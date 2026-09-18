@@ -168,6 +168,17 @@ const envSchema = z.object({
   OPENCODE_PLUGIN_DIR: z
     .string()
     .default(join(process.env.XDG_CONFIG_HOME || join(homedir(), '.config'), 'opencode', 'plugin')),
+  // OpenCode skills dir (honors XDG_CONFIG_HOME) — where the adapter drops the Harness Compute
+  // skill, so any opencode session can help start/use a local model without being told what the
+  // underlying CLI it shells out to is called.
+  OPENCODE_SKILL_DIR: z
+    .string()
+    .default(join(process.env.XDG_CONFIG_HOME || join(homedir(), '.config'), 'opencode', 'skills')),
+  // OpenCode agents dir (honors XDG_CONFIG_HOME) — where the adapter drops the `harness-compute` agent
+  // definition, so `opencode --agent harness-compute` opens a pane AS the agent that starts a local model.
+  OPENCODE_AGENT_DIR: z
+    .string()
+    .default(join(process.env.XDG_CONFIG_HOME || join(homedir(), '.config'), 'opencode', 'agents')),
   // Kilo state root — the SQLite store lives at <KILO_DATA_DIR>/kilo.db. Kilo is an opencode fork and
   // keeps the same layout, but NOT the same overrides: measured on 7.4.20 via `kilo debug paths`, it
   // honours XDG_DATA_HOME and ignores both `KILO_DATA_DIR` and `OPENCODE_DATA_DIR`. So this variable
@@ -256,6 +267,9 @@ const envSchema = z.object({
   ADAPTER_COMPUTER_ID_FILE: z.string().default(computerIdFile),
   // Set to 'true' to skip auto-installing lifecycle hooks for every supported engine.
   DISABLE_HOOK_INSTALL: z.string().default('false').transform((v) => v === 'true'),
+  // `harness start` and `harness login` install the `grid` CLI when the machine has none (see
+  // lib/gridInstall.ts). Off for tests and for a machine whose grid is managed some other way.
+  DISABLE_GRID_INSTALL: z.string().default('false').transform((v) => v === 'true'),
   // Additive terminal capability. Order controls deterministic primary-route tie breaking.
   //
   // UNSET MEANS AUTO — every backend that is actually usable here, which is what makes `herdr` then an
@@ -405,6 +419,14 @@ const envSchema = z.object({
   ADAPTER_RUNTIME_METADATA_URL: z
     .string()
     .default('https://storage.googleapis.com/s3-autonomous-upgrade-3/harness/runtime/metadata.json'),
+  // The managed grid's manifest — its own document, as tmux's is (harness/runtime/tmux/metadata.json):
+  // install.sh slices a manifest by the FIRST platform key it finds, and Node's already has one. The
+  // same entry shape (version/url/sha256/size/archiveRoot), and its version is the PIN: the grid this
+  // build of the CLI drives, moved on purpose by a release and never by grid's own updater — see
+  // ensureManagedGrid() in lib/runtimeInstall.ts, which follows it on every daemon start.
+  ADAPTER_GRID_RUNTIME_METADATA_URL: z
+    .string()
+    .default('https://storage.googleapis.com/s3-autonomous-upgrade-3/harness/runtime/grid/metadata.json'),
   // Where the `harness` launcher lives. Same name (and default) `scripts/install-cli.sh` uses, so a
   // sandboxed install and this process agree on which launcher they are talking about.
   HARNESS_BIN_DIR: z.string().default(adapterBinDir),

@@ -62,7 +62,10 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
         result(nil)
       case "modelsState":
         let state = call.arguments as? [String: Any] ?? [:]
-        self.updateModels(state["subscriptions"] as? [[String: Any]] ?? [])
+        self.updateModels(
+          state["subscriptions"] as? [[String: Any]] ?? [],
+          local: state["local"] as? [[String: Any]] ?? []
+        )
         result(nil)
       case "keymapState":
         guard let payload = call.arguments as? [String: Any],
@@ -156,7 +159,7 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
     configured = true
     NSWindow.allowsAutomaticWindowTabbing = false
     window.tabbingMode = .disallowed
-    window.title = "Harness"
+    window.title = "OpenHarness"
     window.titleVisibility = .hidden
     window.titlebarAppearsTransparent = true
     window.styleMask.remove(.fullSizeContentView)
@@ -286,6 +289,9 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
     guard entries != machines else { return }
     machines = entries
     rebuildMachinesMenu()
+    // The Models menu's last row lists these too (see `rebuildModelsMenu`), so it is rebuilt on
+    // the same change rather than waiting for the next models push to catch up.
+    rebuildModelsMenu()
   }
 
   private func rebuildMachinesMenu() {
@@ -389,12 +395,31 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
     }
   }
 
-  private func updateModels(_ rows: [[String: Any]]) {
+  private func updateModels(_ rows: [[String: Any]], local: [[String: Any]] = []) {
     let entries = rows.prefix(32).compactMap(SwarmSubscriptionEntry.init)
-    guard entries != subscriptions else { return }
+    // What the account's own grid is serving RIGHT NOW, read off the machines that answer for it.
+    // Placeholder names lived here before and read as real ones — a menu naming a model nobody is
+    // serving is worse than a menu admitting it has none.
+    let locals: [(String, String)] = local.prefix(32).compactMap {
+      guard let id = $0["id"] as? String, !id.isEmpty else { return nil }
+      return (id, $0["node"] as? String ?? "")
+    }
+    guard entries != subscriptions || locals.map({ $0.0 }) != localModels.map({ $0.0 })
+      || locals.map({ $0.1 }) != localModels.map({ $0.1 }) else { return }
     subscriptions = entries
+    localModels = locals
     rebuildModelsMenu()
   }
+
+  /// The mark for a locally served model. Built once: `NSImage(systemSymbolName:)` re-renders the
+  /// glyph on every call, and this menu rebuilds on each usage refresh.
+  private static let localModelIcon: NSImage? = {
+    let image = NSImage(systemSymbolName: "cpu", accessibilityDescription: "Served locally")
+    return image?.withSymbolConfiguration(.init(pointSize: 14, weight: .regular))
+  }()
+
+  /// `(model id, node)` for every model the account's private grid is serving.
+  private var localModels: [(String, String)] = []
 
   private func rebuildModelsMenu() {
     modelsMenu.removeAllItems()
@@ -411,7 +436,11 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
       }
     }
     section("Subscription")
-    let rowWidth = subscriptions.map(SwarmSubscriptionView.preferredWidth).max() ?? 352
+    // One width across both sections. Measuring them separately let the menu's two halves size
+    // independently, so the trailing column stepped in or out at the section break.
+    let rowWidth = max(
+      subscriptions.map(SwarmSubscriptionView.preferredWidth).max() ?? 352,
+      localModels.map { SwarmSubscriptionView.preferredWidth(title: $0.0, account: "", status: $0.1) }.max() ?? 352)
     for entry in subscriptions {
       let item = NSMenuItem(title: entry.accessibilityLabel, action: nil, keyEquivalent: "")
       let icon = historyIcons.image(engine: entry.engine, asset: entry.iconAsset)
@@ -423,16 +452,68 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
       label("Anthropic", in: modelsMenu)
       label("OpenAI", in: modelsMenu)
     }
-    modelsMenu.addItem(.separator())
-    section("API")
-    label("OpenRouter", in: modelsMenu)
-    label("fal.ai", in: modelsMenu)
+    // No API section. `OpenRouter` and `fal.ai` were placeholders with nothing behind them, and a
+    // menu naming providers this app cannot reach reads as a list of things you could pick. The
+    // section returns when there is a real source for it, not before.
     modelsMenu.addItem(.separator())
     section("Local")
-    label("DeepSeek V4 Flash", in: modelsMenu)
-    label("Qwen3.8-27B", in: modelsMenu)
-    modelsMenu.addItem(.separator())
-    label("Add Model", in: modelsMenu)
+    // Nothing served is not said: the "Talk to Model manager" row that ends this section is the
+    // answer, and an empty-list sentence above an empty list is noise.
+    do {
+      for (id, node) in localModels {
+        // Same row view as the subscriptions above: the model id reads at full strength where an
+        // account name would, and the node — which of the user's own machines answers, the detail
+        // that makes a private grid legible — takes the trailing column the usage figures use.
+        // The mark is a chip rather than a vendor logo, because what distinguishes these rows is
+        // where they run, not who supplies them. Tinted to match the model id beside it: at a
+        // secondary weight the glyph sat a shade under the vivid brand artwork above and read as
+        // smudge rather than icon.
+        let item = NSMenuItem(title: [id, node].filter { !$0.isEmpty }.joined(separator: ", "),
+          action: nil, keyEquivalent: "")
+        item.view = SwarmSubscriptionView(title: id, account: "", status: node,
+          icon: Self.localModelIcon, width: rowWidth, accessibility: item.title,
+          tint: .labelColor)
+        item.isEnabled = false
+        modelsMenu.addItem(item)
+      }
+    }
+    // The Local section's one ACTION, in the shape the in-app picker gives it: a captioned rule that
+    // says the listing has ended, then a button that spans the menu. It was the last ROW of Local,
+    // which read as one more model — a place the agent could go — when it is the thing a person
+    // picks BECAUSE the model they want is not there yet. Present whether or not anything is served.
+    //
+    // It replaces the `Add Model` placeholder that dispatched nothing, and is wired like Link
+    // Machine…, through the guarded channel handler.
+    //
+    // The manager opens ON a machine — the one whose models it will manage — and with more than one
+    // linked, this is the only place the menu can say which. So it keeps a submenu of the machines,
+    // one row each, this computer marked as such; every child dispatches the same command with the
+    // machine's id. With one machine, or none, the button dispatches directly and the app picks.
+    let caption = NSMenuItem(title: "Want to manage local models?", action: nil, keyEquivalent: "")
+    caption.view = SwarmMenuCaptionView(text: caption.title, width: rowWidth)
+    caption.isEnabled = false
+    modelsMenu.addItem(caption)
+    let run = NSMenuItem(title: "Talk to Model manager", action: nil, keyEquivalent: "")
+    run.identifier = NSUserInterfaceItemIdentifier(HarnessKeymapMenu.actionPrefix + "runLocalModel")
+    if machines.count > 1 {
+      let pick = NSMenu(title: run.title)
+      for machine in machines {
+        let item = NSMenuItem(title: machine.local ? "\(machine.name) (this computer)" : machine.name,
+          action: #selector(runLocalModelAction(_:)), keyEquivalent: "")
+        item.target = self
+        item.representedObject = machine.id
+        pick.addItem(item)
+      }
+      run.submenu = pick
+    } else {
+      run.target = self
+      run.action = #selector(menuAction(_:))
+      run.representedObject = "runLocalModel"
+    }
+    // Set AFTER the submenu is decided: the view draws a chevron only when there is one to open,
+    // and AppKit does not draw its own over a custom view.
+    run.view = SwarmMenuButtonView(title: run.title, width: rowWidth)
+    modelsMenu.addItem(run)
   }
 
   private func updateHistory(_ rows: [[String: Any]], closed: [[String: Any]] = []) {
@@ -504,7 +585,7 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
       item.target = self
       item.representedObject = entry.id
       item.state = entry.current ? .on : .off
-      item.image = entry.swarm && entry.agentCount != 1
+      item.image = entry.swarm && !entry.store && entry.agentCount != 1
         ? SwarmIdentity.menuIcon
         : historyIcons.image(engine: entry.engine, asset: entry.iconAsset)
       historyMenu.addItem(item)
@@ -550,6 +631,9 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
     if menuItem.action == #selector(machineDeleteAction(_:)) {
       return actionsEnabled && machines.contains(where: { $0.id == action && !$0.local })
     }
+    if menuItem.action == #selector(runLocalModelAction(_:)) {
+      return actionsEnabled && machines.contains(where: { $0.id == action })
+    }
     if menuItem.action == #selector(historyAction(_:)) {
       return actionsEnabled && history.contains(where: { $0.id == action })
     }
@@ -570,6 +654,11 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
   @objc private func machineAction(_ sender: NSMenuItem) {
     guard validateMenuItem(sender), let id = sender.representedObject as? String else { return }
     sendTabAction("machineDestination", arguments: ["id": id])
+  }
+
+  @objc private func runLocalModelAction(_ sender: NSMenuItem) {
+    guard validateMenuItem(sender), let id = sender.representedObject as? String else { return }
+    sendTabAction("runLocalModel", arguments: ["machineId": id])
   }
 
   @objc private func machineDeleteAction(_ sender: NSMenuItem) {
@@ -662,6 +751,125 @@ private struct SwarmSubscriptionEntry: Equatable {
   }
 }
 
+/// The captioned rule that introduces the Local section's one action.
+///
+/// The same shape the in-app picker draws: a hairline, a question, a hairline. It marks where the
+/// menu stops LISTING and starts OFFERING — the rows above are places an agent can go, and what
+/// follows starts something instead. Without it the action read as one more model, which is the
+/// mistake the in-app menu made before it grew this block.
+private final class SwarmMenuCaptionView: NSView {
+  private static let font = NSFont.menuFont(ofSize: NSFont.smallSystemFontSize - 1)
+  private let caption: NSTextField
+
+  init(text: String, width: CGFloat) {
+    caption = NSTextField(labelWithString: text)
+    super.init(frame: NSRect(x: 0, y: 0, width: width, height: 24))
+    autoresizingMask = [.width]
+    caption.font = Self.font
+    caption.textColor = .secondaryLabelColor
+    caption.alignment = .center
+    addSubview(caption)
+    caption.setAccessibilityElement(false)
+    setAccessibilityElement(true)
+    setAccessibilityRole(.staticText)
+    setAccessibilityLabel(text)
+  }
+
+  required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+  override func layout() {
+    super.layout()
+    let size = caption.intrinsicContentSize
+    caption.frame = NSRect(x: (bounds.width - size.width) / 2,
+      y: (bounds.height - size.height) / 2, width: size.width, height: size.height)
+  }
+
+  override func draw(_ dirtyRect: NSRect) {
+    super.draw(dirtyRect)
+    NSColor.separatorColor.setFill()
+    let y = (bounds.height / 2).rounded()
+    // A gap either side of the words, so the rule reads as interrupted by them rather than struck
+    // through them.
+    let gap: CGFloat = 8
+    let left = NSRect(x: 18, y: y, width: max(0, caption.frame.minX - gap - 18), height: 1)
+    let rightX = caption.frame.maxX + gap
+    let right = NSRect(x: rightX, y: y, width: max(0, bounds.width - 18 - rightX), height: 1)
+    left.fill()
+    right.fill()
+  }
+}
+
+/// The Local section's one ACTION, drawn as a button rather than as a row.
+///
+/// Every other row in this menu is a destination — pick it and the agent moves. This starts
+/// something, so it wears a border and spans the menu, which is what tells the eye it is not a
+/// fifth model. A custom view gets no highlight from AppKit and performs no action on click, so
+/// both are done here: the fill follows `isHighlighted`, and the mouse dispatches the item's own
+/// target/action the way the menu would have.
+private final class SwarmMenuButtonView: NSView {
+  private static let font = NSFont.menuFont(ofSize: 0)
+  private let label: NSTextField
+
+  init(title: String, width: CGFloat) {
+    label = NSTextField(labelWithString: title)
+    super.init(frame: NSRect(x: 0, y: 0, width: width, height: 34))
+    autoresizingMask = [.width]
+    label.font = Self.font
+    label.textColor = .labelColor
+    label.alignment = .center
+    addSubview(label)
+    label.setAccessibilityElement(false)
+    setAccessibilityElement(true)
+    setAccessibilityRole(.button)
+    setAccessibilityLabel(title)
+  }
+
+  required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+  private var box: NSRect {
+    // Inset from the menu's own edges, so the border is a button's edge and not the menu's.
+    bounds.insetBy(dx: 14, dy: 5)
+  }
+
+  override func layout() {
+    super.layout()
+    let size = label.intrinsicContentSize
+    label.frame = NSRect(x: (bounds.width - size.width) / 2,
+      y: (bounds.height - size.height) / 2, width: size.width, height: size.height)
+  }
+
+  override func draw(_ dirtyRect: NSRect) {
+    super.draw(dirtyRect)
+    let highlighted = enclosingMenuItem?.isHighlighted ?? false
+    let path = NSBezierPath(roundedRect: box, xRadius: 6, yRadius: 6)
+    if highlighted {
+      NSColor.selectedContentBackgroundColor.withAlphaComponent(0.25).setFill()
+      path.fill()
+    }
+    NSColor.separatorColor.setStroke()
+    path.lineWidth = 1
+    path.stroke()
+    label.textColor = highlighted ? .labelColor : .secondaryLabelColor
+    if enclosingMenuItem?.submenu != nil {
+      // A custom view suppresses AppKit's own submenu arrow, and an item that opens one must still
+      // say so — otherwise the machine list appears out of nowhere.
+      let chevron = NSAttributedString(string: "›", attributes: [
+        .font: Self.font, .foregroundColor: NSColor.tertiaryLabelColor,
+      ])
+      chevron.draw(at: NSPoint(x: box.maxX - 16, y: (bounds.height - chevron.size().height) / 2))
+    }
+  }
+
+  override func mouseUp(with event: NSEvent) {
+    guard let item = enclosingMenuItem, item.submenu == nil else { return }
+    let menu = item.menu
+    menu?.cancelTracking()
+    if let action = item.action, let target = item.target {
+      NSApp.sendAction(action, to: target, from: item)
+    }
+  }
+}
+
 /// Read-only account information, with aligned trailing balances. There is no
 /// action or submenu to suggest another step just to read the remaining usage.
 private final class SwarmSubscriptionView: NSView {
@@ -677,26 +885,43 @@ private final class SwarmSubscriptionView: NSView {
   }
 
   static func preferredWidth(_ entry: SwarmSubscriptionEntry) -> CGFloat {
-    let identityWidth = textWidth(entry.title + "  " + entry.account)
-    let balanceWidth = textWidth(entry.status)
+    preferredWidth(title: entry.title, account: entry.account, status: entry.status)
+  }
+
+  static func preferredWidth(title: String, account: String, status: String) -> CGFloat {
+    let identityWidth = textWidth(title + "  " + account)
+    let balanceWidth = textWidth(status)
     return min(576, max(352, identityWidth + balanceWidth + 88))
   }
 
-  init(entry: SwarmSubscriptionEntry, icon: NSImage, width: CGFloat) {
+  convenience init(entry: SwarmSubscriptionEntry, icon: NSImage, width: CGFloat) {
+    self.init(title: entry.title, account: entry.account, status: entry.status,
+      icon: icon, width: width, accessibility: entry.accessibilityLabel)
+  }
+
+  /// Every row in this menu is built here, subscription or local. Sharing the construction is what
+  /// keeps the two sections reading as one menu: same font, same label/secondary split, same icon
+  /// column, same right-aligned trailing field. Local rows were plain disabled `NSMenuItem`s before,
+  /// which AppKit greys wholesale, so a served model looked unavailable beside the accounts above.
+  init(title primary: String, account: String, status: String, icon: NSImage?, width: CGFloat,
+       accessibility: String, tint: NSColor? = nil) {
     super.init(frame: NSRect(x: 0, y: 0, width: width, height: 26))
     autoresizingMask = [.width]
     self.icon.image = icon
     self.icon.imageScaling = .scaleProportionallyDown
-    let title = NSMutableAttributedString(string: entry.title,
+    // Brand artwork carries its own colour; an SF Symbol arrives as a template and would paint flat
+    // black without this, which reads as a hole in the row on a dark menu.
+    self.icon.contentTintColor = tint
+    let title = NSMutableAttributedString(string: primary,
       attributes: [.font: Self.rowFont, .foregroundColor: NSColor.labelColor])
-    if !entry.account.isEmpty {
-      title.append(NSAttributedString(string: "  " + entry.account,
+    if !account.isEmpty {
+      title.append(NSAttributedString(string: "  " + account,
         attributes: [.font: Self.rowFont, .foregroundColor: NSColor.secondaryLabelColor]))
     }
     identity.attributedStringValue = title
     identity.usesSingleLineMode = true
     identity.lineBreakMode = .byTruncatingMiddle
-    balance.stringValue = entry.status
+    balance.stringValue = status
     balance.font = Self.rowFont
     balance.textColor = .secondaryLabelColor
     balance.alignment = .right
@@ -708,7 +933,7 @@ private final class SwarmSubscriptionView: NSView {
     }
     setAccessibilityElement(true)
     setAccessibilityRole(.staticText)
-    setAccessibilityLabel(entry.accessibilityLabel)
+    setAccessibilityLabel(accessibility)
     layout()
   }
 
@@ -831,6 +1056,8 @@ private struct SwarmHistoryEntry: Equatable {
   let detail: String
   let machineName: String
   let swarm: Bool
+  /// The Harness Store's tab: no agents, but not an empty group either.
+  let store: Bool
   let agentCount: Int?
   let current: Bool
   let engine: String?
@@ -857,6 +1084,7 @@ private struct SwarmHistoryEntry: Equatable {
     detail = row["detail"] as? String ?? ""
     machineName = row["machineName"] as? String ?? ""
     swarm = row["swarm"] as? Bool == true
+    store = row["store"] as? Bool == true
     agentCount = row["agentCount"] as? Int
     current = row["current"] as? Bool == true
     engine = (row["engine"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
@@ -869,6 +1097,15 @@ private struct SwarmHistoryEntry: Equatable {
 /// decoded once to at most 32 pixels, rather than retaining a full-size bitmap
 /// or reopening assets on every history/focus update.
 private final class SwarmHistoryIcons {
+  /// The Flutter assets this opens: engine and harness artwork, and the app
+  /// icon the Harness Store's tab wears (`kStoreMarkAsset` in
+  /// lib/store/store_mark.dart). Any other path draws the engine's initial,
+  /// which is how the store tab once read "S".
+  static func opens(_ asset: String) -> Bool {
+    !asset.contains("..") && (asset == "assets/app_icon.png"
+      || asset.hasPrefix("assets/engine-icons/") && asset.hasSuffix(".png"))
+  }
+
   private let cache = NSCache<NSString, NSImage>()
   private let assetURL: (String) -> URL?
 
@@ -890,8 +1127,7 @@ private final class SwarmHistoryIcons {
     if let image = cache.object(forKey: key) { return image }
     let size = NSSize(width: 16, height: 16)
     let image: NSImage
-    if let asset, asset.hasPrefix("assets/engine-icons/"),
-       asset.hasSuffix(".png"), !asset.contains(".."),
+    if let asset, SwarmHistoryIcons.opens(asset),
        let url = assetURL(asset),
        let source = CGImageSourceCreateWithURL(url as CFURL, nil),
        let thumbnail = CGImageSourceCreateThumbnailAtIndex(source, 0, [
@@ -906,6 +1142,12 @@ private final class SwarmHistoryIcons {
       let height = CGFloat(thumbnail.height) * scale
       image = NSImage(size: size, flipped: false) { _ in
         bitmap.draw(in: NSRect(x: (16 - width) / 2, y: (16 - height) / 2, width: width, height: height))
+        return true
+      }
+    } else if id == "store", let appIcon = NSApp.applicationIconImage {
+      // The bundled copy did not load; the Dock's icon is the same mark.
+      image = NSImage(size: size, flipped: false) { _ in
+        appIcon.draw(in: NSRect(origin: .zero, size: size))
         return true
       }
     } else if id == "claude" {
@@ -926,7 +1168,10 @@ private final class SwarmHistoryIcons {
       }
     } else {
       image = NSImage(size: size, flipped: false) { _ in
-        let initial = String(id.first ?? "A").uppercased() as NSString
+        // A harness id is `owner/name`: its initial is the name's, not the owner's — every
+        // `autonomous/…` harness without artwork used to read "A".
+        let name = id.split(separator: "/").last.map(String.init) ?? id
+        let initial = String(name.first ?? "A").uppercased() as NSString
         let attributes: [NSAttributedString.Key: Any] = [
           .font: NSFont.monospacedSystemFont(ofSize: 11, weight: .bold),
           .foregroundColor: NSColor.black,
@@ -1124,7 +1369,8 @@ private final class SwarmTabStrip: NSView {
   private var commandHeld = false
   private var flagsMonitor: Any?
   private var resignObserver: NSObjectProtocol?
-  override var mouseDownCanMoveWindow: Bool { true }
+  // Dragging is explicit below. AppKit must not also start a titlebar gesture.
+  override var mouseDownCanMoveWindow: Bool { false }
 
   override init(frame: NSRect) {
     super.init(frame: frame)
@@ -1330,13 +1576,12 @@ private final class SwarmTabStrip: NSView {
 
   }
   override func mouseDown(with event: NSEvent) {
-    // A double-click on the strip's background zooms the window. This is the
-    // one place that does: the Flutter bar under the strip only drags, since
-    // its own double-tap zoomed a second time, straight back (owner,
-    // 2026-09-15: "maximizes out and resizes back").
     if ownsBackgroundDoubleClick(event) { window?.performZoom(nil) }
     else if event.clickCount == 1 { window?.performDrag(with: event) }
   }
+  // Own the release as well as the press. Forwarding it lets AppKit zoom a
+  // second time on mouse-up, immediately restoring the previous window size.
+  override func mouseUp(with event: NSEvent) {}
   fileprivate func ownsBackgroundDoubleClick(_ event: NSEvent) -> Bool {
     if event.clickCount == 1 {
       lastBackgroundClick = (event.timestamp, event.locationInWindow)

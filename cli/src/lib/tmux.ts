@@ -584,7 +584,18 @@ export function bypassPermissionActive(engine: RegisteredSession['engine'], args
   const flags = BYPASS_PERMISSION_FLAGS[engine]
   if (!flags) return false
   const tokens = argvTokens(args)
-  return flags.every((flag) => tokens.includes(flag))
+  // The flags in order, as launch writes them (`--permission-mode auto` is two tokens, and "auto"
+  // alone elsewhere in argv is not the mode) — or `--flag=value` as one.
+  const inOrder = (want: readonly string[]): boolean => tokens.some((_, i) => want.every((flag, j) => tokens[i + j] === flag))
+    || (want.length === 2 && tokens.includes(`${want[0]}=${want[1]}`))
+  // An agent launched before the auto modes carried the old skip-everything flag; it still counts as
+  // approving on its own, and a relaunch brings it back in the auto mode.
+  return inOrder(flags) || (LEGACY_BYPASS_FLAGS[engine] ?? []).some((legacy) => inOrder(legacy))
+}
+
+const LEGACY_BYPASS_FLAGS: Partial<Record<RegisteredSession['engine'], string[][]>> = {
+  claude: [['--dangerously-skip-permissions']],
+  codex: [['--dangerously-bypass-approvals-and-sandbox']],
 }
 
 /** The session id an engine was told to resume, or null when argv does not name one. */

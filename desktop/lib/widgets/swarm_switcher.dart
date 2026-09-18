@@ -13,6 +13,7 @@ import '../shared/widgets/app_dialog.dart';
 import '../state/app_state.dart';
 import '../state/swarm_navigation.dart';
 import '../state/swarm_search.dart';
+import '../store/store_mark.dart';
 import 'engine_identity.dart';
 import 'swarm_icon.dart';
 import 'swarm_search_preview.dart';
@@ -478,6 +479,8 @@ class _SwarmSearchResultsState extends State<SwarmSearchResults> {
                                         size: 20,
                                         color: Colors.white60,
                                       )
+                                    : row.isStore
+                                    ? StoreMark(size: 22, enabled: canSubmit)
                                     : row.agentId != null ||
                                           (row.isSwarm &&
                                               row.members.length == 1)

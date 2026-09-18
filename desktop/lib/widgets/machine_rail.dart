@@ -227,7 +227,7 @@ class _MachineRailState extends State<MachineRail> {
                             children: [
                               Expanded(
                                 child: Text(
-                                  'Harness',
+                                  'OpenHarness',
                                   style: TextStyle(
                                     color: grid.AppPalette.textPrimary,
                                     fontSize: 16,
@@ -425,7 +425,7 @@ class _CaptionActions extends StatelessWidget {
         AppIconButton(
           icon: LucideIcons.plus300,
           size: 16,
-          tooltip: 'Create Agent here…',
+          tooltip: 'New Harness here…',
           onPressed: onNewAgent,
         ),
       ],
@@ -1618,7 +1618,7 @@ class _AgentLoadError extends StatelessWidget {
   }
 }
 
-/// "Create Agent…", drawn as the row it would create.
+/// "New Harness…", drawn as the row it would create.
 ///
 /// The rail is a LIST, and every framed control put in it has read as a foreign object — there is
 /// nothing else in this column with a border or a fill of its own. So this is not a button placed in a
@@ -1659,11 +1659,11 @@ class _NewAgentRow extends StatelessWidget {
       // one. A different indent here would bend the trunk at the last branch.
       padding: const EdgeInsets.only(left: 28),
       child: SidebarItem(
-        label: 'Create Agent…',
+        label: 'New Harness…',
         // Dimmed rather than a colour of its own: this row is a placeholder until it is reached for, and
         // the hover state SidebarItem already owns is what says it is live.
         dimmed: true,
-        tooltip: 'Start an agent on this machine',
+        tooltip: 'Start a harness on this machine',
         onTap: () =>
             showNewAgentDialog(context, notifier, machineId, source: source),
         // The agent row's well, in dashes. Same 24px box and same 7px radius, so the column of marks

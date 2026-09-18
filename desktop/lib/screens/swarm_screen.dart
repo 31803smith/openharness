@@ -14,6 +14,7 @@ import '../settings/settings_section.dart';
 import '../shared/theme/app_theme.dart' as grid;
 import '../shared/widgets/app_dialog.dart';
 import '../shortcuts/app_shortcuts.dart';
+import '../core/models.dart';
 import '../shortcuts/app_keymap.dart';
 import '../shortcuts/keymap.dart';
 import '../shortcuts/keymap_commands.dart';
@@ -29,8 +30,10 @@ import '../state/swarm_attention.dart';
 import '../state/swarm_navigation.dart';
 import '../state/swarm_search.dart';
 import '../state/swarm.dart';
+import '../widgets/transient_menus.dart';
 import '../widgets/layout_palette.dart';
 import '../widgets/engine_identity.dart';
+import '../store/store_mark.dart';
 import '../store/store_screen.dart';
 import '../widgets/harness_start_page.dart';
 import '../widgets/link_machine_screen.dart';
@@ -121,6 +124,9 @@ class _SwarmScreenState extends State<SwarmScreen> {
           widget.modelsMenu ??
           ModelsMenuController(remote: app.readRemoteUsage);
       _modelsMenu!.addListener(_syncModels);
+      // Same trigger as the subscription rows: the daemon memoises its answer, so opening the menu
+      // repeatedly costs nothing after the first.
+      unawaited(_refreshLocalModels());
       _channel.setMethodCallHandler(_onNative);
       app.addListener(_syncNative);
       _syncNative();
@@ -302,6 +308,10 @@ class _SwarmScreenState extends State<SwarmScreen> {
   }
 
   void _syncNative() {
+    // ⚠️ Also from here, not only from `initState`. At init the machine list is still empty, so the
+    // first read returned nothing and the Local section sat on its empty state forever. This fires
+    // on every app change, throttled, so it lands as soon as a machine appears.
+    unawaited(_refreshLocalModels());
     _syncMachines();
     final payload = {
       'enabled': _routeIsCurrent && !_dialogOpen && !_spokenPaletteOpen,
@@ -320,9 +330,12 @@ class _SwarmScreenState extends State<SwarmScreen> {
             'machineName': entry.machineLabel,
             'detail': entry.detail,
             'swarm': entry.isSwarm,
+            'store': entry.isStore,
             'agentCount': entry.isSwarm ? entry.members.length : 1,
-            'engine': entry.engine,
-            'iconAsset': engineIdentity(entry.engine).asset,
+            'engine': entry.isStore ? 'store' : entry.engine,
+            'iconAsset': entry.isStore
+                ? kStoreMarkAsset
+                : engineIdentity(entry.engine).asset,
             'canReopen': app.canReopenClosed(entry.id),
           },
       ],
@@ -335,9 +348,12 @@ class _SwarmScreenState extends State<SwarmScreen> {
             'machineName': entry.machineLabel,
             'detail': entry.detail,
             'swarm': entry.isSwarm,
+            'store': entry.isStore,
             'agentCount': entry.isSwarm ? entry.members.length : 1,
-            'engine': entry.engine,
-            'iconAsset': engineIdentity(entry.engine).asset,
+            'engine': entry.isStore ? 'store' : entry.engine,
+            'iconAsset': entry.isStore
+                ? kStoreMarkAsset
+                : engineIdentity(entry.engine).asset,
             'current': entry.current,
           },
       ],
@@ -420,8 +436,10 @@ class _SwarmScreenState extends State<SwarmScreen> {
                   {
                     'id': agent.id,
                     'title': agent.name,
-                    'engine': agent.engine,
-                    'iconAsset': engineIdentity(agent.engine).asset,
+                    // Drawn as what it is: a Godogen agent wears Godogen, not
+                    // the Claude Code it runs on.
+                    'engine': agent.identityEngine,
+                    'iconAsset': agentIdentity(agent).asset,
                     'canOpen':
                         agent.terminalAvailable ||
                         openAgents.contains((
@@ -458,11 +476,56 @@ class _SwarmScreenState extends State<SwarmScreen> {
   }
 
   void _syncModels() {
-    final payload = {'subscriptions': _modelsMenu?.rows ?? []};
+    final payload = {
+      'subscriptions': _modelsMenu?.rows ?? [],
+      // The Local section used to be two hardcoded names. A menu that names a model nobody is
+      // serving is worse than one admitting it has none, so this carries what the account's own
+      // grid actually answers with — refreshed below, and empty until the first read lands.
+      'local': [
+        for (final m in _localModels) {'id': m.id, 'node': m.node},
+      ],
+    };
     final encoded = jsonEncode(payload);
     if (encoded == _modelsState) return;
     _modelsState = encoded;
     unawaited(_channel.invokeMethod<void>('modelsState', payload));
+  }
+
+  /// What the account's private grid is serving, for the native Models menu.
+  ///
+  /// Read from a machine this window is connected to — the grid is per ACCOUNT, so any of them
+  /// answers the same, and the local one is asked first because its daemon is a loopback away.
+  /// Never throws and never blocks the menu: a machine that cannot answer leaves the list as it was.
+  List<GridModel> _localModels = const [];
+
+  DateTime? _localModelsAt;
+
+  Future<void> _refreshLocalModels() async {
+    final machines = app.machines;
+    if (machines.isEmpty) return;
+    // The daemon memoises its answer, so a repeat is nearly free — but this is called on every app
+    // change, and an RPC per keystroke-sized notification is not free. One read per window is
+    // plenty for a list that changes when someone starts or stops serving a model.
+    final now = DateTime.now();
+    final last = _localModelsAt;
+    if (last != null && now.difference(last) < const Duration(seconds: 10))
+      return;
+    _localModelsAt = now;
+    final preferred = machines.firstWhere(
+      (m) => app.stateOf(m.machineId)?.isLocalMachine == true,
+      orElse: () => machines.first,
+    );
+    final answer = await app.gridModels(preferred.machineId);
+    if (!mounted) return;
+    final same =
+        answer.models.length == _localModels.length &&
+        [
+          for (var i = 0; i < answer.models.length; i++)
+            answer.models[i].id == _localModels[i].id,
+        ].every((x) => x);
+    if (same) return;
+    _localModels = answer.models;
+    _syncModels();
   }
 
   Future<void> _onNative(MethodCall call) async {
@@ -552,6 +615,9 @@ class _SwarmScreenState extends State<SwarmScreen> {
       return;
     }
     _closeSearch(restoreFocus: false);
+    // Same reason the search field closes: the titlebar is native, so a click on it is not a pointer
+    // event any Flutter overlay can see itself.
+    dismissTransientMenus();
     switch (call.method) {
       case 'new':
         _newTab();
@@ -589,6 +655,20 @@ class _SwarmScreenState extends State<SwarmScreen> {
         await _addAgent();
       case 'newAgent':
         unawaited(_newAgent(swarmId: app.activeSwarmId));
+      case 'runLocalModel':
+        // The native Models menu's one command. Wrapped like Link Machine…
+        // because the notifier may open its dialog here, and the pane it then
+        // creates takes focus the same way a New Agent does. With more than one
+        // machine linked the menu lists them and names the chosen one here;
+        // with one, or none, the notifier picks.
+        await _dialog(
+          () => app.runLocalModel(
+            context,
+            machineId: args['machineId'] is String
+                ? args['machineId'] as String
+                : null,
+          ),
+        );
       case 'splitRight':
         unawaited(_splitAgent(PaneResizeAxis.x));
       case 'splitDown':
@@ -600,7 +680,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
       case 'addProject':
         await _addProject();
       case 'linkMachine':
-        await _dialog(() => linkMachineOrSignIn(context, app));
+        await _dialog(() => showSwarmLinkDialog(context, app));
       case 'manageMachines':
         unawaited(_dialog(() => showMachinesManager(context, app)));
       case 'refreshMachines':
@@ -769,7 +849,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
         folder ?? (agent == null ? null : machine?.projectOf(agent)?.cwd);
     await _dialog(() async {
       if (id == null) {
-        await linkMachineOrSignIn(context, app);
+        await showSwarmLinkDialog(context, app);
         return;
       }
       await showNewAgentDialog(
@@ -1238,7 +1318,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
     for (var i = 1; i <= 9; i++)
       'pane.focus_$i': () => app.focusPaneByIndex(i - 1),
     'navigation.commands': _showSearchCommands,
-    'machine.link': () => _dialog(() => linkMachineOrSignIn(context, app)),
+    'machine.link': () => _dialog(() => showSwarmLinkDialog(context, app)),
     'machines.manage': () => _dialog(() => showMachinesManager(context, app)),
     'project.add': _addProject,
     'keyboard.open_config': () => openKeyboardConfig(context),
@@ -1428,59 +1508,59 @@ class _SwarmScreenState extends State<SwarmScreen> {
                             source: 'tab',
                           )
                         else
-                          Padding(
-                            padding: app.panes.isEmpty
-                                ? EdgeInsets.zero
-                                : const EdgeInsets.all(10),
-                            child: Focus.withExternalFocusNode(
-                              focusNode: _canvasFocus,
-                              includeSemantics: false,
-                              child: Stack(
-                                children: [
-                                  Positioned.fill(
-                                    child: PaneGrid(
-                                      notifier: app,
-                                      swarmMode: true,
-                                      onSplit: (paneId, axis) => unawaited(
-                                        _splitAgent(axis, paneId: paneId),
-                                      ),
-                                      onNewSplit: (paneId, axis) => unawaited(
-                                        _splitAgent(
-                                          axis,
-                                          paneId: paneId,
-                                          create: true,
-                                        ),
-                                      ),
-                                      empty: app.panes.isEmpty
-                                          ? HarnessStartPage(
-                                              key: ValueKey(
-                                                'harness-start:${app.activeSwarmId}',
-                                              ),
-                                              focusNode: _startSearchFocus,
-                                              createSearch: () =>
-                                                  SwarmSearchController(
-                                                    app,
-                                                    _navigation.recent,
-                                                    projects: _projects,
-                                                    commands: _searchCommands,
-                                                    adding: true,
-                                                    catalog: _searchCatalog,
-                                                  ),
-                                              onNew: _newAgent,
-                                              onStore: app.openStore,
-                                              onChoose: (selection) =>
-                                                  _activateSearch(
-                                                    selection,
-                                                    app.activeSwarmId,
-                                                  ),
-                                            )
-                                          : null,
+                        Padding(
+                          padding: app.panes.isEmpty
+                              ? EdgeInsets.zero
+                              : const EdgeInsets.all(10),
+                          child: Focus.withExternalFocusNode(
+                            focusNode: _canvasFocus,
+                            includeSemantics: false,
+                            child: Stack(
+                              children: [
+                                Positioned.fill(
+                                  child: PaneGrid(
+                                    notifier: app,
+                                    swarmMode: true,
+                                    onSplit: (paneId, axis) => unawaited(
+                                      _splitAgent(axis, paneId: paneId),
                                     ),
+                                    onNewSplit: (paneId, axis) => unawaited(
+                                      _splitAgent(
+                                        axis,
+                                        paneId: paneId,
+                                        create: true,
+                                      ),
+                                    ),
+                                    empty: app.panes.isEmpty
+                                        ? HarnessStartPage(
+                                            key: ValueKey(
+                                              'harness-start:${app.activeSwarmId}',
+                                            ),
+                                            focusNode: _startSearchFocus,
+                                            createSearch: () =>
+                                                SwarmSearchController(
+                                                  app,
+                                                  _navigation.recent,
+                                                  projects: _projects,
+                                                  commands: _searchCommands,
+                                                  adding: true,
+                                                  catalog: _searchCatalog,
+                                                ),
+                                            onNew: _newAgent,
+                                            onStore: app.openStore,
+                                            onChoose: (selection) =>
+                                                _activateSearch(
+                                                  selection,
+                                                  app.activeSwarmId,
+                                                ),
+                                          )
+                                        : null,
                                   ),
-                                ],
-                              ),
+                                ),
+                              ],
                             ),
                           ),
+                        ),
                       ],
                     ),
                   ),
@@ -1568,14 +1648,8 @@ class _SwarmScreenState extends State<SwarmScreen> {
                                   child: Row(
                                     children: [
                                       if (swarm.isStore)
-                                        // The Store shares the app's icon.
-                                        Image.asset(
-                                          kStoreMarkAsset,
-                                          key: ValueKey(
-                                            'tab-store:${swarm.id}',
-                                          ),
-                                          width: 16,
-                                          height: 16,
+                                        StoreMark(
+                                          key: ValueKey('tab-store:${swarm.id}'),
                                         )
                                       else if (_tabAgents(swarm).length == 1)
                                         EngineMark(

@@ -4,10 +4,10 @@ Harness never wraps an agent. It reads the transcript the agent already writes a
 vendor's own hooks or plugin to learn when a turn starts and ends. Your credentials stay in your
 `~/.claude`, `~/.codex`, and so on.
 
-| Engine | Binary | How Harness follows it | Resume | Permission bypass | Grid |
+| Engine | Binary | How Harness follows it | Resume | Auto-approve | Grid |
 |---|---|---|---|---|---|
-| Claude Code | `claude` | hooks in `~/.claude/settings.json` + JSONL transcript | `--resume` | `--dangerously-skip-permissions` | yes |
-| Codex | `codex` | `hooks.json` per `CODEX_HOME` + JSONL rollouts | `resume` | `--dangerously-bypass-approvals-and-sandbox` | yes |
+| Claude Code | `claude` | hooks in `~/.claude/settings.json` + JSONL transcript | `--resume` | `--permission-mode auto` | yes |
+| Codex | `codex` | `hooks.json` per `CODEX_HOME` + JSONL rollouts | `resume` | `--approve-for-me` | yes |
 | Cursor | `cursor-agent` | `~/.cursor/hooks.json` + transcript | `--resume` | `--force` | — |
 | OpenCode | `opencode` | plugin + SQLite | `--session` | `--auto` | yes |
 | Pi | `pi` | extension + transcript | `--session` | — | yes |
@@ -20,6 +20,10 @@ vendor's own hooks or plugin to learn when a turn starts and ends. Your credenti
 | Grok Build | `grok` | hooks + `updates.jsonl` | `--resume` | — | yes |
 | Antigravity | `agy` | hooks + transcript | `--conversation` | — | — |
 | GitHub Copilot | `copilot` | hooks + transcript | `--resume` | — | yes |
+
+**Auto-approve** is the default permission mode for a new harness: the engine's own auto mode, not its
+skip-every-check flag. New Harness ▸ Advanced offers the engine's other modes (`PERMISSION_MODES` in
+`cli/src/lib/engineLaunch.ts`).
 
 A launcher that hands the pane to one of these is that engine: `ori claude` is a Claude Code agent,
 and the daemon reads the gateway off the live process so recaps and routing go through it too.

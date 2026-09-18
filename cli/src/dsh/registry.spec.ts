@@ -9,7 +9,7 @@ import { pathToFileURL } from 'node:url'
 import { env } from '../config/env.js'
 import {
   bundledDshRegistry, HARNESS_MONOREPO, readRegistryDir, readStoreDir, registryEntry, registrySourceUrl,
-  resetBundledDshRegistry, storeEntry,
+  resetBundledDshRegistry, storeEntry, StoreExampleSchema, StoreFactsSchema,
 } from './registry.js'
 
 // @ts-expect-error — plain ESM with no declaration file, imported to hold the build to the runtime
@@ -23,12 +23,33 @@ const write = (path: string, body: string): void => {
   writeFileSync(path, body)
 }
 
+describe('StoreExampleSchema: what a product page example may hold', () => {
+  it('takes a prompt, an https picture and a caption; a catalog entry drops unknown fields, store.json refuses them', () => {
+    expect(StoreExampleSchema.parse({ prompt: '  A desk lamp.  ', image: 'https://example.com/a.jpg', caption: 'Lamp', later: 1 }))
+      .toEqual({ prompt: 'A desk lamp.', image: 'https://example.com/a.jpg', caption: 'Lamp' })
+    expect(StoreExampleSchema.safeParse({ prompt: 'x', image: 'http://example.com/a.jpg' }).success).toBe(false)
+    expect(StoreExampleSchema.safeParse({ prompt: '   ' }).success).toBe(false)
+    expect(StoreExampleSchema.safeParse({ prompt: 'x'.repeat(601) }).success).toBe(false)
+    expect(StoreFactsSchema.safeParse({ examples: [{ prompt: 'x', later: 1 }] }).success).toBe(false)
+    expect(StoreFactsSchema.safeParse({ examples: Array.from({ length: 9 }, () => ({ prompt: 'x' })) }).success).toBe(false)
+    expect(StoreFactsSchema.parse({ examples: [{ prompt: 'x' }] })).toEqual({ examples: [{ prompt: 'x' }] })
+  })
+
+  it('a tagline is one short line', () => {
+    expect(StoreFactsSchema.parse({ tagline: 'Advanced physics simulation' })).toEqual({ tagline: 'Advanced physics simulation' })
+    expect(StoreFactsSchema.safeParse({ tagline: '' }).success).toBe(false)
+    expect(StoreFactsSchema.safeParse({ tagline: 'x'.repeat(81) }).success).toBe(false)
+  })
+})
+
 describe('storeEntry', () => {
   const cases: Array<[string, Record<string, unknown>, Record<string, unknown>]> = [
     ['a bare agent: tier 0, only what the manifest says', { spec: 1, id: 'autonomous/bare', name: 'Bare', engine: 'claude' }, {}],
     ['a verdict: tier 1', { spec: 1, id: 'autonomous/checked', name: 'Checked', engine: 'codex', verdict: '.harness/verdict.json' }, {}],
     ['a used viewer: tier 2 and its dependency', { spec: 1, id: 'autonomous/cad', name: 'CAD', category: 'CAD', author: 'Autonomous', description: 'd', engine: 'claude', viewer: { use: 'autonomous/cad-viewer' } }, { homepage: 'https://example.com', license: 'MIT' }],
     ['a viewer package: its kind and no engine', { spec: 1, kind: 'viewer', id: 'autonomous/pane', name: 'Pane', viewer: { command: 'v.sh', url: 'http://127.0.0.1:${port}/' } }, { upstream: 'https://example.com/up', screenshots: ['https://example.com/1.png'] }],
+    ['tagline: carried as written', { spec: 1, id: 'autonomous/sim', name: 'Sim', engine: 'claude' }, { tagline: 'Advanced physics simulation' }],
+    ['examples: carried as written', { spec: 1, id: 'autonomous/lamp', name: 'Lamp', engine: 'claude', viewer: { use: 'autonomous/model-viewer' } }, { examples: [{ prompt: 'A desk lamp.', image: 'https://example.com/lamp.jpg', caption: 'Lamp · glTF' }] }],
   ]
   for (const [what, manifest, facts] of cases) {
     it(`${what}, the same from the build`, () => {
@@ -39,7 +60,9 @@ describe('storeEntry', () => {
   }
 
   it('says exactly what each case ships', () => {
-    const [bare, checked, cad, pane] = cases.map(([, manifest, facts]) => storeEntry('p', manifest, facts))
+    const [bare, checked, cad, pane, sim, lamp] = cases.map(([, manifest, facts]) => storeEntry('p', manifest, facts))
+    expect(sim.tagline).toBe('Advanced physics simulation')
+    expect(lamp.examples).toEqual([{ prompt: 'A desk lamp.', image: 'https://example.com/lamp.jpg', caption: 'Lamp · glTF' }])
     expect(bare).toEqual({ id: 'autonomous/bare', name: 'Bare', repo: HARNESS_MONOREPO, ref: 'main', path: 'p', engine: 'claude', tier: 0, verified: true })
     expect(checked.tier).toBe(1)
     expect(cad).toMatchObject({ category: 'CAD', author: 'Autonomous', description: 'd', homepage: 'https://example.com', license: 'MIT', viewerUse: 'autonomous/cad-viewer', tier: 2 })

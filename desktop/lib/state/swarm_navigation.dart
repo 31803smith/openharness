@@ -112,6 +112,7 @@ class SwarmNavigationHistory {
       for (final swarm in app.swarms) ...[
         swarm.id,
         swarm.name,
+        swarm.kind,
         for (final pane in swarm.panes)
           (
             pane.id,
@@ -171,6 +172,7 @@ class SwarmDestination {
     this.projectId,
     this.previewKey,
     this.members = const {},
+    this.isStore = false,
     Iterable<String?> searchFields = const [],
     int titleFields = 1,
   }) : fields = [
@@ -199,6 +201,10 @@ class SwarmDestination {
   final String? projectId;
   final SessionPreviewKey? previewKey;
   final Set<String> members;
+
+  /// The Harness Store's tab, open or recently closed. It holds no agents, so
+  /// without this it would be drawn as an empty group; it wears the app icon.
+  final bool isStore;
   final bool current;
   final List<String> fields;
   bool get isProject => projectId != null;
@@ -266,6 +272,7 @@ List<Object?> _catalogPresentation(
   for (final swarm in app.swarms) ...[
     swarm.id,
     swarm.name,
+    swarm.kind,
     for (final pane in swarm.panes)
       (
         pane.id,
@@ -429,6 +436,7 @@ class SwarmLocationCatalog {
       machineLabel: machineLabel,
       swarmId: swarm.id,
       swarmName: swarm.name,
+      isStore: swarm.isStore,
       current: swarm.id == app.activeSwarmId,
       searchFields: [machineLabel],
     );
@@ -741,6 +749,7 @@ List<SwarmDestination> closedWorkDestinations(AppNotifier app) => [
         closedId: entry.historyId,
         title: entry.name,
         engine: entry.engine,
+        isStore: entry.kind == 'store',
         members: {
           for (final pane in entry.panes)
             if (pane.agentId != null)
@@ -842,6 +851,7 @@ List<SwarmDestination> swarmDestinations(
           if (machines.isNotEmpty) _countLabel(machines.length, 'machine'),
         ].join(' · '),
         members: members,
+        isStore: swarm.isStore,
         swarmId: swarm.id,
         current: swarm.id == app.activeSwarmId,
         searchFields: context.toSet(),

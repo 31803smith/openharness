@@ -13,6 +13,8 @@ import 'package:harness/widgets/new_agent_dialog.dart';
 import 'package:harness/shared/widgets/app_choice_picker.dart';
 import 'package:harness/shared/widgets/app_select_field.dart';
 
+import 'support/agent_picker.dart';
+
 class _App extends AppNotifier {
   _App() : super(config: AppConfig.dev, authSession: AuthSession()) {
     for (final id in ['local', 'remote']) {
@@ -63,10 +65,14 @@ class _App extends AppNotifier {
     required String folder,
     ProjectFolderRequest? projectFolder,
     bool bypassPermission = false,
+    String? permissionMode,
     String? codexHome,
     String? swarmId,
     PaneSplitRequest? split,
     String? dsh,
+    String? prompt,
+    String? name,
+    String? agent,
     AgentCreationAttempt? attempt,
   }) async {
     calls.add({
@@ -186,7 +192,7 @@ void main() {
     (tester) async {
       await mount(tester);
       await recent(tester, 'alpha');
-      await tester.tap(find.byKey(const ValueKey('new-agent-quick-opencode')));
+      await chooseAgent(tester, 'opencode');
       await tester.pumpAndSettle();
       expect(find.text('alpha'), findsOneWidget);
       expect(find.text('/local/alpha'), findsNothing);
@@ -331,7 +337,7 @@ void main() {
     await tester.sendKeyEvent(LogicalKeyboardKey.escape);
     await tester.pumpAndSettle();
     expect(find.text('No recent projects'), findsNothing);
-    expect(find.text('New Harness'), findsOneWidget);
+    expect(find.byKey(const ValueKey('create-agent-submit')), findsOneWidget);
     expect(app.calls, isEmpty);
   });
 }

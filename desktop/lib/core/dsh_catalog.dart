@@ -9,6 +9,42 @@
 /// on a machine that has never heard of it and say "Harness will install".
 library;
 
+/// One example on a product page: the prompt, a picture of what the harness made from it, and a line
+/// naming the result. Read defensively — it arrives from any machine's catalog.
+class StoreExample {
+  const StoreExample({required this.prompt, this.image, this.caption});
+
+  final String prompt;
+
+  /// An https picture of the output, or null when the package has none for this prompt.
+  final String? image;
+  final String? caption;
+
+  static StoreExample? fromJson(Object? raw) {
+    if (raw is! Map) return null;
+    final prompt = raw['prompt'];
+    if (prompt is! String || prompt.trim().isEmpty || prompt.length > 600) {
+      return null;
+    }
+    final image = raw['image'];
+    final uri = image is String ? Uri.tryParse(image.trim()) : null;
+    final caption = raw['caption'];
+    return StoreExample(
+      prompt: prompt.trim(),
+      image:
+          uri != null &&
+              uri.scheme == 'https' &&
+              uri.hasAuthority &&
+              (image as String).length <= 2048
+          ? image.trim()
+          : null,
+      caption: caption is String && caption.trim().isNotEmpty
+          ? caption.trim().substring(0, caption.trim().length.clamp(0, 120))
+          : null,
+    );
+  }
+}
+
 class DshEntry {
   const DshEntry({
     required this.id,
@@ -26,7 +62,9 @@ class DshEntry {
     this.homepage,
     this.upstream,
     this.license,
+    this.tagline,
     this.screenshots = const [],
+    this.examples = const [],
     this.linked = false,
   });
 
@@ -70,7 +108,14 @@ class DshEntry {
   final String? homepage;
   final String? upstream;
   final String? license;
+
+  /// One line in the project's own words, from its website or repository —
+  /// "Advanced physics simulation" — under the name wherever it is chosen.
+  final String? tagline;
   final List<String> screenshots;
+
+  /// What a person types and what comes out — the product page is built around these.
+  final List<StoreExample> examples;
 
   /// Installed as a link to a checkout (`--link`) rather than a clone: a
   /// developer's own working copy, which Remove would only unlink.
@@ -98,10 +143,18 @@ class DshEntry {
       homepage: _httpUrl(raw['homepage']),
       upstream: _httpUrl(raw['upstream']),
       license: _short(raw['license'], 40),
+      tagline: _short(raw['tagline'], 80),
       screenshots: screenshots is List
           ? screenshots
                 .map(_httpUrl)
                 .whereType<String>()
+                .take(8)
+                .toList(growable: false)
+          : const [],
+      examples: raw['examples'] is List
+          ? (raw['examples'] as List)
+                .map(StoreExample.fromJson)
+                .whereType<StoreExample>()
                 .take(8)
                 .toList(growable: false)
           : const [],

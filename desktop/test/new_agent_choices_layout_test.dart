@@ -18,6 +18,10 @@ import 'package:harness/shared/widgets/app_choice_picker.dart';
 
 import 'support/real_fonts.dart';
 
+import 'package:harness/widgets/agent_picker.dart';
+
+import 'support/agent_picker.dart';
+
 class _ChoicesApp extends AppNotifier {
   _ChoicesApp() : super(config: AppConfig.dev, authSession: AuthSession()) {
     for (final (id, name) in [
@@ -59,10 +63,14 @@ class _ChoicesApp extends AppNotifier {
     required String folder,
     ProjectFolderRequest? projectFolder,
     bool bypassPermission = false,
+    String? permissionMode,
     String? codexHome,
     String? swarmId,
     PaneSplitRequest? split,
     String? dsh,
+    String? prompt,
+    String? name,
+    String? agent,
     AgentCreationAttempt? attempt,
   }) async {
     createCalls++;
@@ -175,7 +183,6 @@ void main() {
             'codex.png',
             'cursor.png',
             'kilo.png',
-            'solid.png',
             'autonomous-circuit.png',
             'marp.png',
           ]) {
@@ -203,22 +210,35 @@ void main() {
       for (final id in ['local', 'office', 'studio']) {
         expect(find.byKey(ValueKey('new-agent-machine-$id')), findsOneWidget);
       }
-      for (final id in ['codex', 'claude', 'opencode']) {
-        expect(find.byKey(ValueKey('new-agent-quick-$id')), findsOneWidget);
-      }
+      // The agent section is its line and one search box, with no tiles
+      // and no title over the form; the box names the chosen agent alone.
+      expect(find.text('Agent. Choose who you’ll work with.'), findsOneWidget);
+      expect(
+        find.descendant(of: agentBar, matching: find.text(AgentPicker.hint)),
+        findsNothing,
+      );
+      expect(
+        find.descendant(
+          of: find.byKey(const Key('new-agent-agent-choice')),
+          matching: find.text('Codex'),
+        ),
+        findsOneWidget,
+      );
+      expect(find.byKey(const ValueKey('harness-help-agent')), findsNothing);
+      expect(find.byKey(const ValueKey('new-agent-quick-codex')), findsNothing);
       void expectUniformTiles() {
-        final tile = tester.getSize(
-          find.byKey(const ValueKey('new-agent-quick-codex')),
-        );
+        final tile = tester.getSize(find.byType(AppChoiceTile).first);
+        // Every machine and project tile, and the two menus that stand in a
+        // tile's place.
+        for (final element in find.byType(AppChoiceTile).evaluate()) {
+          expect(
+            tester.getSize(find.byWidget(element.widget)),
+            tile,
+            reason: '${element.widget.key}',
+          );
+        }
         for (final key in [
-          for (final id in ['claude', 'opencode']) 'new-agent-quick-$id',
-          for (final id in ['local', 'office', 'studio'])
-            'new-agent-machine-$id',
-          'new-agent-engine-field',
           'new-agent-machine-more',
-          'new-agent-folder-newProject',
-          'new-agent-project-browse',
-          'new-agent-project-git',
           'new-agent-project-recent',
         ]) {
           expect(tester.getSize(find.byKey(ValueKey(key))), tile, reason: key);
@@ -226,15 +246,43 @@ void main() {
       }
 
       expectUniformTiles();
+      // The agent box, the tiles and the first-task box are one height.
+      final tileHeight = tester
+          .getSize(find.byType(AppChoiceTile).first)
+          .height;
+      expect(tester.getSize(agentBar).height, tileHeight);
+      final taskBox = find.byKey(const Key('new-agent-task'));
+      await tester.ensureVisible(taskBox);
+      await tester.pumpAndSettle();
+      // The painted box, not only the space it takes: the decorator's fill.
+      expect(
+        tester
+            .getSize(
+              find.descendant(
+                of: taskBox,
+                matching: find.byType(InputDecorator),
+              ),
+            )
+            .height,
+        closeTo(tileHeight, 1),
+      );
+      expect(tester.getSize(taskBox).height, closeTo(tileHeight, 1));
+      expect(
+        find.text('First task. What should your agent work on? (Optional)'),
+        findsOneWidget,
+      );
+      await tester.ensureVisible(agentBar);
+      await tester.pumpAndSettle();
+
       if (size.width >= 900 && size.height >= 720 && scale == 1) {
         // The common desktop sizes should show every choice before scrolling.
         final form = find.ancestor(
-          of: find.byKey(const ValueKey('new-agent-quick-codex')),
+          of: agentBar,
           matching: find.byType(SingleChildScrollView),
         );
         final visible = tester.getRect(form);
         for (final key in [
-          'new-agent-quick-codex',
+          'new-agent-agent-field',
           'new-agent-machine-local',
           'new-agent-folder-newProject',
           'new-agent-project-recent',
@@ -246,20 +294,45 @@ void main() {
           expect(choice.hitTestable(), findsOneWidget);
         }
       }
+
+      // Opened, the bar becomes the search: the agents you use first, the
+      // Store last, in a panel that stays inside the window.
+      await openAgentSearch(tester);
+      expect(agentRows(tester).first, 'codex');
+      expect(
+        tester.getRect(find.byKey(const Key('new-agent-agent-panel'))).bottom,
+        lessThanOrEqualTo(size.height),
+      );
+      await capture('search-open');
+      await tester.enterText(agentSearch, 'openc');
+      await tester.pumpAndSettle();
+      expect(agentRows(tester).first, 'opencode');
+      await capture('search');
+      await tester.enterText(agentSearch, 'welding');
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const Key('new-agent-agent-search-empty')),
+        findsOneWidget,
+      );
+      await capture('search-empty');
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.pumpAndSettle();
+      expect(agentSearch, findsNothing);
+      expect(tester.takeException(), isNull);
       expect(find.text('This computer'), findsOneWidget);
       expect(find.text('Cancel'), findsNothing);
-      expect(find.widgetWithText(FilledButton, 'Create'), findsOneWidget);
+      expect(find.byKey(const ValueKey('create-agent-submit')), findsOneWidget);
       final advanced = find.byKey(const Key('new-agent-advanced'));
       await tester.ensureVisible(advanced);
       await tester.tap(advanced);
       await tester.pumpAndSettle();
-      await tester.ensureVisible(find.text('Bypass approvals'));
+      await tester.ensureVisible(find.text('Auto-approve'));
       expect(find.text('Permissions'), findsNothing);
       expect(find.text('Add'), findsOneWidget);
       if (size.width >= 900 && scale == 1) {
         final settingsCenter = tester.getCenter(advanced).dy;
         for (final control in [
-          find.text('Bypass approvals'),
+          find.text('Auto-approve'),
           find.byKey(const Key('new-agent-codex-profile-field')),
           find.text('Add'),
         ]) {
@@ -270,7 +343,7 @@ void main() {
       await tester.ensureVisible(advanced);
       await tester.tap(advanced);
       await tester.pumpAndSettle();
-      expect(find.text('Bypass approvals'), findsNothing);
+      expect(find.text('Auto-approve'), findsNothing);
       expect(find.text('Add'), findsNothing);
       final recent = find.byKey(const Key('new-agent-project-recent'));
       await tester.ensureVisible(recent);
@@ -296,7 +369,6 @@ void main() {
       // Help is a separate route: it must keep the current choices and scroll
       // position, contain keyboard shortcuts, and return focus to its trigger.
       for (final (topic, lastTitle) in [
-        ('agent', 'Marp · Slides'),
         ('machine', 'Remote machine'),
         ('project', 'Recent'),
       ]) {
@@ -345,12 +417,8 @@ void main() {
         expect(selected.selected, isTrue);
         expect(selected.detail, 'repo');
         expect(
-          tester
-              .widget<AppChoiceTile>(
-                find.byKey(const ValueKey('new-agent-quick-codex')),
-              )
-              .selected,
-          isTrue,
+          tester.widget<AgentPicker>(find.byType(AgentPicker)).value,
+          'codex',
         );
         expect(
           tester
@@ -371,22 +439,19 @@ void main() {
       expect(find.text('T480 - Omarchy'), findsOneWidget);
       expect(find.text('Offline'), findsNothing);
       expect(find.byKey(const Key('new-agent-machine-home')), findsNothing);
-      final moreAgents = find.byKey(const Key('new-agent-engine-field'));
-      await tester.ensureVisible(moreAgents);
-      await tester.tap(moreAgents);
+      // An agent you have not used is a search away; chosen, the bar names it.
+      await chooseAgent(tester, 'kilo');
       await tester.pumpAndSettle();
-      await tester.ensureVisible(find.text('Kilo'));
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('Kilo'));
-      await tester.pumpAndSettle();
-      expect(find.byKey(const ValueKey('new-agent-quick-kilo')), findsNothing);
       expect(
-        find.byKey(const ValueKey('new-agent-quick-opencode')),
+        tester.widget<AgentPicker>(find.byType(AgentPicker)).value,
+        'kilo',
+      );
+      expect(
+        find.descendant(of: agentBar, matching: find.text('Kilo')),
         findsOneWidget,
       );
-      expect(find.text('Kilo'), findsOneWidget);
       expectUniformTiles();
-      expect(find.byType(AppChoiceTile), findsNWidgets(9));
+      expect(find.byType(AppChoiceTile), findsNWidgets(6));
       expect(find.byType(Tooltip), findsNothing);
       expect(
         find.text('Harness will install Kilo before starting.'),

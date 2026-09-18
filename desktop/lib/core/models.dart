@@ -116,6 +116,36 @@ class Machine {
   );
 }
 
+/// Whether an agent on a Local model can search the web, as the daemon decided when it built the
+/// launch (`grid.webSearch` on the agent frame).
+///
+/// Three words, each a different fact for the person reading the picker: `on` needs no sentence;
+/// `unavailable` means the daemon could not obtain the web-tools configuration this time (an
+/// outdated CLI, no sign-in) and moving the agent again may fix it; `unsupported` means the engine
+/// cannot take the tools on this machine at all (Pi has no MCP client; Hermes under a
+/// system-managed install), and nothing about the model changes that.
+enum GridWebSearch {
+  on,
+  unavailable,
+  unsupported;
+
+  /// The one sentence shown for a degraded status, or null when there is nothing to say.
+  String? get sentence => switch (this) {
+    GridWebSearch.on => null,
+    GridWebSearch.unavailable => 'Web search unavailable',
+    GridWebSearch.unsupported => 'Web search not supported by this engine',
+  };
+
+  /// The wire word, or null for anything else — an older daemon sends no field, and a newer one
+  /// might send a fourth word this build should neither print verbatim nor guess at.
+  static GridWebSearch? fromWire(Object? raw) => switch (raw) {
+    'on' => GridWebSearch.on,
+    'unavailable' => GridWebSearch.unavailable,
+    'unsupported' => GridWebSearch.unsupported,
+    _ => null,
+  };
+}
+
 /// Data-plane agent (RPC agents_list).
 class Agent {
   final String id;
@@ -130,6 +160,18 @@ class Agent {
   final String? engineDisplayName;
   final String? engineIconHint;
   final String? codexHome;
+
+  /// The grid model this agent is CURRENTLY running on, or null for its own vendor login.
+  ///
+  /// Read by the daemon off the live process on every discovery, never bookkept — so it is the
+  /// truth even for an agent someone re-pointed by hand. Null is a real answer, not a missing one.
+  final String? gridModel;
+
+  /// Whether the agent can search the web on that model, or null when the daemon said nothing —
+  /// an agent on its own login, an older daemon, or a grid agent it merely discovered. Decided by
+  /// the daemon when it built the launch and carried on every frame, so it is right after a
+  /// reconnect or a restart without anything being replayed.
+  final GridWebSearch? gridWebSearch;
   final String? parentAgentId;
   final AgentProject? project;
   final String status;
@@ -153,6 +195,14 @@ class Agent {
   /// when there is none (yet). A change means the viewer pane must navigate.
   final String? viewerUrl;
 
+  /// Why this remote viewer could not be forwarded, including old-daemon update guidance.
+  final String? viewerError;
+
+  /// What the harness's viewer pane is called — the shared viewer's own name ("3D Viewer"), or
+  /// the harness's name and "Viewer" for one it ships ("Marp Viewer") — as the daemon worked it
+  /// out. Null from an older daemon or with no viewer; see [PaneGrid] for what stands in.
+  final String? viewerName;
+
   /// The harness's last verdict on this workspace, or null when it has not written one.
   final AgentVerdict? verdict;
 
@@ -165,6 +215,8 @@ class Agent {
     this.engineDisplayName,
     this.engineIconHint,
     this.codexHome,
+    this.gridModel,
+    this.gridWebSearch,
     this.parentAgentId,
     this.project,
     this.status = 'active',
@@ -176,6 +228,8 @@ class Agent {
     this.dsh,
     this.dshName,
     this.viewerUrl,
+    this.viewerError,
+    this.viewerName,
     this.verdict,
   });
 
@@ -209,6 +263,7 @@ class Agent {
       'failed' => 'failed',
       _ => 'ready',
     };
+    final grid = j['grid'] as Map<String, dynamic>?;
     return Agent(
       id: j['id'] as String,
       sessionId: _safeLabel(j['sessionId']),
@@ -218,6 +273,8 @@ class Agent {
       engineDisplayName: _safeLabel(j['engineDisplayName']),
       engineIconHint: _safeLabel(j['engineIconHint']),
       codexHome: j['engine'] == 'codex' ? _safeCodexHome(j['codexHome']) : null,
+      gridModel: _safeLabel(grid?['model']),
+      gridWebSearch: GridWebSearch.fromWire(grid?['webSearch']),
       parentAgentId: _safeLabel(j['parentAgentId'] ?? j['parentId']),
       project: AgentProject.fromJson(j['project']),
       status: (j['status'] as String?) ?? 'active',
@@ -234,6 +291,8 @@ class Agent {
       dsh: _safeDsh(j['dsh']),
       dshName: _safeLabel(j['dshName']),
       viewerUrl: _safeViewerUrl(j['viewerUrl']),
+      viewerError: _safeDetail(j['viewerError']),
+      viewerName: _safeLabel(j['viewerName']),
       verdict: AgentVerdict.fromJson(j['verdict']),
     );
   }
@@ -247,6 +306,8 @@ class Agent {
     engineDisplayName: engineDisplayName,
     engineIconHint: engineIconHint,
     codexHome: codexHome,
+    gridModel: gridModel,
+    gridWebSearch: gridWebSearch,
     parentAgentId: parentAgentId,
     project: project,
     status: status,
@@ -258,6 +319,8 @@ class Agent {
     dsh: dsh,
     dshName: dshName,
     viewerUrl: viewerUrl,
+    viewerError: viewerError,
+    viewerName: viewerName,
     verdict: verdict,
   );
 
@@ -620,5 +683,88 @@ class AgentProject {
       remote: field('remote'),
       branch: field('branch', 256),
     );
+  }
+}
+
+/// One model the account's private harness grid can answer right now.
+class GridModel {
+  /// The id an engine is pointed at, verbatim from the grid.
+  final String id;
+
+  /// Which machine serves it. Display only, and empty when the grid does not say — on a private
+  /// grid this is one of the user's own computers, which is the useful part of the answer.
+  final String node;
+
+  const GridModel({required this.id, required this.node});
+}
+
+/// Which `grid` a machine would run, as its daemon reports beside the model list (`gridCli`).
+///
+/// `managed` is the runtime Harness itself carries and pins; `path` is one the person installed
+/// (runnable, but not the pin); `missing` is nothing to run — the one value that changes what the
+/// picker and the Local model dialog say, because an agent started on that machine would die on
+/// its first `grid`. An older daemon sends no field, read as null: nothing is claimed either way.
+enum GridCli {
+  managed,
+  path,
+  missing;
+
+  static GridCli? parse(Object? raw) => switch (raw) {
+    'managed' => GridCli.managed,
+    'path' => GridCli.path,
+    'missing' => GridCli.missing,
+    _ => null,
+  };
+}
+
+/// The picker's whole answer: which grid was asked, and what it offers.
+///
+/// `gridName` is null when the machine has no grid yet — told apart from "a grid with nothing on
+/// it", because the two need different sentences in front of a person.
+class GridModels {
+  final String? gridName;
+  final List<GridModel> models;
+
+  /// The engines a Local model can be offered to at all, as the daemon on that machine names them
+  /// (`localModelEngines`; the set of launch contracts in its `gridLaunch.ts`). Null when the
+  /// daemon is older and sends no such list — read as "offer everything", the behaviour before.
+  final Set<String>? localModelEngines;
+
+  /// Which `grid` the machine would run — see [GridCli]. Null when the daemon is older and does
+  /// not say, which claims nothing.
+  final GridCli? gridCli;
+
+  /// Did the machine ANSWER? False when the request failed — offline, timed out, or a daemon too
+  /// old to know the call.
+  ///
+  /// Kept apart from `gridName == null` because the two mean opposite things to a person. "This
+  /// account has no grid" is a fact worth acting on; "we could not ask" is not a fact about the
+  /// account at all, and a UI that folds them together tells a signed-in user to sign in again.
+  final bool reachable;
+
+  const GridModels({
+    required this.gridName,
+    required this.models,
+    this.localModelEngines,
+    this.gridCli,
+    this.reachable = true,
+  });
+
+  /// The machine could not be asked. Says nothing about the account, because nothing is known —
+  /// including which engines it would have offered, or whether it has a `grid`.
+  const GridModels.unreachable()
+    : gridName = null,
+      models = const [],
+      localModelEngines = null,
+      gridCli = null,
+      reachable = false;
+
+  /// Whether [engine] may be pointed at one of [models]: unknown engines are refused only when the
+  /// daemon gave a list — a picker that guessed would refuse the wrong ones on an older daemon.
+  bool canRunLocally(String? engine) {
+    final capable = localModelEngines;
+    if (capable == null) return true;
+    final id = engine?.trim().toLowerCase();
+    return id != null && capable.contains(id);
   }
 }

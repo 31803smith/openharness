@@ -10,7 +10,7 @@ import { readDshRegistry } from '../../cli/scripts/lib/dshRegistry.mjs';
 const MONOREPO='https://github.com/autonomous-ai/openharness';
 const ID=/^[a-z0-9][a-z0-9-]{0,63}\/[a-z0-9][a-z0-9-]{0,63}$/;
 const PACKAGE_PATH=/^(?!\/)(?!.*\/$)(?!.*\/\/)(?!(?:.*\/)?\.{1,2}(?:\/|$))[A-Za-z0-9._\-/]+$/;
-const LIMITS={id:160,name:40,description:300,category:24,author:80,repo:2048,ref:200,path:512,homepage:2048,upstream:2048,license:40,viewerUse:160};
+const LIMITS={id:160,name:40,description:300,category:24,author:80,repo:2048,ref:200,path:512,homepage:2048,upstream:2048,license:40,tagline:80,viewerUse:160};
 
 export function createStoreCatalog(storeDir, ref) {
   if (!/^[a-f0-9]{40}$/i.test(ref)) throw new Error('Publish from a complete git commit SHA');
@@ -18,6 +18,7 @@ export function createStoreCatalog(storeDir, ref) {
   const byId=new Map();
   for (const entry of entries) {
     for(const [key,max]of Object.entries(LIMITS))if(entry[key]!==undefined&&(typeof entry[key]!=='string'||entry[key].length>max||/[\x00-\x1f\x7f]/.test(entry[key])))throw new Error(`${entry.id}: invalid ${key}`);
+    if(entry.tagline!==undefined&&!entry.tagline.trim())throw new Error(`${entry.id}: invalid tagline`);
     if(!ID.test(entry.id)||!entry.name||!entry.repo||byId.has(entry.id))throw new Error(`Invalid or duplicate catalog identity: ${entry.id}`);
     if(entry.kind!==undefined&&!['agent','viewer'].includes(entry.kind))throw new Error(`${entry.id}: invalid kind`);
     if(entry.kind!=='viewer'&&(typeof entry.engine!=='string'||!entry.engine))throw new Error(`${entry.id}: missing engine`);
@@ -27,6 +28,7 @@ export function createStoreCatalog(storeDir, ref) {
     if(entry.viewerUse!==undefined&&!ID.test(entry.viewerUse))throw new Error(`${entry.id}: invalid viewer dependency`);
     if(entry.tier!==undefined&&![0,1,2].includes(entry.tier))throw new Error(`${entry.id}: invalid tier`);
     for(const key of ['homepage','upstream'])if(entry[key]!==undefined)new URL(entry[key]);
+    if(entry.examples!==undefined){if(!Array.isArray(entry.examples)||entry.examples.length>8)throw new Error(`${entry.id}: invalid examples`);for(const ex of entry.examples){if(!ex||typeof ex!=='object'||typeof ex.prompt!=='string'||!ex.prompt.trim()||ex.prompt.length>600)throw new Error(`${entry.id}: an example needs a prompt`);if(ex.image!==undefined&&(typeof ex.image!=='string'||ex.image.length>2048||new URL(ex.image).protocol!=='https:'))throw new Error(`${entry.id}: an example image is an https URL`);if(ex.caption!==undefined&&(typeof ex.caption!=='string'||ex.caption.length>120))throw new Error(`${entry.id}: invalid example caption`);for(const key of Object.keys(ex))if(!['prompt','image','caption'].includes(key))throw new Error(`${entry.id}: unknown example field ${key}`);}}
     if(entry.screenshots!==undefined){if(!Array.isArray(entry.screenshots)||entry.screenshots.length>8)throw new Error(`${entry.id}: invalid screenshots`);for(const shot of entry.screenshots){if(typeof shot!=='string'||shot.length>2048)throw new Error(`${entry.id}: invalid screenshot`);new URL(shot);}}
     const builtIn=entry.repo.replace(/\.git$/,'')===MONOREPO&&entry.path===`store/${entry.kind==='viewer'?'viewers':'agents'}/${entry.id.slice('autonomous/'.length)}`&&entry.id.startsWith('autonomous/');
     if(entry.id.startsWith('autonomous/')&&!builtIn)throw new Error(`${entry.id}: autonomous IDs belong to built-in packages`);

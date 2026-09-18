@@ -122,20 +122,37 @@ def inspect(path: Path) -> dict:
     return info
 
 
+def read_report(ws: Path, artifact: Path | None) -> dict | None:
+    """The report of the molecule being judged. `write_outputs` puts a `report.json` in the folder it
+    writes to, so a series written to `out/<series>/` has its own beside its SDFs — reading only
+    `out/report.json` named whatever was written there last (the starter molecule, say) in the summary
+    of a series that is not it. The artifact's folder first, then each folder up to `out/`."""
+    out = ws / "out"
+    folders = []
+    if artifact is not None and artifact.parent.is_relative_to(out):
+        folder = artifact.parent
+        while folder != out and folder.is_relative_to(out):
+            folders.append(folder)
+            folder = folder.parent
+    folders.append(out)
+    for folder in folders:
+        candidate = folder / "report.json"
+        if candidate.exists():
+            try:
+                return json.loads(candidate.read_text())
+            except ValueError:
+                return None
+    return None
+
+
 def main(argv: list[str]) -> int:
     molecules = WS / "molecules"
     has_design = any(molecules.glob("*.py")) or any(molecules.glob("*.smi"))
-    report = None
-    report_path = WS / "out" / "report.json"
-    if report_path.exists():
-        try:
-            report = json.loads(report_path.read_text())
-        except ValueError:
-            report = None
     path = Path(argv[1]).resolve() if len(argv) > 1 else newest_sdf(WS)
     if path and not path.is_relative_to(WS):  # the artifact is workspace-relative, and so is the pane
         print(f"not judged · {argv[1]} is outside the workspace ({WS})", file=sys.stderr)
         return 2
+    report = read_report(WS, path)
     verdict = judge(has_design, report, inspect(path) if path and path.exists() else None)
     (WS / ".harness").mkdir(exist_ok=True)
     (WS / ".harness" / "verdict.json").write_text(json.dumps(verdict, indent=2) + "\n")

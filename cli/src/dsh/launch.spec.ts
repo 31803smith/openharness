@@ -42,7 +42,8 @@ describe('dshLaunch', () => {
 
 describe('buildLaunchOverrides with a DSH', () => {
   const deps: LaunchOverridesDeps = {
-    configDirFor: () => undefined,
+    // The branch replaced `configDirFor` with the machine facts the grid launch builder reads itself.
+    machine: () => ({ hermesSystemManaged: false }),
     writeGridConfigDir: async () => '/cfg',
     tmuxSupportsSessionEnv: async () => true,
     installCodexHooks: () => undefined,

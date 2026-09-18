@@ -32,6 +32,12 @@ private extension NSButton {
   }
 }
 
+private extension SwarmSubscriptionView {
+  // `icon` is private to the row view; a same-file extension reads it without widening the app API.
+  var iconImage: NSImage? { icon.image }
+  var iconTint: NSColor? { icon.contentTintColor }
+}
+
 private extension SwarmTabButton {
   func checkDoubleClickIsolation() throws {
     let parent = nextResponder
@@ -775,15 +781,106 @@ private extension SwarmTitlebar {
     let models = main.item(withTitle: "Models")!.submenu!
     try checkTitlebar(models.items.filter { !$0.isSeparatorItem }.map(\.title) == [
       "Subscription", "Anthropic, aabbcc, 12% remaining", "OpenAI, Not signed in",
-      "API", "OpenRouter", "fal.ai", "Local", "DeepSeek V4 Flash", "Qwen3.8-27B", "Add Model"
-    ], "Models has the three requested sections and Add Model last")
-    try checkTitlebar(models.items.filter(\.isSeparatorItem).count == 3,
-      "Native separators distinguish the sections and future Add Model action")
-    for title in ["OpenRouter", "fal.ai", "DeepSeek V4 Flash", "Qwen3.8-27B", "Add Model"] {
-      let item = models.item(withTitle: title)!
-      try checkTitlebar(!item.isEnabled && item.action == nil && item.target == nil && item.submenu == nil,
-        "\(title) is greyed out and cannot dispatch or open anything")
+      "Local", "Talk to Model manager"
+    ], "Models carries the two sections with something behind them, ending on the row that starts a model")
+    try checkTitlebar(models.items.filter(\.isSeparatorItem).count == 1,
+      "One native separator, between the sections — the run row is a Local row, not a section")
+    for gone in ["API", "OpenRouter", "fal.ai", "Add Model"] {
+      try checkTitlebar(models.item(withTitle: gone) == nil,
+        "\(gone) is gone — it named nothing this app can reach or do")
     }
+    // The row that took Add Model's place is the one item in this menu that does something: the
+    // last row of Local, in the same list as the models, enabled with nothing served, and dispatched
+    // through the same guarded handler as Link Machine… so a modal still swallows it.
+    let runLocal = models.items.last!
+    try checkTitlebar(runLocal.title == "Talk to Model manager",
+      "the last item in Models is the row that runs a local model")
+    try checkTitlebar(!models.items[models.items.count - 2].isSeparatorItem,
+      "the run row sits directly under the Local rows, with no separator of its own")
+    try checkTitlebar(runLocal.isEnabled && runLocal.submenu == nil,
+      "Talk to Model manager is enabled even when nothing is served, and opens no submenu")
+    try checkTitlebar(runLocal.target === self && runLocal.action == #selector(menuAction(_:))
+      && runLocal.representedObject as? String == "runLocalModel",
+      "Talk to Model manager dispatches runLocalModel through the guarded channel handler")
+    try checkTitlebar(runLocal.identifier?.rawValue == HarnessKeymapMenu.actionPrefix + "runLocalModel",
+      "Talk to Model manager is identified for the keymap like every other Harness command")
+    try checkTitlebar(validateMenuItem(runLocal), "Talk to Model manager validates with the workspace live")
+    actionsEnabled = false
+    try checkTitlebar(!validateMenuItem(runLocal), "Talk to Model manager cannot run behind a modal")
+    actionsEnabled = true
+    try checkTitlebar(!runLocal.title.lowercased().contains("grid") && !runLocal.title.contains("Mac"),
+      "the command names neither the plumbing nor one vendor's computer")
+
+    // With more than one machine linked, the row has to say WHICH computer the manager opens on:
+    // it becomes a submenu of the machines, each child dispatching the same command with that
+    // machine's id, this computer marked. With one machine (or none) it is the plain row above.
+    _ = try messenger.receive("machinesState", arguments: ["machines": machineRows])
+    let picked = main.item(withTitle: "Models")!.submenu!.items.last!
+    // AppKit gives a submenu's parent its own `submenuAction:`; what matters is that it is no longer
+    // the guarded channel handler — nothing is dispatched until a machine is chosen.
+    try checkTitlebar(picked.title == "Talk to Model manager" && picked.submenu != nil
+      && picked.action != #selector(menuAction(_:)) && picked.representedObject == nil,
+      "with two machines the manager row opens a submenu instead of dispatching itself")
+    try checkTitlebar(picked.identifier?.rawValue == HarnessKeymapMenu.actionPrefix + "runLocalModel",
+      "the submenu's parent keeps the keymap identifier")
+    let choices = picked.submenu!.items
+    try checkTitlebar(choices.map(\.title) == ["iMac – Office (this computer)", "iMac – Home"],
+      "one child per linked machine, in the Machines menu's order, this computer marked")
+    try checkTitlebar(choices.allSatisfy { $0.target === self && $0.action == #selector(runLocalModelAction(_:)) }
+      && choices.map { $0.representedObject as? String } == ["office", "home"],
+      "each child dispatches runLocalModel for its own machine")
+    let modelCalls = messenger.calls.count
+    runLocalModelAction(choices[1])
+    try checkTitlebar(messenger.calls.last?.method == "runLocalModel"
+      && (messenger.calls.last?.arguments as? [String: String]) == ["machineId": "home"]
+      && messenger.calls.count == modelCalls + 1,
+      "choosing a machine sends runLocalModel with that machine's id")
+    actionsEnabled = false
+    try checkTitlebar(!validateMenuItem(choices[0]), "a machine choice cannot run behind a modal")
+    actionsEnabled = true
+    try checkTitlebar(validateMenuItem(choices[0]), "and returns when the modal closes")
+    _ = try messenger.receive("machinesState", arguments: ["machines": [machineRows[0]]])
+    let single = main.item(withTitle: "Models")!.submenu!.items.last!
+    try checkTitlebar(single.submenu == nil && single.representedObject as? String == "runLocalModel",
+      "one machine linked: back to the plain row, and the app picks the machine")
+    _ = try messenger.receive("machinesState", arguments: ["machines": []])
+
+    // The Local section is DATA, not two hardcoded names. A menu naming a model nobody serves is
+    // worse than one admitting it has none, which is what the empty case above asserts.
+    updateModels(modelRows, local: [
+      ["id": "Qwen3.6-35B-A3B-UD-Q5_K_XL", "node": "macbook-m1max"],
+      ["id": "DeepSeek-V4-Flash", "node": ""],
+    ])
+    let served = main.item(withTitle: "Models")!.submenu!
+    try checkTitlebar(served.item(withTitle: "Qwen3.6-35B-A3B-UD-Q5_K_XL, macbook-m1max") != nil,
+      "a served model names the machine answering it")
+    try checkTitlebar(served.item(withTitle: "DeepSeek-V4-Flash") != nil,
+      "a model with no node named is listed on its own")
+    try checkTitlebar(served.items.last?.title == "Talk to Model manager"
+      && !served.items[served.items.count - 2].isSeparatorItem
+      && served.items.filter(\.isSeparatorItem).count == 1,
+      "the run row stays last in Local, directly under the served models, once models are served")
+
+    // A local row is built by the same view as a subscription row, which is what makes the two
+    // sections read as one menu. A plain disabled NSMenuItem greys its whole title, so a served
+    // model looked unavailable beside the accounts above it.
+    let localRows = served.items.compactMap { $0.view as? SwarmSubscriptionView }.suffix(2)
+    try checkTitlebar(localRows.count == 2, "Local models render as rows, not as greyed labels")
+    try checkTitlebar(localRows.first?.identity.stringValue == "Qwen3.6-35B-A3B-UD-Q5_K_XL"
+      && localRows.first?.balance.stringValue == "macbook-m1max",
+      "the model id takes the left column and its node the trailing one, as usage does above")
+    try checkTitlebar(localRows.last?.balance.stringValue.isEmpty == true,
+      "a model with no node leaves the trailing column empty rather than inventing one")
+    try checkTitlebar(localRows.allSatisfy { $0.iconImage != nil && $0.iconTint == .labelColor },
+      "a local model carries a tinted mark, so its row is not a gap where the brand icons sit")
+    let subscriptionWidth = served.items.compactMap { $0.view as? SwarmSubscriptionView }.first!.bounds.width
+    try checkTitlebar(localRows.allSatisfy { $0.bounds.width == subscriptionWidth },
+      "both sections share one width, so the trailing column does not step at the section break")
+    try checkTitlebar(localRows.allSatisfy { $0.identity.frame.minX == served.items.compactMap({ $0.view as? SwarmSubscriptionView }).first!.identity.frame.minX },
+      "local and subscription titles start in the same column")
+    updateModels(modelRows)
+    try checkTitlebar(models.item(withTitle: "No models being served") == nil,
+      "an empty Local says nothing — the run row is the answer, not a sentence")
     let subscription = models.items.first(where: { $0.view is SwarmSubscriptionView })!
     let row = subscription.view as! SwarmSubscriptionView
     try checkTitlebar(subscription.submenu == nil && subscription.action == nil && !subscription.isEnabled,

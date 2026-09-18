@@ -73,6 +73,7 @@ class AppSelectField<T> extends StatefulWidget {
     required this.onChanged,
     this.width,
     this.menuWidth,
+    this.menuAlignedToEnd = false,
     this.height = AppControl.height,
     this.padding = const EdgeInsets.only(left: 10, right: 8),
     this.trigger,
@@ -96,6 +97,11 @@ class AppSelectField<T> extends StatefulWidget {
   /// does — a name, a second line and a mark want room to be read at a
   /// glance. Never narrower than the field itself.
   final double? menuWidth;
+
+  /// A menu wider than its field lines up with the field's END edge and
+  /// grows toward the start — for a field at the right of a row, whose menu
+  /// would otherwise run past the dialog it sits in.
+  final bool menuAlignedToEnd;
   final double height;
   final EdgeInsetsGeometry padding;
 
@@ -511,7 +517,12 @@ class _AppSelectFieldState<T> extends State<AppSelectField<T>> {
       },
       // Below the control, by the app's one menu gap — and the panel takes its
       // fill, rim and radius from [AppMenu], the app's single panel recipe.
-      alignmentOffset: const Offset(0, AppControl.menuGap),
+      alignmentOffset: Offset(
+        widget.menuAlignedToEnd
+            ? math.min(0, (panelWidth ?? 0) - _rowWidth(panelWidth))
+            : 0,
+        AppControl.menuGap,
+      ),
       // ⚠️ The width is set on the ROWS, not with `MenuStyle.minimumSize`.
       //
       // `minimumSize` does widen the panel, but `MenuAnchor` lays its children

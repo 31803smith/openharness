@@ -269,6 +269,10 @@ describe('tmux process primitives', () => {
   })
 
   it('reads bypass-permission mode from a live process argv via exact token match', () => {
+    expect(bypassPermissionActive('claude', '/usr/local/bin/claude --permission-mode auto')).toBe(true)
+    expect(bypassPermissionActive('claude', 'claude --permission-mode=auto --resume abc')).toBe(true)
+    expect(bypassPermissionActive('codex', 'codex resume abc --approve-for-me')).toBe(true)
+    // Launched before the auto modes: the old flags still count, and a relaunch uses the auto mode.
     expect(bypassPermissionActive('claude', '/usr/local/bin/claude --dangerously-skip-permissions'))
       .toBe(true)
     expect(bypassPermissionActive('codex', 'codex --dangerously-bypass-approvals-and-sandbox'))
@@ -286,6 +290,10 @@ describe('tmux process primitives', () => {
 
   it('reads false when the confirmed flag is absent', () => {
     expect(bypassPermissionActive('claude', 'claude --resume abc')).toBe(false)
+    // Another mode, or "auto" that is not the mode's value.
+    expect(bypassPermissionActive('claude', 'claude --permission-mode plan')).toBe(false)
+    expect(bypassPermissionActive('claude', 'claude --permission-mode manual auto')).toBe(false)
+    expect(bypassPermissionActive('claude', 'claude auto --permission-mode')).toBe(false)
   })
 
   it('always reads false for engines with no confirmed bypass flag — never guesses', () => {

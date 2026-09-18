@@ -19,10 +19,8 @@ import 'store_controller.dart';
 import 'store_discover.dart';
 import 'store_editorial.dart';
 import 'store_models.dart';
+import 'store_showcase.dart';
 import 'store_viewers.dart';
-
-/// Store tabs reuse the app icon.
-const String kStoreMarkAsset = 'assets/app_icon.png';
 
 /// The Harness Store, the content of its tab: every harness the registry
 /// knows and every built-in engine, as a shelf of cards; one becomes its page
@@ -30,10 +28,10 @@ const String kStoreMarkAsset = 'assets/app_icon.png';
 /// with Get, Open and Remove. A tab, not a screen over the window, so the
 /// strip stays where it is and browsing never blocks switching.
 ///
-/// The catalogue is what the machines answered `dsh_list` with, so the same
-/// screen is honest about the one fact an app store usually hides: a harness
-/// is installed PER MACHINE. The page lists your machines and lets you put it
-/// on any of them. Ratings and reviews come from the control plane through
+/// The catalogue and installation state come from this computer's daemon.
+/// Browsing, Get, Open and Remove all refer to this computer; remote machines
+/// do not contribute packages or installation state to the Store.
+/// Ratings and reviews come from the control plane through
 /// [StoreApi]; the screen works without them (a page simply has no stars).
 class StoreTab extends StatefulWidget {
   const StoreTab({
@@ -148,22 +146,18 @@ class _StoreTabState extends State<StoreTab> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       unawaited(_store.loadRatings());
-      // Every machine is asked again: what the store shows as installed is a
-      // per-machine fact, and an install started from a terminal is exactly
-      // what a stored answer misses.
-      for (final machine in widget.notifier.machineStates.values) {
-        _ask(machine);
-      }
+      // Refresh installs made from a local terminal while the Store was closed.
+      final local = widget.notifier.localMachineState;
+      if (local != null) _ask(local);
       widget.notifier.addListener(_onAppChanged);
       // A Store left open picks up new publications; engines do not need reprobes.
       // The daemon caches catalog HTTP requests for five minutes.
       _catalogRefresh = Timer.periodic(const Duration(minutes: 1), (_) {
-        for (final machine in widget.notifier.machineStates.values) {
-          if (machine.connectionStatus == ConnectionStatus.connected) {
-            unawaited(
-              widget.notifier.probeDsh(machine.machine.machineId, force: true),
-            );
-          }
+        final local = widget.notifier.localMachineState;
+        if (local?.connectionStatus == ConnectionStatus.connected) {
+          unawaited(
+            widget.notifier.probeDsh(local!.machine.machineId, force: true),
+          );
         }
       });
     });
@@ -190,7 +184,7 @@ class _StoreTabState extends State<StoreTab> {
 
   void _onAppChanged() {
     final connecting = <MachineState>[];
-    for (final machine in widget.notifier.machineStates.values) {
+    for (final machine in [?widget.notifier.localMachineState]) {
       final id = machine.machine.machineId;
       if (machine.connectionStatus != ConnectionStatus.connected) {
         _askedWhileConnected.remove(id);
@@ -204,6 +198,7 @@ class _StoreTabState extends State<StoreTab> {
       if (!mounted) return;
       for (final machine in connecting) {
         if (machine.connectionStatus == ConnectionStatus.connected &&
+            identical(machine, widget.notifier.localMachineState) &&
             !_askedWhileConnected.contains(machine.machine.machineId)) {
           _ask(machine);
         }
@@ -220,19 +215,12 @@ class _StoreTabState extends State<StoreTab> {
     super.dispose();
   }
 
-  /// One row per harness id across every machine, the local machine's row
-  /// winning (its catalog carries the whole registry) — and one row per
+  /// The local daemon's catalog carries the registry, plus one row per
   /// built-in engine, because a person looking for "Claude Code" in a store
   /// should find it beside Marp, not learn that it is a different kind of thing.
   Map<String, DshEntry> get _catalog {
     final rows = <String, DshEntry>{};
     final local = widget.notifier.localMachineState;
-    final states = [
-      ?local,
-      ...widget.notifier.machineStates.values.where(
-        (s) => !identical(s, local),
-      ),
-    ];
     for (final identity in allEngines) {
       rows[identity.id] = DshEntry(
         id: identity.id,
@@ -243,25 +231,19 @@ class _StoreTabState extends State<StoreTab> {
         author: identity.creator,
         description: identity.blurb,
         homepage: identity.homepage,
-        installed: states.any((s) => s.engines[identity.id]?.installed == true),
+        installed: _installedOnMachine(local, identity.id),
       );
     }
-    for (final state in states) {
-      for (final entry in state.dsh.entries) {
-        rows.putIfAbsent(entry.id, () => entry);
-      }
+    for (final entry in local?.dsh.entries ?? const <DshEntry>[]) {
+      rows.putIfAbsent(entry.id, () => entry);
     }
     return rows;
   }
 
-  /// The machines that have [id] installed — a harness from their catalog, an
-  /// engine from their probe.
+  /// Store installation facts are local, including shared viewer packages.
   List<MachineState> _installedOn(String id) => [
-    for (final state in widget.notifier.machineStates.values)
-      if (isHarnessId(id)
-          ? state.dsh[id]?.installed == true
-          : state.engines[id]?.installed == true)
-        state,
+    for (final state in [?widget.notifier.localMachineState])
+      if (_installedOnMachine(state, id)) state,
   ];
 
   List<String> get _categories {
@@ -311,24 +293,13 @@ class _StoreTabState extends State<StoreTab> {
   });
 
   void _takeAction(DshEntry entry) {
-    final installed = _installedOn(entry.id);
     final local = widget.notifier.localMachineState;
-    final target =
-        installed.where((s) => identical(s, local)).firstOrNull ??
-        installed
-            .where((s) => s.nodeOnline == true && !s.needsLink)
-            .firstOrNull;
-    if (target == null) {
+    if (local == null || !_installedOnMachine(local, entry.id)) {
       _openPage(entry.id);
       return;
     }
     unawaited(
-      _openStoreAgent(
-        context,
-        widget.notifier,
-        entry,
-        target.machine.machineId,
-      ),
+      _openStoreAgent(context, widget.notifier, entry, local.machine.machineId),
     );
   }
 
@@ -364,17 +335,18 @@ class _StoreTabState extends State<StoreTab> {
                               entry: selected,
                               notifier: widget.notifier,
                               store: _store,
-                              installedOn: _installedOn(selected.id),
                               onBack: () => setState(() => _selected = null),
                             )
                           : _shelf is _Viewers
                           ? StoreViewers(
                               viewers: _shelved(const _Viewers()),
-                              agents: [
-                                for (final machine
-                                    in widget.notifier.machineStates.values)
-                                  ...machine.dsh.entries,
-                              ],
+                              agents:
+                                  widget
+                                      .notifier
+                                      .localMachineState
+                                      ?.dsh
+                                      .entries ??
+                                  const [],
                               installedOn: (id) => _installedOn(id)
                                   .map((machine) => machine.machine.displayName)
                                   .toList(),
@@ -626,7 +598,7 @@ class _Shelf$View extends StatelessWidget {
                       ? 'No matching harnesses. Try a name or something you want to make.'
                       : loaded
                       ? 'Nothing here yet.'
-                      : 'Asking your machines…',
+                      : 'Asking this computer…',
                   style: TextStyle(
                     fontSize: 14,
                     height: 1.5,
@@ -687,12 +659,28 @@ class _Stars extends StatelessWidget {
 
 // ─── the page ────────────────────────────────────────────────────────────────
 
+bool _installedOnMachine(MachineState? machine, String id) => isHarnessId(id)
+    ? machine?.dsh[id]?.installed == true
+    : machine?.engines[id]?.installed == true;
+
+bool _canGetOnMachine(MachineState machine, DshEntry entry) {
+  if (machine.needsLink || machine.nodeOnline == false) return false;
+  if (entry.isEngine) {
+    return machine.engines.loaded &&
+        machine.engines[entry.id]?.installable == true;
+  }
+  return machine.dsh.loaded &&
+      machine.dsh[entry.id] != null &&
+      machine.dsh.runs[entry.id]?.inProgress != true;
+}
+
 Future<void> _openStoreAgent(
   BuildContext context,
   AppNotifier notifier,
   DshEntry entry,
-  String machineId,
-) async {
+  String machineId, {
+  String? prompt,
+}) async {
   final origin = notifier.activeSwarmId;
   notifier.newSwarm(draft: true);
   final target = notifier.activeSwarmId;
@@ -702,6 +690,7 @@ Future<void> _openStoreAgent(
     machineId,
     source: 'store',
     initialEngine: entry.id,
+    initialPrompt: prompt,
     swarmId: target,
   );
   if (result != null) return;
@@ -721,14 +710,12 @@ class _ProductPage extends StatefulWidget {
     required this.entry,
     required this.notifier,
     required this.store,
-    required this.installedOn,
     required this.onBack,
   });
 
   final DshEntry entry;
   final AppNotifier notifier;
   final StoreController store;
-  final List<MachineState> installedOn;
   final VoidCallback onBack;
 
   @override
@@ -757,6 +744,12 @@ class _ProductPageState extends State<_ProductPage> {
   }
 
   Future<void> _get(String machineId) async {
+    final local = widget.notifier.localMachineState;
+    if (local == null ||
+        local.machine.machineId != machineId ||
+        !_canGetOnMachine(local, widget.entry)) {
+      return;
+    }
     // An engine is installed by the daemon on the way to the first harness
     // that needs it (`installIfMissing` on create), so Get is Open.
     if (widget.entry.isEngine) return _open(machineId);
@@ -772,6 +765,9 @@ class _ProductPageState extends State<_ProductPage> {
   }
 
   Future<void> _remove(String machineId, String machineName) async {
+    if (widget.notifier.localMachineState?.machine.machineId != machineId) {
+      return;
+    }
     final ok = await showAppDialog<bool>(
       context: context,
       builder: (context) => _ConfirmCard(
@@ -795,9 +791,19 @@ class _ProductPageState extends State<_ProductPage> {
 
   /// Open (or Get) from the store: the harness needs a tab of its own, since
   /// a pane never lands in the store tab. A draft tab is opened for it and
-  /// abandoned — back to the store — if the dialog is dismissed.
-  Future<void> _open(String machineId) async {
-    await _openStoreAgent(context, widget.notifier, widget.entry, machineId);
+  /// abandoned — back to the store — if the dialog is dismissed. [prompt] is
+  /// an example's, and becomes the new harness's first message.
+  Future<void> _open(String machineId, {String? prompt}) async {
+    if (widget.notifier.localMachineState?.machine.machineId != machineId) {
+      return;
+    }
+    await _openStoreAgent(
+      context,
+      widget.notifier,
+      widget.entry,
+      machineId,
+      prompt: prompt,
+    );
   }
 
   Future<void> _review() async {
@@ -819,8 +825,12 @@ class _ProductPageState extends State<_ProductPage> {
     if (failure != null) _say(failure);
   }
 
+  /// Where the reviews start, so the rating under the name can take a person there.
+  final _reviewsKey = GlobalKey();
+
   @override
   Widget build(BuildContext context) {
+    grid.AppTheme.watch(context);
     final entry = widget.entry;
     final identity = engineIdentity(entry.id, displayName: entry.name);
     final author = entry.author ?? identity.creator;
@@ -828,151 +838,257 @@ class _ProductPageState extends State<_ProductPage> {
     final rating = widget.store.ratingOf(_key);
     final page = widget.store.reviews[_key];
     final local = widget.notifier.localMachineState;
-    final localInstalled =
-        local != null &&
-        (entry.isEngine
-            ? local.engines[entry.id]?.installed == true
-            : local.dsh[entry.id]?.installed == true);
-    final machines = widget.notifier.machineStates.values.toList()
-      ..sort((a, b) {
-        if (identical(a, local)) return -1;
-        if (identical(b, local)) return 1;
-        return a.machine.displayName.toLowerCase().compareTo(
-          b.machine.displayName.toLowerCase(),
-        );
-      });
+    final localInstalled = _installedOnMachine(local, entry.id);
     final base = entry.engine.isNotEmpty
         ? entry.engine
         : (knownHarnessBase[entry.id] ?? '');
     final baseLabel = base.isEmpty ? null : engineIdentity(base).label;
+    final description = entry.description ?? identity.blurb;
+    final installing = local?.dsh.runs[entry.id]?.inProgress == true;
+    final failed = local?.dsh.runs[entry.id]?.failed == true;
+    final busy = local != null && _busy.contains(local.machine.machineId);
+    // New Harness installs a harness the machine lacks before it creates, so
+    // an example can be tried from here whether or not Get was pressed.
+    final canTry =
+        !entry.isViewerPackage &&
+        local != null &&
+        !busy &&
+        !installing &&
+        (localInstalled || _canGetOnMachine(local, entry));
+    // A package that has not published its own examples yet still leads with
+    // prompts — the editorial ones — so every page reads the same way.
+    final examples = entry.examples.isNotEmpty
+        ? entry.examples
+        : [
+            for (final prompt
+                in storeStories[entry.id]?.prompts ?? const <String>[])
+              StoreExample(prompt: prompt),
+          ];
+    final screenshots = entry.examples.isEmpty
+        ? entry.screenshots
+        : const <String>[];
+    // A viewer package is never opened on its own: once it is here there is
+    // nothing more to press, and Remove sits in the line beneath.
+    final showAction =
+        local != null && !(entry.isViewerPackage && localInstalled);
 
-    return SingleChildScrollView(
-      padding: const EdgeInsets.fromLTRB(32, 12, 32, 48),
-      child: Align(
-        alignment: Alignment.topLeft,
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 820),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final wide = constraints.maxWidth >= 820;
+        final side = wide ? 56.0 : 24.0;
+        return SingleChildScrollView(
+          padding: EdgeInsets.fromLTRB(side, 12, side, 140),
           child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              TextButton.icon(
-                key: const ValueKey('store-back'),
-                onPressed: widget.onBack,
-                icon: const Icon(LucideIcons.arrowLeft300, size: 15),
-                label: const Text('Back'),
-                style: TextButton.styleFrom(
-                  foregroundColor: grid.AppPalette.textSecondary,
+              Align(
+                alignment: Alignment.centerLeft,
+                child: TextButton.icon(
+                  key: const ValueKey('store-back'),
+                  onPressed: widget.onBack,
+                  icon: const Icon(LucideIcons.arrowLeft300, size: 15),
+                  label: const Text('Back'),
+                  style: TextButton.styleFrom(
+                    foregroundColor: grid.AppPalette.textSecondary,
+                  ),
                 ),
               ),
-              const SizedBox(height: 12),
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  EngineMark(
-                    engine: entry.id,
-                    displayName: entry.name,
-                    size: 96,
+              // The name in its own light: a soft glow of the harness's colour behind the hero.
+              DecoratedBox(
+                decoration: BoxDecoration(
+                  gradient: RadialGradient(
+                    center: const Alignment(0, -0.12),
+                    radius: wide ? 0.44 : 0.5,
+                    colors: [
+                      identity.color.withValues(alpha: 0.16),
+                      identity.color.withValues(alpha: 0),
+                    ],
                   ),
-                  const SizedBox(width: 20),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    SizedBox(height: wide ? 44 : 20),
+                    Center(
+                      child: EngineMark(
+                        engine: entry.id,
+                        displayName: entry.name,
+                        size: wide ? 96 : 72,
+                      ),
+                    ),
+                    const SizedBox(height: 26),
+                    Text(
+                      entry.name,
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        fontSize: wide ? 64 : 42,
+                        height: 1.02,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: wide ? -2.2 : -1.2,
+                        color: grid.AppPalette.textPrimary,
+                      ),
+                    ),
+                    if (description != null) ...[
+                      const SizedBox(height: 18),
+                      Center(
+                        child: ConstrainedBox(
+                          constraints: const BoxConstraints(maxWidth: 640),
+                          child: Text(
+                            description,
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                              fontSize: wide ? 19 : 16,
+                              height: 1.45,
+                              color: grid.AppPalette.textSecondary,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                    const SizedBox(height: 22),
+                    Text(
+                      [
+                        ?author,
+                        ?category,
+                        if (entry.isViewerPackage)
+                          'Viewer package'
+                        else if (entry.isEngine)
+                          'Coding agent'
+                        else if (baseLabel != null)
+                          'Runs on $baseLabel',
+                      ].join(' · '),
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: grid.AppPalette.textFaint,
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    Wrap(
+                      alignment: WrapAlignment.center,
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      spacing: 20,
+                      runSpacing: 8,
                       children: [
-                        Text(
-                          entry.name,
-                          style: TextStyle(
-                            fontSize: 28,
-                            fontWeight: FontWeight.w700,
-                            letterSpacing: -0.5,
-                            color: grid.AppPalette.textPrimary,
-                          ),
-                        ),
-                        const SizedBox(height: 4),
-                        Text(
-                          [
-                            ?author,
-                            ?category,
-                            if (entry.isViewerPackage)
-                              'Viewer package'
-                            else if (entry.isEngine)
-                              'Coding agent'
-                            else if (baseLabel != null)
-                              'Runs on $baseLabel',
-                          ].join(' · '),
-                          style: TextStyle(
-                            fontSize: 13,
-                            color: grid.AppPalette.textSecondary,
-                          ),
-                        ),
-                        if (!rating.isEmpty) ...[
-                          const SizedBox(height: 10),
-                          Row(
-                            children: [
-                              _Stars(value: rating.average, size: 16),
-                              const SizedBox(width: 8),
-                              Expanded(
-                                child: Text(
-                                  '${rating.average.toStringAsFixed(1)} · ${rating.count} rating${rating.count == 1 ? '' : 's'}',
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: TextStyle(
-                                    fontSize: 12.5,
-                                    color: grid.AppPalette.textSecondary,
+                        if (!rating.isEmpty)
+                          _QuietLink(
+                            key: const ValueKey('store-rating-link'),
+                            onTap: () {
+                              final target = _reviewsKey.currentContext;
+                              if (target != null) {
+                                unawaited(
+                                  Scrollable.ensureVisible(
+                                    target,
+                                    duration: const Duration(milliseconds: 600),
+                                    curve: Curves.easeInOutCubic,
                                   ),
+                                );
+                              }
+                            },
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                _Stars(value: rating.average, size: 14),
+                                const SizedBox(width: 6),
+                                Text(
+                                  '${rating.average.toStringAsFixed(1)} · ${rating.count} rating${rating.count == 1 ? '' : 's'}',
                                 ),
-                              ),
-                            ],
+                              ],
+                            ),
                           ),
-                        ],
+                        if (entry.homepage != null)
+                          _QuietLink(label: 'Website', url: entry.homepage!),
+                        if (entry.upstream != null)
+                          _QuietLink(label: 'Source', url: entry.upstream!),
+                        if (entry.repo != null)
+                          _QuietLink(label: 'Package', url: entry.repo!),
+                        if (entry.license != null)
+                          _QuietLink(label: '${entry.license} licence'),
                       ],
                     ),
-                  ),
-                  const SizedBox(width: 16),
-                  if (!entry.isViewerPackage && local != null)
-                    FilledButton(
-                      key: const ValueKey('store-primary-action'),
-                      onPressed: _busy.contains(local.machine.machineId)
-                          ? null
-                          : () => localInstalled
-                                ? _open(local.machine.machineId)
-                                : _get(local.machine.machineId),
-                      style: FilledButton.styleFrom(
-                        backgroundColor: grid.AppPalette.accent,
-                        foregroundColor: Colors.white,
-                        minimumSize: const Size(96, 38),
-                        shape: const StadiumBorder(),
+                    const SizedBox(height: 34),
+                    if (showAction)
+                      Center(
+                        child: FilledButton(
+                          key: const ValueKey('store-primary-action'),
+                          onPressed:
+                              busy ||
+                                  installing ||
+                                  (!localInstalled &&
+                                      !_canGetOnMachine(local, entry))
+                              ? null
+                              : () => localInstalled
+                                    ? _open(local.machine.machineId)
+                                    : _get(local.machine.machineId),
+                          style: FilledButton.styleFrom(
+                            backgroundColor: grid.AppPalette.textPrimary,
+                            foregroundColor: grid.AppPalette.windowBg,
+                            minimumSize: const Size(148, 50),
+                            padding: const EdgeInsets.symmetric(horizontal: 30),
+                            textStyle: const TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.w600,
+                            ),
+                            shape: const StadiumBorder(),
+                          ),
+                          child: Text(
+                            installing || busy
+                                ? 'Working…'
+                                : localInstalled
+                                ? 'Open'
+                                : failed
+                                ? 'Try again'
+                                : 'Get',
+                          ),
+                        ),
                       ),
-                      child: Text(localInstalled ? 'Open' : 'Get'),
+                    const SizedBox(height: 14),
+                    Center(
+                      child: local == null
+                          ? Text(
+                              'Connecting to this computer…',
+                              style: TextStyle(
+                                fontSize: 12.5,
+                                color: grid.AppPalette.textFaint,
+                              ),
+                            )
+                          : _InstallLine(
+                              key: ValueKey(
+                                'store-machine:${local.machine.machineId}',
+                              ),
+                              state: local,
+                              entry: entry,
+                              busy: busy,
+                              onRemove: () => _remove(
+                                local.machine.machineId,
+                                local.machine.displayName,
+                              ),
+                            ),
                     ),
-                ],
-              ),
-              const SizedBox(height: 24),
-              if (entry.description != null)
-                Text(
-                  entry.description!,
-                  style: TextStyle(
-                    fontSize: 14,
-                    height: 1.5,
-                    color: grid.AppPalette.textPrimary,
-                  ),
+                    const SizedBox(height: 24),
+                  ],
                 ),
-              if (storeStories[entry.id] case final story?) ...[
-                const SizedBox(height: 24),
-                StoreProductStory(story: story),
+              ),
+              if (examples.isNotEmpty) ...[
+                SizedBox(height: wide ? 136 : 88),
+                StoreExampleFlow(
+                  entry: entry,
+                  examples: examples,
+                  onTry: canTry
+                      ? (prompt) =>
+                            _open(local.machine.machineId, prompt: prompt)
+                      : null,
+                ),
               ],
-              if (entry.screenshots.isNotEmpty) ...[
-                const SizedBox(height: 20),
-                SizedBox(
-                  height: 220,
-                  child: ListView.separated(
-                    scrollDirection: Axis.horizontal,
-                    itemCount: entry.screenshots.length,
-                    separatorBuilder: (_, _) => const SizedBox(width: 12),
-                    itemBuilder: (context, i) => ClipRRect(
-                      borderRadius: BorderRadius.circular(10),
+              for (final (i, url) in screenshots.indexed) ...[
+                SizedBox(height: i == 0 ? (wide ? 120 : 72) : 48),
+                Center(
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 1120),
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(wide ? 28 : 18),
                       child: Image.network(
-                        entry.screenshots[i],
-                        height: 220,
+                        url,
                         fit: BoxFit.cover,
                         errorBuilder: (_, _, _) => const SizedBox.shrink(),
                       ),
@@ -980,187 +1096,118 @@ class _ProductPageState extends State<_ProductPage> {
                   ),
                 ),
               ],
-              const SizedBox(height: 28),
-              _SectionTitle('On your machines'),
-              const SizedBox(height: 8),
-              Container(
-                decoration: BoxDecoration(
-                  color: grid.AppPalette.cardBg,
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: grid.AppPalette.divider),
-                ),
-                child: Column(
-                  children: [
-                    for (final (i, state) in machines.indexed) ...[
-                      if (i > 0)
-                        Divider(height: 1, color: grid.AppPalette.divider),
-                      _MachineRow(
-                        key: ValueKey(
-                          'store-machine:${state.machine.machineId}',
-                        ),
-                        state: state,
-                        entry: entry,
-                        isLocal: identical(state, local),
-                        busy: _busy.contains(state.machine.machineId),
-                        onGet: () => _get(state.machine.machineId),
-                        onRemove: () => _remove(
-                          state.machine.machineId,
-                          state.machine.displayName,
-                        ),
-                        onOpen: entry.isViewerPackage
-                            ? null
-                            : () => _open(state.machine.machineId),
-                      ),
-                    ],
-                    if (machines.isEmpty)
-                      Padding(
-                        padding: const EdgeInsets.all(16),
-                        child: Text(
-                          'No machines yet.',
+              if (page != null || !rating.isEmpty) ...[
+                SizedBox(height: wide ? 160 : 96),
+                Center(
+                  child: ConstrainedBox(
+                    key: _reviewsKey,
+                    constraints: const BoxConstraints(maxWidth: 720),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        Text(
+                          'Ratings and reviews',
+                          textAlign: TextAlign.center,
                           style: TextStyle(
-                            fontSize: 13,
-                            color: grid.AppPalette.textFaint,
+                            fontSize: 28,
+                            fontWeight: FontWeight.w700,
+                            letterSpacing: -0.6,
+                            color: grid.AppPalette.textPrimary,
                           ),
                         ),
-                      ),
-                  ],
-                ),
-              ),
-              if (entry.repo != null ||
-                  entry.homepage != null ||
-                  entry.upstream != null ||
-                  entry.license != null) ...[
-                const SizedBox(height: 28),
-                _SectionTitle('Links'),
-                const SizedBox(height: 8),
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: [
-                    if (entry.homepage != null)
-                      _LinkChip(label: 'Website', url: entry.homepage!),
-                    if (entry.upstream != null)
-                      _LinkChip(
-                        label: 'Upstream project',
-                        url: entry.upstream!,
-                      ),
-                    if (entry.repo != null)
-                      _LinkChip(label: 'Package source', url: entry.repo!),
-                    if (entry.license != null)
-                      _LinkChip(label: 'Licence · ${entry.license}'),
-                  ],
-                ),
-              ],
-              if (page != null || !rating.isEmpty) ...[
-                const SizedBox(height: 28),
-                Row(
-                  children: [
-                    const Expanded(child: _SectionTitle('Ratings and reviews')),
-                    TextButton(
-                      key: const ValueKey('store-write-review'),
-                      onPressed: _review,
-                      child: Text(
-                        page?.mine == null
-                            ? 'Write a review'
-                            : 'Edit your review',
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 8),
-                if (!rating.isEmpty) _RatingSummary(rating: rating),
-                if (widget.store.reviewsError[_key] != null) ...[
-                  const SizedBox(height: 8),
-                  Text(
-                    'Reviews are unavailable right now.',
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: grid.AppPalette.textSecondary,
+                        const SizedBox(height: 6),
+                        Center(
+                          child: TextButton(
+                            key: const ValueKey('store-write-review'),
+                            onPressed: _review,
+                            child: Text(
+                              page?.mine == null
+                                  ? 'Write a review'
+                                  : 'Edit your review',
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 20),
+                        if (!rating.isEmpty) _RatingSummary(rating: rating),
+                        if (widget.store.reviewsError[_key] != null) ...[
+                          const SizedBox(height: 8),
+                          Text(
+                            'Reviews are unavailable right now.',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: grid.AppPalette.textSecondary,
+                            ),
+                          ),
+                        ],
+                        const SizedBox(height: 16),
+                        if (page != null && page.reviews.isEmpty)
+                          Text(
+                            'No reviews yet. Be the first.',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                              fontSize: 13,
+                              color: grid.AppPalette.textFaint,
+                            ),
+                          ),
+                        for (final review
+                            in page?.reviews ?? const <StoreReview>[])
+                          Padding(
+                            padding: const EdgeInsets.only(bottom: 10),
+                            child: _ReviewCard(
+                              key: ValueKey('store-review:${review.id}'),
+                              review: review,
+                              onEdit: review.mine ? _review : null,
+                            ),
+                          ),
+                      ],
                     ),
                   ),
-                ],
-                const SizedBox(height: 12),
-                if (page != null && page.reviews.isEmpty)
-                  Text(
-                    'No reviews yet. Be the first.',
-                    style: TextStyle(
-                      fontSize: 13,
-                      color: grid.AppPalette.textFaint,
-                    ),
-                  ),
-                for (final review in page?.reviews ?? const <StoreReview>[])
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 10),
-                    child: _ReviewCard(
-                      key: ValueKey('store-review:${review.id}'),
-                      review: review,
-                      onEdit: review.mine ? _review : null,
-                    ),
-                  ),
+                ),
               ],
             ],
           ),
-        ),
-      ),
+        );
+      },
     );
   }
 }
 
-class _SectionTitle extends StatelessWidget {
-  const _SectionTitle(this.text);
-  final String text;
-
-  @override
-  Widget build(BuildContext context) => Text(
-    text,
-    style: TextStyle(
-      fontSize: 16,
-      fontWeight: FontWeight.w600,
-      color: grid.AppPalette.textPrimary,
-    ),
-  );
-}
-
-class _MachineRow extends StatelessWidget {
-  const _MachineRow({
+/// The one line under the page's action: where this is, and what it is doing there — asking,
+/// installing, installed, failed — with Remove once there is something to remove.
+class _InstallLine extends StatelessWidget {
+  const _InstallLine({
     super.key,
     required this.state,
     required this.entry,
-    required this.isLocal,
     required this.busy,
-    required this.onGet,
     required this.onRemove,
-    required this.onOpen,
   });
 
   final MachineState state;
   final DshEntry entry;
-  final bool isLocal;
   final bool busy;
-  final VoidCallback onGet;
   final VoidCallback onRemove;
-  final VoidCallback? onOpen;
+
+  String _engineStatus() {
+    final installed = state.engines[entry.id]?.installed == true;
+    if (!installed && state.needsLink) return 'Link required';
+    if (!installed && state.nodeOnline == false) return 'Offline';
+    if (!state.engines.loaded) return 'Asking…';
+    return installed ? 'Installed' : 'Not installed';
+  }
 
   @override
   Widget build(BuildContext context) {
-    if (entry.isEngine) return _engineRow(context);
+    grid.AppTheme.watch(context);
     final row = state.dsh[entry.id];
     final run = state.dsh.runs[entry.id];
     final installing = run != null && run.inProgress;
-    final installed = row?.installed == true;
-    // Why a machine cannot take this package right now, when it cannot. An
-    // offline or unlinked machine answers nothing, so without these the row
-    // said "Asking…" forever; a machine whose CLI predates the package lists
-    // no row for it, and a Get there would only fail.
-    final unavailable = state.needsLink
-        ? 'Link required'
-        : state.nodeOnline == false
-        ? 'Offline'
-        : state.dsh.loaded && state.dsh.error == null && row == null
-        ? 'Update Harness CLI on this machine to get it'
-        : null;
+    final installed = !entry.isEngine && row?.installed == true;
     final String status;
-    if (installing) {
+    if (entry.isEngine) {
+      status = _engineStatus();
+    } else if (installing) {
       status = switch (run.phase) {
         'clone' => 'Fetching…',
         'setup' => 'Setting up the toolchain…',
@@ -1175,11 +1222,19 @@ class _MachineRow extends StatelessWidget {
       status = row?.linked == true
           ? 'Installed · linked to a checkout'
           : 'Installed';
-    } else if (unavailable != null) {
-      status = unavailable;
+    } else if (state.needsLink) {
+      // Why a machine cannot take this package right now, when it cannot. An
+      // offline or unlinked machine answers nothing, so without these the line
+      // said "Asking…" forever; a machine whose CLI predates the package lists
+      // no row for it, and a Get there would only fail.
+      status = 'Link required';
+    } else if (state.nodeOnline == false) {
+      status = 'Offline';
+    } else if (state.dsh.loaded && state.dsh.error == null && row == null) {
+      status = 'Update Harness CLI on this machine to get it';
     } else if (!state.dsh.loaded) {
       // `dsh_list` refused by a CLI that predates it arrives as the bare wire
-      // code; the row says what to do about it instead.
+      // code; the line says what to do about it instead.
       status = switch (state.dsh.error) {
         null => 'Asking…',
         'UNSUPPORTED' || 'UNSUPPORTED_ON_REMOTE' =>
@@ -1189,207 +1244,97 @@ class _MachineRow extends StatelessWidget {
     } else {
       status = 'Not installed';
     }
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-      child: Row(
-        children: [
-          Icon(
-            isLocal ? LucideIcons.laptop300 : LucideIcons.server300,
-            size: 16,
-            color: grid.AppPalette.textSecondary,
+    final faint = TextStyle(fontSize: 12.5, color: grid.AppPalette.textFaint);
+    return Wrap(
+      alignment: WrapAlignment.center,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      spacing: 8,
+      runSpacing: 4,
+      children: [
+        if (installing || busy)
+          const SizedBox(
+            width: 12,
+            height: 12,
+            child: CircularProgressIndicator(strokeWidth: 1.6),
           ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  isLocal
-                      ? '${state.machine.displayName} · this computer'
-                      : state.machine.displayName,
-                  style: TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w500,
-                    color: grid.AppPalette.textPrimary,
-                  ),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  status,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: run?.failed == true
-                        ? grid.AppPalette.warn
-                        : grid.AppPalette.textSecondary,
-                  ),
-                ),
-              ],
-            ),
+        Text('${state.machine.displayName} · this computer', style: faint),
+        Text('·', style: faint),
+        Text(
+          status,
+          style: TextStyle(
+            fontSize: 12.5,
+            color: run?.failed == true
+                ? grid.AppPalette.warn
+                : grid.AppPalette.textSecondary,
           ),
-          if (installing || busy)
-            const SizedBox(
-              width: 16,
-              height: 16,
-              child: CircularProgressIndicator(strokeWidth: 2),
-            )
-          else if (installed) ...[
-            if (onOpen != null)
-              TextButton(
-                key: ValueKey('store-open:${state.machine.machineId}'),
-                onPressed: onOpen,
-                child: const Text('Open'),
-              ),
-            TextButton(
-              key: ValueKey('store-remove:${state.machine.machineId}'),
-              onPressed: onRemove,
-              style: TextButton.styleFrom(
-                foregroundColor: grid.AppPalette.textSecondary,
-              ),
-              child: const Text('Remove'),
-            ),
-          ] else
-            FilledButton.tonal(
-              key: ValueKey('store-get:${state.machine.machineId}'),
-              onPressed: state.dsh.loaded && unavailable == null ? onGet : null,
-              style: FilledButton.styleFrom(
-                minimumSize: const Size(72, 32),
-                shape: const StadiumBorder(),
-              ),
-              child: Text(run?.failed == true ? 'Try again' : 'Get'),
-            ),
+        ),
+        if (installed && !installing && !busy) ...[
+          Text('·', style: faint),
+          _QuietLink(
+            key: ValueKey('store-remove:${state.machine.machineId}'),
+            label: 'Remove',
+            onTap: onRemove,
+          ),
         ],
-      ),
+      ],
     );
   }
 }
 
-extension on _MachineRow {
-  /// An engine's row: what the machine's probe said. Installed → Open; not
-  /// installed but installable → Get, which opens New Harness and lets the
-  /// daemon install it on the way; anything else is said and not offered.
-  Widget _engineRow(BuildContext context) {
-    final probe = state.engines[entry.id];
-    final loaded = state.engines.loaded;
-    final installed = probe?.installed == true;
-    final String status;
-    if (!installed && state.needsLink) {
-      status = 'Link required';
-    } else if (!installed && state.nodeOnline == false) {
-      status = 'Offline';
-    } else if (!loaded) {
-      status = 'Asking…';
-    } else if (installed) {
-      status = 'Installed';
-    } else {
-      status = 'Not installed';
-    }
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-      child: Row(
-        children: [
-          Icon(
-            isLocal ? LucideIcons.laptop300 : LucideIcons.server300,
-            size: 16,
-            color: grid.AppPalette.textSecondary,
-          ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  isLocal
-                      ? '${state.machine.displayName} · this computer'
-                      : state.machine.displayName,
-                  style: TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w500,
-                    color: grid.AppPalette.textPrimary,
-                  ),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  status,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: grid.AppPalette.textSecondary,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          if (installed)
-            TextButton(
-              key: ValueKey('store-open:${state.machine.machineId}'),
-              onPressed: onOpen,
-              child: const Text('Open'),
-            )
-          else if (loaded &&
-              probe?.installable == true &&
-              !state.needsLink &&
-              state.nodeOnline != false)
-            FilledButton.tonal(
-              key: ValueKey('store-get:${state.machine.machineId}'),
-              onPressed: onGet,
-              style: FilledButton.styleFrom(
-                minimumSize: const Size(72, 32),
-                shape: const StadiumBorder(),
-              ),
-              child: const Text('Get'),
-            ),
-        ],
-      ),
-    );
-  }
-}
+/// A link that stays out of the way: secondary text, brighter under the pointer, an arrow when it
+/// leaves the app. Without a destination it is plain text (the licence).
+class _QuietLink extends StatefulWidget {
+  const _QuietLink({super.key, this.label, this.url, this.onTap, this.child})
+    : assert(label != null || child != null);
 
-class _LinkChip extends StatelessWidget {
-  const _LinkChip({required this.label, this.url});
-  final String label;
+  final String? label;
   final String? url;
+  final VoidCallback? onTap;
+  final Widget? child;
+
+  @override
+  State<_QuietLink> createState() => _QuietLinkState();
+}
+
+class _QuietLinkState extends State<_QuietLink> {
+  var _hovering = false;
 
   @override
   Widget build(BuildContext context) {
-    final child = Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
-      decoration: BoxDecoration(
-        color: grid.AppPalette.cardBg,
-        borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: grid.AppPalette.divider),
-      ),
+    grid.AppTheme.watch(context);
+    final url = widget.url;
+    final VoidCallback? tap = url != null
+        ? () => unawaited(
+            launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication),
+          )
+        : widget.onTap;
+    final color = tap == null
+        ? grid.AppPalette.textFaint
+        : _hovering
+        ? grid.AppPalette.textPrimary
+        : grid.AppPalette.textSecondary;
+    final content = DefaultTextStyle.merge(
+      style: TextStyle(fontSize: 13, color: color),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Text(
-            label,
-            style: TextStyle(
-              fontSize: 12.5,
-              color: grid.AppPalette.textPrimary,
-            ),
-          ),
+          widget.child ?? Text(widget.label!),
           if (url != null) ...[
-            const SizedBox(width: 6),
-            Icon(
-              LucideIcons.arrowUpRight300,
-              size: 13,
-              color: grid.AppPalette.textFaint,
-            ),
+            const SizedBox(width: 3),
+            Icon(LucideIcons.arrowUpRight300, size: 13, color: color),
           ],
         ],
       ),
     );
-    if (url == null) return child;
+    if (tap == null) return content;
     return MouseRegion(
       cursor: SystemMouseCursors.click,
+      onEnter: (_) => setState(() => _hovering = true),
+      onExit: (_) => setState(() => _hovering = false),
       child: GestureDetector(
-        onTap: () => unawaited(
-          launchUrl(Uri.parse(url!), mode: LaunchMode.externalApplication),
-        ),
-        child: child,
+        behavior: HitTestBehavior.opaque,
+        onTap: tap,
+        child: content,
       ),
     );
   }

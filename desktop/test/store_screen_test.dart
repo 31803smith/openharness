@@ -1,5 +1,5 @@
-// The Harness Store: the shelf is the machines' catalog as cards, a page is
-// one harness with Get/Open/Remove per machine, and ratings and reviews come
+// The Harness Store: the shelf is this computer's catalog as cards, a page is
+// one harness with local Get/Open/Remove, and ratings and reviews come
 // from the store API. Pinned: viewers have a quiet dependency view, Get and
 // Remove reach the notifier for the right machine, Remove asks first, and a
 // posted review goes to the API with what was typed.
@@ -63,15 +63,18 @@ class _Notifier extends AppNotifier {
   final removals = <(String, String)>[];
   int probes = 0;
   int engineProbes = 0;
+  final probedMachines = <String>[];
 
   @override
   Future<void> probeEngines(String machineId, {bool force = false}) async {
     engineProbes++;
+    probedMachines.add(machineId);
   }
 
   @override
   Future<void> probeDsh(String machineId, {bool force = false}) async {
     probes++;
+    probedMachines.add(machineId);
   }
 
   @override
@@ -301,75 +304,52 @@ void main() {
   );
 
   testWidgets(
-    'a machine that is offline, unlinked or on an older CLI says so instead of offering Get',
+    'the Store never probes or shows remote machines, including reconnects and refreshes',
     (tester) async {
       final notifier = _Notifier();
       addTearDown(notifier.dispose);
-      // This computer knows Typst; a second machine runs an older CLI that does not.
-      notifier.machineStates['machine-1'] = MachineState(_machine)
+      final local = MachineState(_machine)
         ..localOnly = true
+        ..connectionStatus = ConnectionStatus.connected
         ..dsh.replace(const [_marp, _typst]);
-      final other = MachineState(
+      notifier.machineStates['machine-1'] = local;
+      final remote = MachineState(
         const Machine(
           machineId: 'machine-2',
           authMode: MachineAuthMode.remote,
           name: 'office-imac',
         ),
-      )..dsh.replace(const [_marp]);
-      notifier.machineStates['machine-2'] = other;
+      )..connectionStatus = ConnectionStatus.connected;
+      notifier.machineStates['machine-2'] = remote;
       await tester.pumpWidget(
         MaterialApp(
           home: Scaffold(
             body: StoreTab(
               notifier: notifier,
               api: _FakeStore(),
-              source: 'test',
-              initialHarness: 'autonomous/typst',
+              initialHarness: _typst.id,
             ),
           ),
         ),
       );
       await tester.pumpAndSettle();
-      Finder status(String text) => find.descendant(
-        of: find.byKey(const ValueKey('store-machine:machine-2')),
-        matching: find.text(text),
-      );
-      FilledButton? get() => tester
-          .widgetList<FilledButton>(
-            find.byKey(const ValueKey('store-get:machine-2')),
-          )
-          .firstOrNull;
-
       expect(
-        status('Update Harness CLI on this machine to get it'),
+        find.byKey(const ValueKey('store-machine:machine-1')),
         findsOneWidget,
       );
-      expect(get()?.onPressed, isNull);
-
-      // Offline: it cannot answer, so it is not "Asking…" forever.
-      other.nodeOnline = false;
+      expect(
+        find.byKey(const ValueKey('store-machine:machine-2')),
+        findsNothing,
+      );
+      expect(notifier.probedMachines, ['machine-1', 'machine-1']);
+      remote.connectionStatus = ConnectionStatus.reconnecting;
       notifier.notifyListeners();
-      await tester.pumpAndSettle();
-      expect(status('Offline'), findsOneWidget);
-      expect(status('Asking…'), findsNothing);
-      expect(get()?.onPressed, isNull);
-
-      // Unlinked wins over offline.
-      other.needsLink = true;
+      await tester.pump();
+      remote.connectionStatus = ConnectionStatus.connected;
       notifier.notifyListeners();
-      await tester.pumpAndSettle();
-      expect(status('Link required'), findsOneWidget);
-      expect(get()?.onPressed, isNull);
-
-      // Back online, linked, and knowing the package: Get again.
-      other
-        ..needsLink = false
-        ..nodeOnline = true
-        ..dsh.replace(const [_marp, _typst]);
-      notifier.notifyListeners();
-      await tester.pumpAndSettle();
-      expect(status('Not installed'), findsOneWidget);
-      expect(get()?.onPressed, isNotNull);
+      await tester.pump();
+      await tester.pump(const Duration(minutes: 1));
+      expect(notifier.probedMachines, ['machine-1', 'machine-1', 'machine-1']);
       expect(tester.takeException(), isNull);
     },
   );
@@ -422,7 +402,7 @@ void main() {
     tester,
   ) async {
     final (notifier, store) = await open(tester);
-    expect(notifier.probes, 1, reason: 'every machine is asked again on open');
+    expect(notifier.probes, 1, reason: 'this computer is asked again on open');
     expect(
       notifier.engineProbes,
       1,
@@ -493,7 +473,7 @@ void main() {
       expect(find.text('studio-mac · this computer'), findsOneWidget);
       expect(find.text('Not installed'), findsOneWidget);
 
-      await tester.tap(find.byKey(const ValueKey('store-get:machine-1')));
+      await tester.tap(find.byKey(const ValueKey('store-primary-action')));
       await tester.pumpAndSettle();
       expect(notifier.installs, [('machine-1', 'autonomous/typst')]);
     },
@@ -521,7 +501,7 @@ void main() {
         findsOneWidget,
       );
       expect(find.text('Website'), findsOneWidget);
-      expect(find.text('Licence · MIT'), findsOneWidget);
+      expect(find.text('MIT licence'), findsOneWidget);
 
       await tester.ensureVisible(
         find.byKey(const ValueKey('store-remove:machine-1')),
@@ -620,7 +600,13 @@ void main() {
       expect(find.text('OpenAI · Code · Coding agent'), findsOneWidget);
       expect(find.textContaining('npm install'), findsNothing);
       expect(find.text('Not installed'), findsOneWidget);
-      expect(find.byKey(const ValueKey('store-get:machine-1')), findsOneWidget);
+      expect(
+        find.descendant(
+          of: find.byKey(const ValueKey('store-primary-action')),
+          matching: find.text('Get'),
+        ),
+        findsOneWidget,
+      );
       expect(
         find.byKey(const ValueKey('store-remove:machine-1')),
         findsNothing,

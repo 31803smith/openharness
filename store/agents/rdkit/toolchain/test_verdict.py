@@ -215,6 +215,24 @@ class Main(Workspace):
         code, _, v = self.run_main(["verdict.py", str(named)])
         self.assertEqual((code, v["artifact"]), (0, "out/named.sdf"))
 
+    def test_a_series_in_a_subfolder_is_summarised_by_its_own_report(self):
+        self.write("molecules/capsaicin.py", "")
+        self.write("out/report.json", json.dumps({**REPORT, "name": "ibuprofen"}), age=100)
+        self.write("out/ibuprofen.sdf", WATER_3D, age=100)
+        self.write("out/capsaicin/report.json", json.dumps({**REPORT, "name": "capsiate"}))
+        self.write("out/capsaicin/capsiate.sdf", WATER_3D)
+        code, _, v = self.run_main(["verdict.py"])
+        self.assertEqual((code, v["artifact"]), (0, "out/capsaicin/capsiate.sdf"))
+        self.assertTrue(v["summary"].startswith("capsiate · "), v["summary"])
+
+    def test_a_subfolder_without_its_own_report_falls_back_to_out(self):
+        self.write("molecules/water.py", "")
+        self.write("out/report.json", json.dumps({**REPORT, "name": "water"}))
+        self.write("out/extra/water.sdf", WATER_3D)
+        code, _, v = self.run_main(["verdict.py"])
+        self.assertEqual((code, v["artifact"]), (0, "out/extra/water.sdf"))
+        self.assertTrue(v["summary"].startswith("water · "), v["summary"])
+
     def test_a_named_sdf_that_is_missing_is_judged_as_none(self):
         self.write("molecules/water.py", "")
         self.write("out/report.json", json.dumps(REPORT))

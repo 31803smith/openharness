@@ -25,7 +25,7 @@ import {
 import { trackSocketLiveness } from './hub.js'
 import { guardedSend, guardedSendJson } from './wsSend.js'
 import { attachNodeRole, PRESENCE_TTL_SEC } from './nodeRole.js'
-import { presenceWriteDue, recordTurnStarted, touchMachineOnlineDay, type PresenceWriteState } from './dailyTracking.js'
+import { presenceWriteDue, recordTurnStarted, touchMachineOnlineDay, touchUserOnlineDay, type PresenceWriteState } from './dailyTracking.js'
 import { recordCreatedAgent, recordDeletedAgent } from './agentTracker.js'
 import type { Frame } from './tunnel.js'
 import { logger } from '../utils/logger.js'
@@ -81,6 +81,20 @@ const CLIENT_VERSION_RE = /^[A-Za-z0-9._+-]{1,64}$/
 // timer of its own — this is just the floor between two Mongo writes, so a machine that is up all
 // day costs ~300 upserts, not ~6000. Connect and close always write regardless.
 const MACHINE_PRESENCE_WRITE_MS = 5 * 60_000
+
+// Daily presence of the PERSON (`user_daily_presence`): the daemon reports its own loopback clients —
+// `open` the moment a desktop window attaches, `ping` on its 15s app-ping tick while one stays, at
+// most once a minute (cli backendSocket sendAppPresence) — and this is the floor between two Mongo
+// writes for the `ping` kind. `open` always writes — it is what `connections` counts. The web-ws upgrade
+// used to be the source, but the desktop app never dials web-ws directly (only the daemon does, and
+// only to relay a foreign machine), so a single-machine user was invisible there.
+const USER_PRESENCE_WRITE_MS = 5 * 60_000
+// `open` is not floored by the interval above (each one IS a session), but it is floored on its own:
+// the window reconnects its local socket a few times a minute at worst during a daemon restart, and
+// an adapter sending more than that is looping or lying — either way not a session per frame, and
+// not a Mongo upsert per frame.
+const USER_PRESENCE_OPEN_MS = 10_000
+const APP_PRESENCE_KINDS = new Set(['open', 'ping'])
 
 // `turn_started` tap (agent/machine daily presence). `agentId` is a plain token the CLI derives from
 // its registry (a UUID, or the engine's own session id as fallback), so it is bounded and
@@ -239,7 +253,13 @@ async function attachAdapter(ws: WebSocket, machineId: string, userId: string, c
   }
   // Tell the adapter its machine's display name (it mirrors it locally for `harness status`); null when
   // unnamed so a stale mirror clears. Renames while connected arrive the same way (machine_meta).
-  send({ t: 'down', connId: '', frame: { type: 'machine_meta', payload: { name: currentName?.trim() || seededName } } })
+  // The account's private harness grid, carried on the frame the adapter already gets on connect.
+  // Minted and remembered by `routes/grid.ts`; read-only here. A user who has never signed in since
+  // the route shipped simply has none yet, and the daemon treats that as "no grid" rather than an
+  // error — the next `harness login` mints it.
+  const gridName = (await prisma.user.findUnique({ where: { id: userId }, select: { gridName: true } })
+    .catch(() => null))?.gridName ?? null
+  send({ t: 'down', connId: '', frame: { type: 'machine_meta', payload: { name: currentName?.trim() || seededName, gridName } } })
 
   // Daily presence row for the machine, mirroring the user/device variants in webWs/deviceWs. The
   // guard only advances on a SUCCESSFUL write, so a transient DB failure is retried on the next
@@ -257,6 +277,25 @@ async function attachAdapter(ws: WebSocket, machineId: string, userId: string, c
       .then(() => { lastMachinePresence.dayKey = utcDayKey(now); lastMachinePresence.wroteAt = now.getTime() })
       .catch((err) => logger.warn('machine presence tracking failed', { machineId, kind, error: String(err) }))
       .finally(() => { machinePresenceInFlight = false })
+  }
+  // Same shape for the person behind the app: `open` bypasses the interval the way `connect` does
+  // above, `ping` is rate-floored. `userId` is the machine's owner — the only person a desktop app
+  // on this computer can be signed in as.
+  const lastUserPresence: PresenceWriteState = { dayKey: null, wroteAt: 0 }
+  let userPresenceInFlight = false
+  let lastUserOpenAt = 0
+  const touchUserPresence = (kind: 'open' | 'ping'): void => {
+    const now = new Date()
+    if (kind === 'ping' && (userPresenceInFlight || !presenceWriteDue(lastUserPresence, now, USER_PRESENCE_WRITE_MS))) return
+    if (kind === 'open') {
+      if (now.getTime() - lastUserOpenAt < USER_PRESENCE_OPEN_MS) return
+      lastUserOpenAt = now.getTime()
+    }
+    userPresenceInFlight = true
+    touchUserOnlineDay(userId, now, { isNewConnection: kind === 'open' })
+      .then(() => { lastUserPresence.dayKey = utcDayKey(now); lastUserPresence.wroteAt = now.getTime() })
+      .catch((err) => logger.warn('user presence tracking failed', { machineId, userId, kind, error: String(err) }))
+      .finally(() => { userPresenceInFlight = false })
   }
 
   // The node role — down subscription, presence, `__clients` resync, node_status — is shared with
@@ -375,10 +414,19 @@ async function attachAdapter(ws: WebSocket, machineId: string, userId: string, c
         })
         return
       }
+      // The daemon saying a desktop window is attached to it (cli backendSocket sendAppPresence).
+      // Bookkeeping only — absorbed here, never published: no client has any use for it and an
+      // unknown frame type must not reach the firmware.
+      if (app.type === 'app_presence') {
+        const kind = (app.payload as { kind?: unknown } | undefined)?.kind
+        if (typeof kind !== 'string' || !APP_PRESENCE_KINDS.has(kind)) return
+        touchUserPresence(kind as 'open' | 'ping')
+        return
+      }
       // Hub tap (mirrors managerWs): keep `machine_agents` in sync from the adapter's agent
       // lifecycle frames. Needed so the device voice path's agent-ownership check
       // (deviceWs: `machineAgent.findFirst`) recognizes remote tmux sessions.
-      const f = env.frame as { type?: string; agentId?: unknown; payload?: { agent?: unknown; agentId?: unknown; machineId?: unknown } }
+      const f = env.frame as { type?: string; agentId?: unknown; replay?: unknown; payload?: { agent?: unknown; agentId?: unknown; machineId?: unknown } }
       if (f.type === 'agent_synced') {
         void recordCreatedAgent(machineId, f.payload?.agent as { id?: unknown; name?: unknown } | undefined)
       } else if (f.type === 'agent_deleted' && typeof f.payload?.agentId === 'string') {
@@ -386,14 +434,16 @@ async function attachAdapter(ws: WebSocket, machineId: string, userId: string, c
         // Reading `machineId` here meant no deletion was EVER recorded, so machine_agents grew a row per
         // agent forever — and that table is what the plan cap counts.
         void recordDeletedAgent(machineId, f.payload.agentId)
-      } else if (f.type === 'turn_started') {
-        // Usage signal for machine_daily_presence / agent_daily_presence. Only the plaintext `type`
-        // and top-level `agentId` (set by the CLI's correlateAgentEvent) are read — the payload is
-        // E2EE ciphertext (cli e2ee/core.ts ENCRYPTED_UP_TYPES) and stays opaque here. The CLI already
-        // dedupes engines that re-announce one turn (cursor/agy/copilot, cli.ts), so one frame == one
-        // turn; the one known over-count is a daemon restarting mid-turn, which re-emits the open
-        // turn's start on attach (cli.ts `resumed`) — rare, and invisible from here. A frame with no
-        // (or a malformed) agentId has nothing to attribute the turn to and is not counted.
+      } else if (f.type === 'turn_started' && f.replay !== true) {
+        // Usage signal for machine_daily_presence / agent_daily_presence. Only the plaintext `type`,
+        // top-level `agentId` and `replay` (set by the CLI's correlateAgentEvent / emitSessionEvents)
+        // are read — the payload is E2EE ciphertext (cli e2ee/core.ts ENCRYPTED_UP_TYPES) and stays
+        // opaque here. The CLI already dedupes engines that re-announce one turn (cursor/agy/copilot,
+        // cli.ts), so one frame == one turn. `replay: true` is the CLI saying this one did NOT start
+        // now — a turn resumed at attach, or a prompt re-read from a transcript already on disk
+        // (measured 2026-09-17: 42 such frames in one second credited to one agent). It still relays,
+        // it is just not a turn today. A frame with no (or a malformed) agentId has nothing to
+        // attribute the turn to and is not counted.
         const now = new Date()
         const agentId = typeof f.agentId === 'string' && TURN_AGENT_ID_RE.test(f.agentId) ? f.agentId : undefined
         if (agentId && allowTurnWrite(now.getTime())) {

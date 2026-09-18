@@ -27,7 +27,11 @@ import { registry, projectDisplayName, type RegisteredSession } from './lib/regi
 import { ENGINES, type AgentEngine } from './engines/types.js'
 import { listDir } from './lib/fsBrowse.js'
 import { linkCodexProfile, listCodexProfiles } from './lib/codexProfiles.js'
-import { parseGridLaunchOverride, type GridLaunchOverride } from './lib/gridLaunch.js'
+import { gridCliPresence } from './lib/gridExec.js'
+import { gridCapableEngines, parseGridLaunchOverride, type GridLaunchOverride } from './lib/gridLaunch.js'
+import { listGridModels, resolveGridTarget } from './lib/gridModels.js'
+import { deriveHarnessGridName } from './lib/gridDerive.js'
+import { AGENT_NAME_RE, FirstPromptUnsupportedError, MAX_FIRST_PROMPT_CHARS, NamedAgentUnsupportedError, permissionModeApproves, permissionModeFlags, supportsFirstPrompt, supportsNamedAgent } from './lib/engineLaunch.js'
 import { readAccountUsage, type AccountUsageReading } from './lib/accountUsage.js'
 import { probeEngines } from './lib/engineProbe.js'
 import { AgentCreationReceipts, AgentCreationReceiptError, creationFingerprint, validCreationId, type AgentCreationStatus } from './lib/agentCreationReceipt.js'
@@ -37,6 +41,7 @@ import { preTrustClaudeProject, preTrustCodexProject } from './lib/claudeTrust.j
 import { projectPreview } from './lib/projectPreview.js'
 import { agentFrame, type AgentDshContext, type AgentFrame } from './lib/agentFrame.js'
 import { installedDsh } from './dsh/installed.js'
+import { engineLabel } from './lib/agentNames.js'
 import { DSH_ID_RE } from './dsh/manifest.js'
 import { refreshDshRegistry } from './dsh/catalog.js'
 import type { DshInstallProgress } from './dsh/install.js'
@@ -46,6 +51,8 @@ import { tailFile } from './lib/sessions.js'
 import { messagesToEvents, windowRawLines, subagentStatsFromRawLines, type SessionEvent } from './lib/normalize.js'
 import { listFileTree, readProjectFile } from './lib/files.js'
 import { MediaPreviewError, readMediaPreviewChunk } from './lib/mediaPreview.js'
+import { ViewerForwarder } from './lib/viewerForwarder.js'
+import { VIEWER_DOWN_TYPES } from './lib/viewerWire.js'
 import { codexMessagesToEvents, windowCodexLines } from './engines/codex/normalizer.js'
 import { codexSubagentResolverFor } from './engines/codex/subagent.js'
 import { parseHostTheme, type HostTheme } from './lib/hostTheme.js'
@@ -103,6 +110,11 @@ export type RecentProvider = (sessionId: string, n: number) => Array<{ kind: str
 
 
 const APP_PING_MS = 15_000
+// Floor between two `app_presence` up-frames while a window is attached. Rides the 15s app-ping
+// tick; the backend only needs to hear about it about once a minute (it floors its own Mongo write
+// at five). `open` is never held back — it is the one that counts as a session in
+// `user_daily_presence`.
+const APP_PRESENCE_UP_MS = 60_000
 // How long the opening handshake may take before the attempt is abandoned and retried. `ws` waits
 // forever by default, and the heartbeat below only starts on 'open' — so a TCP connection that came
 // up while the network was flapping but never got its upgrade answered sat in CONNECTING for hours,
@@ -306,6 +318,11 @@ export class BackendSocket {
   private droppedSinceLog = 0
   private heartbeat: LivenessWatch | null = null
   private appPing: NodeJS.Timeout | null = null
+  private lastAppPresenceUpAt = 0
+  // A window attached while there was no link to tell (cold start: the app dials this daemon before
+  // the daemon has dialed the backend; or a daemon restart under an open window). The session is
+  // real and must be counted once, so it is owed to the next link — not turned into a `ping`.
+  private appOpenOwed = false
   private readonly downChains = new Map<string, Promise<void>>()
   private readonly localClients = new Map<string, LocalClientSink>()
   private terminalStreams: TerminalStreamManager | null = null
@@ -341,6 +358,19 @@ export class BackendSocket {
     codexHome: string | null
     /** The domain-specific harness to create this agent as (installed here, base engine = `engine`). */
     dsh: string | null
+    /** The message the session opens with, already submitted (`FIRST_PROMPT_ARGS` in engineLaunch.ts);
+     *  null when the pane opens on an empty input. Validated here — length, and that the engine has a
+     *  contract for it — so cli.ts never sees one it cannot hand over. Never logged. */
+    prompt: string | null
+    /** The name the pane opens under, instead of the next `agent-N`; null to number it. */
+    name: string | null
+    /** The engine's named agent the pane opens AS (`NAMED_AGENT_ARGS` in engineLaunch.ts; opencode
+     *  `--agent <name>`); null for a general session. Validated here — shape, and that the engine has
+     *  a contract for it. Unlike `prompt`, kept on the row so a relaunch opens as it again. */
+    agent: string | null
+    /** A mode from `PERMISSION_MODES` for this engine; null when the client sent only
+     *  `bypassPermission`, which then decides. Validated here (`INVALID_PERMISSION_MODE`). */
+    permissionMode: string | null
   }) =>
     Promise<{ ok: true; session: RegisteredSession } | { ok: false; error: string; detail?: string }>) | null = null
   /** Called on `dsh_install` — cli.ts clones/sets up/doctors the harness and reports each phase. */
@@ -350,6 +380,18 @@ export class BackendSocket {
   onDshRemove: ((id: string) => { ok: true } | { ok: false; error: string; detail: string }) | null = null
   /** What the daemon knows about an agent's DSH companions (viewer URL, verdict); null when nothing. */
   dshFrameProvider: ((session: RegisteredSession) => AgentDshContext | null) | null = null
+  viewerTargetProvider: ((agentId: string) => string | null) | null = null
+  readonly viewerForwarder = new ViewerForwarder({
+    target: (agentId) => this.viewerTargetProvider?.(agentId) ?? null,
+    send: (connId, type, payload) => {
+      if (this.localClients.has(connId)) { this.sendTo(connId, { type, payload }); return true }
+      if (!this.isConnected()) return false
+      const frame = this.e2ee.wrapTarget(connId, type, payload)
+      if (!frame) return false
+      this.sendTo(connId, frame)
+      return true
+    },
+  })
   private readonly agentCreations = new AgentCreationReceipts(join(env.ADAPTER_DATA_DIR, 'agent-creations'))
   /** Injectable for queue-isolation tests; production uses the machine-local probe. */
   engineProbeProvider: typeof probeEngines = probeEngines
@@ -522,6 +564,7 @@ export class BackendSocket {
       isConnectionAvailable: connId => this.directDeviceSinks.has(connId) || this.isConnected(),
       onIdentityPaired: (connId, pub) => { if (this.directDeviceSinks.has(connId)) this.directDevicePins.set(connId, pub) },
       onIdentityRevoked: identity => { this.autonomousDeviceRelay?.revoke(identity); this.onDirectDeviceRevoked?.(fingerprint(b64d(identity))) },
+      onSessionDropped: (connId) => this.viewerForwarder.closeConnection(connId),
     })
     this.terminalP2p = new TerminalP2pResponderPool({
       sendSignal: (connId, type, payload) => this.sendP2pSignal(connId, type, payload),
@@ -569,6 +612,25 @@ export class BackendSocket {
     return this.e2ee.remotePasswordStatus()
   }
 
+  /** The account's private harness grid name, as the backend last reported it. Null until the first
+   *  `machine_meta` lands, or when this account has none yet. */
+  private harnessGridName: string | null = null
+  /** Injected so the derivation (a `grid` spawn) is a seam in tests; see `lib/gridDerive.ts`. */
+  deriveGridName: () => Promise<string | null> = deriveHarnessGridName
+
+  /** Which grid this machine's agents can be pointed at — for `harness status` and the models RPC. */
+  gridName(): string | null { return this.harnessGridName }
+
+  /**
+   * The account's private grid: the backend's word when it gave one, else what this machine can
+   * work out for itself (`lib/gridDerive.ts`). A backend that predates `machine_meta.gridName`
+   * left every picker empty while `grid models` listed the model fine; the derivation is the
+   * skill's own rule, so the daemon and the agent it opens agree on which grid is "yours".
+   */
+  private async resolveGridName(): Promise<string | null> {
+    return this.harnessGridName ?? await this.deriveGridName()
+  }
+
   connect(): void {
     if (this.closed || this.ws || this.connecting) return
     this.connecting = true
@@ -603,8 +665,14 @@ export class BackendSocket {
         onIdle: (idleMs) => console.log(`[backend] no traffic for ${Math.round(idleMs / 1000)}s — terminating the link`),
       })
 
-      // App-level ping refreshes the backend's presence key (TTL 30s).
-      this.appPing = setInterval(() => this.sendBestEffort({ t: 'ping' }), APP_PING_MS)
+      // App-level ping refreshes the backend's presence key (TTL 30s). The window's presence rides
+      // the same tick — a fresh socket knows nothing about the window, so its first tick goes through.
+      this.lastAppPresenceUpAt = 0
+      if (this.appOpenOwed && this.localClients.size > 0) this.sendAppPresence('open')
+      this.appPing = setInterval(() => {
+        this.sendBestEffort({ t: 'ping' })
+        if (this.localClients.size > 0) this.sendAppPresence('ping')
+      }, APP_PING_MS)
     })
 
     ws.on('message', (raw, isBinary) => {
@@ -634,6 +702,7 @@ export class BackendSocket {
       // completing during the gap burns a `claude -p` recap that goes nowhere. attachAdapter always
       // re-pushes the true count via recomputeAndSendClients on reconnect (and 0→N re-fires the replay).
       this.setCommanderCount(0, null) // active count is unknown until the next __clients snapshot
+      this.viewerForwarder.closeAll()
       void this.terminalStreams?.closeConnectionsWhere(
         (connId) => !isLocalClientId(connId),
         'backend disconnected',
@@ -703,6 +772,7 @@ export class BackendSocket {
 
   async stop(): Promise<void> {
     this.closed = true
+    this.viewerForwarder.closeAll()
     if (this.heartbeat) this.heartbeat.stop()
     if (this.appPing) clearInterval(this.appPing)
     await this.terminalStreams?.stop()
@@ -819,16 +889,44 @@ export class BackendSocket {
     this.enqueue({ t: 'up', webEligible: false, commanderEligible: true, frame: this.e2ee.wrapCommander(frame) })
   }
 
+  /**
+   * The desktop window is open on this computer: tell the backend, which turns it into the person's
+   * `user_daily_presence` row. The window itself says nothing — its loopback socket IS the fact, so
+   * this daemon reports it: `open` the moment a window registers (registerLocalClient), `ping` on the
+   * app-ping tick while any window is attached, at most once per APP_PRESENCE_UP_MS. Best-effort and
+   * plaintext on purpose: it is bookkeeping about the person, not data, and a daemon that is signed
+   * out (no backend dial) or between reconnects simply drops it rather than queueing a stale "was
+   * open" behind real frames. Returns whether a frame went up.
+   */
+  sendAppPresence(kind: 'open' | 'ping'): boolean {
+    const now = Date.now()
+    if (kind === 'ping' && now - this.lastAppPresenceUpAt < APP_PRESENCE_UP_MS) return false
+    const sent = this.sendBestEffort({
+      t: 'up',
+      webEligible: false,
+      commanderEligible: false,
+      frame: { type: 'app_presence', payload: { kind } },
+    })
+    if (sent) this.lastAppPresenceUpAt = now
+    if (kind === 'open') this.appOpenOwed = !sent
+    return sent
+  }
+
   /** Attach one authenticated loopback desktop client to the same RPC and event plane as cloud web. */
   registerLocalClient(connId: string, sink: LocalClientSink): boolean {
     if (!isLocalClientId(connId) || this.localClients.has(connId)) return false
     this.localClients.set(connId, sink)
+    this.sendAppPresence('open')
     return true
   }
 
   /** Release all connection-scoped state when the loopback WebSocket closes. */
   async unregisterLocalClient(connId: string): Promise<void> {
     if (!this.localClients.delete(connId)) return
+    this.viewerForwarder.closeConnection(connId)
+    // The window left before any link could hear it attach: nothing happened, as far as the backend
+    // is concerned, and a later link must not be told otherwise.
+    if (this.localClients.size === 0) this.appOpenOwed = false
     this.downChains.delete(connId)
     await this.terminalStreams?.closeConnection(connId, 'local client disconnected', false)
   }
@@ -1081,7 +1179,7 @@ export class BackendSocket {
     }
     // Client→adapter encrypted frames: chat messages plus trusted web control actions. Plaintext
     // passes through for legacy/device transition paths; undecryptable ciphertext is dropped.
-    if (!local && isEncryptedDownType(type)) {
+    if (!local && (isEncryptedDownType(type) || VIEWER_DOWN_TYPES.has(type))) {
       if (type !== 'message' && type !== 'question_response' && !isWrapped(frame.payload)) {
         const requestId = (frame.payload as { requestId?: unknown } | undefined)?.requestId
         if (requestId !== undefined) this.emitReply(connId, type, requestId, { error: 'E2EE_REQUIRED' })
@@ -1099,7 +1197,7 @@ export class BackendSocket {
     // than as an opaque __e2e envelope.
     // Terminal frames contain raw keystrokes, paste text and screen bytes after
     // unwrap. Never pass them to the frame logger, even in diagnostic mode.
-    if (env.LOG_FRAMES && !type.startsWith('terminal_') && type !== 'agent_read_file' && type !== 'project_preview') {
+    if (env.LOG_FRAMES && !type.startsWith('terminal_') && !type.startsWith('viewer_') && type !== 'agent_read_file' && type !== 'project_preview') {
       logFrame('←', connId ? `conn:${sid(connId)}` : 'backend', frame)
     }
     const reply = (t: string, rid: unknown, p: Record<string, unknown>): void => this.emitReply(connId, t, rid, p)
@@ -1133,6 +1231,7 @@ export class BackendSocket {
       // terminal controller lease until the 30-second heartbeat timeout.
       this.autonomousDeviceRelay?.drop(connId)
       this.e2ee.dropSession(connId)
+      this.viewerForwarder.closeConnection(connId)
       await this.terminalP2p.closeConnection(connId, 'client_disconnected', false)
       this.p2pPendingOpens.delete(connId)
       this.p2pStreams.delete(connId)
@@ -1152,13 +1251,25 @@ export class BackendSocket {
 
     // Machine display name (seed on connect + web renames) — mirrored locally for `harness status`.
     if (type === 'machine_meta') {
-      const name = (frame.payload as { name?: unknown } | undefined)?.name
+      const meta = frame.payload as { name?: unknown; gridName?: unknown } | undefined
+      const name = meta?.name
+      // The account's private grid, pushed on every connect. Held in memory only: it is the
+      // backend's value, and a daemon that cached it on disk would keep answering with a stale one
+      // after the account's grid changed.
+      this.harnessGridName = typeof meta?.gridName === 'string' && meta.gridName.trim() ? meta.gridName.trim() : null
       this.onMachineMeta?.(typeof name === 'string' && name.trim() ? name.trim() : null)
       return
     }
 
     const payload = (frame.payload ?? {}) as Record<string, unknown>
     const requestId = payload.requestId
+
+    if (type.startsWith('viewer_')) {
+      if (VIEWER_DOWN_TYPES.has(type) && (local || this.e2ee.sessionRole(connId) === 'web')) {
+        this.viewerForwarder.handle(connId, type, payload)
+      }
+      return
+    }
 
     if (type.startsWith('terminal_')) {
       this.noteTerminalInputRoute(connId, type, payload, transport)
@@ -1452,6 +1563,29 @@ export class BackendSocket {
           return
         }
 
+        case 'grid_models_list': {
+          // Only the account's OWN private grid: the picker is "models my machines serve", not a
+          // catalogue of every grid this computer's `grid` CLI happens to be signed into.
+          const gridName = await this.resolveGridName()
+          reply(type, requestId, {
+            gridName,
+            models: await listGridModels(gridName),
+            // Which engines a Local model can be offered to at all. Static per CLI version — it is
+            // the set of launch contracts in `gridLaunch.ts` — and answered here, beside the list,
+            // so the picker can say "Cursor runs only on its own login" instead of offering a row
+            // whose retarget the daemon would refuse. An older app ignores the field; an older
+            // daemon omits it, which the app reads as "offer everything", as before.
+            localModelEngines: gridCapableEngines(),
+            // Whether this MACHINE has a `grid` to run at all — `managed`, `path` or `missing` —
+            // as distinct from `gridName`, which is about the account. The Local model dialog was
+            // gating on the account alone and starting an agent whose second step is `grid`; this
+            // is what lets it, and the picker, say so first. An older app ignores the field.
+            gridCli: gridCliPresence(),
+          })
+          return
+        }
+
+
         case 'models_list': {
           const sessionId = typeof payload.agentId === 'string' && payload.agentId
             ? payload.agentId
@@ -1687,13 +1821,59 @@ export class BackendSocket {
             }
             dsh = installed.id
           }
+          // A first prompt is refused BEFORE any pane exists: an engine with no way to take one would
+          // otherwise open on an empty input and look like the person's request had been heard. The
+          // length bound is a first message's, not a document's. The text itself is never logged.
+          let prompt: string | null = null
+          if (payload.prompt !== undefined && payload.prompt !== null) {
+            if (typeof payload.prompt !== 'string') { reply(type, requestId, { error: 'INVALID_PROMPT', detail: 'prompt must be a string' }); return }
+            const trimmed = payload.prompt.trim()
+            if (trimmed.length > MAX_FIRST_PROMPT_CHARS) {
+              reply(type, requestId, { error: 'PROMPT_TOO_LONG', detail: `prompt is longer than ${MAX_FIRST_PROMPT_CHARS} characters` }); return
+            }
+            if (trimmed && !supportsFirstPrompt(engine)) {
+              reply(type, requestId, { error: 'PROMPT_UNSUPPORTED', detail: new FirstPromptUnsupportedError(engine).message }); return
+            }
+            prompt = trimmed || null
+          }
+          // Blank is "number it", the same as absent — a client that sends an empty field is not
+          // asking for an agent with no name.
+          const name = typeof payload.name === 'string' && payload.name.trim() ? payload.name.trim() : null
+          // The engine's named agent is refused BEFORE any pane exists, like the prompt: an engine with
+          // no way to open as one would otherwise come up as a general session under that agent's
+          // name. The shape is an identifier the engine looks a file up by — never a path.
+          let agent: string | null = null
+          if (payload.agent !== undefined && payload.agent !== null) {
+            if (typeof payload.agent !== 'string' || !AGENT_NAME_RE.test(payload.agent)) {
+              reply(type, requestId, { error: 'INVALID_AGENT', detail: 'agent must be 1-64 letters, digits, `-` or `_`' }); return
+            }
+            if (!supportsNamedAgent(engine)) {
+              reply(type, requestId, { error: 'AGENT_UNSUPPORTED', detail: new NamedAgentUnsupportedError(engine).message }); return
+            }
+            agent = payload.agent
+          }
+          // A permission mode picked in New Harness. A client that predates the choice sends only
+          // `bypassPermission`; one that sends a mode this engine does not have is refused rather than
+          // quietly launched in some other mode.
+          let permissionMode: string | null = null
+          if (payload.permissionMode !== undefined && payload.permissionMode !== null) {
+            if (typeof payload.permissionMode !== 'string' || !permissionModeFlags(engine, payload.permissionMode)) {
+              reply(type, requestId, { error: 'INVALID_PERMISSION_MODE', detail: `${engine} has no permission mode ${JSON.stringify(payload.permissionMode)}` }); return
+            }
+            permissionMode = payload.permissionMode
+          }
           const input = {
             engine,
             cwd: typeof cwd === 'string' ? cwd : '',
-            bypassPermission: payload.bypassPermission === true,
+            // On unless a client says otherwise: a harness works without stopping to ask for each command.
+            bypassPermission: permissionMode ? permissionModeApproves(permissionMode) : payload.bypassPermission !== false,
+            permissionMode,
             grid: grid.state === 'ok' ? grid.override : null,
             codexHome,
             dsh,
+            prompt,
+            name,
+            agent,
           }
           if (creationId !== undefined) {
             // Reserve before spawning. A transport retry carries the SAME creationId; a deliberate
@@ -1704,7 +1884,7 @@ export class BackendSocket {
               void this.agentCreations.run(creationId, creationFingerprint(projectFolder ? { ...input, projectFolder } : input), async () => {
                 let preparedFolder: string | undefined
                 if (projectFolder) {
-                  try { preparedFolder = await prepareProjectFolder(projectFolder) }
+                  try { preparedFolder = await prepareProjectFolder(projectFolder, { label: (dsh ? installedDsh(dsh)?.manifest.name : null) ?? engineLabel(input.engine) }) }
                   catch (error) {
                     return { state: 'failed', error: error instanceof ProjectFolderError ? error.code : 'PROJECT_PREPARATION_FAILED',
                       detail: error instanceof ProjectFolderError ? error.message : 'Could not prepare the project folder.' }
@@ -1749,6 +1929,19 @@ export class BackendSocket {
           if (!agentId) { reply(type, requestId, { error: 'MISSING_AGENT_ID' }); return }
           if (!this.onRetargetAgent) { reply(type, requestId, { error: 'UNSUPPORTED_ON_REMOTE' }); return }
           const clear = payload.clearGrid === true
+          // `gridModel` is the header picker's frame: a model id and nothing else. The endpoint and
+          // the credential are resolved HERE, from this machine's own signed-in `grid`, so neither
+          // ever crosses the relay and the app cannot be the source of truth for an address it does
+          // not know. A client that sends the full `grid` object still works unchanged.
+          const picked = typeof payload.gridModel === 'string' ? payload.gridModel : ''
+          if (picked && payload.grid === undefined && !clear) {
+            const resolved = await resolveGridTarget(await this.resolveGridName(), picked)
+            if (!resolved) {
+              reply(type, requestId, { error: 'GRID_UNAVAILABLE', detail: 'Could not read this machine\'s grid endpoint.' })
+              return
+            }
+            payload.grid = resolved
+          }
           const target = parseGridLaunchOverride(payload.grid)
           // Exactly one, and `clearGrid` is a separate field rather than `grid: null` on purpose:
           // parseGridLaunchOverride already answers `absent` for both undefined and null, so

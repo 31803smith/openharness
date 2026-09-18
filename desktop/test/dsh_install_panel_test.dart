@@ -87,7 +87,7 @@ void main() {
     expect(_markOf(tester, 'Check this machine'), _Mark.pending);
     expect(
       find.text(
-        'The first install takes a few minutes. You can keep using Harness.',
+        'The first install takes a few minutes. You can keep using OpenHarness.',
       ),
       findsOneWidget,
     );
@@ -196,7 +196,7 @@ void main() {
       expect(_markOf(tester, 'Fetch Marp'), _Mark.done);
       expect(_markOf(tester, 'Set up the toolchain'), _Mark.done);
       expect(_markOf(tester, 'Check this machine'), _Mark.done);
-      expect(find.text('Starting the agent…'), findsOneWidget);
+      expect(find.text('Starting the harness…'), findsOneWidget);
 
       // Already installed toolchain: straight from fetch to done.
       await _show(

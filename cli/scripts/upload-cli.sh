@@ -12,7 +12,7 @@
 # The CURRENT version is read from the remote metadata.json on GCS (single source of truth) and the
 # patch is bumped from there — nothing is git-committed (the version is injected into the bundle via
 # ADAPTER_VERSION, so the running binary's version equals the published manifest version).
-# Prereqs: `gcloud storage` (or gsutil) authenticated with WRITE access on the bucket; the
+# Prereqs: `gcloud storage` authenticated with WRITE access on the bucket; the
 # bucket/objects must be public-read; `node`+`npm`.
 set -euo pipefail
 
@@ -63,35 +63,27 @@ done
 
 command -v node >/dev/null 2>&1 || { echo "error: node not found" >&2; exit 1; }
 
-# --- GCS client: `gcloud storage` if we have it, else gsutil ---
-# gsutil is a standalone Python tool that only understands gcloud's *user* and *service-account-key*
-# credentials. It cannot use the external-account (federated) credential that Workload Identity
-# Federation issues, so a CI job authenticated by WIF fails on every gsutil call while the identical
-# `gcloud storage` call works — it is the same gcloud binary that performed the token exchange.
-# gsutil stays as the fallback for a laptop whose SDK predates `gcloud storage`.
-if command -v gcloud >/dev/null 2>&1 && gcloud storage --help >/dev/null 2>&1; then
-  GCS_CLI=gcloud
-elif command -v gsutil >/dev/null 2>&1; then
-  GCS_CLI=gsutil
-  echo ">> note: falling back to gsutil (no 'gcloud storage'); this will not work under workload identity federation" >&2
-else
-  echo "error: neither 'gcloud storage' nor gsutil found — install/authenticate the gcloud SDK" >&2
+# --- GCS client: `gcloud storage`, and only `gcloud storage` ---
+# gsutil was retired from this repo on 2026-09-17. It is a standalone Python tool that only
+# understands gcloud's *user* and *service-account-key* credentials: it cannot use the
+# external-account (federated) credential Workload Identity Federation issues, so every call fails
+# under WIF while the identical `gcloud storage` call works — it is the same gcloud binary that
+# performed the token exchange. Every release path here runs on WIF now. Do not reintroduce it.
+command -v gcloud >/dev/null 2>&1 || {
+  echo "error: gcloud not found — install/authenticate the gcloud SDK" >&2
   exit 1
-fi
+}
+gcloud storage --help >/dev/null 2>&1 || {
+  echo "error: this gcloud is too old for 'gcloud storage' — update the gcloud SDK" >&2
+  exit 1
+}
 
 # gcs_cp <src> <dst> [cache-control] [content-type] — either side may be gs:// or a local path or `-`.
 gcs_cp() {
-  local src="$1" dst="$2" cc="${3:-}" ct="${4:-}" args=()
-  if [ "$GCS_CLI" = gcloud ]; then
-    args=(storage cp)
-    if [ -n "$cc" ]; then args+=("--cache-control=$cc"); fi
-    if [ -n "$ct" ]; then args+=("--content-type=$ct"); fi
-    gcloud "${args[@]}" "$src" "$dst"
-  else
-    if [ -n "$cc" ]; then args+=(-h "Cache-Control:$cc"); fi
-    if [ -n "$ct" ]; then args+=(-h "Content-Type:$ct"); fi
-    gsutil "${args[@]}" cp "$src" "$dst"
-  fi
+  local src="$1" dst="$2" cc="${3:-}" ct="${4:-}" args=(storage cp)
+  if [ -n "$cc" ]; then args+=("--cache-control=$cc"); fi
+  if [ -n "$ct" ]; then args+=("--content-type=$ct"); fi
+  gcloud "${args[@]}" "$src" "$dst"
 }
 
 cleanup() { rm -f "${SRC:-}" "${DST:-}"; }

@@ -131,8 +131,21 @@ that a manifest does not know. The catalog publisher lists every such folder; th
 
 ```json
 { "homepage": "https://typst.app", "upstream": "https://github.com/typst/typst", "license": "MIT",
-  "screenshots": [] }
+  "tagline": "Markup-based typesetting system",
+  "screenshots": [],
+  "examples": [{ "prompt": "A one-page invoice for Studio Nord, due in 30 days.",
+                 "image": "https://raw.githubusercontent.com/autonomous-ai/openharness/main/store/showcase/typst/invoice.jpg",
+                 "caption": "Invoice · 1 page PDF" }] }
 ```
+
+`tagline` (≤ 80 characters) is the line under the harness's name in New Harness's agent search —
+"MuJoCo by Google DeepMind", then "Advanced physics simulation". Take it from the project's own website
+or repository, in its words, shortened only by dropping clauses. A package without one shows its category.
+
+`examples` (≤ 8) is what the product page leads with: a prompt, a picture of what the harness really
+made from it, and a line naming the result. The page types the prompt out, reveals the picture, and
+"Try this prompt" opens New Harness with the prompt as the first message. Pictures live in
+`store/showcase/<name>/`, 1600×1000 JPEG under 350 KB, and are real output — never a mock-up.
 
 **In a repository of its own**: add `store/registry/<owner>/<name>.json` in a pull request.
 
@@ -148,7 +161,7 @@ Built-in entries derive this field from the manifest automatically.
 
 A package that is one folder of a bigger repository names it with `"path"`; install then fetches
 that folder alone. Run the conformance check and include a real example in the PR; the full test
-suite is currently triggered manually. Once merged, the next catalog publication lists it.
+suite is currently triggered manually. Once merged, the catalog publisher lists it automatically.
 The app offers the tile before the package is installed. `verified: true` marks built-in packages;
 community packages show their source on install.
 
@@ -160,14 +173,13 @@ and writes one `catalog.json` to the `store-catalog` branch. It uses GitHub only
 or release the app, run package setup scripts, or access cloud infrastructure. Authors do not
 edit a generated index.
 
-**Automation setup is pending.** The ready-to-install
-[workflow](tools/publish-store-catalog.workflow.yml) belongs at
-`.github/workflows/publish-store-catalog.yml`. A maintainer with permission to write workflow
-files can copy it there to publish automatically after package changes merge to `main`.
-It uses pinned official actions, limits write permission to the publishing job, and never runs
-on pull requests or forks. Until installed, a maintainer can publish from a clean, current
-`main` checkout with `node store/tools/catalog.mjs --publish`, supplying `GITHUB_TOKEN` with
-repository contents-write access.
+Package changes merged into `main` trigger
+[`Publish Store catalog`](../.github/workflows/publish-store-catalog.yml), which runs the publisher
+on `main` as merged; it uses pinned official actions, gives write permission to the publishing job
+alone, and never runs on pull requests or forks. **Actions → Publish Store catalog → Run workflow**
+republishes by hand. A maintainer can also publish from a clean, current `main` checkout with
+`node store/tools/catalog.mjs --publish`, supplying `GITHUB_TOKEN` with repository contents-write
+access.
 
 The CLI reads that public JSON over HTTPS, using conditional requests and a five-minute cache.
 Concurrent requests share one fetch. An open Store asks connected machines again every minute;
@@ -251,7 +263,8 @@ its own and gets an entry in `registry/` instead. Nothing changes for the people
 
 The app's start page has a door to the store: every harness as a card, and a page per harness — its
 mark, who made it (`author`), its category and description, where it lives (`repo` and `path`,
-`homepage`, `upstream`), what it is licensed under (`license`), pictures (`screenshots`), ratings and
+`homepage`, `upstream`), what it is licensed under (`license`), prompts beside what they made
+(`examples`), pictures (`screenshots`), ratings and
 reviews, and a row per machine with Get, Open or Remove. Installing is still what it always was — a
 clone (for a built-in package, of its one folder) under `~/.harness/dsh` on one machine, its toolchain
 set up beside it — so the page is honest about that: a harness is on a machine, not on an account.

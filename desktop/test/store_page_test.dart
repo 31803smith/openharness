@@ -1,5 +1,5 @@
 // A harness's page in the Harness Store, past the happy path the screen test
-// pins: every machine's row and what its install is doing, Get/Open/Remove
+// pins: this computer's install state, Get/Open/Remove
 // under double clicks and pages that vanish mid-dialog, engines as the probes
 // saw them, viewer packages, links, pictures, reviews, the shelves around the
 // page, and a store whose control plane has no ratings routes at all (404).
@@ -10,12 +10,14 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:harness/api/api_client.dart';
 import 'package:harness/auth/auth_session.dart';
 import 'package:harness/core/config.dart';
 import 'package:harness/core/dsh_catalog.dart';
 import 'package:harness/core/engine_availability.dart';
 import 'package:harness/core/models.dart';
+import 'package:harness/shared/widgets/app_choice_picker.dart';
 import 'package:harness/state/app_state.dart';
 import 'package:harness/store/store_controller.dart';
 import 'package:harness/store/store_models.dart';
@@ -242,6 +244,63 @@ void main() {
   setUpAll(loadRealFonts);
 
   group('Get, Open and Remove', () {
+    testWidgets('the primary Get respects this computer’s availability', (
+      tester,
+    ) async {
+      final (app, _) = await _open(
+        tester,
+        initialHarness: _typst.id,
+        seed: (app) {
+          app.machine(
+            'machine-1',
+            local: true,
+            online: false,
+            dsh: const [_typst],
+          );
+          app.machine('remote', online: true, dsh: const [_typst]);
+        },
+      );
+      final local = app.machineStates['machine-1']!;
+      void expectEnabled(bool enabled) {
+        expect(
+          tester.widget<FilledButton>(_key('store-primary-action')).onPressed !=
+              null,
+          enabled,
+        );
+      }
+
+      expectEnabled(false);
+      expect(
+        _in('store-machine:machine-1', find.text('Offline')),
+        findsOneWidget,
+      );
+      local.nodeOnline = true;
+      local.needsLink = true;
+      app.changed();
+      await tester.pumpAndSettle();
+      expectEnabled(false);
+      local.needsLink = false;
+      app.changed();
+      await tester.pumpAndSettle();
+      expectEnabled(true);
+
+      // An install started elsewhere also disables the page’s main action.
+      local.dsh.runs[_typst.id] = DshInstallRun(_typst.id);
+      app.changed();
+      await tester.pump();
+      expect(
+        tester.widget<FilledButton>(_key('store-primary-action')).onPressed,
+        isNull,
+      );
+      local.dsh.runs[_typst.id]!.apply(
+        DshInstallProgress(id: _typst.id, phase: 'failed'),
+      );
+      app.changed();
+      await tester.pumpAndSettle();
+      expectEnabled(true);
+      expect(app.installs, isEmpty);
+    });
+
     testWidgets(
       'Get installs on this machine once however fast the clicks, and a failure is said',
       (tester) async {
@@ -252,7 +311,7 @@ void main() {
         app.installGate = Completer<String?>();
         expect(_in('store-primary-action', find.text('Get')), findsOneWidget);
         await tester.tap(_key('store-primary-action'));
-        await tester.tap(_key('store-get:machine-1'));
+        await tester.tap(_key('store-primary-action'), warnIfMissed: false);
         expect(app.installs, [('machine-1', 'autonomous/typst')]);
         await tester.pump();
         expect(
@@ -267,12 +326,12 @@ void main() {
           ),
           findsOneWidget,
         );
-        expect(_key('store-get:machine-1'), findsNothing);
+        expect(_in('store-primary-action', find.text('Get')), findsNothing);
 
         app.installGate!.complete('kicad-cli is not on studio-mac');
         await tester.pumpAndSettle();
         expect(find.text('kicad-cli is not on studio-mac'), findsOneWidget);
-        expect(_key('store-get:machine-1'), findsOneWidget);
+        expect(_in('store-primary-action', find.text('Get')), findsOneWidget);
         expect(
           tester.widget<FilledButton>(_key('store-primary-action')).onPressed,
           isNotNull,
@@ -285,7 +344,7 @@ void main() {
     ) async {
       final (app, _) = await _open(tester, initialHarness: 'autonomous/typst');
       app.installGate = Completer<String?>();
-      await tester.tap(_key('store-get:machine-1'));
+      await tester.tap(_key('store-primary-action'));
       await tester.pump();
       await tester.tap(_key('store-back'));
       await tester.pumpAndSettle();
@@ -385,14 +444,17 @@ void main() {
     );
 
     testWidgets(
-      'Open, from the page or a machine row, opens New Harness on that machine in a tab of its own',
+      'Open opens New Harness on this machine in a tab of its own, and a dismissed dialog leaves none',
       (tester) async {
         final (app, _) = await _open(tester, initialHarness: 'autonomous/marp');
         final tabs = app.swarms.length;
         expect(_in('store-primary-action', find.text('Open')), findsOneWidget);
         await tester.tap(_key('store-primary-action'));
         await tester.pumpAndSettle();
-        expect(find.text('New Harness'), findsOneWidget);
+        expect(
+          find.byKey(const ValueKey('create-agent-submit')),
+          findsOneWidget,
+        );
         expect(app.swarms.length, tabs + 1);
         await tester.sendKeyEvent(LogicalKeyboardKey.escape);
         await tester.pumpAndSettle();
@@ -401,163 +463,136 @@ void main() {
           tabs,
           reason: 'a dismissed dialog leaves no tab',
         );
-
-        await tester.tap(_key('store-open:machine-1'));
-        await tester.pumpAndSettle();
-        expect(find.text('New Harness'), findsOneWidget);
-        await tester.sendKeyEvent(LogicalKeyboardKey.escape);
-        await tester.pumpAndSettle();
-        expect(app.swarms.length, tabs);
       },
     );
   });
 
   testWidgets(
-    'every machine has a row — this computer first, then by name — saying where its install stands',
+    'only this computer has an install row, through progress, failure and recovery',
     (tester) async {
-      DshInstallRun run(String phase, {String? line}) => DshInstallRun(
-        _typst.id,
-      )..apply(DshInstallProgress(id: _typst.id, phase: phase, line: line));
       final (app, _) = await _open(
         tester,
-        initialHarness: 'autonomous/typst',
-        settle: false,
+        initialHarness: _typst.id,
         seed: (app) {
-          app.machine('juliet', dsh: const [_typst]);
-          app.machine('india').dsh.error =
-              'This machine could not report its harnesses';
-          app.machine('hotel');
-          app.machine('golf').dsh.error = 'UNSUPPORTED';
+          app.machine('remote', dsh: const [_marp, _typst]);
           app.machine(
-            'foxtrot',
-            dsh: const [
-              DshEntry(
-                id: 'autonomous/typst',
-                name: 'Typst',
-                engine: 'claude',
-                installed: true,
-                linked: true,
-              ),
-            ],
-          );
-          app
-              .machine('echo', dsh: const [_typst])
-              .dsh
-              .runs[_typst.id] = DshInstallRun(_typst.id)
-            ..apply(DshInstallProgress(id: _typst.id, phase: 'clone'))
-            ..apply(
-              DshInstallProgress(
-                id: _typst.id,
-                phase: 'failed',
-                detail: 'no space left',
-              ),
-            );
-          app.machine('delta', dsh: const [_typst]).dsh.runs[_typst.id] = run(
-            'doctor',
-            line: 'miss typst-cli (cargo install typst-cli)',
-          )..apply(DshInstallProgress(id: _typst.id, phase: 'failed'));
-          app.machine('charlie', dsh: const [_typst]).dsh.runs[_typst.id] = run(
-            'queued',
-          );
-          app.machine('Beta', dsh: const [_typst]).dsh.runs[_typst.id] = run(
-            'doctor',
-          );
-          app.machine('alpha', dsh: const [_typst]).dsh.runs[_typst.id] = run(
-            'setup',
-          );
-          app
-              .machine(
-                'machine-1',
-                name: 'zulu-mac',
-                local: true,
-                dsh: const [_typst],
-              )
-              .dsh
-              .runs[_typst.id] = run(
-            'clone',
+            'machine-1',
+            name: 'studio-mac',
+            local: true,
+            dsh: const [_typst],
           );
         },
       );
-      final order = [
-        'machine-1',
-        'alpha',
-        'Beta',
-        'charlie',
-        'delta',
-        'echo',
-        'foxtrot',
-        'golf',
-        'hotel',
-        'india',
-        'juliet',
-      ];
-      final tops = [
-        for (final id in order) tester.getTopLeft(_key('store-machine:$id')).dy,
-      ];
-      expect(tops, [...tops]..sort(), reason: 'this computer, then by name');
-
-      void says(String id, String status) => expect(
-        _in('store-machine:$id', find.text(status)),
+      final local = app.machineStates['machine-1']!;
+      void says(String status) => expect(
+        _in('store-machine:machine-1', find.text(status)),
         findsOneWidget,
-        reason: id,
       );
-      says('machine-1', 'zulu-mac · this computer');
-      says('machine-1', 'Fetching…');
-      says('alpha', 'alpha');
-      says('alpha', 'Setting up the toolchain…');
-      says('Beta', 'Checking…');
-      says('charlie', 'Installing…');
-      for (final id in ['machine-1', 'alpha', 'Beta', 'charlie']) {
+      expect(_key('store-machine:remote'), findsNothing);
+      says('studio-mac · this computer');
+      says('Not installed');
+      final quietColor = tester
+          .widget<Text>(
+            _in('store-machine:machine-1', find.text('Not installed')),
+          )
+          .style
+          ?.color;
+
+      for (final (phase, label) in [
+        ('clone', 'Fetching…'),
+        ('setup', 'Setting up the toolchain…'),
+        ('doctor', 'Checking…'),
+        ('queued', 'Installing…'),
+      ]) {
+        local.dsh.runs[_typst.id] = DshInstallRun(_typst.id)
+          ..apply(DshInstallProgress(id: _typst.id, phase: phase));
+        app.changed();
+        await tester.pump();
+        says(label);
         expect(
-          _in('store-machine:$id', find.byType(CircularProgressIndicator)),
+          _in(
+            'store-machine:machine-1',
+            find.byType(CircularProgressIndicator),
+          ),
           findsOneWidget,
-          reason: id,
+        );
+        expect(
+          tester.widget<FilledButton>(_key('store-primary-action')).onPressed,
+          isNull,
         );
       }
-      says('delta', 'miss typst-cli (cargo install typst-cli)');
-      says('echo', 'Install failed');
-      final failed = tester.widget<Text>(
-        _in('store-machine:echo', find.text('Install failed')),
+      local.dsh.runs[_typst.id]!.apply(
+        DshInstallProgress(id: _typst.id, phase: 'failed'),
+      );
+      app.changed();
+      await tester.pumpAndSettle();
+      says('Install failed');
+      expect(
+        tester
+            .widget<Text>(
+              _in('store-machine:machine-1', find.text('Install failed')),
+            )
+            .style
+            ?.color,
+        isNot(quietColor),
       );
       expect(
-        failed.style?.color,
-        isNot(
-          tester
-              .widget<Text>(
-                _in('store-machine:juliet', find.text('Not installed')),
-              )
-              .style
-              ?.color,
+        _in('store-primary-action', find.text('Try again')),
+        findsOneWidget,
+      );
+
+      local.dsh.runs[_typst.id] = DshInstallRun(_typst.id)
+        ..apply(
+          DshInstallProgress(
+            id: _typst.id,
+            phase: 'doctor',
+            line: 'miss typst-cli (cargo install typst-cli)',
+          ),
+        )
+        ..apply(DshInstallProgress(id: _typst.id, phase: 'failed'));
+      app.changed();
+      await tester.pumpAndSettle();
+      says('miss typst-cli (cargo install typst-cli)');
+      await tester.tap(_key('store-primary-action'));
+      await tester.pumpAndSettle();
+      expect(app.installs, [('machine-1', _typst.id)]);
+
+      local.dsh.runs.clear();
+      local.dsh.loaded = false;
+      for (final (error, label) in <(String?, String)>[
+        (null, 'Asking…'),
+        (
+          'UNSUPPORTED',
+          'Update the harness CLI on this machine to install harnesses',
         ),
-        reason: 'a failure is not in the quiet colour',
-      );
-      expect(_in('store-get:delta', find.text('Try again')), findsOneWidget);
-      says('foxtrot', 'Installed · linked to a checkout');
-      expect(_key('store-open:foxtrot'), findsOneWidget);
-      expect(_key('store-remove:foxtrot'), findsOneWidget);
-      says(
-        'golf',
-        'Update the harness CLI on this machine to install harnesses',
-      );
-      says('hotel', 'Asking…');
-      says('india', 'This machine could not report its harnesses');
-      for (final id in ['golf', 'hotel', 'india']) {
+        (
+          'This machine could not report its harnesses',
+          'This machine could not report its harnesses',
+        ),
+      ]) {
+        local.dsh.error = error;
+        app.changed();
+        await tester.pumpAndSettle();
+        says(label);
         expect(
-          tester.widget<FilledButton>(_key('store-get:$id')).onPressed,
+          tester.widget<FilledButton>(_key('store-primary-action')).onPressed,
           isNull,
-          reason: '$id has not said it can install',
         );
       }
-      says('juliet', 'Not installed');
-
-      await tester.tap(_key('store-get:delta'));
-      await tester.pump();
-      await tester.tap(_key('store-get:juliet'));
-      await tester.pump();
-      expect(app.installs, [
-        ('delta', 'autonomous/typst'),
-        ('juliet', 'autonomous/typst'),
+      local.dsh.replace(const [
+        DshEntry(
+          id: 'autonomous/typst',
+          name: 'Typst',
+          engine: 'claude',
+          installed: true,
+          linked: true,
+        ),
       ]);
+      app.changed();
+      await tester.pumpAndSettle();
+      says('Installed · linked to a checkout');
+      expect(_in('store-primary-action', find.text('Open')), findsOneWidget);
+      expect(_key('store-remove:machine-1'), findsOneWidget);
     },
   );
 
@@ -617,28 +652,55 @@ void main() {
         _in('store-machine:machine-1', find.byType(TextButton)),
         findsNothing,
       );
-      expect(_in('store-machine:alpha', find.text('alpha')), findsOneWidget);
-      expect(_key('store-open:alpha'), findsOneWidget);
+      for (final id in ['alpha', 'beta', 'gamma']) {
+        expect(_key('store-machine:$id'), findsNothing);
+      }
+      final local = app.machineStates['machine-1']!;
+      local.engines.replace(const [
+        EngineAvailability(engine: 'claude', installed: false),
+      ]);
+      app.changed();
+      await tester.pumpAndSettle();
       expect(
-        _in('store-machine:beta', find.text('Not installed')),
+        _in('store-machine:machine-1', find.text('Not installed')),
         findsOneWidget,
       );
-      expect(_key('store-get:beta'), findsNothing, reason: 'nothing to offer');
-      expect(_key('store-get:gamma'), findsOneWidget);
+      expect(_key('store-get:machine-1'), findsNothing);
       // A rating with no bars drawn still reads as its number.
       expect(find.text('5.0 · 1 rating'), findsOneWidget);
       expect(find.text('out of 5 · 1 rating'), findsOneWidget);
 
       final tabs = app.swarms.length;
+      expect(
+        tester.widget<FilledButton>(_key('store-primary-action')).onPressed,
+        isNull,
+        reason:
+            'wait for this computer’s engine probe, as the machine row does',
+      );
+      app.machineStates['machine-1']!.engines.replace(const [
+        EngineAvailability(
+          engine: 'claude',
+          installed: false,
+          installable: true,
+        ),
+      ]);
+      app.changed();
+      await tester.pumpAndSettle();
       // Get on an engine is Open: the daemon installs it on the way.
       expect(_in('store-primary-action', find.text('Get')), findsOneWidget);
       await tester.tap(_key('store-primary-action'));
       await tester.pumpAndSettle();
-      expect(find.text('New Harness'), findsOneWidget);
+      expect(find.byKey(const ValueKey('create-agent-submit')), findsOneWidget);
       expect(app.installs, isEmpty);
       await tester.sendKeyEvent(LogicalKeyboardKey.escape);
       await tester.pumpAndSettle();
       expect(app.swarms.length, tabs);
+      local.engines.replace(const [
+        EngineAvailability(engine: 'claude', installed: true),
+      ]);
+      app.changed();
+      await tester.pumpAndSettle();
+      expect(_in('store-primary-action', find.text('Open')), findsOneWidget);
     },
   );
 
@@ -669,7 +731,7 @@ void main() {
     tester,
   ) async {
     await _open(tester, initialHarness: 'codex', seed: (_) {});
-    expect(find.text('No machines yet.'), findsOneWidget);
+    expect(find.text('Connecting to this computer…'), findsOneWidget);
     expect(_key('store-primary-action'), findsNothing);
   });
 
@@ -713,8 +775,8 @@ void main() {
         ),
       );
       expect(find.text('Website'), findsNothing);
-      expect(find.text('Package source'), findsNothing);
-      await tester.tap(find.text('Upstream project'));
+      expect(find.text('Package'), findsNothing);
+      await tester.tap(find.text('Source'));
       await tester.pump();
       expect(launched, ['https://github.com/marp-team/marp-cli']);
 
@@ -737,17 +799,24 @@ void main() {
   );
 
   testWidgets(
-    'every link the registry names is a chip, the licence without an arrow',
+    'every link the registry names is under the name, the licence without an arrow',
     (tester) async {
       await _open(tester, initialHarness: 'autonomous/marp');
-      for (final label in [
-        'Website',
-        'Upstream project',
-        'Package source',
-        'Licence · MIT',
-      ]) {
+      for (final label in ['Website', 'Source', 'Package', 'MIT licence']) {
         expect(find.text(label), findsOneWidget, reason: label);
       }
+      expect(
+        find.descendant(
+          of: find
+              .ancestor(
+                of: find.text('MIT licence'),
+                matching: find.byType(Row),
+              )
+              .first,
+          matching: find.byIcon(LucideIcons.arrowUpRight300),
+        ),
+        findsNothing,
+      );
     },
   );
 
@@ -961,7 +1030,7 @@ void main() {
         app.machineStates.clear();
         app.changed();
         await tester.pumpAndSettle();
-        expect(find.text('Asking your machines…'), findsOneWidget);
+        expect(find.text('Asking this computer…'), findsOneWidget);
       },
     );
 
@@ -982,73 +1051,153 @@ void main() {
       );
     });
 
-    testWidgets(
-      'a card\'s action opens where it is installed — here, else an online machine — else the page',
-      (tester) async {
-        final (app, _) = await _open(
-          tester,
-          seed: (app) {
-            app.machine(
-              'machine-1',
-              name: 'studio-mac',
-              local: true,
-              dsh: const [_typst],
-            );
-            app.machine(
-              'remote',
-              online: true,
-              dsh: const [
-                DshEntry(
-                  id: 'autonomous/typst',
-                  name: 'Typst',
-                  engine: 'claude',
-                  installed: true,
-                ),
-                DshEntry(
-                  id: 'autonomous/marp',
-                  name: 'Marp',
-                  engine: 'claude',
-                  installed: true,
-                ),
-              ],
-            );
-            app.machine(
-              'offline',
-              online: false,
-              dsh: const [
-                DshEntry(
-                  id: 'autonomous/manim',
-                  name: 'Manim',
-                  engine: 'claude',
-                  category: 'Math animation',
-                  installed: true,
-                ),
-              ],
-            );
-          },
-        );
-        await tester.tap(_key('store-shelf-category:Media'));
-        await tester.pumpAndSettle();
-        final tabs = app.swarms.length;
+    testWidgets('cards and pages install and open only on this computer', (
+      tester,
+    ) async {
+      final (app, _) = await _open(
+        tester,
+        seed: (app) {
+          app.machine(
+            'machine-1',
+            name: 'studio-mac',
+            local: true,
+            dsh: const [_typst],
+          );
+          app.machine(
+            'remote',
+            online: true,
+            dsh: const [
+              DshEntry(
+                id: 'autonomous/typst',
+                name: 'Typst',
+                category: 'Documents',
+                engine: 'claude',
+                installed: true,
+              ),
+              DshEntry(
+                id: 'autonomous/marp',
+                name: 'Marp',
+                category: 'Slides',
+                engine: 'claude',
+                installed: true,
+              ),
+            ],
+          );
+          app.machine(
+            'offline',
+            online: false,
+            dsh: const [
+              DshEntry(
+                id: 'autonomous/manim',
+                name: 'Manim',
+                engine: 'claude',
+                category: 'Math animation',
+                installed: true,
+              ),
+            ],
+          );
+        },
+      );
+      await tester.tap(_key('store-shelf-category:Media'));
+      await tester.pumpAndSettle();
+      final tabs = app.swarms.length;
 
-        expect(
-          _in('store-action:autonomous/typst', find.text('Open')),
-          findsOneWidget,
-        );
-        await tester.tap(_key('store-action:autonomous/typst'));
-        await tester.pumpAndSettle();
-        expect(find.text('New Harness'), findsOneWidget);
-        await tester.sendKeyEvent(LogicalKeyboardKey.escape);
-        await tester.pumpAndSettle();
-        expect(app.swarms.length, tabs);
+      expect(
+        _in('store-action:autonomous/typst', find.text('Get')),
+        findsOneWidget,
+      );
+      await tester.tap(_key('store-action:autonomous/typst'));
+      await tester.pumpAndSettle();
+      expect(_key('store-page:autonomous/typst'), findsOneWidget);
+      expect(_in('store-primary-action', find.text('Get')), findsOneWidget);
+      expect(find.text('New Harness'), findsNothing);
+      expect(app.swarms.length, tabs);
+      expect(app.installs, isEmpty);
 
-        // Installed only on a machine that is offline: nowhere to open it.
-        await tester.tap(_key('store-action:autonomous/manim'));
-        await tester.pumpAndSettle();
-        expect(_key('store-page:autonomous/manim'), findsOneWidget);
-        expect(app.swarms.length, tabs);
-      },
-    );
+      expect(_key('store-machine:remote'), findsNothing);
+      expect(_key('store-machine:offline'), findsNothing);
+      await tester.tap(_key('store-primary-action'));
+      await tester.pumpAndSettle();
+      expect(app.installs, [('machine-1', _typst.id)]);
+      await tester.tap(_key('store-back'));
+      await tester.pumpAndSettle();
+
+      // Once installed locally, the same card becomes Open and stays local.
+      app.machineStates['machine-1']!.dsh.replace(
+        app.machineStates['remote']!.dsh.entries,
+      );
+      app.changed();
+      await tester.pumpAndSettle();
+      expect(
+        _in('store-action:autonomous/typst', find.text('Open')),
+        findsOneWidget,
+      );
+      await tester.tap(_key('store-action:autonomous/typst'));
+      await tester.pumpAndSettle();
+      expect(
+        tester
+            .widget<AppChoicePicker<String>>(_key('new-agent-machine-field'))
+            .value,
+        'machine-1',
+      );
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.pumpAndSettle();
+
+      // Remote-only packages never leak into the local catalog.
+      expect(_key('store-action:autonomous/manim'), findsNothing);
+      expect(app.swarms.length, tabs);
+    });
+
+    for (final (id, name, category) in [
+      ('autonomous/marp', 'Marp', 'Media'),
+      ('claude', 'Claude Code', 'Code'),
+    ]) {
+      testWidgets(
+        '$name uses local installation state in every store listing',
+        (tester) async {
+          final (app, _) = await _open(
+            tester,
+            seed: (app) {
+              app.machine(
+                'machine-1',
+                local: true,
+                dsh: const [
+                  DshEntry(
+                    id: 'autonomous/marp',
+                    name: 'Marp',
+                    engine: 'claude',
+                    category: 'Slides',
+                  ),
+                ],
+              );
+              app.machine(
+                'remote',
+                online: true,
+                dsh: const [_marp],
+                engines: const [
+                  EngineAvailability(engine: 'claude', installed: true),
+                ],
+              );
+            },
+          );
+          void expectGet() =>
+              expect(_in('store-action:$id', find.text('Get')), findsOneWidget);
+          expectGet(); // Discover.
+          await tester.tap(_key('store-shelf-category:$category'));
+          await tester.pumpAndSettle();
+          expectGet();
+          await tester.enterText(_key('store-search'), name);
+          await tester.pumpAndSettle();
+          expectGet();
+          await tester.tap(_key('store-action:$id'));
+          await tester.pumpAndSettle();
+          expect(_key('store-page:$id'), findsOneWidget);
+          expect(_in('store-primary-action', find.text('Get')), findsOneWidget);
+          expect(find.text('New Harness'), findsNothing);
+          expect(app.installs, isEmpty);
+        },
+      );
+    }
   });
 
   testWidgets('without an injected API nothing is asked under test', (

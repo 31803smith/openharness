@@ -107,6 +107,19 @@ export function viewerUse(manifest: DshManifest): string | null {
   return manifest.viewer && 'use' in manifest.viewer ? manifest.viewer.use : null
 }
 
+/**
+ * What a harness's viewer pane is called: the shared viewer package's own name ("3D Viewer"), looked
+ * up by `nameOf` (the installed package, else the catalog); for a viewer the harness ships itself,
+ * its own name and "Viewer" ("Marp Viewer"). Null for a harness with no viewer, and for a used
+ * package whose name is not known here — the pane then says what the app can.
+ */
+export function dshViewerName(manifest: DshManifest, nameOf: (id: string) => string | null | undefined): string | null {
+  if (!manifest.viewer) return null
+  const used = viewerUse(manifest)
+  if (used) return nameOf(used)?.trim() || null
+  return `${manifest.name} Viewer`
+}
+
 /** The base engine of an agent package; a viewer package answers null. */
 export function dshEngine(manifest: DshManifest): DshManifest['engine'] | null {
   return manifest.engine ?? null

@@ -1,30 +1,54 @@
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
+  AGENT_NAME_RE,
   BYPASS_PERMISSION_FLAGS,
+  FIRST_PROMPT_ARGS,
+  FirstPromptUnsupportedError,
   LAUNCH_RESUME_FLAG,
+  NAMED_AGENT_ARGS,
+  NamedAgentUnsupportedError,
+  PERMISSION_MODES,
   buildEngineCommandArgv,
   buildEngineLaunchArgv,
   commandAvailableInInteractiveShell,
+  firstPromptArgs,
+  gridPanePrelude,
   harnessNodePrelude,
+  namedAgentArgs,
+  supportsFirstPrompt,
+  supportsNamedAgent,
+  unreadableCwdGuard,
 } from './engineLaunch.js'
 import { ENGINES } from '../engines/types.js'
 import { engineBin } from './engineBin.js'
 import type { EngineInstallRecipe } from './engineInstall.js'
+import { MIN_OPEN_FILES, RAISE_OPEN_FILES_SH } from './openFiles.js'
+
+// The launch script names the `grid` the daemon resolved, and a developer's own HARNESS_GRID_BIN
+// would resolve to THEIR grid. The suite's runtime dir is already a throwaway (vitest.setup.ts), so
+// with the override gone every case below resolves to the bare name.
+const developersOwnGridBin = process.env.HARNESS_GRID_BIN
+beforeEach(() => { delete process.env.HARNESS_GRID_BIN })
+afterAll(() => { if (developersOwnGridBin !== undefined) process.env.HARNESS_GRID_BIN = developersOwnGridBin })
+
+/** The prelude every case below gets by default: no managed grid on this machine, so PATH is left
+ *  alone and only grid's update check is turned off. */
+const GRID_PRELUDE = gridPanePrelude('grid')
 
 describe('buildEngineLaunchArgv', () => {
   it('wraps zsh in its interactive login form and execs the resolved binary', () => {
     expect(buildEngineLaunchArgv('claude', {}, '/bin/zsh')).toEqual([
-      '/bin/zsh', '-lic', 'exec "$@"', 'harness-engine', engineBin('claude'),
+      '/bin/zsh', '-lic', `${RAISE_OPEN_FILES_SH}${GRID_PRELUDE}exec "$@"`, 'harness-engine', engineBin('claude'),
     ])
   })
 
   it('uses Ubuntu bash interactive startup files without making it a login shell', () => {
     expect(buildEngineLaunchArgv('claude', {}, '/bin/bash')).toEqual([
-      '/bin/bash', '-ic', 'exec "$@"', 'harness-engine', engineBin('claude'),
+      '/bin/bash', '-ic', `${RAISE_OPEN_FILES_SH}${GRID_PRELUDE}exec "$@"`, 'harness-engine', engineBin('claude'),
     ])
   })
 
@@ -32,17 +56,128 @@ describe('buildEngineLaunchArgv', () => {
     const argv = buildEngineLaunchArgv('claude', { cwd: '/work/project' }, '/bin/zsh')
     expect(argv).toEqual([
       '/bin/zsh', '-lic',
-      'if ! cd -- "$1"; then printf \'%s\\n\' \'harness: the selected working directory is unavailable.\' >&2; exit 1; fi\nshift\nexec "$@"',
+      `${RAISE_OPEN_FILES_SH}${GRID_PRELUDE}if ! cd -- "$1"; then printf '%s\\n' 'harness: the selected working directory is unavailable.' >&2; exit 1; fi\n${unreadableCwdGuard(process.platform)}shift\nexec "$@"`,
       'harness-engine', '/work/project', engineBin('claude'),
     ])
   })
 
+  it('hands the engine a soft open-files limit fit for it, however low the pane started', async () => {
+    // A tmux server started by the desktop app passes launchd's 256 to every pane; Claude Code will
+    // not start under that. The pane's own shell lifts it before exec, so the server never has to.
+    const [shell, flag, paneScript] = buildEngineLaunchArgv('claude', {}, '/bin/sh')
+    const { execFile } = await import('node:child_process')
+    const seenByEngine = await new Promise<string>((resolve, reject) => {
+      execFile(
+        '/bin/sh',
+        ['-c', 'ulimit -S -n 256 || exit 99; exec "$@"', 'pane', shell, flag, paneScript, 'harness-engine', '/bin/sh', '-c', 'ulimit -S -n'],
+        { timeout: 10_000 },
+        (error, stdout, stderr) => (error ? reject(new Error(`${error.message}\n${stderr}`)) : resolve(stdout.trim())),
+      )
+    })
+    expect(seenByEngine).not.toBe('256')
+    expect(seenByEngine === 'unlimited' || Number(seenByEngine) >= Math.min(MIN_OPEN_FILES, 4096)).toBe(true)
+  })
+
+  describe('an unreadable workspace', () => {
+    // Under /bin/sh, with the engine replaced by printf so its run leaves a marker.
+    async function launchInto(dir: string): Promise<{ code: number; stdout: string; stderr: string }> {
+      const [, , paneScript] = buildEngineLaunchArgv('claude', { cwd: dir }, '/bin/sh')
+      const { execFile } = await import('node:child_process')
+      return await new Promise((resolve) => {
+        execFile(
+          '/bin/sh',
+          ['-c', paneScript, 'harness-engine', dir, '/usr/bin/printf', 'ENGINE_RAN\n'],
+          { timeout: 10_000 },
+          (error, stdout, stderr) => {
+            const code = error && typeof (error as { code?: unknown }).code === 'number'
+              ? (error as unknown as { code: number }).code
+              : 0
+            resolve({ code, stdout, stderr })
+          },
+        )
+      })
+    }
+
+    // root reads everything, so the guard has nothing to catch there.
+    const notRoot = process.getuid?.() !== 0
+
+    it.skipIf(!notRoot)('says why and stops instead of letting the engine fail on its first read', async () => {
+      // Enterable but not readable: what macOS privacy settings (TCC) produce for a folder the
+      // responsible app was not granted — `cd` works, the first readdir does not.
+      const dir = mkdtempSync(join(tmpdir(), 'harness-unreadable-'))
+      try {
+        chmodSync(dir, 0o300)
+        const result = await launchInto(dir)
+        expect(result.code).toBe(1)
+        expect(result.stdout).not.toContain('ENGINE_RAN')
+        expect(result.stderr).toContain(`harness: cannot read ${dir}`)
+      } finally {
+        chmodSync(dir, 0o700)
+        rmSync(dir, { recursive: true, force: true })
+      }
+    })
+
+    it('launches the engine when the workspace is readable', async () => {
+      const dir = mkdtempSync(join(tmpdir(), 'harness-readable-'))
+      try {
+        const result = await launchInto(dir)
+        expect(result.code).toBe(0)
+        expect(result.stdout).toContain('ENGINE_RAN')
+      } finally {
+        rmSync(dir, { recursive: true, force: true })
+      }
+    })
+
+    // Both hints are pushed through a real /bin/sh, whatever platform runs the suite: the quoting
+    // of the macOS text (a backtick-free command, `›`, `—`) is what a Linux runner would otherwise
+    // never exercise.
+    async function guardOutput(platform: NodeJS.Platform, dir: string): Promise<string> {
+      const { execFile } = await import('node:child_process')
+      return await new Promise((resolve) => {
+        execFile(
+          '/bin/sh',
+          ['-c', `cd -- "$1" || exit 9\n${unreadableCwdGuard(platform)}echo ENGINE_RAN`, 'guard', dir],
+          { timeout: 10_000 },
+          (_error, stdout, stderr) => resolve(stdout + stderr),
+        )
+      })
+    }
+
+    it.skipIf(!notRoot)('points at the privacy settings on macOS and at permissions elsewhere', async () => {
+      const dir = mkdtempSync(join(tmpdir(), 'harness-unreadable-hint-'))
+      try {
+        chmodSync(dir, 0o300)
+        const darwin = await guardOutput('darwin', dir)
+        expect(darwin).toContain('Full Disk Access')
+        expect(darwin).toContain('tmux kill-server')
+        expect(darwin).toContain('Privacy & Security')
+        expect(darwin).not.toContain('ENGINE_RAN')
+        const linux = await guardOutput('linux', dir)
+        expect(linux).toContain('permissions')
+        expect(linux).not.toContain('Privacy & Security')
+        expect(linux).not.toContain('ENGINE_RAN')
+      } finally {
+        chmodSync(dir, 0o700)
+        rmSync(dir, { recursive: true, force: true })
+      }
+    })
+
+    it('keeps the action inside what a relayed pane summary can show', () => {
+      // First hint line: what to do. It has to survive next to a folder path in a ~180-char summary.
+      const firstHint = unreadableCwdGuard('darwin').match(/'(harness: on macOS[^']*)'/)?.[1] ?? ''
+      expect(firstHint.length).toBeGreaterThan(0)
+      expect(firstHint.length).toBeLessThanOrEqual(120)
+    })
+  })
+
   it('a DSH agent gets Harness\'s Node at the end of a PATH that has none; a plain launch is unchanged', () => {
     const argv = buildEngineLaunchArgv('claude', { harnessNode: true }, '/bin/zsh', '/opt/harness runtime/bin/node')
-    expect(argv[2]).toBe(`${harnessNodePrelude('/opt/harness runtime/bin/node')}exec "$@"`)
+    // On this branch every pane script opens with the open-files raise and the grid prelude; the Node
+    // line lands after them, and a launch without `harnessNode` is exactly the baseline above.
+    expect(argv[2]).toBe(`${RAISE_OPEN_FILES_SH}${GRID_PRELUDE}${harnessNodePrelude('/opt/harness runtime/bin/node')}exec "$@"`)
     expect(harnessNodePrelude('/opt/harness runtime/bin/node')).toBe(
       'if ! command -v node >/dev/null 2>&1; then PATH="${PATH:+$PATH:}"\'/opt/harness runtime/bin\'; export PATH; fi\n')
-    expect(buildEngineLaunchArgv('claude', { harnessNode: false }, '/bin/zsh')[2]).toBe('exec "$@"')
+    expect(buildEngineLaunchArgv('claude', { harnessNode: false }, '/bin/zsh')[2]).toBe(`${RAISE_OPEN_FILES_SH}${GRID_PRELUDE}exec "$@"`)
   })
 
   it('the DSH prelude, run by a real shell, reaches the engine\'s PATH only when node is missing', () => {
@@ -75,13 +210,39 @@ describe('buildEngineLaunchArgv', () => {
 
   it('appends the confirmed flag for engines with a known bypass flag', () => {
     expect(buildEngineCommandArgv('claude', { bypassPermission: true }))
-      .toEqual([engineBin('claude'), '--dangerously-skip-permissions'])
+      .toEqual([engineBin('claude'), '--permission-mode', 'auto'])
     expect(buildEngineCommandArgv('codex', { bypassPermission: true }))
-      .toEqual([engineBin('codex'), '--dangerously-bypass-approvals-and-sandbox'])
+      .toEqual([engineBin('codex'), '--approve-for-me'])
     expect(buildEngineCommandArgv('cursor', { bypassPermission: true }))
       .toEqual([engineBin('cursor'), '--force'])
     expect(buildEngineCommandArgv('opencode', { bypassPermission: true }))
       .toEqual([engineBin('opencode'), '--auto'])
+  })
+
+  it('launches each permission mode with its own flags, and a mode outranks bypassPermission', () => {
+    expect(buildEngineCommandArgv('claude', { permissionMode: 'plan' }))
+      .toEqual([engineBin('claude'), '--permission-mode', 'plan'])
+    expect(buildEngineCommandArgv('claude', { permissionMode: 'acceptEdits', bypassPermission: true }))
+      .toEqual([engineBin('claude'), '--permission-mode', 'acceptEdits'])
+    expect(buildEngineCommandArgv('claude', { permissionMode: 'ask', bypassPermission: true }))
+      .toEqual([engineBin('claude')])
+    expect(buildEngineCommandArgv('claude', { permissionMode: 'full' }))
+      .toEqual([engineBin('claude'), '--dangerously-skip-permissions'])
+    expect(buildEngineCommandArgv('codex', { permissionMode: 'readOnly' }))
+      .toEqual([engineBin('codex'), '--sandbox', 'read-only'])
+    expect(buildEngineCommandArgv('codex', { permissionMode: 'full' }))
+      .toEqual([engineBin('codex'), '--dangerously-bypass-approvals-and-sandbox'])
+    // A mode the engine lacks falls back to the yes/no.
+    expect(buildEngineCommandArgv('opencode', { permissionMode: 'plan', bypassPermission: true }))
+      .toEqual([engineBin('opencode'), '--auto'])
+    expect(buildEngineCommandArgv('pi', { permissionMode: 'auto' })).toEqual([engineBin('pi')])
+  })
+
+  it('makes auto the same flags as bypassPermission, for every engine with modes', () => {
+    for (const [engine, modes] of Object.entries(PERMISSION_MODES)) {
+      expect(modes?.auto, engine).toEqual(BYPASS_PERMISSION_FLAGS[engine as keyof typeof BYPASS_PERMISSION_FLAGS])
+      expect(modes?.ask, engine).toEqual([])
+    }
   })
 
   it('is a no-op for engines with no confirmed flag, even when bypass is requested', () => {
@@ -106,14 +267,14 @@ describe('buildEngineLaunchArgv', () => {
     expect(buildEngineCommandArgv('codex', { resumeSessionId: 'abc-123' }))
       .toEqual([engineBin('codex'), 'resume', 'abc-123'])
     expect(buildEngineCommandArgv('codex', { resumeSessionId: 'abc-123', bypassPermission: true }))
-      .toEqual([engineBin('codex'), 'resume', 'abc-123', '--dangerously-bypass-approvals-and-sandbox'])
+      .toEqual([engineBin('codex'), 'resume', 'abc-123', '--approve-for-me'])
     expect(buildEngineCommandArgv('amp', { resumeSessionId: 'T-1' }))
       .toEqual([engineBin('amp'), 'threads', 'continue', 'T-1'])
   })
 
   it('still applies bypassPermission with no resume requested (regression)', () => {
     expect(buildEngineCommandArgv('claude', { bypassPermission: true }))
-      .toEqual([engineBin('claude'), '--dangerously-skip-permissions'])
+      .toEqual([engineBin('claude'), '--permission-mode', 'auto'])
   })
 
   it('is a no-op when resumeSessionId is set but the engine has no known launch resume flag', () => {
@@ -126,6 +287,104 @@ describe('buildEngineLaunchArgv', () => {
       expect(LAUNCH_RESUME_FLAG[engine]?.length).toBeGreaterThan(0)
     }
     expect(LAUNCH_RESUME_FLAG.devin).toBeUndefined()
+  })
+})
+
+describe('a first prompt on launch', () => {
+  const PROMPT = 'Start a local model on this machine'
+
+  it('hands opencode the text through its TUI flag', () => {
+    expect(buildEngineCommandArgv('opencode', { firstPrompt: PROMPT }))
+      .toEqual([engineBin('opencode'), '--prompt', PROMPT])
+  })
+
+  it('hands claude and codex the text positionally', () => {
+    expect(buildEngineCommandArgv('claude', { firstPrompt: PROMPT })).toEqual([engineBin('claude'), PROMPT])
+    expect(buildEngineCommandArgv('codex', { firstPrompt: PROMPT })).toEqual([engineBin('codex'), PROMPT])
+  })
+
+  it('puts the text LAST, after every flag, so a positional is never read as an option value', () => {
+    expect(buildEngineCommandArgv('claude', { firstPrompt: PROMPT, bypassPermission: true, extraArgs: ['--allowedTools=WebSearch'] }))
+      .toEqual([engineBin('claude'), '--permission-mode', 'auto', '--allowedTools=WebSearch', PROMPT])
+    expect(buildEngineCommandArgv('opencode', { firstPrompt: PROMPT, bypassPermission: true, extraArgs: ['-m', 'local/qwen'] }))
+      .toEqual([engineBin('opencode'), '--auto', '-m', 'local/qwen', '--prompt', PROMPT])
+  })
+
+  it('refuses an engine with no documented mechanism, naming the engine, rather than dropping the text', () => {
+    expect(supportsFirstPrompt('cursor')).toBe(false)
+    expect(() => firstPromptArgs('cursor', PROMPT)).toThrow(FirstPromptUnsupportedError)
+    let refusal: unknown
+    try { buildEngineCommandArgv('cursor', { firstPrompt: PROMPT }) } catch (error) { refusal = error }
+    expect(refusal).toBeInstanceOf(FirstPromptUnsupportedError)
+    expect((refusal as FirstPromptUnsupportedError).code).toBe('PROMPT_UNSUPPORTED')
+    expect((refusal as FirstPromptUnsupportedError).message).toContain('cursor')
+  })
+
+  it('leaves the argv unchanged with no prompt, or an empty one', () => {
+    expect(buildEngineCommandArgv('opencode', {})).toEqual([engineBin('opencode')])
+    expect(buildEngineCommandArgv('opencode', { firstPrompt: '' })).toEqual([engineBin('opencode')])
+    expect(buildEngineCommandArgv('cursor', { firstPrompt: '' })).toEqual([engineBin('cursor')])
+  })
+
+  it('reaches the engine as ONE positional argument through the pane shell, however it is spelled', async () => {
+    // The pane script execs "$@": the prompt must arrive as a single argv entry, spaces, quotes and
+    // all, rather than being re-split by the shell.
+    const spelled = `Start a local model on "this" machine; it's $HOME`
+    const [, , paneScript, marker, ...command] = buildEngineLaunchArgv('claude', { firstPrompt: spelled }, '/bin/sh')
+    expect(marker).toBe('harness-engine')
+    expect(command).toEqual([engineBin('claude'), spelled])
+    const { execFile } = await import('node:child_process')
+    const seen = await new Promise<string>((resolve, reject) => {
+      execFile('/bin/sh', ['-c', paneScript, 'harness-engine', '/bin/sh', '-c', 'printf "%s" "$1"', 'engine', spelled],
+        { timeout: 10_000 }, (error, stdout) => (error ? reject(error) : resolve(stdout)))
+    })
+    expect(seen).toBe(spelled)
+  })
+
+  it('has an entry (possibly null) for every known engine — no engine silently falls through', () => {
+    for (const engine of ENGINES) {
+      expect(Object.prototype.hasOwnProperty.call(FIRST_PROMPT_ARGS, engine)).toBe(true)
+    }
+    expect(supportsFirstPrompt('opencode')).toBe(true)
+    expect(supportsFirstPrompt('claude')).toBe(true)
+    expect(supportsFirstPrompt('codex')).toBe(true)
+  })
+})
+
+describe('opening as a named agent', () => {
+  it('hands opencode the name through --agent, in the extraArgs slot a relaunch also uses', () => {
+    expect(namedAgentArgs('opencode', 'harness-compute')).toEqual(['--agent', 'harness-compute'])
+    expect(buildEngineCommandArgv('opencode', { bypassPermission: true, extraArgs: ['-m', 'local/qwen', ...namedAgentArgs('opencode', 'harness-compute')] }))
+      .toEqual([engineBin('opencode'), '--auto', '-m', 'local/qwen', '--agent', 'harness-compute'])
+    // Resume keeps it too — the flag rides `extraArgs`, which every relaunch rebuilds from the row.
+    expect(buildEngineCommandArgv('opencode', { resumeSessionId: 'ses_1', extraArgs: namedAgentArgs('opencode', 'harness-compute') }))
+      .toEqual([engineBin('opencode'), '--session', 'ses_1', '--agent', 'harness-compute'])
+  })
+
+  it('refuses every other engine, naming it, rather than dropping the name', () => {
+    for (const engine of ENGINES) {
+      if (engine === 'opencode') continue
+      expect(supportsNamedAgent(engine)).toBe(false)
+      let refusal: unknown
+      try { namedAgentArgs(engine, 'harness-compute') } catch (error) { refusal = error }
+      expect(refusal).toBeInstanceOf(NamedAgentUnsupportedError)
+      expect((refusal as NamedAgentUnsupportedError).code).toBe('AGENT_UNSUPPORTED')
+      expect((refusal as NamedAgentUnsupportedError).message).toContain(engine)
+    }
+  })
+
+  it('has an entry (possibly null) for every known engine — no engine silently falls through', () => {
+    for (const engine of ENGINES) {
+      expect(Object.prototype.hasOwnProperty.call(NAMED_AGENT_ARGS, engine)).toBe(true)
+    }
+    expect(supportsNamedAgent('opencode')).toBe(true)
+  })
+
+  it('accepts an identifier and nothing that could be a path or prose', () => {
+    for (const ok of ['harness-compute', 'build', 'A_b-1', 'x'.repeat(64)]) expect(AGENT_NAME_RE.test(ok)).toBe(true)
+    for (const bad of ['', ' harness-compute', 'local model', '../etc', 'a/b', 'name.md', 'x'.repeat(65), 'nämn']) {
+      expect(AGENT_NAME_RE.test(bad)).toBe(false)
+    }
   })
 })
 
@@ -190,6 +449,70 @@ describe('commandAvailableInInteractiveShell', () => {
   })
 })
 
+describe('buildEngineLaunchArgv — the grid the pane finds', () => {
+  /** A runnable `grid` at `dir/grid`. Which one the pane's shell resolves is the assertion. */
+  function gridAt(dir: string): string {
+    mkdirSync(dir, { recursive: true })
+    return executable(dir, 'grid')
+  }
+
+  it('puts the resolved grid first on PATH and turns its update check off, before the engine', () => {
+    const managed = '/opt/harness/runtime/grid-0.3.47-darwin-arm64/grid'
+    const script = buildEngineLaunchArgv('claude', {}, '/bin/zsh', undefined, managed)[2]
+
+    expect(script).toContain(`PATH='/opt/harness/runtime/grid-0.3.47-darwin-arm64'"\${PATH:+:$PATH}"\nexport PATH\n`)
+    expect(script).toContain('GRID_NO_UPDATE_CHECK=1\nexport GRID_NO_UPDATE_CHECK\n')
+    expect(script.indexOf('export GRID_NO_UPDATE_CHECK')).toBeLessThan(script.indexOf('exec "$@"'))
+  })
+
+  it('leaves PATH alone when grid is only a name on it, but still turns the update check off', () => {
+    const script = buildEngineLaunchArgv('claude', {}, '/bin/zsh', undefined, 'grid')[2]
+
+    expect(script).not.toContain('export PATH')
+    expect(script).toContain('GRID_NO_UPDATE_CHECK=1')
+  })
+
+  /** What the engine's own `command -v grid` answers, and what it sees in GRID_NO_UPDATE_CHECK.
+   *
+   *  The pane is the user's login shell, and a `.zshrc` that puts `~/.local/bin` first is ordinary —
+   *  which is where grid's own installer (uv, on a Mac) leaves a `grid`. The prelude runs AFTER the
+   *  startup files, so that one cannot get ahead of the grid the daemon resolved. `bashProbeShell()`
+   *  plays the startup file: it resets PATH to HARNESS_ENGINE_TEST_PATH before the script runs. */
+  async function gridSeenByEngine(gridBinary: string): Promise<{ which: string; updateCheck: string }> {
+    const [shell, flag, script] = buildEngineLaunchArgv('claude', {}, bashProbeShell(), undefined, gridBinary)
+    const { execFile } = await import('node:child_process')
+    const out = await new Promise<string>((resolve, reject) => {
+      execFile(
+        shell,
+        [flag, script, 'harness-engine', '/bin/sh', '-c', 'command -v grid; printf "%s" "$GRID_NO_UPDATE_CHECK"'],
+        { timeout: 10_000 },
+        (error, stdout, stderr) => (error ? reject(new Error(`${error.message}\n${stderr}`)) : resolve(stdout)),
+      )
+    })
+    const [which, updateCheck] = out.split('\n')
+    return { which, updateCheck }
+  }
+
+  it('wins over a grid the shell\'s own startup files put first on PATH', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'harness-pane-grid-'))
+    dirs.push(root)
+    gridAt(join(root, 'users-own'))
+    const managed = gridAt(join(root, 'runtime', 'grid-0.3.47-darwin-arm64'))
+    process.env.HARNESS_ENGINE_TEST_PATH = `${join(root, 'users-own')}:/usr/bin:/bin`
+
+    await expect(gridSeenByEngine(managed)).resolves.toEqual({ which: managed, updateCheck: '1' })
+  })
+
+  it('leaves the user\'s own grid in charge when the daemon resolved nothing better', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'harness-pane-grid-'))
+    dirs.push(root)
+    const own = gridAt(join(root, 'users-own'))
+    process.env.HARNESS_ENGINE_TEST_PATH = `${join(root, 'users-own')}:/usr/bin:/bin`
+
+    await expect(gridSeenByEngine('grid')).resolves.toEqual({ which: own, updateCheck: '1' })
+  })
+})
+
 describe('buildEngineLaunchArgv with installFirst', () => {
   // Everything here is about ONE rule: the engine must not be exec'd after an install that failed.
   // Doing so reproduces the `command not found` this feature exists to replace, with a screenful of
@@ -198,7 +521,7 @@ describe('buildEngineLaunchArgv with installFirst', () => {
     buildEngineLaunchArgv('opencode', { installFirst: install }, '/bin/zsh')[2]
 
   it('leaves the plain launch alone when nothing has to be installed', () => {
-    expect(buildEngineLaunchArgv('opencode', {}, '/bin/zsh')[2]).toBe('exec "$@"')
+    expect(buildEngineLaunchArgv('opencode', {}, '/bin/zsh')[2]).toBe(`${RAISE_OPEN_FILES_SH}${GRID_PRELUDE}exec "$@"`)
   })
 
   it('keeps the engine argv positional, so the shell never re-parses a path or a flag', () => {

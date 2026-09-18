@@ -121,7 +121,7 @@ writes it beside the sidecar in `circuitpy.generation`; Workshop writes it from 
 
 ### The store's facts
 
-A registry entry may also carry `homepage`, `upstream`, `license` and `screenshots` (see
+A registry entry may also carry `homepage`, `upstream`, `license`, `screenshots` and `examples` (see
 `cli/src/dsh/registry.ts`); a built-in package keeps them in `store.json` beside its manifest. They are
 the store page's, not the package's: a manifest never has them,
 and `dsh_list` rows forward them from the registry whether or not the package is installed, with

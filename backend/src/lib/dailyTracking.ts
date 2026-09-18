@@ -3,8 +3,8 @@
  * `UserDailyRemoteUsage`, `UserDailyDevicePresence`, `MachineDailyPresence` and
  * `AgentDailyPresence` (prisma/schema.prisma). Separate model family and separate module from the
  * opt-in `Analytics*` telemetry in analyticsIngest.ts: these signals are derived directly from the
- * web-ws/device-ws/adapter-ws relays (src/lib/webWs.ts, src/lib/deviceWs.ts, src/lib/adapterWs.ts),
- * not from a collector upload.
+ * device-ws/adapter-ws relays (src/lib/deviceWs.ts, src/lib/adapterWs.ts) plus the p2p_offer tap on
+ * web-ws (src/lib/webWs.ts), not from a collector upload.
  *
  * Unlike analyticsIngest.ts, none of these rows need last-write-wins ordering (there's no
  * client-supplied revision to defend against), so each touch is a plain atomic `upsert` on the
@@ -12,18 +12,20 @@
  * write's `lastSeenAt`/counter increment.
  *
  * All entry points are meant to be called fire-and-forget from the hot path (connection open,
- * periodic re-seed, p2p_offer) — callers must not await them inline.
+ * heartbeat/ping, p2p_offer) — callers must not await them inline.
  */
 import { prisma } from './prisma.js'
 import { utcDayKey, utcDayStart } from '../types/analytics.js'
 
 /**
- * Mark a user online for the UTC day containing `now`. Call once on connect
- * (`isNewConnection: true`, bumps `connections`) and again whenever a day-boundary check on an
- * open connection finds the day has changed (`isNewConnection: false`, just touches `lastSeenAt`).
+ * Mark a user online for the UTC day containing `now`. The signal is the `harness` daemon's
+ * `app_presence` frame over adapter-ws (src/lib/adapterWs.ts), sent about its own loopback clients:
+ * `isNewConnection: true` when a desktop window just attached to the daemon (bumps `connections`),
+ * `false` for the periodic ping while one stays attached (just touches `lastSeenAt`, at most every
+ * USER_PRESENCE_WRITE_MS). Not the web-ws upgrade — the app never dials that itself.
  *
- * `connections` counts connections OPENED on that day: a touch that is the first write of a new
- * UTC day but is not a connect (a session spanning midnight) creates the row with `connections: 0`,
+ * `connections` counts app sessions OPENED on that day: a touch that is the first write of a new
+ * UTC day but is not an open (a session spanning midnight) creates the row with `connections: 0`,
  * so summing the column across days never double-counts one long session. Same rule for every
  * `touch*OnlineDay` below.
  */

@@ -11,14 +11,17 @@ import '../state/pane_arrangement.dart';
 import '../core/engine_availability.dart';
 import '../core/codex_profiles.dart';
 import '../core/dsh_catalog.dart';
+import '../core/first_task.dart';
+import '../core/permission_modes.dart';
 import '../core/project_folder.dart';
 import '../core/repository_clone.dart';
 import '../shared/theme/app_theme.dart' as grid;
-import '../shared/widgets/app_checkbox.dart';
+import '../shared/widgets/app_icon_button.dart';
 import '../shared/widgets/app_choice_picker.dart';
 import '../shared/widgets/app_dialog.dart';
 import '../shared/widgets/app_select_field.dart';
 import '../state/app_state.dart';
+import '../store/store_editorial.dart';
 import 'engine_identity.dart';
 import 'codex_profile_field.dart';
 import 'agent_picker.dart';
@@ -26,17 +29,6 @@ import 'remote_folder_picker.dart';
 import 'new_agent_project_picker.dart';
 import 'new_harness_help.dart';
 import 'dsh_install_panel.dart';
-
-/// Mirrors the harness CLI's `BYPASS_PERMISSION_FLAGS`
-/// (autonomous-harness/cli/src/lib/engineLaunch.ts) 1:1 — this is UI-only display + gating, the CLI
-/// is the actual enforcement point. An engine absent here shows no checkbox at all rather than
-/// guessing a flag for a CLI we haven't verified. Keep both maps in sync.
-const Map<String, String> kEngineBypassPermissionFlag = {
-  'claude': '--dangerously-skip-permissions',
-  'codex': '--dangerously-bypass-approvals-and-sandbox',
-  'cursor': '--force',
-  'opencode': '--auto',
-};
 
 enum NewAgentDialogResult { created, findExisting, backToSearch }
 
@@ -62,9 +54,13 @@ Future<NewAgentDialogResult?> showNewAgentDialog(
   Future<void>? initialEngineProbe,
   bool offerFindExisting = false,
   bool offerBackToSearch = false,
+
   /// Open with this engine or harness already chosen — the store's Get and
   /// Open buttons, which know exactly which one the person is looking at.
   String? initialEngine,
+
+  /// The harness's first message, sent as it starts — the store's "Try this prompt".
+  String? initialPrompt,
 }) {
   // Reported here rather than at each call site: the doors are four and
   // growing, and one that forgets to track is a hole in the funnel that only
@@ -77,6 +73,7 @@ Future<NewAgentDialogResult?> showNewAgentDialog(
     builder: (context) => _NewAgentDialog(
       notifier: notifier,
       initialEngine: initialEngine,
+      initialPrompt: initialPrompt,
       machineId: machineId,
       initialFolder: initialFolder,
       swarmId: swarmId ?? notifier.activeSwarmId,
@@ -108,18 +105,51 @@ class _NewAgentDialog extends StatefulWidget {
     required this.offerFindExisting,
     required this.offerBackToSearch,
     this.initialEngine,
+    this.initialPrompt,
   });
 
   /// An engine or harness to open on, chosen elsewhere (the store); null lets
   /// the remembered or first installed engine win.
   final String? initialEngine;
 
+  /// A first message to start the harness with (the store's "Try this prompt").
+  final String? initialPrompt;
+
   @override
   State<_NewAgentDialog> createState() => _NewAgentDialogState();
 }
 
 class _NewAgentDialogState extends State<_NewAgentDialog> {
+  /// The task: sent, exactly as written, as the harness's first message. Empty
+  /// starts the harness with nothing sent. The Store's "Try this prompt" fills
+  /// it, and the person can change it before creating.
+  late final _task = TextEditingController(
+    text: widget.initialPrompt?.trim() ?? '',
+  );
+  String? get _firstPrompt {
+    final task = _task.text.trim();
+    return task.isEmpty || !_takesTask || _taskTooLong ? null : task;
+  }
+
+  /// Whether the chosen agent can start on a task at all: only some engines
+  /// can be opened with a first message, and a machine refuses one for the
+  /// rest. The field says so and keeps what was typed, unsent.
+  bool get _takesTask => takesFirstTask(_baseEngine(_engine));
+
+  /// Longer than a machine accepts: Create waits until it is shortened, rather
+  /// than sending something the machine refuses or cutting it.
+  bool get _taskTooLong =>
+      _takesTask && _task.text.trim().length > kFirstTaskMaxLength;
+  late bool _taskWasTooLong = _taskTooLong;
+
+  /// Rebuilds the dialog, not just the field, when Create's answer changes.
+  void _onTaskChanged() {
+    if (_taskTooLong == _taskWasTooLong) return;
+    setState(() => _taskWasTooLong = _taskTooLong);
+  }
+
   final _folderFocus = FocusNode(debugLabel: 'Working folder');
+  final _agentSearchFocus = FocusNode(debugLabel: 'Agent search');
   final _actionFocus = FocusNode(debugLabel: 'Create or check agent');
   GitHubRepository? _repository;
   final _choicesScroll = ScrollController();
@@ -139,7 +169,19 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
   late String? _folder = widget.initialFolder;
   LocalCodexProfile? _codexProfile;
   bool _codexProfilesBusy = true;
-  bool _bypassPermission = false;
+
+  /// Auto-approve unless the person picks otherwise: a new harness works without stopping to ask
+  /// for each command — Claude Code's manual mode was what every harness opened in before. Kept
+  /// across engine changes; an engine without the picked mode uses its default instead.
+  String _permissionMode = kDefaultPermissionMode;
+
+  /// The mode [engine] launches in: the picked one when it has it.
+  String _permissionModeFor(String engine) {
+    final modes = permissionModesOf(engine);
+    return modes.any((mode) => mode.id == _permissionMode)
+        ? _permissionMode
+        : kDefaultPermissionMode;
+  }
 
   /// Whether the fold is open. Closed on every open of the dialog, deliberately:
   /// it is shut for the case it exists to serve, and a drawer that remembers
@@ -154,7 +196,9 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
 
   @override
   void dispose() {
+    _task.dispose();
     _folderFocus.dispose();
+    _agentSearchFocus.dispose();
     _actionFocus.dispose();
     _choicesScroll.dispose();
     super.dispose();
@@ -163,10 +207,12 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
   @override
   void initState() {
     super.initState();
+    _task.addListener(_onTaskChanged);
     final remembered = widget.notifier.agentPreference.value;
     final asked = widget.initialEngine;
     if (asked != null &&
-        (isHarnessId(asked) || allEngines.any((identity) => identity.id == asked))) {
+        (isHarnessId(asked) ||
+            allEngines.any((identity) => identity.id == asked))) {
       // Chosen before the dialog opened: counts as the person's choice, so no
       // probe or remembered preference moves it.
       _engine = asked;
@@ -192,11 +238,14 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
         // The modal's fallback focus can win autofocus. Claim the first
-        // actionable control once the route and its focus tree are mounted.
-        _folderFocus.requestFocus();
+        // actionable control once the route and its focus tree are mounted:
+        // the agent search, so the dialog opens ready to type — or the
+        // project, when the agent was chosen before it opened (the Store).
+        (widget.initialEngine == null ? _agentSearchFocus : _folderFocus)
+            .requestFocus();
         unawaited(_probeEngines(initialProbe: widget.initialEngineProbe));
-        // And the harnesses, whatever is selected: a package installed from
-        // a terminal since the last answer is otherwise missing from More.
+        // And the harnesses, whatever is selected: what the machine has
+        // installed is what the agent row shows first.
         unawaited(_probeHarnesses());
         unawaited(_loadAgentPreference());
       }
@@ -249,16 +298,21 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
     return entry != null && !entry.installed;
   }
 
-  /// What it makes and whose it is — "CAD · Autonomous" — the
-  /// machine's words first, this build's when the machine has not answered,
-  /// the description when there is nothing else.
-  String? _harnessDetail(DshEntry harness) {
+  /// The line under a harness's name in the agent search: its tagline, in
+  /// the project's own words. The machine's catalog first, this build's words
+  /// when the machine's CLI does not send one, then its domain, then its
+  /// description.
+  String? _harnessTagline(DshEntry harness) {
     final identity = engineIdentity(harness.id);
-    final parts = [
+    for (final line in [
+      harness.tagline,
+      identity.tagline,
       harness.category ?? identity.category,
-      harness.author ?? identity.creator,
-    ].whereType<String>().where((s) => s.isNotEmpty);
-    return parts.isEmpty ? harness.description : parts.join(' · ');
+      harness.description,
+    ]) {
+      if (line != null && line.trim().isNotEmpty) return line.trim();
+    }
+    return null;
   }
 
   /// The harnesses to list after the engines: what the machine named when it
@@ -380,7 +434,6 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
   }
 
   bool _picking = false;
-  bool _bypassHovered = false;
   String? _error;
 
   /// Whether the machine this agent will run on is the computer the app is
@@ -444,8 +497,10 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
     final harness = _engineIsHarness ? choice : null;
     final engine = _baseEngine(choice);
     final profile = _codexProfile;
+    final hasModes = permissionModesOf(engine).isNotEmpty;
+    final permissionMode = hasModes ? _permissionModeFor(engine) : null;
     final bypassPermission =
-        _bypassPermission && kEngineBypassPermissionFlag.containsKey(engine);
+        permissionMode != null && permissionModeApproves(permissionMode);
     if (!_confirmationPending) _creation = AgentCreationAttempt();
     setState(() {
       _checkingCreation = _confirmationPending;
@@ -454,7 +509,7 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
     });
     // A harness the machine does not have yet is installed FIRST, as its own
     // step with its own words: minutes of clone and toolchain under a button
-    // that said "Creating agent…" would read as a create that hung. The
+    // that said "Creating harness…" would read as a create that hung. The
     // machine's catalog decides "has it" — asked AGAIN at this moment, not
     // read from the answer the dialog opened with: a harness removed or
     // installed in the meantime (`harness dsh remove` in a terminal, another
@@ -473,7 +528,7 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
           _submitting = false;
           _error =
               'Update Harness CLI on $_machineName to create a '
-              '${_labelOf(harness)} agent.';
+              '${_labelOf(harness)} harness.';
         });
         return;
       }
@@ -504,10 +559,12 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
       swarmId: widget.swarmId,
       split: widget.split,
       bypassPermission: bypassPermission,
+      permissionMode: permissionMode,
       // Keep the explicit choice even if machine discovery changes mid-submit.
       // The notifier must reject a now-remote target, never use its default login.
       codexHome: engine == 'codex' ? profile?.path : null,
       dsh: harness,
+      prompt: _firstPrompt,
       attempt: _creation,
     );
     if (!mounted) return;
@@ -529,7 +586,13 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
       });
       return;
     }
-    analytics.agentCreated(engine: choice, bypassPermission: bypassPermission);
+    analytics.agentCreated(
+      engine: choice,
+      bypassPermission: bypassPermission,
+      permissionMode: permissionMode,
+    );
+    // What New Harness lists first next time, before anything is typed.
+    unawaited(widget.notifier.agentPreference.remember(choice));
     Navigator.of(context).pop(NewAgentDialogResult.created);
   }
 
@@ -561,10 +624,17 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
     );
   }
 
+  /// The dialog's title: what it makes, and where a split puts it. The
+  /// primary button says "New Harness" alone.
+  String get _title => switch (widget.split?.axis) {
+    PaneResizeAxis.x => 'New Harness to the right',
+    PaneResizeAxis.y => 'New Harness below',
+    null => 'New Harness',
+  };
+
   Widget _buildDialog(BuildContext context) {
     final edgePadding = MediaQuery.sizeOf(context).width < 700 ? 24.0 : 36.0;
     final compactHeight = MediaQuery.sizeOf(context).height < 800;
-    final bypassFlag = kEngineBypassPermissionFlag[_baseEngine(_engine)];
     final canCreate =
         (_preparedFolder != null ||
             (_folderSource == _FolderSource.local
@@ -572,6 +642,7 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
                 : _projectFolder != null)) &&
         !_picking &&
         !_submitting &&
+        (_confirmationPending || !_taskTooLong) &&
         (_confirmationPending || !_waitingForCodexProfile);
 
     return CallbackShortcuts(
@@ -590,11 +661,7 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
         backgroundColor: grid.AppPalette.swarmField,
         surfaceTintColor: Colors.transparent,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(28)),
-        title: Text(switch (widget.split?.axis) {
-          PaneResizeAxis.x => 'New Harness to the right',
-          PaneResizeAxis.y => 'New Harness below',
-          null => 'New Harness',
-        }),
+        title: Text(_title),
         titleTextStyle: Theme.of(context).textTheme.headlineSmall?.copyWith(
           fontSize: 28,
           height: 1.2,
@@ -645,6 +712,42 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
                         child: FocusTraversalGroup(
                           policy: WidgetOrderTraversalPolicy(),
                           child: _choices(),
+                        ),
+                      ),
+                    ),
+                    // Last: who, where and which folder are chosen, then what
+                    // to do, said right beside the button that starts it.
+                    //
+                    // Outside the choices' traversal group, and locked the
+                    // same way: that group orders Tab by when a focus node
+                    // attached, and choosing a machine rebuilds the project
+                    // tiles — inside the group they would come AFTER this
+                    // field, and Shift-Tab would bounce between the two.
+                    AbsorbPointer(
+                      absorbing: _choicesLocked,
+                      child: ExcludeFocus(
+                        excluding: _choicesLocked,
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            SizedBox(height: compactHeight ? 24 : 32),
+                            _sectionHeader(
+                              'First task',
+                              _takesTask
+                                  ? 'What should your agent work on? (Optional)'
+                                  : '${_labelOf(_engine)} starts without one. '
+                                        'Tell it once it opens.',
+                              null,
+                              compactHeight: compactHeight,
+                            ),
+                            _taskField(
+                              minHeight: _tileHeight(
+                                MediaQuery.textScalerOf(context),
+                                compactHeight: compactHeight,
+                              ),
+                            ),
+                          ],
                         ),
                       ),
                     ),
@@ -701,7 +804,7 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
                     // later. `awaitingConfirmation` is set the moment the
                     // request goes out, so on its own it also covered every
                     // ordinary create in flight, and a disabled Close sat
-                    // beside "Creating agent…" meaning nothing (owner,
+                    // beside "Creating harness…" meaning nothing (owner,
                     // 2026-09-16). Same gate as Find an agent below.
                     if (_confirmationPending &&
                         (!_submitting || _checkingCreation))
@@ -731,17 +834,21 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
                       focusNode: _actionFocus,
                       onPressed: canCreate ? _submit : null,
                       style: FilledButton.styleFrom(
-                        minimumSize: const Size(192, 56),
+                        // Taller and larger type, in proportion with the
+                        // tile-tall rows above it; no wider at rest, so the
+                        // settings beside it keep their one line at 900.
+                        minimumSize: const Size(192, 64),
+                        maximumSize: const Size(420, double.infinity),
                         padding: const EdgeInsets.symmetric(
                           horizontal: 32,
-                          vertical: 16,
+                          vertical: 18,
                         ),
                         backgroundColor: grid.AppPalette.accent,
                         foregroundColor: Colors.white,
                         textStyle: TextStyle(
                           fontFamily: grid.AppFont.sans,
                           fontFamilyFallback: grid.AppFont.sansFallback,
-                          fontSize: 16,
+                          fontSize: 18,
                           fontWeight: FontWeight.w600,
                         ),
                         shape: const StadiumBorder(),
@@ -764,16 +871,23 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
                                     ),
                                   ),
                                   const SizedBox(width: 8),
-                                  Text(
-                                    _checkingCreation
-                                        ? 'Checking status…'
-                                        : _folderSource ==
-                                                  _FolderSource.remote &&
-                                              _preparedFolder == null
-                                        ? 'Cloning and starting…'
-                                        : _installing
-                                        ? 'Installing ${_labelOf(_engine)}…'
-                                        : 'Creating agent…',
+                                  // A long harness name ends in an ellipsis
+                                  // rather than pushing the button past the
+                                  // footer.
+                                  Flexible(
+                                    child: Text(
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      _checkingCreation
+                                          ? 'Checking status…'
+                                          : _folderSource ==
+                                                    _FolderSource.remote &&
+                                                _preparedFolder == null
+                                          ? 'Cloning and starting…'
+                                          : _installing
+                                          ? 'Installing ${_labelOf(_engine)}…'
+                                          : 'Creating harness…',
+                                    ),
                                   ),
                                 ],
                               ),
@@ -783,7 +897,7 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
                                   ? 'Check status'
                                   : _installRun?.failed == true
                                   ? 'Retry'
-                                  : 'Create',
+                                  : 'New Harness',
                             ),
                     ),
                   ],
@@ -803,7 +917,7 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
                   children: [
                     Flexible(
                       fit: stacked ? FlexFit.loose : FlexFit.tight,
-                      child: _settingsRow(bypassFlag),
+                      child: _settingsRow(),
                     ),
                     SizedBox(width: stacked ? 0 : 16, height: stacked ? 12 : 0),
                     Align(alignment: Alignment.centerRight, child: actions),
@@ -817,10 +931,12 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
     );
   }
 
+  /// "Machine. Where would you like your agent to run?" and its help link;
+  /// a section with no [helpTopic] has the line alone.
   Widget _sectionHeader(
     String label,
     String prompt,
-    HarnessHelpTopic helpTopic, {
+    HarnessHelpTopic? helpTopic, {
     required bool compactHeight,
   }) => Padding(
     padding: EdgeInsets.only(bottom: compactHeight ? 12 : 16),
@@ -853,10 +969,26 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
             ),
           ),
         ),
-        HarnessHelpLink(topic: helpTopic),
+        if (helpTopic != null) HarnessHelpLink(topic: helpTopic),
       ],
     ),
   );
+
+  /// A tile's height, which depends on the text size and the window's height
+  /// but never on its width — so the task field, laid out outside the tiles'
+  /// LayoutBuilder, can be the same height as they are.
+  static double _tileHeight(TextScaler scaler, {required bool compactHeight}) {
+    final labelLine =
+        scaler.scale(AppChoiceTileContent.labelSize) *
+        AppChoiceTileContent.lineHeight;
+    final detailLine =
+        scaler.scale(AppChoiceTileContent.detailSize) *
+        AppChoiceTileContent.lineHeight;
+    return math.max(
+      compactHeight ? 96 : 100,
+      math.max(labelLine * 2 + detailLine, labelLine + detailLine * 2) + 38,
+    );
+  }
 
   Widget _choices() => LayoutBuilder(
     builder: (context, constraints) {
@@ -879,56 +1011,70 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
       // line at this width, and on one it arrived as "Documents · Typst Gm…".
       // Which line is spent where is decided per tile, against the name it
       // actually holds: AppChoiceTileContent.linesFor.
-      final labelLine =
-          scaler.scale(AppChoiceTileContent.labelSize) *
-          AppChoiceTileContent.lineHeight;
-      final detailLine =
-          scaler.scale(AppChoiceTileContent.detailSize) *
-          AppChoiceTileContent.lineHeight;
       final tileSize = Size(
         (constraints.maxWidth - AppChoiceTile.gap * (columns - 1)) / columns,
-        math.max(
-          compactHeight ? 96 : 100,
-          math.max(labelLine * 2 + detailLine, labelLine + detailLine * 2) + 38,
-        ),
+        _tileHeight(scaler, compactHeight: compactHeight),
       );
       return Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          // The section's line, like Machine's and Project's but with no help
+          // link (owner, 2026-09-17), and the search box under it naming the
+          // chosen agent.
           _sectionHeader(
             'Agent',
             'Choose who you’ll work with.',
-            HarnessHelpTopic.agent,
+            null,
             compactHeight: compactHeight,
           ),
           AgentPicker(
-            compact: true,
-            tileSize: tileSize,
+            key: const Key('new-agent-agent-picker'),
+            focusNode: _agentSearchFocus,
+            // A tile's height, so the bar is in proportion with the rows of
+            // tiles under it.
+            height: tileSize.height,
+            width: constraints.maxWidth,
             value: _engine,
-            options: [
+            recent: () => _recentAgents,
+            installed: _installedIds,
+            statusOf: _agentStatus,
+            choices: [
               for (final identity in allEngines)
-                SelectOption(
-                  value: identity.id,
-                  label: identity.label,
-                  detail: identity.detail,
-                  leading: () => EngineMark(engine: identity.id, size: 14),
+                AgentChoice(
+                  id: identity.id,
+                  label: _labelOf(identity.id),
+                  detail: identity.tagline ?? identity.category,
+                  creator: identity.creator,
+                  keywords: identity.category,
+                  description: identity.blurb,
+                  mark: (size) => EngineMark(engine: identity.id, size: size),
                 ),
               // The domain harnesses, after the engines they run on. What the
-              // machine named when it has answered, else this build's own two.
+              // machine named when it has answered, else this build's own.
               for (final harness in _harnessOptions)
-                SelectOption(
-                  value: harness.id,
+                AgentChoice(
+                  id: harness.id,
                   label: harness.name,
-                  // No "on Codex" here: the engine underneath is a backend
-                  // detail (owner, 2026-09-15) — the settings row says it.
-                  // What it makes, in a word or two; the machine's word first,
-                  // this build's when the machine has not answered.
-                  detail: _harnessDetail(harness),
-                  leading: () => EngineMark(
+                  // "MuJoCo by Google DeepMind" over "Advanced physics
+                  // simulation" (owner, 2026-09-17). No "on Codex": the engine
+                  // underneath is a backend detail (owner, 2026-09-15).
+                  detail: _harnessTagline(harness),
+                  creator: harness.author ?? engineIdentity(harness.id).creator,
+                  // For the search alone: the Store's shelf and the package's
+                  // own domain, so "engineering" and "PCB" both find Circuit.
+                  keywords: [
+                    storeCategoryFor(harness),
+                    ?(harness.category ?? engineIdentity(harness.id).category),
+                  ].join(' '),
+                  description:
+                      harness.description ??
+                      engineIdentity(harness.id).blurb ??
+                      storeStories[harness.id]?.benefit,
+                  mark: (size) => EngineMark(
                     engine: harness.id,
                     displayName: harness.name,
-                    size: 14,
+                    size: size,
                   ),
                 ),
             ],
@@ -942,12 +1088,9 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
                   _codexProfile = null;
                   _codexProfilesBusy = true;
                 }
+                // The choice is kept across agents; one with no flag simply shows none (and sends
+                // false, see _submit), so coming back to Claude Code finds it as it was left.
                 _error = null;
-                if (!kEngineBypassPermissionFlag.containsKey(
-                  _baseEngine(value),
-                )) {
-                  _bypassPermission = false;
-                }
               });
               if (isHarnessId(value)) unawaited(_probeHarnesses());
             },
@@ -960,7 +1103,7 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
                 Expanded(
                   child: Text(
                     'Couldn’t check whether ${_labelOf(_baseEngine(_engine))} is installed. '
-                    'You can still try creating an agent.',
+                    'You can still try creating the harness.',
                     style: Theme.of(context).textTheme.bodySmall
                         ?.copyWith(color: grid.AppPalette.textSecondary),
                   ),
@@ -1059,7 +1202,101 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
     ],
   );
 
-  Widget _settingsRow(String? bypassFlag) => Wrap(
+  /// The task field: what the harness is told first, exactly as typed, with no
+  /// guessing about it (owner, 2026-09-17: "you just pick exactly what you want
+  /// and enter the exact task"). One line tall at rest — as tall as the agent
+  /// box and the tiles above it, [minHeight] — and taller as lines are added.
+  /// Return adds a line; ⌘Return creates, as it does anywhere in the dialog.
+  Widget _taskField({required double minHeight}) => ListenableBuilder(
+    listenable: _task,
+    builder: (context, _) {
+      final radius = BorderRadius.circular(grid.AppControl.radius);
+      final line = MediaQuery.textScalerOf(context).scale(16) * 1.45;
+      final padding = ((minHeight - line) / 2).clamp(12.0, double.infinity);
+      final tooLong = _taskTooLong;
+      final errorBorder = OutlineInputBorder(
+        borderRadius: radius,
+        borderSide: BorderSide(
+          color: Theme.of(context).colorScheme.error,
+          width: 1.5,
+        ),
+      );
+      return TextField(
+        key: const Key('new-agent-task'),
+        controller: _task,
+        // Kept, not cleared, for an agent that cannot take it: choosing one
+        // that can sends it after all.
+        enabled: _takesTask,
+        minLines: 1,
+        maxLines: 6,
+        keyboardType: TextInputType.multiline,
+        textInputAction: TextInputAction.newline,
+        style: TextStyle(
+          fontSize: 16,
+          height: 1.45,
+          color: grid.AppPalette.textPrimary,
+        ),
+        decoration: InputDecoration(
+          hintText: 'Tell your agent what to do first.',
+          // Readable, not faint: the hint says what the field is for.
+          hintStyle: TextStyle(
+            fontSize: 16,
+            height: 1.45,
+            color: grid.AppPalette.textSecondary,
+          ),
+          // One line, so an empty box is exactly a tile tall at any width.
+          hintMaxLines: 1,
+          errorText: tooLong
+              ? 'A first task can be up to $kFirstTaskMaxLength characters. '
+                    'This one is ${_task.text.trim().length}.'
+              : null,
+          errorMaxLines: 2,
+          errorBorder: errorBorder,
+          focusedErrorBorder: errorBorder,
+          filled: true,
+          fillColor: grid.AppSurface.recess,
+          isDense: true,
+          // One line fills exactly [minHeight]: the padding is what a line of
+          // text at this size leaves. A minimum height on the decoration would
+          // reserve the space but paint the fill only around the text.
+          contentPadding: EdgeInsets.fromLTRB(18, padding, 8, padding),
+          border: OutlineInputBorder(
+            borderRadius: radius,
+            borderSide: BorderSide.none,
+          ),
+          enabledBorder: OutlineInputBorder(
+            borderRadius: radius,
+            borderSide: BorderSide.none,
+          ),
+          disabledBorder: OutlineInputBorder(
+            borderRadius: radius,
+            borderSide: BorderSide.none,
+          ),
+          focusedBorder: OutlineInputBorder(
+            borderRadius: radius,
+            borderSide: BorderSide(
+              color: grid.AppPalette.swarmAccent.withValues(alpha: .7),
+              width: 1.5,
+            ),
+          ),
+          // A disabled field takes no clicks, so it offers none.
+          suffixIcon: _task.text.isEmpty || !_takesTask
+              ? null
+              : Padding(
+                  padding: const EdgeInsets.only(right: 8),
+                  child: AppIconButton(
+                    key: const Key('new-agent-task-clear'),
+                    icon: LucideIcons.x300,
+                    tooltip: 'Clear the task',
+                    onPressed: _choicesLocked ? null : _task.clear,
+                  ),
+                ),
+        ),
+      );
+    },
+  );
+
+  Widget _settingsRow() => Wrap(
     spacing: 12,
     runSpacing: 8,
     crossAxisAlignment: WrapCrossAlignment.center,
@@ -1079,18 +1316,46 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
           ),
         ),
       ),
-      _setting(
-        _BypassCheck(
-          value: bypassFlag != null && _bypassPermission,
-          hovered: _bypassHovered,
-          onHover: (value) => setState(() => _bypassHovered = value),
-          onChanged: bypassFlag == null
-              ? null
-              : (value) => setState(() => _bypassPermission = value),
-        ),
-      ),
+      if (permissionModesOf(_baseEngine(_engine)) case final modes
+          when modes.isNotEmpty)
+        _setting(_permissionModeField(modes)),
       if (_baseEngine(_engine) == 'codex') _setting(_profileOptions()),
     ],
+  );
+
+  /// How far the agent may go without asking. The field shows the mode; the menu says what each
+  /// one does, since "Accept edits" and "Plan first" mean little on their own.
+  Widget _permissionModeField(List<PermissionMode> modes) => SizedBox(
+    width: 156 * math.min(1.4, MediaQuery.textScalerOf(context).scale(13) / 13),
+    height: 34,
+    child: AppSelectField<String>(
+      key: const Key('new-agent-permission-mode'),
+      height: 34,
+      menuWidth: 340,
+      value: _permissionModeFor(_baseEngine(_engine)),
+      options: [
+        for (final mode in modes)
+          SelectOption(
+            value: mode.id,
+            label: mode.label,
+            detail: mode.detail,
+            leading: () => Icon(
+              mode.risky
+                  ? LucideIcons.shieldOff
+                  : mode.id == kDefaultPermissionMode
+                  ? LucideIcons.shieldCheck
+                  : LucideIcons.shield,
+              size: 16,
+              color: mode.risky
+                  ? grid.AppPalette.dangerFill
+                  : grid.AppPalette.textSecondary,
+            ),
+          ),
+      ],
+      onChanged: (mode) {
+        if (!_choicesLocked) setState(() => _permissionMode = mode);
+      },
+    ),
   );
 
   Widget _setting(Widget child) => Offstage(
@@ -1176,9 +1441,56 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
         _error = null;
       });
       unawaited(_probeEngines());
-      if (_engineIsHarness) unawaited(_probeHarnesses());
+      // And its harnesses, whatever is chosen: what this machine has
+      // installed is what the agent row shows first.
+      unawaited(_probeHarnesses());
     },
   );
+
+  /// The agents you used lately, most recent first: the ones harnesses were
+  /// created with here, then the ones running on this machine and the rest.
+  List<String> get _recentAgents => [
+    ...widget.notifier.agentPreference.recent,
+    for (final machine in [
+      ?widget.notifier.stateOf(_machineId),
+      ...widget.notifier.machineStates.values,
+    ])
+      for (final agent in machine.agents.reversed) ?(agent.dsh ?? agent.engine),
+  ];
+
+  /// A line for the agent search's preview: is [id] on the chosen machine, or
+  /// will Harness install it first. Null while the machine has not said.
+  String? _agentStatus(String id) {
+    final machine = widget.notifier.stateOf(_machineId);
+    if (machine == null) return null;
+    final name = machine.machine.displayName;
+    if (isHarnessId(id)) {
+      final entry = _harness(id);
+      if (entry == null) return null;
+      return entry.installed
+          ? 'Installed on $name'
+          : 'Installs on $name before it starts';
+    }
+    final engine = machine.engines.loaded ? machine.engines[id] : null;
+    if (engine == null) return null;
+    if (engine.installed) return 'Installed on $name';
+    return engine.installable
+        ? 'Installs on $name before it starts'
+        : 'Not installed on $name';
+  }
+
+  /// What the machine has, by id: engines from its probe, harnesses from its
+  /// catalog. The agent search lists them after the agents you used.
+  Set<String> get _installedIds {
+    final machine = widget.notifier.stateOf(_machineId);
+    if (machine == null) return const {};
+    return {
+      for (final entry in machine.dsh.entries)
+        if (entry.installed && !entry.isViewerPackage) entry.id,
+      for (final engine in machine.engines.byEngine.values)
+        if (engine.installed) engine.engine,
+    };
+  }
 }
 
 /// The project picker shares Open Agent’s generous reading space.
@@ -1186,51 +1498,3 @@ const double _dialogWidth = 1080;
 
 /// Blocks inside one card: the command, the facts, the reason.
 const double _gapBlock = 12;
-
-class _BypassCheck extends StatelessWidget {
-  const _BypassCheck({
-    required this.value,
-    required this.hovered,
-    required this.onHover,
-    required this.onChanged,
-  });
-  final bool value;
-  final bool hovered;
-  final ValueChanged<bool> onHover;
-  final ValueChanged<bool>? onChanged;
-
-  @override
-  Widget build(BuildContext context) {
-    grid.AppTheme.watch(context);
-    return MouseRegion(
-      cursor: onChanged == null
-          ? SystemMouseCursors.basic
-          : SystemMouseCursors.click,
-      onEnter: (_) => onHover(true),
-      onExit: (_) => onHover(false),
-      child: GestureDetector(
-        onTap: onChanged == null ? null : () => onChanged!(!value),
-        behavior: HitTestBehavior.opaque,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 10),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              AppCheckbox(value: value, hovered: hovered, onChanged: onChanged),
-              const SizedBox(width: 10),
-              Text(
-                'Bypass approvals',
-                style: TextStyle(
-                  fontSize: 13,
-                  color: onChanged == null
-                      ? grid.AppPalette.textFaint
-                      : grid.AppPalette.textPrimary,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}

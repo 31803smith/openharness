@@ -7,6 +7,8 @@ import 'package:xterm/xterm.dart';
 import 'window_chrome.dart';
 
 import '../clipboard/image_bytes.dart';
+import '../core/dsh_catalog.dart' show DshEntry;
+import '../core/models.dart' show Agent;
 import '../clipboard/native_clipboard.dart';
 import '../shared/theme/app_theme.dart' as grid;
 // `hide TerminalKey`: this file's own shortcut-label class, unused here, collides with xterm's
@@ -1275,6 +1277,7 @@ class _PaneContent extends StatelessWidget {
         key: ValueKey('web-pane-${pane.id}'),
         notifier: notifier,
         pane: pane,
+        title: viewerPaneName(owner, machine?.dsh.entries ?? const []),
         ownerName: owner?.name ?? pane.ownerAgentId ?? 'Viewer',
         ownerEngine: owner?.identityEngine,
         ownerDisplayName: owner?.identityDisplayName,
@@ -2133,7 +2136,7 @@ class _EmptyGrid extends StatelessWidget {
                 FilledButton.icon(
                   key: const ValueKey('empty-grid-new-agent'),
                   icon: const Icon(Icons.add, size: 16),
-                  label: const Text('Create Agent'),
+                  label: const Text('New Harness'),
                   onPressed: () => showNewAgentDialog(
                     context,
                     notifier,
@@ -2161,4 +2164,20 @@ class _EmptyGrid extends StatelessWidget {
       ),
     );
   }
+}
+
+/// What a harness's viewer pane is called, so the harness's name is not printed twice beside its
+/// terminal. The daemon's answer first; from a daemon that predates it, the shared viewer's name
+/// from this machine's catalog ("3D Viewer"); else the harness's name and "Viewer"; else "Viewer".
+String viewerPaneName(Agent? owner, Iterable<DshEntry> catalog) {
+  if (owner == null) return 'Viewer';
+  if (owner.viewerName case final name?) return name;
+  final entry = catalog.where((e) => e.id == owner.dsh).firstOrNull;
+  final used = entry?.viewerUse;
+  if (used != null) {
+    final viewer = catalog.where((e) => e.id == used).firstOrNull;
+    if (viewer != null && viewer.name.trim().isNotEmpty) return viewer.name.trim();
+  }
+  final harness = owner.dshName ?? entry?.name;
+  return harness == null || harness.trim().isEmpty ? 'Viewer' : '${harness.trim()} Viewer';
 }

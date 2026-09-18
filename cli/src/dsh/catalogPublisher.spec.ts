@@ -26,12 +26,49 @@ describe('Store publication', () => {
     expect(parsed.entries).toHaveLength(catalog.entries.length)
     expect(parsed.entries.length).toBeGreaterThan(10)
     expect(parsed.entries.filter(entry => entry.verified).every(entry => entry.ref === ref)).toBe(true)
+    const taglines = catalog.entries.filter((entry: { tagline?: string }) => entry.tagline !== undefined)
+    expect(taglines.length).toBeGreaterThan(10)
+    expect(parsed.entries.filter(entry => entry.tagline !== undefined).map(entry => [entry.id, entry.tagline]))
+      .toEqual(taglines.map((entry: { id: string; tagline: string }) => [entry.id, entry.tagline]))
+  })
+
+  it('publishes a package\'s tagline as written, and refuses an empty, overlong, multi-line or non-text one', () => {
+    const root = fixture()
+    writeFileSync(join(root, 'agents', 'game', 'store.json'), JSON.stringify({ tagline: 'Open source HTML5 game framework' }))
+    expect(createStoreCatalog(root, ref).entries[0].tagline).toBe('Open source HTML5 game framework')
+    expect(parseStoreCatalog(createStoreCatalog(root, ref)).entries[0]!.tagline).toBe('Open source HTML5 game framework')
+    writeFileSync(join(root, 'agents', 'game', 'store.json'), JSON.stringify({ tagline: 't'.repeat(80) }))
+    expect(createStoreCatalog(root, ref).entries[0].tagline).toHaveLength(80)
+    // An empty one too: the CLI refuses the whole catalog over one bad entry, so it must never be published.
+    for (const bad of ['', '   ', 't'.repeat(81), 'Two\nlines', 'Tab\tseparated', 42]) {
+      writeFileSync(join(root, 'agents', 'game', 'store.json'), JSON.stringify({ tagline: bad }))
+      expect(() => createStoreCatalog(root, ref)).toThrow('autonomous/game: invalid tagline')
+    }
   })
 
   it('rejects corrupt manifests instead of silently publishing a partial catalog', () => {
     const root = fixture()
     writeFileSync(join(root, 'agents', 'game', 'harness.json'), '{bad')
     expect(() => createStoreCatalog(root, ref)).toThrow()
+  })
+
+  it('publishes a package\'s examples as written, and refuses one without a prompt, with an http picture, an overlong caption or an unknown field', () => {
+    const root = fixture()
+    const examples = [{ prompt: 'A brick breaker.', image: 'https://example.com/game.jpg', caption: 'Brick breaker · playable' }]
+    writeFileSync(join(root, 'agents', 'game', 'store.json'), JSON.stringify({ examples }))
+    const [entry] = createStoreCatalog(root, ref).entries
+    expect(entry.examples).toEqual(examples)
+    expect(parseStoreCatalog(createStoreCatalog(root, ref)).entries[0]!.examples).toEqual(examples)
+    for (const [bad, message] of [
+      [[{ image: 'https://example.com/a.jpg' }], /needs a prompt/],
+      [[{ prompt: 'x', image: 'http://example.com/a.jpg' }], /https URL/],
+      [[{ prompt: 'x', caption: 'c'.repeat(121) }], /invalid example caption/],
+      [[{ prompt: 'x', video: 'https://example.com/a.mp4' }], /unknown example field video/],
+      [Array.from({ length: 9 }, () => ({ prompt: 'x' })), /invalid examples/],
+    ] as const) {
+      writeFileSync(join(root, 'agents', 'game', 'store.json'), JSON.stringify({ examples: bad }))
+      expect(() => createStoreCatalog(root, ref)).toThrow(message)
+    }
   })
 
   it('rejects a new harness whose shared viewer is not also published', () => {

@@ -89,11 +89,15 @@ Desktop.ini
 key.properties
 secrets/
 .secrets
+.omc/
+CLAUDE.local.md
+.scratch/
 service-account*.json
 
 # Local scratch — notes, experiments, throwaway scripts
 scratch/
 tmp/
+mockup/
 notes/
 *.local
 *.local.*

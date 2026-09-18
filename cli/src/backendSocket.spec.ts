@@ -12,6 +12,37 @@ import * as projectFolder from './lib/projectFolder.js'
 import * as projectPreview from './lib/projectPreview.js'
 import * as storeCatalog from './dsh/catalog.js'
 import { randomUUID } from 'node:crypto'
+import { fakeGridAnswers, installFakeGrid, type FakeGrid } from './lib/__fixtures__/fakeGrid.js'
+import { clearGridMcpUrlCache } from './lib/gridMcpUrl.js'
+
+describe('viewer forwarding authentication', () => {
+  it('requires encryption and a web-role session remotely, while permitting trusted local clients', async () => {
+    const socket = new BackendSocket('token')
+    const internals = socket as any
+    const handle = vi.spyOn(socket.viewerForwarder, 'handle').mockImplementation(() => {})
+    const role = vi.spyOn(internals.e2ee, 'sessionRole').mockReturnValue('web')
+    const frame = { type: 'viewer_request', payload: { streamId: 'v', agentId: 'a' } }
+    const unwrap = vi.spyOn(internals.e2ee, 'unwrapDown').mockReturnValue(frame)
+    await internals.dispatchDown(frame, 'remote')
+    expect(unwrap).not.toHaveBeenCalled()
+    expect(handle).not.toHaveBeenCalled()
+    const encrypted = { type: 'viewer_request', payload: { __e2e: { v: 1, k: 'p', n: 1, ct: 'fixture' } } }
+    role.mockReturnValue('device')
+    await internals.dispatchDown(encrypted, 'remote')
+    expect(handle).not.toHaveBeenCalled()
+    role.mockReturnValue('web')
+    await internals.dispatchDown(encrypted, 'remote')
+    expect(handle).toHaveBeenCalledWith('remote', 'viewer_request', frame.payload)
+    socket.registerLocalClient('local:viewer', { sendFrame: () => true, sendBinary: () => true })
+    await internals.dispatchDown(frame, 'local:viewer')
+    expect(handle).toHaveBeenCalledWith('local:viewer', 'viewer_request', frame.payload)
+    handle.mockClear()
+    await internals.dispatchDown({ type: 'viewer_arbitrary', payload: {} }, 'local:viewer')
+    expect(handle).not.toHaveBeenCalled()
+    await socket.unregisterLocalClient('local:viewer')
+    await socket.stop()
+  })
+})
 
 const wsMock = vi.hoisted(() => {
   const instances: MockWebSocket[] = []
@@ -644,12 +675,12 @@ describe('BackendSocket outbound queue', () => {
     })).toBe(true)
 
     socket.handleLocalFrame('local:test', {
-      type: 'models_list', payload: { requestId: 'local-models' },
+      type: 'models_list', payload: { requestId: 'harness-computes' },
     })
     await vi.waitFor(() => expect(frames).toContainEqual({
       type: 'models_list_result',
       payload: {
-        requestId: 'local-models',
+        requestId: 'harness-computes',
         models: [{ id: 'runtime-v1:s1:codex:gpt-5.6-sol@high', displayName: 'Sol / High' }],
       },
     }))
@@ -734,6 +765,48 @@ describe('BackendSocket outbound queue', () => {
     await vi.waitFor(() => expect(frames.some((frame) => frame.type === 'engines_probe_result')).toBe(true))
     await socket.unregisterLocalClient('local:create')
     await socket.stop()
+  })
+
+  it('creates with approvals bypassed unless the client turns that off', async () => {
+    const socket = new BackendSocket('token')
+    const frames: Array<Record<string, unknown>> = []
+    socket.registerLocalClient('local:bypass', {
+      sendFrame: (frame) => { frames.push(frame); return true }, sendBinary: () => true,
+    })
+    const pending = (agentId: string): RegisteredSession => ({
+      schemaVersion: 2, active: true, launch: { state: 'starting' },
+      agentId, sessionId: '', boundAt: null, engine: 'claude',
+      transcriptPath: null, projectDir: 'work', cwd: '/tmp/work',
+      runtimes: [{ backend: 'tmux', paneId: '%9' }], primaryRuntimeKey: 'tmux/%9', tmuxPane: '%9',
+      source: null, title: null, model: null, cliVersion: null, processIdentity: null,
+      registeredAt: 1, updatedAt: 1, lastHookAt: 1, lastTranscriptAt: 1,
+    })
+    const create = vi.fn(async (input: { bypassPermission: boolean; permissionMode: string | null }) => ({ ok: true as const, session: pending(`b-${create.mock.calls.length}`) }))
+    socket.onCreateAgent = create
+    const ask = (requestId: string, extra: Record<string, unknown>) => socket.handleLocalFrame('local:bypass', {
+      type: 'agent_create', payload: { requestId, engine: 'claude', cwd: '/tmp/work', ...extra },
+    })
+    try {
+      ask('unsaid', {})
+      ask('on', { bypassPermission: true })
+      ask('off', { bypassPermission: false })
+      await vi.waitFor(() => expect(create).toHaveBeenCalledTimes(3))
+      expect(create.mock.calls.map(([input]) => input.bypassPermission)).toEqual([true, true, false])
+
+      // A mode decides, whatever bypassPermission says; one the engine lacks is refused.
+      ask('plan', { permissionMode: 'plan', bypassPermission: true })
+      ask('full', { permissionMode: 'full', bypassPermission: false })
+      await vi.waitFor(() => expect(create).toHaveBeenCalledTimes(5))
+      expect(create.mock.calls.slice(3).map(([input]) => [input.permissionMode, input.bypassPermission]))
+        .toEqual([['plan', false], ['full', true]])
+      ask('bogus', { permissionMode: 'readOnly' })
+      ask('shape', { permissionMode: 7 })
+      await vi.waitFor(() => expect(frames.filter((frame) => (frame.payload as { error?: string } | undefined)?.error === 'INVALID_PERMISSION_MODE')).toHaveLength(2))
+      expect(create).toHaveBeenCalledTimes(5)
+    } finally {
+      await socket.unregisterLocalClient('local:bypass')
+      await socket.stop()
+    }
   })
 
   it('recovers a delayed creation on the same connection without starting another agent', async () => {
@@ -987,6 +1060,60 @@ describe('BackendSocket outbound queue', () => {
 
     await socket.unregisterLocalClient('local:terminal')
     expect(closeConnection).toHaveBeenCalledWith('local:terminal', 'local client disconnected', false)
+    await socket.stop()
+  })
+
+  it('reports the window itself: open when it attaches, ping once a minute while it stays, nothing while offline', async () => {
+    vi.useFakeTimers()
+    const socket = new BackendSocket('token')
+    const sink = { sendFrame: () => true, sendBinary: () => true }
+    const kinds = (ws: InstanceType<typeof wsMock.MockWebSocket>) => parseSent(ws)
+      .filter((m) => (m.frame as { type?: string } | undefined)?.type === 'app_presence')
+      .map((m) => (m.frame as { payload: { kind: string } }).payload.kind)
+
+    // A window attaching to a not-yet-dialed daemon (the cold start): nothing can be sent yet, and
+    // nothing is queued behind real frames — but the session is owed to the link that comes up.
+    expect(socket.registerLocalClient('local:1', sink)).toBe(true)
+    socket.connect()
+    const ws = wsMock.instances[0]
+    expect(kinds(ws)).toEqual([])
+    ws.open()
+    expect(kinds(ws)).toEqual(['open'])
+
+    // While the window stays: once a minute on the app-ping tick, not once a tick.
+    vi.advanceTimersByTime(45_000)
+    expect(kinds(ws)).toEqual(['open'])
+    vi.advanceTimersByTime(15_000)
+    expect(kinds(ws)).toEqual(['open', 'ping'])
+
+    // A second window is a session in its own right — up at once, floor or not.
+    expect(socket.registerLocalClient('local:2', sink)).toBe(true)
+    expect(kinds(ws)).toEqual(['open', 'ping', 'open'])
+    // Registering the same window twice is refused, and says nothing.
+    expect(socket.registerLocalClient('local:2', sink)).toBe(false)
+    expect(kinds(ws)).toHaveLength(3)
+
+    // Every window gone: the tick falls silent.
+    await socket.unregisterLocalClient('local:1')
+    await socket.unregisterLocalClient('local:2')
+    vi.advanceTimersByTime(120_000)
+    expect(kinds(ws)).toHaveLength(3)
+
+    // A window that came and went while the link was down was never a session the backend can hear
+    // about — the next link is told nothing. Both remaining windows gone first, so the count is clean.
+    ws.close()
+    expect(socket.registerLocalClient('local:3', sink)).toBe(true)
+    await socket.unregisterLocalClient('local:3')
+    vi.advanceTimersByTime(60_000)
+    const ws2 = wsMock.instances[1]
+    ws2.open()
+    vi.advanceTimersByTime(15_000)
+    expect(kinds(ws2)).toEqual([])
+
+    // Bookkeeping about the person, for the backend alone: never fanned out to a client.
+    expect(parseSent(ws).find((m) => (m.frame as { type?: string } | undefined)?.type === 'app_presence'))
+      .toMatchObject({ t: 'up', webEligible: false, commanderEligible: false })
+
     await socket.stop()
   })
 
@@ -1349,6 +1476,207 @@ describe('agent_retarget clearGrid', () => {
     expect(seen).toHaveLength(0)
   })
 })
+
+/**
+ * The desktop's retarget names a Local model and nothing else; the daemon resolves everything from
+ * its own signed-in `grid`. This is that resolution through the real frame handler, against the
+ * plan-driven fake `grid` — the seam `gridEnsure.spec.ts` established.
+ */
+describe('agent_retarget onto a Local model resolves web tools', () => {
+  const { gridName: GRID_NAME, networkId, baseUrl: BASE_URL, mcpUrl: MCP_URL, token: TOKEN, plan } = fakeGridAnswers()
+
+  let fake: FakeGrid | null = null
+  afterEach(async () => {
+    fake?.dispose()
+    fake = null
+    clearGridMcpUrlCache()
+    wsMock.instances.length = 0
+    vi.restoreAllMocks()
+  })
+
+  async function retargetOntoLocalModel(model: string) {
+    const seen: Array<{ agentId: string; grid: unknown }> = []
+    const socket = new BackendSocket('token')
+    socket.onRetargetAgent = async (input) => { seen.push(input); return { ok: true } }
+    socket.connect()
+    const ws = wsMock.instances[0]
+    ws.open()
+    // The grid name is the backend's, pushed on connect; the daemon holds it in memory only.
+    ws.message({ t: 'down', connId: 'web-1', frame: { type: 'machine_meta', payload: { name: 'mac', gridName: GRID_NAME } } })
+    ws.message({ t: 'down', connId: 'web-1', frame: { type: 'agent_retarget', payload: { requestId: 'r', agentId: 'a1', gridModel: model } } })
+    await vi.waitFor(() => expect(parseSent(ws).some((item) => (item.frame as { type?: string } | undefined)?.type === 'agent_retarget_result')).toBe(true), { timeout: 10_000 })
+    const reply = parseSent(ws)
+      .map((item) => item.frame as { type?: string; payload?: Record<string, unknown> } | undefined)
+      .find((frame) => frame?.type === 'agent_retarget_result')
+    await socket.stop()
+    return { seen, reply }
+  }
+
+  it('yields a launch override whose MCP URL is exactly the printed url, asking `mcp config` before `info --env`', async () => {
+    fake = installFakeGrid(plan)
+    const { seen, reply } = await retargetOntoLocalModel('GLM-4.7-Flash')
+    expect(reply?.payload).toMatchObject({ retargeted: true })
+    expect(seen).toEqual([{
+      agentId: 'a1',
+      grid: {
+        networkId,
+        networkName: GRID_NAME,
+        baseUrl: BASE_URL,
+        apiKey: TOKEN,
+        model: 'GLM-4.7-Flash',
+        mcpUrl: MCP_URL,
+      },
+    }])
+    expect(fake.verbs()).toEqual(['mcp', 'info', 'ls'])
+    expect(fake.calls()[0]).toEqual(['--remote', 'mcp', 'config', GRID_NAME, '--json'])
+  })
+
+  it('still retargets, with no MCP URL, when the binary is too old for `mcp config`', async () => {
+    const warned: string[] = []
+    vi.spyOn(console, 'warn').mockImplementation((...parts: unknown[]) => { warned.push(parts.map(String).join(' ')) })
+    fake = installFakeGrid({ ...plan, mcp: { exit: 2, stderr: "grid: error: invalid choice: 'mcp'\n" } })
+    const { seen, reply } = await retargetOntoLocalModel('GLM-4.7-Flash')
+    expect(reply?.payload).toMatchObject({ retargeted: true })
+    expect(seen).toHaveLength(1)
+    expect(seen[0]!.grid).toMatchObject({ baseUrl: BASE_URL, apiKey: TOKEN, model: 'GLM-4.7-Flash' })
+    expect(seen[0]!.grid).not.toHaveProperty('mcpUrl')
+    // The reason reaches the daemon log, and nothing else — the retarget error path is untouched.
+    expect(warned.join('\n')).toMatch(/web tools unavailable .* older than/)
+    expect(reply?.payload).not.toHaveProperty('error')
+  })
+})
+
+/**
+ * `agent_create` carrying a first prompt, a name and a named agent — the fields the run-a-harness-compute
+ * entry can send (it sends `name` and `agent`). All are validated at the wire, before any pane
+ * exists; what reaches `onCreateAgent` is exactly what cli.ts hands to the launch and the registry.
+ */
+describe('agent_create with a prompt, a name and a named agent', () => {
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  const pending: RegisteredSession = {
+    schemaVersion: 2, active: true, launch: { state: 'starting' },
+    agentId: 'named-1', sessionId: '', boundAt: null, engine: 'opencode',
+    transcriptPath: null, projectDir: 'home', cwd: '/home/someone', defaultName: 'Local model',
+    runtimes: [{ backend: 'tmux', paneId: '%11' }], primaryRuntimeKey: 'tmux/%11', tmuxPane: '%11',
+    source: null, title: null, model: null, cliVersion: null, processIdentity: null,
+    registeredAt: 1, updatedAt: 1, lastHookAt: 1, lastTranscriptAt: 1,
+  }
+
+  async function create(choices: Record<string, unknown>) {
+    const socket = new BackendSocket('token')
+    const frames: Array<Record<string, unknown>> = []
+    socket.registerLocalClient('local:named', { sendFrame: (frame) => { frames.push(frame); return true }, sendBinary: () => true })
+    const seen: unknown[] = []
+    socket.onCreateAgent = async (input) => { seen.push(input); return { ok: true, session: pending } }
+    try {
+      socket.handleLocalFrame('local:named', { type: 'agent_create', payload: { requestId: 'r', engine: 'opencode', cwd: '/home/someone', ...choices } })
+      await vi.waitFor(() => expect(frames.some((frame) => frame.type === 'agent_create_result')).toBe(true))
+    } finally {
+      await socket.unregisterLocalClient('local:named')
+      await socket.stop()
+    }
+    const reply = frames.find((frame) => frame.type === 'agent_create_result')?.payload as Record<string, unknown>
+    return { seen, reply }
+  }
+
+  it('passes both through, trimmed, and the name becomes the row\'s defaultName', async () => {
+    const { seen, reply } = await create({ prompt: '  Start a local model on this machine ', name: ' Local model ' })
+    expect(seen).toEqual([expect.objectContaining({ engine: 'opencode', prompt: 'Start a local model on this machine', name: 'Local model' })])
+    expect(reply).toMatchObject({ agent: expect.objectContaining({ id: 'named-1', name: 'Local model' }) })
+  })
+
+  it('sends null for both when neither was given, or when they are blank', async () => {
+    expect((await create({})).seen).toEqual([expect.objectContaining({ prompt: null, name: null })])
+    expect((await create({ prompt: '   ', name: '' })).seen).toEqual([expect.objectContaining({ prompt: null, name: null })])
+  })
+
+  it('refuses an over-long prompt before any pane exists', async () => {
+    const { seen, reply } = await create({ prompt: 'x'.repeat(2001) })
+    expect(reply).toMatchObject({ error: 'PROMPT_TOO_LONG' })
+    expect(seen).toHaveLength(0)
+    expect((await create({ prompt: 'x'.repeat(2000) })).seen).toHaveLength(1)
+  })
+
+  it('refuses a prompt for an engine with no documented mechanism, naming the engine', async () => {
+    const { seen, reply } = await create({ engine: 'cursor', prompt: 'Start a local model on this machine' })
+    expect(reply).toMatchObject({ error: 'PROMPT_UNSUPPORTED', detail: expect.stringContaining('cursor') })
+    expect(seen).toHaveLength(0)
+  })
+
+  it('refuses a prompt that is not text', async () => {
+    const { seen, reply } = await create({ prompt: ['Start a local model'] })
+    expect(reply).toMatchObject({ error: 'INVALID_PROMPT' })
+    expect(seen).toHaveLength(0)
+  })
+
+  it('passes the named agent through for opencode, and null when none was given', async () => {
+    const { seen, reply } = await create({ agent: 'harness-compute', name: 'Local model' })
+    expect(seen).toEqual([expect.objectContaining({ engine: 'opencode', agent: 'harness-compute', name: 'Local model', prompt: null })])
+    expect(reply).toMatchObject({ agent: expect.objectContaining({ id: 'named-1' }) })
+    expect((await create({})).seen).toEqual([expect.objectContaining({ agent: null })])
+    expect((await create({ agent: null })).seen).toEqual([expect.objectContaining({ agent: null })])
+  })
+
+  it('refuses a named agent for an engine with no documented mechanism, naming the engine, before any pane exists', async () => {
+    for (const engine of ['claude', 'codex', 'cursor']) {
+      const { seen, reply } = await create({ engine, agent: 'harness-compute' })
+      expect(reply).toMatchObject({ error: 'AGENT_UNSUPPORTED', detail: expect.stringContaining(engine) })
+      expect(seen).toHaveLength(0)
+    }
+  })
+
+  it('refuses a named agent that is not an identifier — a path, prose, blank, over-long, or not text', async () => {
+    for (const agent of ['', '  ', 'local model', '../etc/passwd', 'a/b', 'x'.repeat(65), ['harness-compute'], 7]) {
+      const { seen, reply } = await create({ agent })
+      expect(reply).toMatchObject({ error: 'INVALID_AGENT' })
+      expect(seen).toHaveLength(0)
+    }
+  })
+})
+
+/**
+ * The picker and the Local model dialog gate on `gridName` — whether the ACCOUNT has a grid — and
+ * had nothing to tell them whether the MACHINE has a `grid` to run at all. A user with no CLI got a
+ * dialog that started an agent, which died at the skill's second step. The answer travels beside
+ * the list, as `localModelEngines` does, and says which grid it is: the managed runtime, one found
+ * on PATH, or none.
+ */
+describe('grid_models_list says whether this machine has a grid CLI', () => {
+  const { gridName: GRID_NAME, plan } = fakeGridAnswers()
+
+  let fake: FakeGrid | null = null
+  afterEach(async () => {
+    fake?.dispose()
+    fake = null
+    wsMock.instances.length = 0
+  })
+
+  async function listModels(): Promise<Record<string, unknown> | undefined> {
+    const socket = new BackendSocket('token')
+    socket.connect()
+    const ws = wsMock.instances[0]
+    ws.open()
+    ws.message({ t: 'down', connId: 'web-1', frame: { type: 'machine_meta', payload: { name: 'mac', gridName: GRID_NAME } } })
+    ws.message({ t: 'down', connId: 'web-1', frame: { type: 'grid_models_list', payload: { requestId: 'r' } } })
+    await vi.waitFor(() => expect(parseSent(ws).some((item) => (item.frame as { type?: string } | undefined)?.type === 'grid_models_list_result')).toBe(true), { timeout: 10_000 })
+    const reply = parseSent(ws)
+      .map((item) => item.frame as { type?: string; payload?: Record<string, unknown> } | undefined)
+      .find((frame) => frame?.type === 'grid_models_list_result')
+    await socket.stop()
+    return reply?.payload
+  }
+
+  it('names the grid it would run — the fixture is a developer override, so `path`', async () => {
+    fake = installFakeGrid(plan)
+
+    expect(await listModels()).toMatchObject({ gridName: GRID_NAME, gridCli: 'path' })
+  })
+})
+
+/** The read-only hardware line for the run-a-harness-compute dialog, answered next to `grid_models_list`. */
 
 describe('Autonomous direct isolation from existing relay/browser behavior', () => {
   it('permits offline PAKE only for the exact live direct pending connection', async () => {
