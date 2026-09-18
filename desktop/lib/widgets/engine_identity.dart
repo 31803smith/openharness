@@ -1,6 +1,7 @@
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import '../core/models.dart';
 import '../theme/app_theme.dart';
@@ -453,6 +454,35 @@ const knownHarnessBase = <String, String>{
   'autonomous/bonsai-mcp': 'codex',
 };
 
+/// The daemon's engine id for a plain shell in a pane (⌘⇧T, New Terminal — and
+/// the last row of New Harness's agent list, as [terminalIdentity]).
+///
+/// Deliberately NOT in [_engines]: [allEngines] is what `engines_probe` asks a
+/// machine about and what the Store shelves as an engine, and a terminal is
+/// neither installable nor absent — every machine has a shell. New Harness
+/// lists it on its own, after the agents. It still has a face, because a tile
+/// shows one, and the daemon swaps the tile's engine for whatever gets typed
+/// into it, so the face must come and go through the same [engineIdentity]
+/// every other mark reads.
+const String kTerminalEngine = 'terminal';
+
+const EngineIdentity _terminal = EngineIdentity(
+  id: kTerminalEngine,
+  label: 'Terminal',
+  category: 'Shell',
+  tagline: 'Your shell, in a tile',
+  blurb:
+      'A plain shell on the machine, in a tile beside your agents: no engine, '
+      'no first task, nothing to install.',
+  color: Color(0xffa8b0b8),
+);
+
+/// The terminal's face, for the one list that offers it: New Harness.
+EngineIdentity get terminalIdentity => _terminal;
+
+/// Whether [engine] is the shell rather than an agent.
+bool isTerminalEngine(String? engine) => engine == kTerminalEngine;
+
 /// All known engines, in declaration order — for the New Agent engine picker.
 List<EngineIdentity> get allEngines => _engines.values.toList(growable: false);
 
@@ -466,7 +496,10 @@ bool isHarnessId(String? id) => id != null && id.contains('/');
 
 EngineIdentity engineIdentity(String? engine, {String? displayName}) {
   final id = engine?.trim().toLowerCase() ?? '';
-  final known = _engines[id] ?? _harnesses[id];
+  final known =
+      _engines[id] ??
+      _harnesses[id] ??
+      (id == kTerminalEngine ? _terminal : null);
   if (known != null) return known;
   final raw = displayName?.trim().isNotEmpty == true
       ? displayName!.trim()
@@ -539,6 +572,13 @@ class EngineMark extends StatelessWidget {
             key: const ValueKey('engine-icon-claude'),
             size: Size.square(size),
             painter: _ClaudeMarkPainter(identity.color),
+          )
+        : identity.id == kTerminalEngine
+        ? Icon(
+            LucideIcons.terminal,
+            key: const ValueKey('engine-icon-terminal'),
+            size: size,
+            color: identity.color,
           )
         : _InitialMark(
             key: ValueKey('engine-fallback-${identity.id}'),
