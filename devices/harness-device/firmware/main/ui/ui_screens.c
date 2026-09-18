@@ -116,6 +116,7 @@ extern const lv_font_t geist_sem_24;  // largest display: tile agent name + over
 #define COL_RED    lv_color_hex(0xff5a5a)
 #define COL_ACCENT lv_color_hex(0x5b8cff)
 #define COL_YELLOW lv_color_hex(0xf0b429)
+#define COL_FORK   lv_color_hex(0x5b8cff)   // the Loop mark's blue, now the Fork mark's — same arc, same slot
 #define COL_ORANGE lv_color_hex(0xff8a4c)   // working-status verb row
 #define COL_CLAUDE lv_color_hex(0xcc7c5e)   // matches the shared Claude reference color
 #define COL_CARD   lv_color_hex(0x16161c)
@@ -233,7 +234,7 @@ static lv_obj_t *s_settings_tile;    // the extra tile at column == s_proj_count
 static lv_obj_t *s_agent_acts;
 // The three round marks on the bottom arc of an agent tile. Held individually because touch.c has to be
 // able to ask whether a press landed on one — see ui_action_hit().
-static lv_obj_t *s_agent_goal_btn, *s_agent_voice_btn, *s_agent_loop_btn;
+static lv_obj_t *s_agent_goal_btn, *s_agent_voice_btn, *s_agent_loop_btn, *s_agent_fork_btn;
 #define AGENT_TILE_GOAL_LOOP 0   // the Goal and Loop marks beside Voice on an agent tile — see build_agent_actions
 static lv_obj_t *s_machines_tile;      // Machines carousel tile (ring 1, between Settings and the agents)
 static lv_obj_t *s_no_agents_tile;   // persistent "No agents yet" page, shown at ring RING_LEAD ONLY when s_proj_count==0
@@ -400,7 +401,8 @@ static void cancel_confirm_no(lv_event_t *e);  // "Cancel task?" No → dismiss,
 
 static void stop_event(lv_event_t *e);   // tap STOP → cancel the active turn (defined below)
 static void update_stop_btn(void);       // show/hide STOP per active tile's processing state (caller holds lock)
-static void agent_actions_apply(void);   // show/hide the per-agent Goal/Voice/Loop cluster (caller holds lock)
+static void agent_actions_apply(void);   // show/hide the per-agent Voice/Fork cluster (caller holds lock)
+static void machine_toast(const char *msg);   // a short centred line over the face (defined with the machine picker)
 static void build_agent_actions(void);   // build that cluster once on scr_projects (defined below)
 static void notif_badge_apply(void);     // show/hide the top unread pill (defined below)
 static void notif_bg_tap(lv_event_t *e); // tap the drawer's empty area → close (defined below)
@@ -2965,6 +2967,20 @@ static void agent_voice_tap(lv_event_t *e)
     s_suppress_tap = true;   // this press started a capture; it must not also land as a tap on the tile
     voice_start_impl(VOICE_CMD_NONE);
 }
+// Fork — a second agent with this one's whole history, opened in the window beside it (owner,
+// 2026-09-18). The daemon does the work (`agent.fork` → lib/forkAgent.ts) and tells the window; the dial
+// only hears back when it was refused, as a toast. Said out loud here so a press that will take a few
+// seconds to show anything is not a press that felt lost.
+static void agent_fork_tap(lv_event_t *e)
+{
+    (void)e;
+    if (!agent_action_ready()) return;
+    s_suppress_tap = true;
+    const char *id = s_proj[s_active_idx].id;
+    if (s_proj[s_active_idx].busy_model) { machine_toast("Wait for the turn to finish, then fork"); return; }
+    cable_client_send_fork(id);
+    machine_toast("Forking\xE2\x80\xA6");
+}
 static __attribute__((unused)) void agent_goal_tap (lv_event_t *e) { (void)e; if (agent_action_ready()) voice_start_impl(VOICE_CMD_GOAL); }
 static __attribute__((unused)) void agent_loop_tap (lv_event_t *e) { (void)e; if (agent_action_ready()) voice_start_impl(VOICE_CMD_LOOP); }
 
@@ -2981,6 +2997,14 @@ static void agent_actions_apply(void)
               && !s_machines_active && !s_notif_open && !display_is_asleep()
               && s_active_idx >= 0 && s_active_idx < s_proj_count;
     set_hidden(s_agent_acts, !on);
+    // Fork only where a fork can be anything (owner, 2026-09-18: "chỉ hiện fork cho agent có khả năng
+    // fork như claude/codex"): Claude Code and Codex fork natively, OpenCode takes a handoff message;
+    // Devin, Cursor and the rest can do neither, and a button that only refuses is not drawn.
+    if (s_agent_fork_btn && on) {
+        const char *eng = s_proj[s_active_idx].engine;
+        bool forkable = strcmp(eng, "claude") == 0 || strcmp(eng, "codex") == 0 || strcmp(eng, "opencode") == 0;
+        set_hidden(s_agent_fork_btn, !forkable);
+    }
 }
 
 static lv_obj_t *agent_act_btn(int32_t x, int32_t y, lv_event_cb_t cb)
@@ -3066,6 +3090,39 @@ static void build_agent_actions(void)
       lv_obj_t *ic = lv_image_create(b);
       lv_image_set_src(ic, &icon_act_voice);      // 44px native, colour baked — see the note on the asset
       lv_obj_center(ic); }
+    // Fork — where Loop used to sit (the right end of the arc, 307/322), drawn from plain objects like Goal
+    // was: two dots on top and one below, joined — the git-fork mark every tab and pane header wears for
+    // a forked harness. Objects rather than an image for the reason the note above gives about images
+    // on the tile that is on screen most of the time.
+    { lv_obj_t *b = agent_act_btn(307, 322, agent_fork_tap);
+      s_agent_fork_btn = b;
+      lv_obj_t *g = lv_obj_create(b);
+      lv_obj_remove_style_all(g);
+      lv_obj_clear_flag(g, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+      lv_obj_set_size(g, 44, 44);
+      lv_obj_center(g);
+      static const lv_point_precise_t left[]  = { { 9, 11 }, { 9, 18 }, { 22, 26 }, { 22, 34 } };
+      static const lv_point_precise_t right[] = { { 35, 11 }, { 35, 18 }, { 22, 26 } };
+      const lv_point_precise_t *strokes[] = { left, right };
+      const int counts[] = { 4, 3 };
+      for (int k = 0; k < 2; k++) {
+          lv_obj_t *ln = lv_line_create(g);
+          lv_line_set_points(ln, strokes[k], counts[k]);
+          lv_obj_set_style_line_width(ln, 4, 0);
+          lv_obj_set_style_line_color(ln, COL_FORK, 0);
+          lv_obj_set_style_line_rounded(ln, true, 0);
+      }
+      const int dots[][2] = { { 9, 8 }, { 35, 8 }, { 22, 37 } };
+      for (int k = 0; k < 3; k++) {
+          lv_obj_t *c = lv_obj_create(g);
+          lv_obj_remove_style_all(c);
+          lv_obj_clear_flag(c, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+          lv_obj_set_size(c, 12, 12);
+          lv_obj_set_pos(c, dots[k][0] - 6, dots[k][1] - 6);
+          lv_obj_set_style_radius(c, LV_RADIUS_CIRCLE, 0);
+          lv_obj_set_style_bg_color(c, COL_FORK, 0);
+          lv_obj_set_style_bg_opa(c, LV_OPA_COVER, 0);
+      } }
 #if AGENT_TILE_GOAL_LOOP
     // Loop — the exported Figma repeat arrows, the same mark the Overview carries, and the mirror of Goal's
     // 20px push: 287 → 307.
@@ -3125,6 +3182,7 @@ bool ui_action_hit(uint16_t x, uint16_t y)
     if (s_agent_acts && !lv_obj_has_flag(s_agent_acts, LV_OBJ_FLAG_HIDDEN)) {
         if ((s_agent_goal_btn  && lv_obj_hit_test(s_agent_goal_btn,  &pt)) ||
             (s_agent_voice_btn && lv_obj_hit_test(s_agent_voice_btn, &pt)) ||
+            (s_agent_fork_btn  && lv_obj_hit_test(s_agent_fork_btn,  &pt)) ||
             (s_agent_loop_btn  && lv_obj_hit_test(s_agent_loop_btn,  &pt))) return true;
     }
 
@@ -5399,6 +5457,7 @@ void ui_project_set_engine(const char *project_id, const char *engine)
         if (valid) snprintf(s_proj[i].engine, sizeof(s_proj[i].engine), "%s", valid);
         else s_proj[i].engine[0] = '\0';
         apply_engine_label(&s_proj[i]);
+        if (i == s_active_idx) agent_actions_apply();   // the Fork mark follows the engine
     }
     display_unlock();
 }
@@ -6851,7 +6910,6 @@ static EXT_RAM_BSS_ATTR struct {
 } s_q;
 
 static void q_render(void);
-static void machine_toast(const char *msg);   // defined with the machine picker, below
 static void q_advance(void);
 static void q_cancel(void);
 static void q_opt_tap(lv_event_t *e);

@@ -1209,6 +1209,68 @@ describe('BackendSocket outbound queue', () => {
   })
 })
 
+describe('agent_fork RPC', () => {
+  afterEach(() => {
+    wsMock.instances.length = 0
+    vi.restoreAllMocks()
+  })
+
+  const FORK: RegisteredSession = {
+    schemaVersion: 2, active: true, agentId: 'agent-2', sessionId: '', boundAt: null, engine: 'claude',
+    forkedFrom: { agentId: 'agent-1', name: 'Agent one' },
+    transcriptPath: null, projectDir: 'workspace', cwd: '/tmp/workspace', runtimes: [], primaryRuntimeKey: '',
+    tmuxPane: '%2', source: null, title: null, model: null, cliVersion: null, processIdentity: null,
+    registeredAt: 2, updatedAt: 2, lastHookAt: 2, lastTranscriptAt: 2,
+  }
+
+  function localSocket(): { socket: BackendSocket; frames: Array<Record<string, unknown>> } {
+    const socket = new BackendSocket('token')
+    const frames: Array<Record<string, unknown>> = []
+    socket.registerLocalClient('local:fork', { sendFrame: (frame) => { frames.push(frame); return true }, sendBinary: () => true })
+    return { socket, frames }
+  }
+
+  it('validates the frame before touching the daemon', async () => {
+    const { socket, frames } = localSocket()
+    socket.handleLocalFrame('local:fork', { type: 'agent_fork', payload: { requestId: 'r1' } })
+    await vi.waitFor(() => expect(frames).toContainEqual({ type: 'agent_fork_result', payload: { requestId: 'r1', error: 'MISSING_AGENT_ID' } }))
+    socket.handleLocalFrame('local:fork', { type: 'agent_fork', payload: { requestId: 'r2', agentId: 'agent-1' } })
+    await vi.waitFor(() => expect(frames).toContainEqual({ type: 'agent_fork_result', payload: { requestId: 'r2', error: 'UNSUPPORTED_ON_REMOTE' } }))
+    socket.onForkAgent = async () => ({ ok: true, session: FORK, level: 'native' })
+    socket.handleLocalFrame('local:fork', { type: 'agent_fork', payload: { requestId: 'r3', agentId: 'agent-1', prompt: 'x'.repeat(2001) } })
+    await vi.waitFor(() => expect(frames).toContainEqual({ type: 'agent_fork_result', payload: { requestId: 'r3', error: 'PROMPT_TOO_LONG' } }))
+    await socket.unregisterLocalClient('local:fork')
+    await socket.stop()
+  })
+
+  it('hands name and prompt to the daemon and answers with the fork, its level, and who it came from', async () => {
+    const { socket, frames } = localSocket()
+    const seen: unknown[] = []
+    socket.onForkAgent = async (input) => { seen.push(input); return { ok: true, session: FORK, level: 'native' } }
+    socket.handleLocalFrame('local:fork', { type: 'agent_fork', payload: { requestId: 'r1', agentId: 'agent-1', name: '  Agent one - fork ', prompt: 'ship it' } })
+    await vi.waitFor(() => {
+      const result = frames.find((f) => f.type === 'agent_fork_result')
+      expect(result).toMatchObject({
+        payload: { requestId: 'r1', level: 'native', agent: expect.objectContaining({ id: 'agent-2', forkedFrom: { agentId: 'agent-1', name: 'Agent one' } }) },
+      })
+    })
+    expect(seen).toEqual([{ agentId: 'agent-1', name: 'Agent one - fork', prompt: 'ship it' }])
+    await socket.unregisterLocalClient('local:fork')
+    await socket.stop()
+  })
+
+  it('relays the daemon\'s refusal with its reason', async () => {
+    const { socket, frames } = localSocket()
+    socket.onForkAgent = async () => ({ ok: false, error: 'AGENT_BUSY', detail: 'Wait for it to finish, then fork.' })
+    socket.handleLocalFrame('local:fork', { type: 'agent_fork', payload: { requestId: 'r1', agentId: 'agent-1' } })
+    await vi.waitFor(() => expect(frames).toContainEqual({
+      type: 'agent_fork_result', payload: { requestId: 'r1', error: 'AGENT_BUSY', detail: 'Wait for it to finish, then fork.' },
+    }))
+    await socket.unregisterLocalClient('local:fork')
+    await socket.stop()
+  })
+})
+
 describe('agent_restart RPC', () => {
   afterEach(() => {
     wsMock.instances.length = 0

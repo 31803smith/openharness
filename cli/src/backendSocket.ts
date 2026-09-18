@@ -467,6 +467,14 @@ export class BackendSocket {
       { ok: true; session: RegisteredSession; resumed: boolean }
       | { ok: false; error: string; detail?: string }
     >) | null = null
+  /** Called on `agent_fork` — cli.ts opens a NEW agent that starts with `agentId`'s whole history
+   *  (lib/forkAgent.ts) and returns its process-agent, exactly as `agent_create` does. `level` says
+   *  what the new agent actually got: the engine's own fork, or a handoff message. */
+  onForkAgent: ((input: { agentId: string; name: string | null; prompt: string | null }) =>
+    Promise<
+      { ok: true; session: RegisteredSession; level: 'native' | 'handoff' }
+      | { ok: false; error: string; detail?: string }
+    >) | null = null
   /** Called when the web/device sends chat input to an agent terminal. */
   onMessage: ((sessionId: string, content: string, deliveryId?: string) => void) | null = null
   /** Best-effort terminal-native title sync after a user renames an agent. */
@@ -2081,6 +2089,26 @@ export class BackendSocket {
             return
           }
           reply(type, requestId, { agent: await this.toProject(result.session), resumed: result.resumed })
+          return
+        }
+
+        // Fork an agent: a second one with the first one's history — see lib/forkAgent.ts. The reply
+        // is agent_create's shape plus `level`, so a client opens the pane the same way.
+        case 'agent_fork': {
+          const target = payload.agentId as string | undefined
+          if (!target) { reply(type, requestId, { error: 'MISSING_AGENT_ID' }); return }
+          if (!this.onForkAgent) { reply(type, requestId, { error: 'UNSUPPORTED_ON_REMOTE' }); return }
+          const name = typeof payload.name === 'string' && payload.name.trim() ? payload.name.trim().slice(0, 120) : null
+          const rawPrompt = payload.prompt
+          if (rawPrompt !== undefined && rawPrompt !== null && typeof rawPrompt !== 'string') { reply(type, requestId, { error: 'INVALID_PROMPT' }); return }
+          const prompt = typeof rawPrompt === 'string' && rawPrompt.trim() ? rawPrompt : null
+          if (prompt && prompt.length > MAX_FIRST_PROMPT_CHARS) { reply(type, requestId, { error: 'PROMPT_TOO_LONG' }); return }
+          const result = await this.onForkAgent({ agentId: target, name, prompt })
+          if (!result.ok) {
+            reply(type, requestId, result.detail ? { error: result.error, detail: result.detail } : { error: result.error })
+            return
+          }
+          reply(type, requestId, { agent: await this.toProject(result.session), level: result.level })
           return
         }
 
