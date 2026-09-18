@@ -1,41 +1,12 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import 'package:harness_mobile/shared/theme/app_theme.dart';
-import 'package:harness_mobile/shared/widgets/pulse.dart';
 
+import 'voice_mic_face.dart';
 import 'voice_mic_mode.dart';
-
-/// What the mic says it will do when tapped.
-enum VoiceMicFace {
-  /// At rest: tap to talk.
-  talk,
-
-  /// The microphone is opening: tap to call it off.
-  starting,
-
-  /// Recording: tap to send what was said. It breathes while it listens.
-  listening,
-
-  /// Transcribing or sending: nothing to tap until that is back.
-  busy,
-
-  /// A send failed and its words are held: tap to send them again.
-  retry,
-
-  /// The microphone was refused: tap to ask again.
-  off,
-
-  /// Recording with the thumb dragged off the button — letting go now throws
-  /// the take away. [VoiceMicMode.holdToTalk] only.
-  ///
-  /// Its own face rather than a flag on [listening] because it is the opposite
-  /// promise: the ring stops breathing, the fill goes to the warning colour and
-  /// the glyph becomes a `×`. What is about to happen has to be readable at a
-  /// glance, by someone whose thumb is covering the button.
-  cancelling,
-}
 
 /// The one voice control on a terminal page — a small round button floating
 /// over the terminal's bottom right corner. [VoiceMicFab] is what places it.
@@ -118,9 +89,6 @@ class VoiceMicButton extends StatefulWidget {
   /// presses. See the gap above the mic in `voice_mic_fab.dart`.
   static const double touchOverhang = (touchExtent - extent) / 2;
 
-  /// The visible circle.
-  static const double _core = 48;
-
   /// How far past [touchExtent] the thumb may stray and still count as "on" the
   /// button.
   ///
@@ -138,6 +106,14 @@ class _VoiceMicButtonState extends State<VoiceMicButton> {
   /// Whether the thumb is currently outside the button, with a hold in
   /// progress. Drives the [VoiceMicFace.cancelling] face.
   bool _slippedOff = false;
+
+  /// The pointer holding the mic down, or null with no hold in progress.
+  ///
+  /// ⚠️ Only the pointer that STARTED a hold may finish it. A press that landed
+  /// while the button was dead started nothing, and its release must not send
+  /// words held from an earlier failed send; a second finger must not end the
+  /// first one's take.
+  int? _holdPointer;
 
   bool get _live => widget.onPressed != null;
 
@@ -183,14 +159,15 @@ class _VoiceMicButtonState extends State<VoiceMicButton> {
   }
 
   void _onPointerDown(PointerDownEvent event) {
-    if (!_live) return;
+    if (!_live || _holdPointer != null) return;
+    _holdPointer = event.pointer;
     _setSlipped(false);
     HapticFeedback.lightImpact();
     widget.onHoldStart?.call();
   }
 
   void _onPointerMove(PointerMoveEvent event) {
-    if (!_live || widget.onHoldFinish == null) return;
+    if (event.pointer != _holdPointer || widget.onHoldFinish == null) return;
     final off = !_within(event.localPosition);
     if (off == _slippedOff) return;
     // Felt as well as seen: the thumb is over the button, so the change of
@@ -200,19 +177,41 @@ class _VoiceMicButtonState extends State<VoiceMicButton> {
   }
 
   void _onPointerUp(PointerUpEvent event) {
-    if (widget.onHoldFinish == null) return;
+    if (event.pointer != _holdPointer) return;
+    _holdPointer = null;
     final cancelled = _slippedOff;
     _setSlipped(false);
-    widget.onHoldFinish!(cancelled: cancelled);
+    widget.onHoldFinish?.call(cancelled: cancelled);
   }
 
-  /// The gesture was taken over by something else — a scroll that won the
-  /// arena, the app going away. Treated as a cancel: a take nobody ended
-  /// deliberately must not be sent.
+  /// The gesture was taken away by the system — the app going away. Treated as
+  /// a cancel: a take nobody ended deliberately must not be sent.
   void _onPointerCancel(PointerCancelEvent event) {
-    if (widget.onHoldFinish == null) return;
+    if (event.pointer != _holdPointer) return;
+    _holdPointer = null;
     _setSlipped(false);
-    widget.onHoldFinish!(cancelled: true);
+    widget.onHoldFinish?.call(cancelled: true);
+  }
+
+  /// ⚠️ **A hold whose button leaves the tree mid-take is cancelled.** The
+  /// button is unmounted while the thumb is still down whenever the page drops
+  /// it — the keyboard coming up, the pane going away — and the release then
+  /// reaches no one: without this the microphone stays open with no thumb on it
+  /// until [VoiceInputController.maxTake] ends it.
+  ///
+  /// Deferred to a microtask: the cancel notifies listeners that rebuild, and
+  /// the tree is locked while it is being finalised.
+  @override
+  void dispose() {
+    if (_holdPointer != null) {
+      final finish = widget.onHoldFinish;
+      final slipChanged = _slippedOff ? widget.onSlipChanged : null;
+      scheduleMicrotask(() {
+        slipChanged?.call(false);
+        finish?.call(cancelled: true);
+      });
+    }
+    super.dispose();
   }
 
   /// ⚠️ Tells the row BEFORE rebuilding itself. The listener sits in an ancestor
@@ -281,8 +280,8 @@ class _VoiceMicButtonState extends State<VoiceMicButton> {
                     // ⚠️ Not while cancelling: the ring means "listening, carry
                     // on talking", and leaving it breathing under a `×` would
                     // say both things at once.
-                    if (_face == VoiceMicFace.listening) const _Ring(),
-                    _Core(face: _face, lit: _lit),
+                    if (_face == VoiceMicFace.listening) const VoiceMicRing(),
+                    VoiceMicCore(face: _face, lit: _lit),
                   ],
                 ),
               ),
@@ -319,155 +318,25 @@ class _VoiceMicButtonState extends State<VoiceMicButton> {
         child: child,
       );
     }
-    return Listener(
-      key: const ValueKey('voice-mic'),
+    // ⚠️ **The drag recognizers are here to WIN the arena, and do nothing else.**
+    // A [Listener] never enters the gesture arena, so the pager this button sits
+    // in would otherwise take any thumb that shifted past touch slop mid-sentence
+    // and swipe to the next agent under a live take. Being deeper in the tree,
+    // these accept first and the pager's drag never starts; the raw pointer
+    // events above keep arriving either way.
+    return GestureDetector(
       behavior: HitTestBehavior.opaque,
-      onPointerDown: _onPointerDown,
-      onPointerMove: _onPointerMove,
-      onPointerUp: _onPointerUp,
-      onPointerCancel: _onPointerCancel,
-      child: child,
+      onHorizontalDragStart: (_) {},
+      onVerticalDragStart: (_) {},
+      child: Listener(
+        key: const ValueKey('voice-mic'),
+        behavior: HitTestBehavior.opaque,
+        onPointerDown: _onPointerDown,
+        onPointerMove: _onPointerMove,
+        onPointerUp: _onPointerUp,
+        onPointerCancel: _onPointerCancel,
+        child: child,
+      ),
     );
   }
-}
-
-class _Core extends StatelessWidget {
-  const _Core({required this.face, required this.lit});
-
-  final VoiceMicFace face;
-  final bool lit;
-
-  /// The fill's hue. Cancelling takes the warning colour: the button is about
-  /// to throw away what was just said, and that is not something the accent —
-  /// which everywhere else in the app means "go" — should be saying.
-  Color get _tint =>
-      face == VoiceMicFace.cancelling ? AppPalette.warn : AppPalette.accent;
-
-  @override
-  Widget build(BuildContext context) => AnimatedContainer(
-    duration: const Duration(milliseconds: 220),
-    curve: Curves.easeOutCubic,
-    width: VoiceMicButton._core,
-    height: VoiceMicButton._core,
-    decoration: BoxDecoration(
-      shape: BoxShape.circle,
-      gradient: lit
-          ? LinearGradient(
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-              colors: [Color.lerp(_tint, Colors.white, 0.18)!, _tint],
-            )
-          : null,
-      color: lit ? null : AppGlass.surfaceFill,
-      border: Border.all(
-        color: lit ? Colors.white.withValues(alpha: 0.28) : AppGlass.lift,
-      ),
-      // ⚠️ **Two different shadows for two different jobs, and the resting one
-      // is not optional.** Lit, the button glows in its own colour — that is
-      // state, saying the mic is open. At rest it casts a plain drop shadow
-      // instead: it floats over streaming output rather than over a surface, and
-      // without one its edge disappears against every dark line it happens to
-      // sit on. The screenshot that prompted this had it all but invisible.
-      boxShadow: lit
-          ? [
-              BoxShadow(color: _tint.withValues(alpha: 0.4), blurRadius: 12),
-              // The lift, under the glow. The glow says "recording"; it does
-              // not separate the circle from the text behind it, because it is
-              // the same brightness as the accent the terminal itself uses.
-              BoxShadow(
-                color: Colors.black.withValues(alpha: 0.35),
-                blurRadius: 10,
-                offset: const Offset(0, 3),
-              ),
-            ]
-          : [
-              // Cast down and soft: enough to lift the circle off the text
-              // behind it without reading as a second ring around it.
-              BoxShadow(
-                color: Colors.black.withValues(alpha: 0.45),
-                blurRadius: 12,
-                offset: const Offset(0, 3),
-              ),
-              // A tight, darker core under the edge, which is what keeps the
-              // outline readable where the blur alone washes out over a bright
-              // line of output.
-              BoxShadow(
-                color: Colors.black.withValues(alpha: 0.3),
-                blurRadius: 3,
-                offset: const Offset(0, 1),
-              ),
-            ],
-    ),
-    child: Center(
-      child: AnimatedSwitcher(
-        duration: const Duration(milliseconds: 160),
-        child: _Glyph(key: ValueKey(face), face: face, lit: lit),
-      ),
-    ),
-  );
-}
-
-class _Glyph extends StatelessWidget {
-  const _Glyph({super.key, required this.face, required this.lit});
-
-  final VoiceMicFace face;
-  final bool lit;
-
-  @override
-  Widget build(BuildContext context) {
-    if (face == VoiceMicFace.busy) {
-      return SizedBox.square(
-        dimension: 21,
-        child: CircularProgressIndicator(
-          strokeWidth: 2.4,
-          color: AppPalette.accent,
-        ),
-      );
-    }
-    return Icon(
-      switch (face) {
-        // ⚠️ In hold-to-talk the arrow would be a lie: nothing is sent by
-        // pressing this, it is sent by letting go. The mic stays up for the
-        // whole take and the thumb never leaves it, so there is no second press
-        // for an arrow to describe.
-        VoiceMicFace.listening =>
-          micHoldsToTalk ? LucideIcons.mic300 : LucideIcons.arrowUp300,
-        VoiceMicFace.retry => LucideIcons.arrowUp300,
-        VoiceMicFace.cancelling => LucideIcons.x300,
-        VoiceMicFace.off => LucideIcons.micOff300,
-        VoiceMicFace.talk ||
-        VoiceMicFace.starting ||
-        VoiceMicFace.busy => LucideIcons.mic300,
-      },
-      size: 25,
-      color: lit
-          ? Colors.white
-          : face == VoiceMicFace.off
-          ? AppPalette.textFaint
-          : AppPalette.textPrimary,
-    );
-  }
-}
-
-/// The glow that swells out of the button while it listens, on the app's one
-/// [Pulse] — which is also what holds it still under Reduce Motion.
-class _Ring extends StatelessWidget {
-  const _Ring();
-
-  @override
-  Widget build(BuildContext context) => Pulse(
-    duration: const Duration(milliseconds: 900),
-    curve: Curves.easeOut,
-    builder: (context, t, _) => Transform.scale(
-      scale: 1 + 0.45 * t,
-      child: Container(
-        width: VoiceMicButton._core,
-        height: VoiceMicButton._core,
-        decoration: BoxDecoration(
-          shape: BoxShape.circle,
-          color: AppPalette.accent.withValues(alpha: 0.35 * (1 - t)),
-        ),
-      ),
-    ),
-  );
 }

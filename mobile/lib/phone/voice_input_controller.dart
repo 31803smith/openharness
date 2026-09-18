@@ -118,6 +118,7 @@ class VoiceInputController extends ChangeNotifier {
   /// Drops the take in progress, the words held from a send that failed, and
   /// the notice. A send already on its way is not recalled.
   void clear() {
+    if (_disposed) return;
     _abandonTake();
     _heard = '';
     _setStatus(VoiceInputStatus.idle);
@@ -238,8 +239,12 @@ class VoiceInputController extends ChangeNotifier {
     var sent = false;
     try {
       sent = await deliver(text);
-    } on Exception {
+    } catch (error) {
       // Reported below exactly like a refusal: the words stay, Send stays live.
+      // ⚠️ Every throwable, not only [Exception]: anything that escaped here
+      // would leave [isSending] set, and the mic busy for the pager's life.
+      // The type only: what failed to send is what someone said.
+      appLog.warn('voice', 'send failed: ${error.runtimeType}');
     }
     _isSending = false;
     if (sent) _heard = '';
@@ -308,7 +313,10 @@ class VoiceInputController extends ChangeNotifier {
         notice: words.isEmpty ? VoiceNotice.nothingHeard : null,
       );
       return words.isNotEmpty;
-    } on Exception catch (error) {
+    } catch (error) {
+      // ⚠️ Every throwable, not only [Exception]: a reply of an unexpected shape
+      // fails as a TypeError, and one that escaped would leave the status on
+      // `transcribing` — the mic busy, for good, until the pager is closed.
       appLog.warn('voice', 'stt[${_language.value}] failed', error: error);
       if (take == _take) {
         _setStatus(VoiceInputStatus.idle, notice: VoiceNotice.notTranscribed);
@@ -355,7 +363,11 @@ class VoiceInputController extends ChangeNotifier {
   void _restartNoticeTimer() {
     _noticeLimit?.cancel();
     _noticeLimit = null;
-    if (_notice == null || _status == VoiceInputStatus.unavailable) return;
+    if (_disposed ||
+        _notice == null ||
+        _status == VoiceInputStatus.unavailable) {
+      return;
+    }
     _noticeLimit = Timer(noticeLinger, () {
       _noticeLimit = null;
       // Only if it is still the same notice: anything that has set another one

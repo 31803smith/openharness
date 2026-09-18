@@ -5,7 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:harness_mobile/terminal/terminal_session.dart';
 
 import 'voice_input_controller.dart';
-import 'voice_mic_button.dart';
+import 'voice_mic_face.dart';
 import 'voice_mic_mode.dart';
 
 typedef VoiceMicAction = ({

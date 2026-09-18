@@ -61,8 +61,25 @@ class MicVoiceRecorder implements VoiceRecorder {
   @override
   Future<bool> allowed() => _recorder.hasPermission();
 
+  /// The tail of the operations running on the plugin, one at a time.
+  ///
+  /// ⚠️ **Serial, because the controller fires `cancel` without awaiting it.**
+  /// A take slid off and a new hold pressed straight after would otherwise run
+  /// the old cancel's `_discardTake` AFTER the new start had subscribed — the new
+  /// take's stream cancelled under it, coming back as "No sound reached the
+  /// microphone" — or land the plugin's own cancel on the new recording.
+  Future<void> _tail = Future.value();
+
+  Future<T> _serially<T>(Future<T> Function() operation) {
+    final result = _tail.then((_) => operation());
+    _tail = result.then((_) {}, onError: (Object _) {});
+    return result;
+  }
+
   @override
-  Future<void> start() async {
+  Future<void> start() => _serially(_start);
+
+  Future<void> _start() async {
     await _discardTake();
     _sampleRate = _requested.sampleRate;
     _channels = _requested.numChannels;
@@ -80,13 +97,18 @@ class MicVoiceRecorder implements VoiceRecorder {
   }
 
   @override
-  Future<VoiceTake?> stop() async {
+  Future<VoiceTake?> stop() => _serially(_stop);
+
+  Future<VoiceTake?> _stop() async {
     final drained = _drained;
     if (drained == null) return null;
     await _recorder.stop();
     // The plugin's own rule: the last buffer arrives with the stream's close,
     // not with `stop()`, so the take is only whole once the stream is done.
     await drained.future.timeout(const Duration(seconds: 2), onTimeout: () {});
+    // Cancelled rather than dropped: after a timeout the stream is still open,
+    // and a late buffer would otherwise land in the NEXT take.
+    await _subscription?.cancel();
     _subscription = null;
     _drained = null;
     final pcm = _pcm.takeBytes();
@@ -100,14 +122,18 @@ class MicVoiceRecorder implements VoiceRecorder {
   }
 
   @override
-  Future<void> cancel() async {
+  Future<void> cancel() => _serially(_cancel);
+
+  Future<void> _cancel() async {
     if (_drained == null) return;
     await _recorder.cancel();
     await _discardTake();
   }
 
   @override
-  Future<void> dispose() async {
+  Future<void> dispose() => _serially(_dispose);
+
+  Future<void> _dispose() async {
     await _discardTake();
     await _recorder.dispose();
   }

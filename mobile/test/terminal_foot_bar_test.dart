@@ -3,22 +3,23 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:harness_mobile/phone/phone_status.dart';
 import 'package:harness_mobile/phone/terminal_foot_bar.dart';
 import 'package:harness_mobile/phone/voice_input_controller.dart';
+import 'package:harness_mobile/phone/voice_mic_action.dart';
 import 'package:harness_mobile/phone/voice_notice.dart';
-import 'package:harness_mobile/terminal/terminal_session.dart';
 
 import 'voice_fakes.dart';
 
+/// The row under the terminal: who the agent is while nothing is being said,
+/// and what the mic is doing while something is. The mic itself floats over the
+/// terminal (`voice_mic_fab_test.dart`); this row carries the words it has
+/// nowhere to put.
 void main() {
   late FakeVoiceRecorder recorder;
   late FakeTranscriber backend;
   late ValueNotifier<String> language;
   late VoiceInputController voice;
-  late TerminalSession session;
-  late List<(String, Map<String, dynamic>)> frames;
 
   const live = (label: 'Live', tone: PhoneTone.good);
-  final mic = find.byKey(const ValueKey('voice-mic'));
-  final cancel = find.byKey(const ValueKey('voice-cancel'));
+  final dismiss = find.byKey(const ValueKey('voice-cancel'));
 
   setUp(() {
     recorder = FakeVoiceRecorder();
@@ -29,74 +30,75 @@ void main() {
       recorder: recorder,
       language: language,
     );
-    frames = [];
-    session =
-        TerminalSession(
-            machineId: 'm',
-            agentId: 'a',
-            agentName: 'Agent',
-            engineId: 'claude',
-            send: (type, payload) async {
-              frames.add((type, payload));
-              return true;
-            },
-            sendBinary: (_) async => true,
-          )
-          ..status = TerminalSessionStatus.controlling
-          ..streamId = 's';
   });
 
   tearDown(() {
     voice.dispose();
     language.dispose();
-    session.dispose();
   });
 
-  Future<void> pumpBar(WidgetTester tester) => tester.pumpWidget(
-    MaterialApp(
-      home: Scaffold(
-        body: Align(
-          alignment: Alignment.bottomCenter,
-          child: TerminalFootBar(
-            name: 'MacBookPro2021.local',
-            status: live,
-            voice: voice,
-            session: session,
+  Future<void> pumpBar(WidgetTester tester, {bool slippedOff = false}) =>
+      tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: Center(
+              child: TerminalFootBar(
+                name: 'MacBookPro2021.local',
+                status: live,
+                voice: voice,
+                agent: null,
+                slippedOff: slippedOff,
+              ),
+            ),
           ),
         ),
-      ),
-    ),
-  );
+      );
 
-  testWidgets('at rest it is the machine, its state, and one mic', (
-    tester,
-  ) async {
+  testWidgets('at rest it names the machine and its state', (tester) async {
     await pumpBar(tester);
 
     expect(find.text('MacBookPro2021.local'), findsOneWidget);
     expect(find.text('Live'), findsOneWidget);
-    expect(mic, findsOneWidget);
-    expect(cancel, findsNothing);
-    expect(recorder.starts, 0);
+    expect(dismiss, findsNothing);
   });
 
-  testWidgets('tap to talk, tap again to send it as a turn', (tester) async {
+  testWidgets('while recording it says what the mic is doing', (tester) async {
     await pumpBar(tester);
-    backend.replies.add('summarise the diff');
 
-    await tester.tap(mic);
-    await tester.pump();
-    expect(voice.status, VoiceInputStatus.listening);
-    expect(find.text('Listening…'), findsOneWidget);
-
-    await tester.tap(mic);
+    await voice.startListening();
     await tester.pumpAndSettle();
 
-    // The composer's frame, not typed bytes — the machine owns the Enter.
-    expect(frames, hasLength(1));
-    expect(frames.single.$1, 'message');
-    expect(frames.single.$2['content'], 'summarise the diff');
-    expect(voice.isIdle, isTrue);
+    expect(find.text(voiceActivityLabel(voice)!), findsOneWidget);
+    expect(find.text('MacBookPro2021.local'), findsNothing);
+    voice.clear();
+    await tester.pumpAndSettle();
+  });
+
+  testWidgets('a hold dragged off the mic says letting go cancels', (
+    tester,
+  ) async {
+    await pumpBar(tester, slippedOff: true);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Release to cancel'), findsOneWidget);
+  });
+
+  testWidgets('a failed send says so, and × puts the row back', (tester) async {
+    await pumpBar(tester);
+    backend.replies.add('deploy');
+    await voice.startListening();
+    await voice.stopListening();
+    await voice.submit((_) async => false);
+    await tester.pumpAndSettle();
+
+    expect(find.text(VoiceNotice.notSent), findsOneWidget);
+
+    // On the glyph: the target only answers inside the row's own 24×18 slot —
+    // hit testing stops at a parent's bounds, whatever the OverflowBox draws.
+    await tester.tap(find.descendant(of: dismiss, matching: find.byType(Icon)));
+    await tester.pumpAndSettle();
+
+    expect(voice.transcript, isEmpty);
     expect(find.text('MacBookPro2021.local'), findsOneWidget);
   });
 
@@ -104,58 +106,11 @@ void main() {
     await pumpBar(tester);
     final atRest = tester.getSize(find.byType(TerminalFootBar));
 
-    await tester.tap(mic);
-    await tester.pump();
+    await voice.startListening();
+    await tester.pumpAndSettle();
 
     expect(tester.getSize(find.byType(TerminalFootBar)), atRest);
     voice.clear();
     await tester.pumpAndSettle();
-  });
-
-  testWidgets('× throws a take away and sends nothing', (tester) async {
-    await pumpBar(tester);
-    await tester.tap(mic);
-    await tester.pump();
-
-    await tester.tap(cancel);
-    await tester.pumpAndSettle();
-
-    expect(recorder.cancels, 1);
-    expect(frames, isEmpty);
-    expect(cancel, findsNothing);
-    expect(find.text('Live'), findsOneWidget);
-  });
-
-  testWidgets('a failed send keeps the words, and the mic sends them again', (
-    tester,
-  ) async {
-    session.status = TerminalSessionStatus.takenOver;
-    await pumpBar(tester);
-    backend.replies.add('deploy');
-    await voice.startListening();
-    await tester.pump();
-
-    await tester.tap(mic);
-    await tester.pumpAndSettle();
-    expect(frames, isEmpty);
-    expect(find.text(VoiceNotice.notSent), findsOneWidget);
-    expect(voice.transcript, 'deploy');
-
-    session.status = TerminalSessionStatus.controlling;
-    await pumpBar(tester);
-    await tester.tap(mic);
-    await tester.pumpAndSettle();
-
-    expect(frames.single.$2['content'], 'deploy');
-  });
-
-  testWidgets('no talking while the terminal takes no input', (tester) async {
-    session.status = TerminalSessionStatus.takenOver;
-    await pumpBar(tester);
-
-    await tester.tap(mic, warnIfMissed: false);
-    await tester.pump();
-
-    expect(recorder.starts, 0);
   });
 }

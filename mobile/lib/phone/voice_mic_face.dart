@@ -1,0 +1,183 @@
+import 'package:flutter/material.dart';
+import 'package:lucide_icons_flutter/lucide_icons.dart';
+
+import 'package:harness_mobile/shared/theme/app_theme.dart';
+import 'package:harness_mobile/shared/widgets/pulse.dart';
+
+import 'voice_mic_mode.dart';
+
+/// What the mic says it will do when tapped.
+enum VoiceMicFace {
+  /// At rest: tap to talk.
+  talk,
+
+  /// The microphone is opening: tap to call it off.
+  starting,
+
+  /// Recording: tap to send what was said. It breathes while it listens.
+  listening,
+
+  /// Transcribing or sending: nothing to tap until that is back.
+  busy,
+
+  /// A send failed and its words are held: tap to send them again.
+  retry,
+
+  /// The microphone was refused: tap to ask again.
+  off,
+
+  /// Recording with the thumb dragged off the button — letting go now throws
+  /// the take away. [VoiceMicMode.holdToTalk] only.
+  ///
+  /// Its own face rather than a flag on [listening] because it is the opposite
+  /// promise: the ring stops breathing, the fill goes to the warning colour and
+  /// the glyph becomes a `×`. What is about to happen has to be readable at a
+  /// glance, by someone whose thumb is covering the button.
+  cancelling,
+}
+
+/// The round, filled part of the mic: its colour, its glow, and the glyph for
+/// what a press will do.
+class VoiceMicCore extends StatelessWidget {
+  const VoiceMicCore({super.key, required this.face, required this.lit});
+
+  /// The visible circle's diameter — the ring breathes out from the same size.
+  static const double diameter = 48;
+
+  final VoiceMicFace face;
+  final bool lit;
+
+  /// The fill's hue. Cancelling takes the warning colour: the button is about
+  /// to throw away what was just said, and that is not something the accent —
+  /// which everywhere else in the app means "go" — should be saying.
+  Color get _tint =>
+      face == VoiceMicFace.cancelling ? AppPalette.warn : AppPalette.accent;
+
+  @override
+  Widget build(BuildContext context) => AnimatedContainer(
+    duration: const Duration(milliseconds: 220),
+    curve: Curves.easeOutCubic,
+    width: VoiceMicCore.diameter,
+    height: VoiceMicCore.diameter,
+    decoration: BoxDecoration(
+      shape: BoxShape.circle,
+      gradient: lit
+          ? LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [Color.lerp(_tint, Colors.white, 0.18)!, _tint],
+            )
+          : null,
+      color: lit ? null : AppGlass.surfaceFill,
+      border: Border.all(
+        color: lit ? Colors.white.withValues(alpha: 0.28) : AppGlass.lift,
+      ),
+      // ⚠️ **Two different shadows for two different jobs, and the resting one
+      // is not optional.** Lit, the button glows in its own colour — that is
+      // state, saying the mic is open. At rest it casts a plain drop shadow
+      // instead: it floats over streaming output rather than over a surface, and
+      // without one its edge disappears against every dark line it happens to
+      // sit on. The screenshot that prompted this had it all but invisible.
+      boxShadow: lit
+          ? [
+              BoxShadow(color: _tint.withValues(alpha: 0.4), blurRadius: 12),
+              // The lift, under the glow. The glow says "recording"; it does
+              // not separate the circle from the text behind it, because it is
+              // the same brightness as the accent the terminal itself uses.
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.35),
+                blurRadius: 10,
+                offset: const Offset(0, 3),
+              ),
+            ]
+          : [
+              // Cast down and soft: enough to lift the circle off the text
+              // behind it without reading as a second ring around it.
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.45),
+                blurRadius: 12,
+                offset: const Offset(0, 3),
+              ),
+              // A tight, darker core under the edge, which is what keeps the
+              // outline readable where the blur alone washes out over a bright
+              // line of output.
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.3),
+                blurRadius: 3,
+                offset: const Offset(0, 1),
+              ),
+            ],
+    ),
+    child: Center(
+      child: AnimatedSwitcher(
+        duration: const Duration(milliseconds: 160),
+        child: _Glyph(key: ValueKey(face), face: face, lit: lit),
+      ),
+    ),
+  );
+}
+
+class _Glyph extends StatelessWidget {
+  const _Glyph({super.key, required this.face, required this.lit});
+
+  final VoiceMicFace face;
+  final bool lit;
+
+  @override
+  Widget build(BuildContext context) {
+    if (face == VoiceMicFace.busy) {
+      return SizedBox.square(
+        dimension: 21,
+        child: CircularProgressIndicator(
+          strokeWidth: 2.4,
+          color: AppPalette.accent,
+        ),
+      );
+    }
+    return Icon(
+      switch (face) {
+        // ⚠️ In hold-to-talk the arrow would be a lie: nothing is sent by
+        // pressing this, it is sent by letting go. The mic stays up for the
+        // whole take and the thumb never leaves it, so there is no second press
+        // for an arrow to describe.
+        VoiceMicFace.listening =>
+          micHoldsToTalk ? LucideIcons.mic300 : LucideIcons.arrowUp300,
+        VoiceMicFace.retry => LucideIcons.arrowUp300,
+        VoiceMicFace.cancelling => LucideIcons.x300,
+        VoiceMicFace.off => LucideIcons.micOff300,
+        VoiceMicFace.talk ||
+        VoiceMicFace.starting ||
+        VoiceMicFace.busy => LucideIcons.mic300,
+      },
+      size: 25,
+      color: lit
+          ? Colors.white
+          : face == VoiceMicFace.off
+          ? AppPalette.textFaint
+          : AppPalette.textPrimary,
+    );
+  }
+}
+
+/// The glow that swells out of the button while it listens, on the app's one
+/// [Pulse] — which is also what holds it still under Reduce Motion.
+class VoiceMicRing extends StatelessWidget {
+  const VoiceMicRing({super.key});
+
+  @override
+  Widget build(BuildContext context) => Pulse(
+    duration: const Duration(milliseconds: 900),
+    curve: Curves.easeOut,
+    builder: (context, t, _) => Transform.scale(
+      scale: 1 + 0.45 * t,
+      child: Container(
+        width: VoiceMicCore.diameter,
+        height: VoiceMicCore.diameter,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          color: AppPalette.accent.withValues(alpha: 0.35 * (1 - t)),
+        ),
+      ),
+    ),
+  );
+}
