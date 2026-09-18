@@ -297,8 +297,9 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
   private func rebuildMachinesMenu() {
     machinesMenu.removeAllItems()
     machinesMenu.minimumWidth = 0
-    let labels = machines.map { machine -> (name: String, presence: String, status: String, count: String) in
+    let labels = machines.map { machine -> (name: String, owner: String, presence: String, status: String, count: String) in
       (name: SwarmMenuText.fitted(machine.name, width: 200),
+       owner: machine.shared && !machine.ownerName.isEmpty ? " · " + SwarmMenuText.fitted(machine.ownerName, width: 140) : "",
        // Node presence ("Online"/"Offline"), shown grey right after the name,
        // independent of the link state on the trailing edge.
        presence: machine.presence,
@@ -309,7 +310,7 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
     // Leading text = name + presence; trailing column = the agent count, or the
     // status word ("Link required"/"Offline"/…) when there is no count.
     let compactEdge = SwarmMenuText.trailingEdge(labels.map {
-      ($0.presence.isEmpty ? $0.name : $0.name + "  " + $0.presence,
+      ($0.name + $0.owner + ($0.presence.isEmpty ? "" : "  " + $0.presence),
        $0.count.isEmpty ? $0.status : $0.count)
     })
     let trailingEdge = ceil((compactEdge + 62) * 1.2) - 62
@@ -319,7 +320,15 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
     manager.identifier = NSUserInterfaceItemIdentifier(HarnessKeymapMenu.actionPrefix + "manageMachines")
     machinesMenu.addItem(manager)
     machinesMenu.addItem(.separator())
-    for (machine, parts) in zip(machines, labels) {
+    var lastSection: Bool? = nil
+    for (machine, parts) in zip(machines, labels).sorted(by: { !$0.0.shared && $1.0.shared }) {
+      if lastSection != machine.shared {
+        if lastSection != nil { machinesMenu.addItem(.separator()) }
+        let header = NSMenuItem(title: machine.shared ? "Shared with you" : "Your machines", action: nil, keyEquivalent: "")
+        header.isEnabled = false
+        machinesMenu.addItem(header)
+        lastSection = machine.shared
+      }
       let item = NSMenuItem(title: machine.name, action: #selector(machineAction(_:)), keyEquivalent: "")
       item.target = self
       item.representedObject = machine.id
@@ -331,16 +340,16 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
       // right): the agent count, or the link/offline status when there is no
       // count. The two are independent slots, so a machine can read
       // "Online … Link required".
-      let afterName = parts.presence.isEmpty ? "" : "  " + parts.presence
+      let afterName = parts.owner + (parts.presence.isEmpty ? "" : "  " + parts.presence)
       let trailing = parts.count.isEmpty ? parts.status : parts.count
       label.append(NSAttributedString(string: afterName + "\t" + trailing,
         attributes: [.font: NSFont.menuFont(ofSize: 0), .paragraphStyle: paragraph,
           .foregroundColor: NSColor.secondaryLabelColor]))
       item.attributedTitle = label
-      item.image = NSImage(systemSymbolName: machine.local ? "laptopcomputer" : "desktopcomputer", accessibilityDescription: nil)
+      item.image = NSImage(systemSymbolName: machine.shared ? "person.2" : machine.local ? "laptopcomputer" : "desktopcomputer", accessibilityDescription: machine.shared ? "Shared machine" : nil)
       let submenu = NSMenu(title: machine.name)
       for agent in machine.agents {
-        let child = NSMenuItem(title: agent.title, action: #selector(machineAgentAction(_:)), keyEquivalent: "")
+        let child = NSMenuItem(title: agent.title + (machine.shared ? " · View only" : ""), action: #selector(machineAgentAction(_:)), keyEquivalent: "")
         child.target = self
         child.representedObject = ["machineId": machine.id, "agentId": agent.id]
         child.image = historyIcons.image(engine: agent.engine, asset: agent.iconAsset)
@@ -364,6 +373,7 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
         empty.isEnabled = false
         submenu.addItem(empty)
       }
+      if !machine.shared {
       submenu.addItem(.separator())
       let find = NSMenuItem(title: "Find Harnesses…", action: #selector(machineAction(_:)), keyEquivalent: "")
       find.target = self
@@ -376,6 +386,7 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
         del.representedObject = machine.id
         del.image = NSImage(systemSymbolName: "trash", accessibilityDescription: nil)
         submenu.addItem(del)
+      }
       }
       item.submenu = submenu
       machinesMenu.addItem(item)
@@ -495,9 +506,9 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
     modelsMenu.addItem(caption)
     let run = NSMenuItem(title: "Talk to Model manager", action: nil, keyEquivalent: "")
     run.identifier = NSUserInterfaceItemIdentifier(HarnessKeymapMenu.actionPrefix + "runLocalModel")
-    if machines.count > 1 {
+    if machines.filter({ !$0.shared }).count > 1 {
       let pick = NSMenu(title: run.title)
-      for machine in machines {
+      for machine in machines where !machine.shared {
         let item = NSMenuItem(title: machine.local ? "\(machine.name) (this computer)" : machine.name,
           action: #selector(runLocalModelAction(_:)), keyEquivalent: "")
         item.target = self
@@ -696,6 +707,8 @@ private struct SwarmMachineEntry: Equatable {
   let local: Bool
   let agentCount: Int?
   let agents: [SwarmMachineAgent]
+  let shared: Bool
+  let ownerName: String
   init?(_ row: [String: Any]) {
     guard let id = row["id"] as? String, !id.isEmpty,
           let name = row["name"] as? String, !name.isEmpty else { return nil }
@@ -704,6 +717,8 @@ private struct SwarmMachineEntry: Equatable {
     status = String((row["status"] as? String ?? "").prefix(80))
     presence = String((row["presence"] as? String ?? "").prefix(80))
     linkRequired = row["linkRequired"] as? Bool == true
+    shared = row["shared"] as? Bool == true
+    ownerName = String((row["ownerName"] as? String ?? "").prefix(100))
     local = row["local"] as? Bool == true
     agentCount = (row["agentCount"] as? Int).map { max(0, $0) }
     agents = (row["agents"] as? [[String: Any]] ?? []).prefix(512).compactMap(SwarmMachineAgent.init)

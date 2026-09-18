@@ -79,6 +79,7 @@ class TerminalSession extends ChangeNotifier {
   final TerminalFrameSender send;
   final TerminalBinarySender sendBinary;
   final Duration resyncTimeout;
+  final bool readOnly;
 
   /// Lets input batching tests hold the clock inside the four-millisecond window under host load.
   @visibleForTesting
@@ -99,6 +100,7 @@ class TerminalSession extends ChangeNotifier {
     required this.send,
     required this.sendBinary,
     this.onOpenStalled,
+    this.readOnly = false,
     this.resyncTimeout = const Duration(seconds: 4),
   }) {
     terminal = _newTerminal();
@@ -170,7 +172,9 @@ class TerminalSession extends ChangeNotifier {
   Future<void> _inputSendTail = Future<void>.value();
 
   bool get acceptsInput =>
-      status == TerminalSessionStatus.controlling && streamId != null;
+      !readOnly &&
+      status == TerminalSessionStatus.controlling &&
+      streamId != null;
 
   /// Grok's CLI declares terminal mouse-tracking (so tmux defers wheel bytes to it, same as any
   /// alt-buffer program) but doesn't correctly handle wheel reports itself — confirmed live: it
@@ -1131,6 +1135,7 @@ class TerminalSession extends ChangeNotifier {
   static const _resizeCoalesceWindow = Duration(milliseconds: 50);
 
   void resize(int width, int height) {
+    if (readOnly) return;
     _pendingCols = _clampCols(width);
     _pendingRows = _clampRows(height);
     final last = _lastResizeFlushAt;
@@ -1245,7 +1250,7 @@ class TerminalSession extends ChangeNotifier {
   }
 
   Future<void> _sendHeartbeat() async {
-    if (!acceptsInput) return;
+    if (status != TerminalSessionStatus.controlling || streamId == null) return;
     final generation = _generation;
     final sent = await send('terminal_alive', {'streamId': streamId});
     if (!sent && _isCurrent(generation)) {
