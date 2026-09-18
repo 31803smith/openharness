@@ -15,6 +15,7 @@ import {
   buildEngineCommandArgv,
   buildEngineLaunchArgv,
   commandAvailableInInteractiveShell,
+  engineFallbackPrelude,
   firstPromptArgs,
   gridPanePrelude,
   harnessNodePrelude,
@@ -23,7 +24,7 @@ import {
   supportsNamedAgent,
   unreadableCwdGuard,
 } from './engineLaunch.js'
-import { ENGINES } from '../engines/types.js'
+import { ENGINES, type AgentEngine } from '../engines/types.js'
 import { engineBin } from './engineBin.js'
 import type { EngineInstallRecipe } from './engineInstall.js'
 import { MIN_OPEN_FILES, RAISE_OPEN_FILES_SH } from './openFiles.js'
@@ -38,27 +39,66 @@ afterAll(() => { if (developersOwnGridBin !== undefined) process.env.HARNESS_GRI
 /** The prelude every case below gets by default: no managed grid on this machine, so PATH is left
  *  alone and only grid's update check is turned off. */
 const GRID_PRELUDE = gridPanePrelude('grid')
+/** The engine-in-a-shell wrapper every launch carries, for the shell each case names — see
+ *  `engineFallbackPrelude`. `null` tmux: the suite must not depend on what this machine has. */
+const FALLBACK = (engine: AgentEngine, shell: string) => engineFallbackPrelude(engine, shell, null)
+const NO_TMUX = null
 
 describe('buildEngineLaunchArgv', () => {
   it('wraps zsh in its interactive login form and execs the resolved binary', () => {
-    expect(buildEngineLaunchArgv('claude', {}, '/bin/zsh')).toEqual([
-      '/bin/zsh', '-lic', `${RAISE_OPEN_FILES_SH}${GRID_PRELUDE}exec "$@"`, 'harness-engine', engineBin('claude'),
+    expect(buildEngineLaunchArgv('claude', {}, '/bin/zsh', undefined, undefined, NO_TMUX)).toEqual([
+      '/bin/zsh', '-lic', `${RAISE_OPEN_FILES_SH}${FALLBACK('claude', '/bin/zsh')}${GRID_PRELUDE}harness_engine "$@"`, 'harness-engine', engineBin('claude'),
     ])
   })
 
   it('uses Ubuntu bash interactive startup files without making it a login shell', () => {
-    expect(buildEngineLaunchArgv('claude', {}, '/bin/bash')).toEqual([
-      '/bin/bash', '-ic', `${RAISE_OPEN_FILES_SH}${GRID_PRELUDE}exec "$@"`, 'harness-engine', engineBin('claude'),
+    expect(buildEngineLaunchArgv('claude', {}, '/bin/bash', undefined, undefined, NO_TMUX)).toEqual([
+      '/bin/bash', '-ic', `${RAISE_OPEN_FILES_SH}${FALLBACK('claude', '/bin/bash')}${GRID_PRELUDE}harness_engine "$@"`, 'harness-engine', engineBin('claude'),
     ])
   })
 
   it('enters the workspace only after interactive startup has completed', () => {
-    const argv = buildEngineLaunchArgv('claude', { cwd: '/work/project' }, '/bin/zsh')
+    const argv = buildEngineLaunchArgv('claude', { cwd: '/work/project' }, '/bin/zsh', undefined, undefined, NO_TMUX)
     expect(argv).toEqual([
       '/bin/zsh', '-lic',
-      `${RAISE_OPEN_FILES_SH}${GRID_PRELUDE}if ! cd -- "$1"; then printf '%s\\n' 'harness: the selected working directory is unavailable.' >&2; exit 1; fi\n${unreadableCwdGuard(process.platform)}shift\nexec "$@"`,
+      `${RAISE_OPEN_FILES_SH}${FALLBACK('claude', '/bin/zsh')}${GRID_PRELUDE}if ! cd -- "$1"; then printf '%s\\n' 'harness: the selected working directory is unavailable.' >&2; exit 1; fi\n${unreadableCwdGuard(process.platform)}shift\nharness_engine "$@"`,
       'harness-engine', '/work/project', engineBin('claude'),
     ])
+  })
+
+  describe('the engine runs INSIDE the pane shell (`harness_engine`), never exec\'d over it', () => {
+    const run = (argv: string[]) => {
+      try {
+        return { status: 0, out: execFileSync(argv[0], argv.slice(1), { stdio: ['ignore', 'pipe', 'pipe'] }).toString() }
+      } catch (error) {
+        const failed = error as { status: number | null; stdout: Buffer; stderr: Buffer }
+        return { status: failed.status, out: `${failed.stdout}${failed.stderr}` }
+      }
+    }
+    it('hands the engine its argv untouched, and without a terminal on stdin reports its exit status', () => {
+      const argv = buildEngineLaunchArgv('claude', {}, '/bin/sh', undefined, undefined, NO_TMUX)
+      // The launcher's own argv, then the "engine": `sh -c 'echo …; exit 3'` stands in for one.
+      const script = [argv[0], argv[1], argv[2], 'harness-engine', '/bin/sh', '-c', 'printf "%s\\n" "args:$*"; exit 3', 'engine', 'a b', '--flag']
+      const result = run(script)
+      expect(result.out).toContain('args:a b --flag')
+      expect(result.status).toBe(3)
+      // No shell was handed over and no "this pane is a shell now" line was printed: no tty.
+      expect(result.out).not.toContain('This pane is a shell now')
+    })
+    it('a command that does not exist still ends the pane with 127, so "not installed" stays a launch failure', () => {
+      const argv = buildEngineLaunchArgv('claude', {}, '/bin/sh', undefined, undefined, NO_TMUX)
+      expect(run([argv[0], argv[1], argv[2], 'harness-engine', '/nowhere/claude-that-is-not-here']).status).toBe(127)
+    })
+    it('marks the pane with the exit status through the daemon\'s own tmux, and only then hands over a shell', () => {
+      const prelude = engineFallbackPrelude('codex', '/bin/bash', '/opt/homebrew/bin/tmux')
+      expect(prelude).toContain(`'/opt/homebrew/bin/tmux' set-option -p -t "$TMUX_PANE" @harness_engine_exit "$harness_status"`)
+      expect(prelude.indexOf('set-option')).toBeLessThan(prelude.indexOf("exec '/bin/bash'"))
+      expect(prelude).toContain('if [ "$harness_status" -eq 127 ]; then exit 127; fi')
+      // zsh is a login shell; bash keeps its interactive rc (same rule as a terminal).
+      expect(engineFallbackPrelude('codex', '/bin/zsh', null)).toContain("exec '/bin/zsh' -l\n")
+      expect(engineFallbackPrelude('codex', '/bin/bash', null)).toContain("exec '/bin/bash'\n")
+      expect(engineFallbackPrelude('codex', '/bin/bash', null)).not.toContain('set-option')
+    })
   })
 
   describe('a terminal (engine `terminal`)', () => {
@@ -211,13 +251,14 @@ describe('buildEngineLaunchArgv', () => {
   })
 
   it('a DSH agent gets Harness\'s Node at the end of a PATH that has none; a plain launch is unchanged', () => {
-    const argv = buildEngineLaunchArgv('claude', { harnessNode: true }, '/bin/zsh', '/opt/harness runtime/bin/node')
-    // On this branch every pane script opens with the open-files raise and the grid prelude; the Node
-    // line lands after them, and a launch without `harnessNode` is exactly the baseline above.
-    expect(argv[2]).toBe(`${RAISE_OPEN_FILES_SH}${GRID_PRELUDE}${harnessNodePrelude('/opt/harness runtime/bin/node')}exec "$@"`)
+    const argv = buildEngineLaunchArgv('claude', { harnessNode: true }, '/bin/zsh', '/opt/harness runtime/bin/node', undefined, NO_TMUX)
+    // On this branch every pane script opens with the open-files raise, the engine-in-a-shell
+    // wrapper and the grid prelude; the Node line lands after them, and a launch without
+    // `harnessNode` is exactly the baseline above.
+    expect(argv[2]).toBe(`${RAISE_OPEN_FILES_SH}${FALLBACK('claude', '/bin/zsh')}${GRID_PRELUDE}${harnessNodePrelude('/opt/harness runtime/bin/node')}harness_engine "$@"`)
     expect(harnessNodePrelude('/opt/harness runtime/bin/node')).toBe(
       'if ! command -v node >/dev/null 2>&1; then PATH="${PATH:+$PATH:}"\'/opt/harness runtime/bin\'; export PATH; fi\n')
-    expect(buildEngineLaunchArgv('claude', { harnessNode: false }, '/bin/zsh')[2]).toBe(`${RAISE_OPEN_FILES_SH}${GRID_PRELUDE}exec "$@"`)
+    expect(buildEngineLaunchArgv('claude', { harnessNode: false }, '/bin/zsh', undefined, undefined, NO_TMUX)[2]).toBe(`${RAISE_OPEN_FILES_SH}${FALLBACK('claude', '/bin/zsh')}${GRID_PRELUDE}harness_engine "$@"`)
   })
 
   it('the DSH prelude, run by a real shell, reaches the engine\'s PATH only when node is missing', () => {
@@ -502,7 +543,7 @@ describe('buildEngineLaunchArgv — the grid the pane finds', () => {
 
     expect(script).toContain(`PATH='/opt/harness/runtime/grid-0.3.47-darwin-arm64'"\${PATH:+:$PATH}"\nexport PATH\n`)
     expect(script).toContain('GRID_NO_UPDATE_CHECK=1\nexport GRID_NO_UPDATE_CHECK\n')
-    expect(script.indexOf('export GRID_NO_UPDATE_CHECK')).toBeLessThan(script.indexOf('exec "$@"'))
+    expect(script.indexOf('export GRID_NO_UPDATE_CHECK')).toBeLessThan(script.indexOf('harness_engine "$@"'))
   })
 
   it('leaves PATH alone when grid is only a name on it, but still turns the update check off', () => {
@@ -561,7 +602,7 @@ describe('buildEngineLaunchArgv with installFirst', () => {
     buildEngineLaunchArgv('opencode', { installFirst: install }, '/bin/zsh')[2]
 
   it('leaves the plain launch alone when nothing has to be installed', () => {
-    expect(buildEngineLaunchArgv('opencode', {}, '/bin/zsh')[2]).toBe(`${RAISE_OPEN_FILES_SH}${GRID_PRELUDE}exec "$@"`)
+    expect(buildEngineLaunchArgv('opencode', {}, '/bin/zsh', undefined, undefined, NO_TMUX)[2]).toBe(`${RAISE_OPEN_FILES_SH}${FALLBACK('opencode', '/bin/zsh')}${GRID_PRELUDE}harness_engine "$@"`)
   })
 
   it('keeps the engine argv positional, so the shell never re-parses a path or a flag', () => {
@@ -571,7 +612,7 @@ describe('buildEngineLaunchArgv with installFirst', () => {
     }, '/bin/zsh')
     expect(argv.slice(0, 2)).toEqual(['/bin/zsh', '-lic'])
     expect(argv.slice(3)).toEqual(['harness-engine', ...buildEngineCommandArgv('opencode', { bypassPermission: true })])
-    expect(argv[2]).toContain('exec "$@"')
+    expect(argv[2]).toContain('harness_engine "$@"')
   })
 
   it('runs the engine only when the install succeeded', async () => {

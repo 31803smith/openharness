@@ -1425,19 +1425,24 @@ class Registry {
   }
 
   /**
-   * The engine that was started inside a terminal has exited: the row is a terminal again.
+   * The engine in this pane has exited and the pane is a shell now: the row is a terminal.
    *
-   * Everything that belonged to the engine goes — session, transcript, process, grid, profile,
-   * model, permission choices — because the next thing typed into this shell may be a different
-   * engine, and `unboundRouteOwner` only claims a route for a row with no session. The row itself,
-   * its id, its pane and its name stay: this is the opposite of dormant, the terminal is live.
+   * For every agent, not only one that began as a terminal — an engine the app launched runs
+   * inside its pane's shell too (engineLaunch.ts `harness_engine`), and `/exit` or Ctrl-C leaves
+   * that shell at its prompt with the engine's last screen above it. Everything that belonged to
+   * the engine goes — session, transcript, process, grid, profile, model, permission choices —
+   * because the next thing typed into this shell may be a different engine, and `unboundRouteOwner`
+   * only claims a route for a row with no session. The row itself, its id, its pane and its name
+   * stay: this is the opposite of dormant, the terminal is live. `terminalHost` is set from here on,
+   * since that is what the pane now is.
    */
   releaseEngine(agentId: string): RegisteredSession | null {
     const entry = this.agents.get(agentId)
-    if (!entry || !entry.terminalHost || isTerminalEngine(entry.engine)) return null
+    if (!entry || isTerminalEngine(entry.engine)) return null
     this.drop(entry)
     this.releaseBinding(entry)
     entry.engine = 'terminal'
+    entry.terminalHost = true
     entry.processIdentity = null
     entry.launch = { state: 'ready' }
     entry.active = true

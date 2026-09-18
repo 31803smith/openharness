@@ -57,12 +57,12 @@ export interface RestoreAgentsDeps {
     releaseEngine(agentId: string): RegisteredSession | null
   }
   /**
-   * Whether a TERMINAL's pane is still there — a live pane in a session this daemon named for a
-   * terminal. A terminal has no engine process to find (`liveProcess` answers null for one by
-   * construction), so pane existence is its liveness. Optional so a caller without tmux inventory
-   * (tests) treats every terminal pane as gone.
+   * Whether the row's PANE is still there — a live pane in a session this daemon created. Every
+   * pane is a shell with the engine inside it, so a pane can outlive its engine: that is a terminal
+   * (a bare one has no engine process to find at all), not a pane to rebuild. Optional so a caller
+   * without tmux inventory (tests) treats a pane with no engine process as gone.
    */
-  liveTerminalPane?: (runtime: TmuxRuntimeRef) => Promise<boolean>
+  livePane?: (runtime: TmuxRuntimeRef) => Promise<boolean>
   /** The engine process still running in this row's pane, or null when tmux does not know the pane
    *  at all — including when no tmux server is running — or the pane has become something else. */
   liveProcess: (entry: RegisteredSession, runtime: TmuxRuntimeRef) => Promise<ProcessIdentity | null>
@@ -77,8 +77,9 @@ export interface RestoreAgentsDeps {
   respawn: (runtime: TmuxRuntimeRef, launch: RestoreLaunch) => Promise<{ ok: boolean; reason?: string }>
   /** One probe of the pane for a recognizable engine process. */
   probeProcess: (runtime: TmuxRuntimeRef, engine: AgentEngine) => Promise<ProcessIdentity | null>
-  /** Null when tmux no longer knows the pane. */
-  paneState: (runtime: TmuxRuntimeRef) => Promise<{ dead: boolean } | null>
+  /** Null when tmux no longer knows the pane. `engineExit` set: the engine left and the pane is a
+   *  shell now (`ENGINE_EXIT_PANE_OPTION`), which for a restore is the same news as `dead`. */
+  paneState: (runtime: TmuxRuntimeRef) => Promise<{ dead: boolean; engineExit?: number | null } | null>
   clearRemainOnExit: (runtime: TmuxRuntimeRef) => Promise<void>
   holdRoute: (routeKey: string, autoReleaseMs: number) => void
   releaseRoute: (routeKey: string) => void
@@ -123,7 +124,7 @@ async function waitForSettle(deps: RestoreAgentsDeps, runtime: TmuxRuntimeRef, s
   while (Date.now() < until) {
     await sleep(Math.min(SETTLE_POLL_MS, until - Date.now()))
     const state = await deps.paneState(runtime)
-    if (!state || state.dead) return 'gone'
+    if (!state || state.dead || state.engineExit != null) return 'gone'
   }
   return 'settled'
 }
@@ -140,23 +141,28 @@ export async function restoreAgents(deps: RestoreAgentsDeps): Promise<RestoreSum
     const runtime = tmuxRuntime(entry)
     if (!runtime) { summary.skipped.push({ agentId: entry.agentId, reason: 'no tmux pane' }); continue }
     if (entry.launch?.state === 'failed') { summary.skipped.push({ agentId: entry.agentId, reason: 'last launch failed' }); continue }
-    // A terminal — bare, or one that adopted an engine — is alive as long as its PANE is: the shell
-    // is what the person opened, and it survives whatever was typed into it. An adopted engine that
-    // exited while the daemon was down is exactly the exit the reconciler would have caught, so the
-    // row is put back to a terminal here; a pane that is gone comes back below as a terminal, too,
-    // never as the engine (its session is gone with the pane).
-    if (entry.terminalHost) {
-      const paneAlive = await deps.liveTerminalPane?.(runtime) ?? false
-      if (paneAlive) {
-        const engineLive = isTerminalEngine(entry.engine) ? null : await deps.liveProcess(entry, runtime)
-        if (engineLive) {
-          if (!entry.processIdentity) deps.registry.updateProcessIdentity(entry.agentId, engineLive)
-        } else if (!isTerminalEngine(entry.engine)) {
-          deps.registry.releaseEngine(entry.agentId)
-          deps.log(`[restore] ${entry.engine} → terminal · agent ${entry.agentId} · its engine exited while the daemon was down`)
-        }
-        continue
+    // A pane is alive as long as tmux has it, whatever runs in it: every pane is a shell with the
+    // engine inside, so an engine that exited while the daemon was down left a shell at its prompt
+    // — exactly the exit the reconciler would have caught — and the row is put back to a terminal
+    // here rather than a second pane being opened beside the first. A bare terminal has no engine
+    // process to look for at all.
+    const paneAlive = await deps.livePane?.(runtime) ?? false
+    if (paneAlive) {
+      const engineLive = isTerminalEngine(entry.engine) ? null : await deps.liveProcess(entry, runtime)
+      if (engineLive) {
+        // Still running. A row that lost its identity without losing its pane (a reboot the boot
+        // clock misread; a tmux server that outlived the daemon) is re-identified right here, so the
+        // reconciler adopts it by process instead of treating it as an unbound route.
+        if (!entry.processIdentity) deps.registry.updateProcessIdentity(entry.agentId, engineLive)
+      } else if (!isTerminalEngine(entry.engine)) {
+        deps.registry.releaseEngine(entry.agentId)
+        deps.log(`[restore] ${entry.engine} → terminal · agent ${entry.agentId} · its engine exited while the daemon was down`)
       }
+      continue
+    }
+    // A terminal whose pane is gone comes back as a terminal — never as the engine that was once
+    // typed into it: that engine's session went with the pane.
+    if (entry.terminalHost) {
       if (!isTerminalEngine(entry.engine)) deps.registry.releaseEngine(entry.agentId)
       missing.push({ entry: deps.registry.byAgent(entry.agentId) ?? entry, runtime })
       continue
@@ -308,7 +314,7 @@ async function watchRestoredPane(
         fail('ENGINE_DID_NOT_START', `${engine}'s restored pane disappeared before its engine process became ready.`)
         return
       }
-      if (state.dead) {
+      if (state.dead || state.engineExit != null) {
         if (!await relaunchFresh()) return
         delayMs = 50
         continue

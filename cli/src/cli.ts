@@ -82,7 +82,7 @@ import { createAndRegisterPane } from './lib/createAgentPane.js'
 import { restoreAgents } from './lib/restoreAgents.js'
 import { buildLaunchOverrides, validateLaunchOverrides, type LaunchOverrides, type LaunchOverridesDeps, type LaunchOverridesResult, type LaunchSource } from './lib/launchOverrides.js'
 import { prepareCodexResume } from './engines/codex/portableHistory.js'
-import { buildHarnessSessionLabel, isHarnessSessionFor } from './lib/harnessSessionLabel.js'
+import { buildHarnessSessionLabel } from './lib/harnessSessionLabel.js'
 import { listTmuxPanes } from './lib/tmuxAgentDiscovery.js'
 import { installedDsh } from './dsh/installed.js'
 import { dshVerdictPath, dshViewerName } from './dsh/manifest.js'
@@ -2738,11 +2738,15 @@ async function runForeground(session: AuthSession): Promise<void> {
         questionWatcher.stop(agent.sessionId)
         stopHeartbeat(agent.sessionId)
       }
-      // The engine somebody started inside a terminal has exited: the pane is a shell at its prompt
-      // again, so the row goes back to being a terminal — live, not dormant — and the dial, which
-      // only ever saw it as an agent, is told it is gone. The web/app side gets the same row with
-      // its engine back to `terminal` and draws it as one.
-      if (agent.terminalHost) {
+      // The engine has exited and its pane is a shell at its prompt (every launch runs the engine
+      // inside the pane's shell — engineLaunch.ts `harness_engine` — and so does a terminal somebody
+      // typed it into): the row becomes a terminal — live, not dormant — and the dial, which only
+      // ever knew it as an agent, is told it is gone. The app gets the same row with its engine
+      // now `terminal` and draws it as one. Not while the launch is still `starting`: a pane with
+      // no engine process yet is an install in progress, not an exit, and releasing it would wipe
+      // the grid/profile/DSH the launch is about to use. Not for a pane that is dead either — that
+      // one is on its way to `onRemoved`.
+      if (agent.launch?.state !== 'starting') {
         const released = registry.releaseEngine(agent.agentId)
         if (released) {
           syncRecapPool()
@@ -3736,12 +3740,11 @@ async function runForeground(session: AuthSession): Promise<void> {
       // and a pane that outlived the daemon in a session discovery no longer lists still has its
       // engine, which a second pane resuming the same session would collide with.
       liveProcess: (entry, runtime) => resolvePaneEngineProcess(runtime.paneId, entry.engine),
-      liveTerminalPane: async (runtime) => {
+      livePane: async (runtime) => {
         const inventory = await listTmuxPanes()
-        if (!inventory.ok) return false
-        // Its OWN session, not just any harness pane: a new tmux server hands out `%N` from zero
-        // again, and a stale id can name another agent's pane.
-        return inventory.panes.some((pane) => pane.tmuxPane === runtime.paneId && isHarnessSessionFor(pane.tmuxSessionName, 'terminal'))
+        // Only a harness pane counts (the inventory is already that whitelist): a new tmux server
+        // hands out `%N` from zero again, and a stale id can name somebody's own shell.
+        return inventory.ok && inventory.panes.some((pane) => pane.tmuxPane === runtime.paneId)
       },
       buildLaunch: async (entry, opts) => {
         // Mirrors `agent_create`: the same grid env/argv (and the same vendor variables cleared), or
@@ -4131,6 +4134,18 @@ async function runForeground(session: AuthSession): Promise<void> {
             console.warn(`[agent] create failed · ${engine} · ${detail}`)
             return
           }
+          // The engine started and was gone again before it was ever seen (a flag it refused, a
+          // config it could not read): its wrapper has handed the pane to a shell with the engine's
+          // own words on screen. That pane is a terminal, and the row says so — the person reads
+          // the error where it was printed and types the command again, rather than being handed a
+          // "Start failed" tile they cannot type into.
+          if (paneState.engineExit !== null) {
+            await clearPaneRemainOnExit(spawned.runtime.paneId)
+            const released = registry.releaseEngine(pending.agentId)
+            if (released) announceSession(released)
+            console.warn(`[agent] create · ${engine} exited (${paneState.engineExit}) before ready · agent ${pending.agentId} kept as a terminal`)
+            return
+          }
           await new Promise<void>((resolve) => {
             const timer = setTimeout(resolve, delayMs)
             timer.unref?.()
@@ -4449,11 +4464,12 @@ async function runForeground(session: AuthSession): Promise<void> {
     }
     forgetSession(sessionId, { force: true })
     if (!s) return
-    // Stopping a terminal is closing it: there is no engine pid to signal, the shell IS the thing,
-    // and a shell left running in a pane nobody can see any more is a leak. A terminal that adopted
-    // an engine goes the same way — the person pressed Stop on the tile, not on the engine — so
-    // the pane is killed alongside the engine's own termination below.
-    if (s.terminalHost && tmuxBackend) {
+    // Stopping is closing the pane. Every pane is a shell with the engine inside it now, so signalling
+    // the engine alone would leave a shell running in a pane nobody can see any more — a leak, and
+    // for a bare terminal there is no engine pid to signal at all. The engine's own termination
+    // below stays as the belt to this: a pane kill that does not land must not leave a live engine
+    // the UI already calls gone.
+    if (tmuxBackend) {
       const runtimes = s.runtimes.filter((runtime): runtime is TmuxRuntimeRef => runtime.backend === 'tmux')
       void Promise.all(runtimes.map((runtime) => tmuxBackend.kill(runtime))).then(() => {
         console.log(`[delete] ${sid(sessionId)} terminal · pane closed`)

@@ -9,6 +9,8 @@
 //   exit     create → type `exit` → the pane goes and the row with it (agent_deleted).
 //   restart  create → adopt claude → `harness stop; harness start` (LOCAL machine only). Then look:
 //            the row must still be claude on the same pane, not a second pane.
+//   agent    an ORDINARY agent (agent_create engine=claude) → /exit it → the row becomes `terminal`
+//            and stays (the pane is a shell now) → type `claude` → adopted again → stop.
 //
 // Machine ids: `harness machines --json`. Needs `claude` on the target machine's PATH (the docker
 // boxes route it through claude-code-router). Leaves nothing behind on a pass.
@@ -85,6 +87,51 @@ await new Promise<void>((resolve) => ws.on('open', () => resolve()))
 send('machine_select', { machineId, localProtocolVersion: 1 })
 await waitFor((f) => f.type === 'connected', 15_000, 'connected')
 log('connected')
+
+if (mode === 'agent') {
+  // An agent the app launched: `claude` exec'd by the daemon, not typed by a person.
+  const created = await rpc('agent_create', { engine: 'claude', cwd: process.env.E2E_CWD ?? '/tmp', bypassPermission: false }, 30_000)
+  if (created.error) fail(`agent_create → ${created.error} ${created.detail ?? ''}`)
+  const agentId: string = created.agent.id
+  log(`created claude agent ${agentId.slice(0, 8)} · launch=${created.agent.launch?.state}`)
+  await pollEngine(agentId, 'claude', 45_000)
+  const openId = randomUUID()
+  send('terminal_open', { requestId: openId, agentId, cols: 120, rows: 40, protocolVersion: 3 })
+  const ready = await waitFor((f) => (f.type === 'terminal_ready' || f.type === 'terminal_error') && f.payload?.requestId === openId, 15_000, 'terminal_ready')
+  if (ready.type === 'terminal_error') fail(`terminal_open → ${JSON.stringify(ready.payload)}`)
+  streamId = ready.payload.streamId
+  // Wait until the launch is confirmed ready (engine process seen), then leave claude.
+  const until = Date.now() + 45_000
+  while (Date.now() < until) {
+    const list = await rpc('agents_list', {})
+    const a = (list.agents as any[]).find((x) => x.id === agentId)
+    if (a?.launch?.state === 'ready') break
+    await sleep(1000)
+  }
+  await sleep(4000)
+  type('\r'); await sleep(2500); type('/exit\r'); await sleep(1500); type('\x03\x03')
+  await pollEngine(agentId, 'terminal', 40_000)
+  log('claude exited → engine=terminal, row kept')
+  await sleep(2000)
+  type('echo HARNESS_E2E_SHELL\r')
+  await sleep(1500)
+  if (!output.includes('HARNESS_E2E_SHELL')) fail(`no shell after the engine left; tail: ${JSON.stringify(output.slice(-300))}`)
+  log('shell answers in the same pane')
+  type('claude\r')
+  await pollEngine(agentId, 'claude', 45_000)
+  log('typed claude → adopted again')
+  await sleep(3000)
+  type('\r'); await sleep(2000); type('/exit\r'); await sleep(1500); type('\x03\x03')
+  await pollEngine(agentId, 'terminal', 40_000)
+  const deleted = await rpc('agent_delete', { agentId })
+  if (!deleted.deleted) fail(`agent_delete → ${JSON.stringify(deleted)}`)
+  await waitFor((f) => f.type === 'agent_deleted' && f.payload?.agentId === agentId, 15_000, 'agent_deleted')
+  await sleep(1500)
+  if (await engineOf(agentId) !== null) fail('agent still listed after delete')
+  log('deleted · gone')
+  console.log(`[${label}] PASS (agent)`)
+  process.exit(0)
+}
 
 // 1. create
 const created = await rpc('agent_create', { engine: 'terminal' }, 30_000)

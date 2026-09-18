@@ -2,12 +2,13 @@ import { execFile } from 'node:child_process'
 import { homedir, userInfo } from 'node:os'
 import { isAbsolute, basename, dirname, join } from 'node:path'
 import { isTerminalEngine, type AgentEngine } from '../engines/types.js'
-import { binaryOnPath } from './binaryOnPath.js'
+import { binaryOnPath, resolveBinaryOnPath } from './binaryOnPath.js'
 import { engineBin } from './engineBin.js'
 import type { EngineInstallRecipe } from './engineInstall.js'
 import { GRID_NO_UPDATE_CHECK_VAR, gridBinaryPath } from './gridExec.js'
 import { managedNodePath } from './nodeRuntime.js'
 import { RAISE_OPEN_FILES_SH } from './openFiles.js'
+import { ENGINE_EXIT_PANE_OPTION } from './tmux.js'
 
 /**
  * Best-effort "skip permission prompts" flag per engine, confirmed against each vendor's own docs.
@@ -364,18 +365,20 @@ export function buildEngineLaunchArgv(
   shell: string | undefined = undefined,
   runtimeNode: string = managedNodePath(),
   gridBinary: string = gridBinaryPath(),
+  tmuxBinary: string | null = resolveBinaryOnPath('tmux'),
 ): string[] {
   if (isTerminalEngine(engine)) return buildTerminalLaunchArgv(opts, shell)
   const command = buildEngineCommandArgv(engine, opts)
   const interactive = interactiveEngineShell(shell)
   if (!interactive) return command
+  const enginePrelude = engineFallbackPrelude(engine, interactive.path, tmuxBinary)
   // The clear comes FIRST, before the install as well as before the engine. An installer is a child
   // of this shell and inherits what it inherits: `npm` is not going to spend someone's Anthropic key,
   // but an install script that probes for credentials to configure itself would, and the whole point
   // of this launch is that the agent's environment is the one the user asked for.
   // Then the grid's PATH entry at the FRONT (its dir holds only `grid`), and — for a DSH agent — Harness's
   // Node at the END, only when the shell found none. The two never meet: one prepends, one appends.
-  const prelude = clearEnvPrelude(opts.clearEnv) + gridPanePrelude(gridBinary) + (opts.harnessNode ? harnessNodePrelude(runtimeNode) : '')
+  const prelude = enginePrelude + clearEnvPrelude(opts.clearEnv) + gridPanePrelude(gridBinary) + (opts.harnessNode ? harnessNodePrelude(runtimeNode) : '')
   // rc files (notably nvm) call getcwd() before running this command. Start the shell in a safe
   // directory and enter the selected workspace only after those files have loaded: an IDE can replace
   // a workspace inode between the desktop picker resolving it and tmux spawning the pane.
@@ -388,12 +391,52 @@ export function buildEngineLaunchArgv(
     ? installIfMissingThenExecScript(opts.installIfMissing, runtimeNode)
     : opts.installFirst
       ? installThenExecScript(opts.installFirst)
-      : 'exec "$@"'
+      : 'harness_engine "$@"'
   // The open-files raise goes ahead of everything, the installer included: a pane inherits the tmux
   // SERVER's soft limit, which is launchd's 256 whenever the desktop app started the daemon that
   // started the server, and an engine (Claude Code refuses outright) or an npm install under 256 is
   // the failure the person then reads in the pane. See openFiles.ts.
   return [interactive.path, ...interactive.args, RAISE_OPEN_FILES_SH + prelude + cwdPrelude + body, 'harness-engine', ...(opts.cwd ? [opts.cwd] : []), ...command]
+}
+
+/**
+ * The shell function every engine launch runs its engine through, instead of a bare `exec`.
+ *
+ * The engine is a CHILD of the pane's shell, and when it exits — `/exit`, Ctrl-C, a crash — the
+ * pane does not die with it: the wrapper records the exit status on the pane (`ENGINE_EXIT_PANE_OPTION`,
+ * which is how the daemon tells "the engine left" from "the install is still running") and `exec`s
+ * the user's interactive shell in its place, exactly as a terminal opened with ⌘⇧T is. The daemon
+ * then turns the row back into a terminal (`registry.releaseEngine`) rather than deleting it, and
+ * typing the engine's name into that shell adopts it again (`adoptEngine`). A 127 is the one exit
+ * that still ends the pane: the command was not found at all, and "not installed" needs to stay
+ * a failure the app can name rather than a prompt with an error above it.
+ *
+ * `tmuxBinary` is the daemon's own tmux, quoted into the script, because the pane's shell may not
+ * have it on PATH (the managed runtime never is). Without one the marker is skipped and the fallback
+ * still happens — only a failure at launch then takes the daemon's full wait to notice.
+ *
+ * Without a terminal on stdin there is nobody to hand a shell to, so the function exits with the
+ * engine's status instead — which is also what keeps the specs that run these scripts honest.
+ *
+ * `"$@" || status=$?` rather than `"$@"; status=$?`: a rc file that turned on `set -e` would end
+ * the script on the engine's non-zero exit before the fallback ran (see RAISE_OPEN_FILES_SH).
+ */
+export function engineFallbackPrelude(engine: AgentEngine, shellPath: string, tmuxBinary: string | null): string {
+  const loginArgs = basename(shellPath).toLowerCase() === 'zsh' ? ' -l' : ''
+  const mark = tmuxBinary && isAbsolute(tmuxBinary)
+    ? `  [ -n "$TMUX_PANE" ] && ${shellSingleQuote(tmuxBinary)} set-option -p -t "$TMUX_PANE" ${ENGINE_EXIT_PANE_OPTION} "$harness_status" >/dev/null 2>&1 || true\n`
+    : ''
+  return 'harness_engine() {\n'
+    + '  harness_status=0\n'
+    + '  "$@" || harness_status=$?\n'
+    + '  if [ "$harness_status" -eq 127 ]; then exit 127; fi\n'
+    + mark
+    // Only a pane — something with a terminal on stdin — gets a shell to type into. Run without one
+    // (a spec exercising the script, a wrapper piped somewhere) the engine's own status is the answer.
+    + '  if ! [ -t 0 ]; then exit "$harness_status"; fi\n'
+    + `  printf '\\n%s\\n' ${shellSingleQuote(`harness: ${engine} exited ($harness_status). This pane is a shell now — run ${engine} again, or stop the pane.`).replace('($harness_status)', `('"$harness_status"')`)}\n`
+    + `  exec ${shellSingleQuote(shellPath)}${loginArgs}\n`
+    + '}\n'
 }
 
 /**
@@ -488,7 +531,7 @@ function clearEnvPrelude(names: readonly string[] | undefined): string {
 function installThenExecScript(install: string): string {
   return [
     `printf '%s\\n' 'harness: installing the engine — this pane becomes the agent when it finishes' 'harness: $ ${install.replace(/'/g, "'\\''")}' ''`,
-    `if eval ${JSON.stringify(install)}; then exec "$@"; fi`,
+    `if eval ${JSON.stringify(install)}; then harness_engine "$@"; fi`,
     `printf '\\n%s\\n' 'harness: the install failed, so the agent was not started. The command is above; fix it and create the agent again.'`,
     'exit 1',
   ].join('\n')
@@ -605,7 +648,7 @@ function installIfMissingThenExecScript(recipe: EngineInstallRecipe, runtimeNode
     '  shift',
     '  if ! resolve_engine "$candidate"; then return 1; fi',
     '  shift',
-    '  exec "$resolved" "$@"',
+    '  harness_engine "$resolved" "$@"',
     '}',
     'try_engine "$1" "$@" || true',
     tryCandidates,

@@ -1650,10 +1650,12 @@ describe('a terminal: a pane that becomes an engine and back', () => {
     expect(registry.byProcess('claude', processIdentity(912))).toBeUndefined()
     expect(registry.byRuntimeTerminal(pane)?.agentId).toBe(opened.agentId)
     expect(registry.terminalAvailable(opened.agentId)).toBe(true)
-    // Not a terminal any more? Nothing to release. A plain agent? Never.
+    // Already a terminal? Nothing to release. A plain agent whose engine exited? A terminal from now on.
     expect(registry.releaseEngine(opened.agentId)).toBeNull()
     const plain = registry.openPendingAgent({ engine: 'codex', runtimes: [{ backend: 'tmux', paneId: '%10' }], cwd: '/tmp/x' })!
-    expect(registry.releaseEngine(plain.agentId)).toBeNull()
+    expect(plain.terminalHost).toBeUndefined()
+    expect(registry.releaseEngine(plain.agentId)).toMatchObject({ engine: 'terminal', terminalHost: true, active: true })
+    expect(registry.byRuntimeTerminal({ backend: 'tmux', paneId: '%10' })?.agentId).toBe(plain.agentId)
 
     // And the next engine typed into the same shell is adopted just the same.
     expect(registry.adoptEngine(opened.agentId, 'codex', processIdentity(913))).toMatchObject({ engine: 'codex' })
