@@ -243,6 +243,17 @@ const _harnesses = <String, EngineIdentity>{
     color: Color(0xffb8733a),
     asset: 'assets/engine-icons/autonomous-circuit.png',
   ),
+  // Grid's own mark — the bolt from the Grid app's icon (autonomous-grid-app,
+  // branding/app_icon.svg); ours, like Circuit's and Workshop's.
+  'autonomous/autonomous-grid': EngineIdentity(
+    id: 'autonomous/autonomous-grid',
+    label: 'Grid',
+    category: 'Compute',
+    tagline: 'Deploy open-weight models across your machines and watch the fleet live',
+    creator: 'Autonomous',
+    color: Color(0xfff5a623),
+    asset: 'assets/engine-icons/autonomous-grid.png',
+  ),
   'autonomous/autonomous-workshop': EngineIdentity(
     id: 'autonomous/autonomous-workshop',
     label: 'Autonomous Workshop',
@@ -433,6 +444,7 @@ const _harnesses = <String, EngineIdentity>{
 const knownHarnessBase = <String, String>{
   'autonomous/autonomous-circuit': 'claude',
   'autonomous/solder': 'claude',
+  'autonomous/autonomous-grid': 'codex',
   'autonomous/autonomous-workshop': 'codex',
   'autonomous/marp': 'claude',
   'autonomous/text-to-cad': 'claude',
