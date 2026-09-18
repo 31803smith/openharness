@@ -1369,7 +1369,8 @@ private final class SwarmTabStrip: NSView {
   private var commandHeld = false
   private var flagsMonitor: Any?
   private var resignObserver: NSObjectProtocol?
-  override var mouseDownCanMoveWindow: Bool { true }
+  // Dragging is explicit below. AppKit must not also start a titlebar gesture.
+  override var mouseDownCanMoveWindow: Bool { false }
 
   override init(frame: NSRect) {
     super.init(frame: frame)
@@ -1575,13 +1576,12 @@ private final class SwarmTabStrip: NSView {
 
   }
   override func mouseDown(with event: NSEvent) {
-    // A double-click on the strip's background zooms the window. This is the
-    // one place that does: the Flutter bar under the strip only drags, since
-    // its own double-tap zoomed a second time, straight back (owner,
-    // 2026-09-15: "maximizes out and resizes back").
     if ownsBackgroundDoubleClick(event) { window?.performZoom(nil) }
     else if event.clickCount == 1 { window?.performDrag(with: event) }
   }
+  // Own the release as well as the press. Forwarding it lets AppKit zoom a
+  // second time on mouse-up, immediately restoring the previous window size.
+  override func mouseUp(with event: NSEvent) {}
   fileprivate func ownsBackgroundDoubleClick(_ event: NSEvent) -> Bool {
     if event.clickCount == 1 {
       lastBackgroundClick = (event.timestamp, event.locationInWindow)
