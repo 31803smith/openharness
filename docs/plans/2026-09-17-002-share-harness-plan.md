@@ -18,6 +18,8 @@ preserve the pane and recover automatically. Revocation immediately ends access.
 Wide panes show terminal and viewer side by side; narrow panes offer Terminal and Viewer tabs.
 The owner keeps terminal control and dimensions while observers join and leave.
 
+![Share harness dialog with two fixture recipients](assets/share-harness-dialog.png)
+
 ## Boundaries
 
 - Authorization belongs to a recipient and a specific agent on a machine. New agents never inherit it.
@@ -43,7 +45,8 @@ Test identities, daemons and runtime data were isolated from existing sessions.
 | --- | --- |
 | CLI sharing modules | 35 tests pass; 100% statements (466), branches (285), functions (102), lines (306) |
 | Backend sharing routes and observer socket | 17 tests pass; 100% statements (141), branches (84), functions (35), lines (99) |
-| Sharing UI and affected desktop regressions | 61 tests pass across 8 files, including real loopback WebSockets |
+| Sharing UI and affected desktop regressions | 76 tests pass across 10 files, including real loopback WebSockets |
+| CLI terminal, tmux, local WebSocket, backend socket and encryption regressions | 237 tests pass across 15 files |
 | Share dialog line coverage | 164/164 (100%) |
 | Observer pane line coverage | 161/166 (97%); remaining lines are fallback transport callbacks |
 | Full backend suite | 440 pass, 11 optional tests skipped |
@@ -55,6 +58,10 @@ Test identities, daemons and runtime data were isolated from existing sessions.
 The 100% thresholds apply to the named sharing modules, not the entire repository or all changed
 integration code. `npm run test:sharing` in `cli` and `backend` enforces all four thresholds.
 
+The pre-PR rerun on 2026-09-18 reconfirmed both sharing coverage gates, the full backend suite,
+237 CLI regressions, 76 desktop tests, both TypeScript checks, desktop analysis, the macOS build and
+the complete real-stack flow. No product changes were needed after that round.
+
 The complete CLI run had 2,959 passes, 52 skips and 6 failures. Two login timeouts and three offline-hook
 failures reproduce on the untouched base commit `e077d176`; the sixth (Grok offline registry) passes
 when rerun in isolation. The complete desktop run had 1,941 passes, 2 skips and 6 failures: five
@@ -65,7 +72,7 @@ remain; the repository-wide suites are not claimed green.
 Reproduce desktop verification from `desktop`:
 
 ```sh
-flutter test --no-pub --coverage test/share_harness_test.dart test/shared_harness_panel_test.dart test/api_client_test.dart test/machines_menu_test.dart test/profile_startup_test.dart test/pane_machine_unknown_test.dart test/terminal_panel_presentation_test.dart test/swarm_interactions_test.dart
+flutter test --no-pub --coverage test/share_harness_test.dart test/shared_harness_panel_test.dart test/api_client_test.dart test/machines_menu_test.dart test/profile_startup_test.dart test/pane_machine_unknown_test.dart test/terminal_panel_presentation_test.dart test/swarm_interactions_test.dart test/ws_conn_test.dart test/ws_readiness_test.dart
 FLUTTER_SWIFT_PACKAGE_MANAGER=true DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer flutter build macos --debug --no-pub
 ```
 
