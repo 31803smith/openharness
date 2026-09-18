@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { reconcileGridAttach, type GridAttachDeps } from './gridAttach.js'
+import { reconcileGridAttach, createGridAttachRunner, type GridAttachDeps, type GridAttachResult } from './gridAttach.js'
 import type { GridHandoffResult } from './gridHandoff.js'
 import type { EnsureResult } from './gridEnsure.js'
 
@@ -159,5 +159,147 @@ describe('reconcileGridAttach — the daemon-start convergence', () => {
   it('does not let a rejected runtime promise throw — a failed download is best-effort', async () => {
     const d = deps({ managedGridReady: Promise.reject(new Error('download failed')), gridAvailable: () => false })
     await expect(reconcileGridAttach(d)).resolves.toMatchObject({ status: 'no-cli' })
+  })
+})
+
+/**
+ * The coordination half: WHEN a reconcile runs. The daemon calls `run()` at start and again on every
+ * backend reconnect, so every property here is about the interaction of those calls.
+ */
+describe('createGridAttachRunner — when a reconcile runs', () => {
+  const result = (status: GridAttachResult['status']): GridAttachResult => ({ status, name: NAME, detail: '' })
+
+  /** A clock the test moves by hand, so nothing here waits on real time. */
+  function clock(start = 1_000_000) {
+    let t = start
+    return { now: () => t, advance: (ms: number) => { t += ms } }
+  }
+
+  function runner(over: Partial<Parameters<typeof createGridAttachRunner>[0]> = {}, c = clock()) {
+    const attempt = vi.fn(async () => result('converged'))
+    const logs: string[] = []
+    const r = createGridAttachRunner({
+      attempt,
+      maxAttempts: 3,
+      minIntervalMs: 1_000,
+      ceilingMs: 5_000,
+      now: c.now,
+      log: (line) => logs.push(line),
+      ...over,
+    })
+    return { r, attempt: (over.attempt ?? attempt) as ReturnType<typeof vi.fn>, logs, clock: c }
+  }
+
+  it('runs once and stops once attached — a later reconnect costs nothing', async () => {
+    const { r, attempt, clock: c } = runner()
+
+    r.run()
+    await r.probe()
+    expect(attempt).toHaveBeenCalledOnce()
+
+    c.advance(10_000) // well past the interval, so only "already attached" can stop a second run
+    r.run()
+    expect(attempt).toHaveBeenCalledOnce()
+  })
+
+  it('does not overlap: a reconnect during an in-flight attempt is a no-op', async () => {
+    let release = (): void => {}
+    const gate = new Promise<void>((res) => { release = res })
+    const attempt = vi.fn(async () => { await gate; return result('converged') })
+    const { r, clock: c } = runner({ attempt })
+
+    r.run()
+    c.advance(10_000)
+    r.run()
+    r.run()
+    expect(attempt).toHaveBeenCalledOnce()
+
+    release()
+    await r.probe()
+    expect(attempt).toHaveBeenCalledOnce()
+  })
+
+  it('retries after an attempt that did not attach, once the interval has passed', async () => {
+    const attempt = vi.fn(async () => result('no-name'))
+    const { r, clock: c } = runner({ attempt })
+
+    r.run()
+    await r.probe()
+    expect(attempt).toHaveBeenCalledOnce()
+
+    c.advance(1_000)
+    r.run()
+    await r.probe()
+    expect(attempt).toHaveBeenCalledTimes(2)
+  })
+
+  it('collapses a burst of reconnects into ONE deferred attempt instead of burning the budget', async () => {
+    vi.useFakeTimers()
+    try {
+      const attempt = vi.fn(async () => result('no-name'))
+      // A real clock is not advanced by fake timers, so the runner reads the same injected one.
+      const c = clock()
+      const { r } = runner({ attempt }, c)
+
+      r.run()
+      await r.probe()
+      expect(attempt).toHaveBeenCalledTimes(1)
+
+      // Waking a laptop: several reconnects inside the interval. None may start an attempt, and
+      // together they must cost exactly one — the whole point of deferring rather than dropping.
+      for (let i = 0; i < 5; i++) r.run()
+      expect(attempt).toHaveBeenCalledTimes(1)
+      expect(r.attempts()).toBe(1)
+
+      c.advance(1_000)
+      await vi.advanceTimersByTimeAsync(1_000)
+      expect(attempt).toHaveBeenCalledTimes(2)
+      // Four attempts' worth of churn cost one, so the cap of 3 is not spent.
+      expect(r.attempts()).toBe(2)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('gives up out loud at the cap, and says it only once', async () => {
+    const attempt = vi.fn(async () => result('no-name'))
+    const { r, logs, clock: c } = runner({ attempt })
+
+    for (let i = 0; i < 3; i++) {
+      c.advance(1_000)
+      r.run()
+      await r.probe()
+    }
+    expect(attempt).toHaveBeenCalledTimes(3)
+
+    c.advance(1_000)
+    r.run()
+    c.advance(1_000)
+    r.run()
+    expect(attempt).toHaveBeenCalledTimes(3)
+    expect(logs.filter((l) => l.includes('giving up'))).toHaveLength(1)
+  })
+
+  it('a rejected attempt is logged and retried, never thrown', async () => {
+    const attempt = vi.fn(async () => { throw new Error('boom') })
+    const { r, logs, clock: c } = runner({ attempt })
+
+    expect(() => r.run()).not.toThrow()
+    await r.probe()
+    expect(logs.some((l) => l.includes('boom'))).toBe(true)
+
+    c.advance(1_000)
+    r.run()
+    expect(attempt).toHaveBeenCalledTimes(2)
+  })
+
+  it('probe stops offering the attempt once its ceiling passes, so an RPC never waits on a stuck one', async () => {
+    const attempt = vi.fn(async () => new Promise<GridAttachResult>(() => {})) // never settles
+    const { r, clock: c } = runner({ attempt })
+
+    r.run()
+    expect(r.probe()).not.toBeNull()
+    c.advance(5_000)
+    expect(r.probe()).toBeNull()
   })
 })

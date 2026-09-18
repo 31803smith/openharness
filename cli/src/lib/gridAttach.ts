@@ -174,6 +174,93 @@ export async function reconcileGridAttach(deps: GridAttachDeps): Promise<GridAtt
  * and makes no network call (autonomous-grid `cli/remote_grid.py`), so the reconcile's gate stays
  * cheap. An unparsable answer is no names, which the caller treats as "ensure it".
  */
+export interface GridAttachRunnerOptions {
+  /** Runs one reconcile. Injected so the coordination below is testable without a daemon. */
+  attempt: () => Promise<GridAttachResult>
+  /** How many attempts this runner will ever make before it stops trying. */
+  maxAttempts: number
+  /** The soonest a new attempt may START after the previous one did. */
+  minIntervalMs: number
+  /** How long an in-flight attempt is worth making an RPC wait for, from when it started. */
+  ceilingMs: number
+  /** Injected clock, for tests. */
+  now?: () => number
+  log: (line: string) => void
+}
+
+export interface GridAttachRunner {
+  /** Start an attempt if one is warranted. Safe to call as often as a reconnect fires. */
+  run: () => void
+  /** The in-flight attempt while it is still worth waiting for, else null. */
+  probe: () => Promise<unknown> | null
+  /** How many attempts have been started. Diagnostics and tests. */
+  attempts: () => number
+}
+
+/**
+ * Decides WHEN to reconcile, as opposed to {@link reconcileGridAttach}, which decides what to do.
+ *
+ * Its own unit because the daemon calls `run()` from two places — once at start, then on every
+ * backend reconnect — and every interesting property is about the interaction of those calls: two
+ * attempts must not overlap, a burst of reconnects must not turn into a burst of grid sign-ins, and
+ * the whole thing must eventually stop rather than rotate this account's tokens forever.
+ *
+ * **A burst collapses into one attempt, it does not burn the budget.** A laptop waking, changing
+ * network or toggling a VPN produces several reconnects in seconds. Counting each as an attempt
+ * spent the entire allowance on one moment of ordinary churn and then went quiet for the daemon's
+ * life — which can be days. Requests inside `minIntervalMs` are therefore DEFERRED to the end of
+ * that window rather than dropped, so the churn yields exactly one attempt and the opportunity is
+ * not lost either. The timer is unref'd: it must never be a reason a process stays alive.
+ *
+ * **It gives up out loud.** Reaching the cap says so once. Silence there was indistinguishable from
+ * a feature that was working.
+ */
+export function createGridAttachRunner(opts: GridAttachRunnerOptions): GridAttachRunner {
+  const now = opts.now ?? Date.now
+  let inFlight: Promise<unknown> | null = null
+  let deferred: ReturnType<typeof setTimeout> | null = null
+  let done = false
+  let attempts = 0
+  let lastStartedAt = Number.NEGATIVE_INFINITY
+  let deadline = 0
+  let saidGaveUp = false
+
+  const run = (): void => {
+    if (done || inFlight || deferred) return
+    if (attempts >= opts.maxAttempts) {
+      if (!saidGaveUp) {
+        saidGaveUp = true
+        opts.log(`no grid after ${attempts} attempts — giving up until this machine restarts, or you sign in to Harness again`)
+      }
+      return
+    }
+    const wait = opts.minIntervalMs - (now() - lastStartedAt)
+    if (wait > 0) {
+      deferred = setTimeout(() => { deferred = null; run() }, wait)
+      deferred.unref?.()
+      return
+    }
+    attempts += 1
+    lastStartedAt = now()
+    deadline = lastStartedAt + opts.ceilingMs
+    inFlight = opts.attempt()
+      .then((result) => {
+        // Only an outcome that actually attached stops the retries. `no-cli`, `no-name` and
+        // `handoff-failed` are all "this machine or the control plane was not ready", which is
+        // exactly what a later connect may have fixed.
+        if (result.status === 'converged' || result.status === 'signed-in') done = true
+      })
+      .catch((err) => { opts.log(`attempt failed: ${err instanceof Error ? (err.stack ?? err.message) : String(err)}`) })
+      .finally(() => { inFlight = null })
+  }
+
+  return {
+    run,
+    probe: () => (inFlight && now() < deadline ? inFlight : null),
+    attempts: () => attempts,
+  }
+}
+
 export async function gridNamesLocal(): Promise<string[]> {
   const { value, result } = await gridJson<Array<{ grid?: unknown }>>(['--remote', 'ls'])
   // ⚠️ A FAILED read is NOT an empty list, and conflating the two is how "this machine has no grids"

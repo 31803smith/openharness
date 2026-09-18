@@ -59,7 +59,7 @@ import { ensureHarnessGrid, type EnsureStatus } from './lib/gridEnsure.js'
 import { passThroughToGridLogout } from './lib/gridLogout.js'
 import { clearGridMcpUrlCache } from './lib/gridMcpUrl.js'
 import { warnIfGridSignInRemains } from './lib/gridCredentials.js'
-import { reconcileGridAttach, gridNamesLocal } from './lib/gridAttach.js'
+import { reconcileGridAttach, gridNamesLocal, createGridAttachRunner } from './lib/gridAttach.js'
 import { signedInGridEmail, resetGridDeriveMemo } from './lib/gridDerive.js'
 import { forgetGridModels } from './lib/gridModels.js'
 import { gridAvailable } from './lib/gridExec.js'
@@ -285,10 +285,15 @@ const GRID_MINT_TIMEOUT_MS = 10_000
  *  not it has settled — the ceiling that keeps a stuck attempt from degrading every grid RPC for the
  *  daemon's whole life (`gridReadyProbe`). */
 const GRID_ATTACH_CEILING_MS = 30_000
-/** How many grid-attach attempts one daemon makes before giving up until its next start. Retries are
- *  driven by backend reconnects, and a link that flaps could otherwise sign in to grid on every one;
- *  a machine still unattached after this many reachable moments has a problem retrying won't fix. */
+/** How many grid-attach attempts one daemon makes before giving up until its next start. A machine
+ *  still unattached after this many reachable moments has a problem that retrying will not fix, and
+ *  each attempt past that is a grid sign-in — and a token rotation — bought for nothing. */
 const GRID_ATTACH_MAX_ATTEMPTS = 5
+/** The soonest one attempt may follow another. Retries are driven by backend reconnects, and waking
+ *  a laptop, changing network or toggling a VPN produces several within seconds; without this floor
+ *  one moment of ordinary churn spent the whole allowance above and the feature went quiet for the
+ *  daemon's life. Requests inside the window are deferred to its end, not dropped. */
+const GRID_ATTACH_MIN_INTERVAL_MS = 60_000
 
 /** Between session-binding attempts for a process whose engine store is not resolvable yet. */
 const REPAIR_RETRY_MS = 60_000
@@ -1619,21 +1624,15 @@ async function runForeground(session: AuthSession): Promise<void> {
   // single attempt that lost to a control plane which was not reachable yet — the ordinary shape of
   // a daemon coming up with the network — would leave the account with no grid until the next real
   // restart. A connect is the evidence the control plane is reachable, so it is when to try again.
-  let gridAttachInFlight: Promise<unknown> | null = null
-  let gridAttachDone = false
-  let gridAttachAttempts = 0
-  // A hard ceiling on how long the RPCs will gate on an attempt, INDEPENDENT of whether it settled.
-  // Every step inside an attempt is bounded on its own now — `mintName` by its abort signal, the
-  // hand-off and the ensure by their own watchdogs — so this is the backstop rather than the only
-  // guard: whatever an attempt does, the RPCs stop paying for it after the ceiling. Past it the
-  // probe returns null; an attempt that lands later still publishes the name through `onName`.
-  let gridAttachDeadline = 0
-
-  const runGridAttach = (): void => {
-    if (gridAttachDone || gridAttachInFlight || gridAttachAttempts >= GRID_ATTACH_MAX_ATTEMPTS) return
-    gridAttachAttempts += 1
-    gridAttachDeadline = Date.now() + GRID_ATTACH_CEILING_MS
-    gridAttachInFlight = reconcileGridAttach({
+  // How long the RPCs gate on an attempt, and how many attempts there are, live in the runner —
+  // `lib/gridAttach.ts`, beside the reconcile itself, so the coordination has a unit test rather
+  // than only a comment. Everything below is the daemon-shaped half: what one attempt actually does.
+  const gridAttach = createGridAttachRunner({
+    maxAttempts: GRID_ATTACH_MAX_ATTEMPTS,
+    minIntervalMs: GRID_ATTACH_MIN_INTERVAL_MS,
+    ceilingMs: GRID_ATTACH_CEILING_MS,
+    log: (line) => console.log(`[grid-attach] ${line}`),
+    attempt: () => reconcileGridAttach({
       managedGridReady,
       gridAvailable: () => gridAvailable(),
       // The backend mints and remembers the name; this CLI holds neither the account's email nor its
@@ -1657,21 +1656,14 @@ async function runForeground(session: AuthSession): Promise<void> {
         clearGridMcpUrlCache()
       },
       log: (line) => console.log(`[grid-attach] ${line}`),
-    }).then((result) => {
-      // Only an outcome that actually attached stops the retries. `no-cli`, `no-name` and
-      // `handoff-failed` are all "the control plane or this machine was not ready", which is exactly
-      // what a later connect may have fixed.
-      if (result.status === 'converged' || result.status === 'signed-in') gridAttachDone = true
-    }).catch((err) => {
-      console.error('[grid-attach] reconcile failed:', err instanceof Error ? (err.stack ?? err.message) : err)
-    }).finally(() => { gridAttachInFlight = null })
-  }
+    }),
+  })
 
   // While an attempt is running AND within its ceiling, the RPCs that need the grid name wait
   // briefly on it; otherwise they read the name directly.
-  backend.gridReadyProbe = () => (gridAttachInFlight && Date.now() < gridAttachDeadline ? gridAttachInFlight : null)
-  onBackendConnected = runGridAttach
-  runGridAttach()
+  backend.gridReadyProbe = () => gridAttach.probe()
+  onBackendConnected = () => gridAttach.run()
+  gridAttach.run()
 
   /**
    * Is ANY device surface watching this machine?

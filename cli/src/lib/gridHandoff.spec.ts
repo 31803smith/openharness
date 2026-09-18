@@ -112,11 +112,16 @@ describe('handOffToGrid — which grid it runs', () => {
  * login` that never returned, and a daemon reconcile that never settled.
  */
 describe('handOffToGrid — a child that never answers', () => {
-  /** A `grid` that reads the token and then hangs, the shape of a black-holed control plane. */
+  /** A `grid` that reads the token and then hangs, the shape of a black-holed control plane.
+   *
+   *  It IGNORES SIGTERM on purpose: that is the case the watchdog's `SIGKILL` exists for, and a fake
+   *  that died politely would let a child which cannot be asked to stop pass as one that can. (The
+   *  signal itself is not observable through this module's result — the kill and the settle happen
+   *  together — so what this pins is that a TERM-immune child still ends the call.) */
   function hangingGrid(dir: string): string {
     mkdirSync(dir, { recursive: true })
     const bin = join(dir, 'grid')
-    writeFileSync(bin, ['#!/bin/sh', '/bin/cat > /dev/null', 'sleep 60', ''].join('\n'), { mode: 0o755 })
+    writeFileSync(bin, ['#!/bin/sh', "trap '' TERM", '/bin/cat > /dev/null', 'sleep 60', ''].join('\n'), { mode: 0o755 })
     return bin
   }
 
