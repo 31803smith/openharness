@@ -4035,10 +4035,22 @@ class AppNotifier extends ChangeNotifier {
   /// narrates progress through `dsh_install_status` pushes, which land in
   /// [MachineDsh.installs] for the dialog's status line. Null on success, else
   /// a sentence for the person who clicked.
-  Future<String?> installDsh(String machineId, String id) async {
+  Future<String?> installDsh(String machineId, String id) =>
+      _installOrUpdateDsh(machineId, id, update: false);
+
+  Future<String?> updateDsh(String machineId, String id) =>
+      _installOrUpdateDsh(machineId, id, update: true);
+
+  Future<String?> _installOrUpdateDsh(
+    String machineId,
+    String id, {
+    required bool update,
+  }) async {
     final machine = machineStates[machineId];
     if (machine == null) return 'Machine not found';
     final machineName = machine.machine.displayName;
+    final action = update ? 'Update' : 'Install';
+    final verb = update ? 'update' : 'install';
     // A new run every time the button is pressed: a retry after a failure is
     // its own attempt, with its own clock.
     machine.dsh.runs.remove(id);
@@ -4046,9 +4058,9 @@ class AppNotifier extends ChangeNotifier {
     notifyListeners();
     try {
       final result = await _conn(machineId).request(
-        'dsh_install',
+        update ? 'dsh_update' : 'dsh_install',
         payload: {'id': id},
-        timeout: const Duration(minutes: 10),
+        timeout: const Duration(minutes: 90),
       );
       if (result['ok'] != true) {
         final detail = result['detail'];
@@ -4057,26 +4069,26 @@ class AppNotifier extends ChangeNotifier {
           id,
           detail is String && detail.isNotEmpty
               ? detail
-              : 'Install failed on $machineName',
+              : '$action failed on $machineName',
         );
       }
     } on WsRequestFailure catch (failure) {
       return _finishInstall(machine, id, switch (failure.code) {
         'UNSUPPORTED' || 'UNSUPPORTED_ON_REMOTE' =>
-          'Update the harness CLI on $machineName to install harnesses',
+          'Update the harness CLI on $machineName to $verb harnesses',
         _ =>
           failure.detail?.isNotEmpty == true
               ? failure.detail!
-              : 'Install failed on $machineName (${failure.code})',
+              : '$action failed on $machineName (${failure.code})',
       });
     } on WsRequestTimeout {
       return _finishInstall(
         machine,
         id,
-        '$machineName is still installing. Try again in a few minutes.',
+        '$machineName is still ${update ? 'updating' : 'installing'}. Try again in a few minutes.',
       );
     } catch (_) {
-      return _finishInstall(machine, id, 'Install failed on $machineName');
+      return _finishInstall(machine, id, '$action failed on $machineName');
     }
     machine.dsh.applyInstall(DshInstallProgress(id: id, phase: 'done'));
     notifyListeners();

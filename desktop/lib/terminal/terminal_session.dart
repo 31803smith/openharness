@@ -81,6 +81,10 @@ class TerminalSession extends ChangeNotifier {
   final Duration resyncTimeout;
   final bool readOnly;
 
+  /// Lets input batching tests hold the clock inside the four-millisecond window under host load.
+  @visibleForTesting
+  DateTime Function() inputClockForTest = DateTime.now;
+
   /// Forces a fresh transport dial (see `WsConn.forceReconnect`) — called once when the very first
   /// `terminal_open` never gets a `terminal_ready` back within [resyncTimeout]. Covers the relay
   /// going stale silently (the relayed machine's own Harness process restarted, dropping its E2EE
@@ -1032,7 +1036,7 @@ class TerminalSession extends ChangeNotifier {
       final last = _lastInputFlushAt;
       final idle =
           last == null ||
-          DateTime.now().difference(last) >= _inputCoalesceWindow;
+          inputClockForTest().difference(last) >= _inputCoalesceWindow;
       if (_inputTimer == null && idle) {
         unawaited(_flushInput());
       } else {
@@ -1053,7 +1057,7 @@ class TerminalSession extends ChangeNotifier {
     }
     final bytes = List<int>.from(_inputBytes);
     _inputBytes.clear();
-    _lastInputFlushAt = DateTime.now();
+    _lastInputFlushAt = inputClockForTest();
     final currentStreamId = streamId;
     if (currentStreamId == null) return;
     final generation = _generation;

@@ -378,6 +378,9 @@ export class BackendSocket {
   /** Called on `dsh_install` — cli.ts clones/sets up/doctors the harness and reports each phase. */
   onDshInstall: ((input: { id?: string; url?: string; ref?: string }, progress: (p: DshInstallProgress) => void) =>
     Promise<{ ok: true; id: string } | { ok: false; error: string; detail: string }>) | null = null
+  /** An explicit update follows the installed source and retains the previous package on failure. */
+  onDshUpdate: ((id: string, progress: (p: DshInstallProgress) => void) =>
+    Promise<{ ok: true; id: string } | { ok: false; error: string; detail: string }>) | null = null
   /** Called on `dsh_remove` — cli.ts uninstalls the harness from this machine. */
   onDshRemove: ((id: string) => { ok: true } | { ok: false; error: string; detail: string }) | null = null
   /** What the daemon knows about an agent's DSH companions (viewer URL, verdict); null when nothing. */
@@ -1640,6 +1643,16 @@ export class BackendSocket {
           const id = dshRemoveId(payload)
           if (!id) { reply(type, requestId, { error: 'INVALID_DSH', detail: 'dsh_remove needs an id' }); return }
           reply(type, requestId, dshRemoveReply(id, this.onDshRemove(id)))
+          return
+        }
+
+        case 'dsh_update': {
+          if (!this.onDshUpdate) { reply(type, requestId, { error: 'UNSUPPORTED_ON_REMOTE' }); return }
+          const id = dshRemoveId(payload)
+          if (!id) { reply(type, requestId, { error: 'INVALID_DSH', detail: 'dsh_update needs an id' }); return }
+          void this.onDshUpdate(id, p => this.send({ type: 'dsh_install_status', payload: dshInstallStatus(p, { id }) }))
+            .then(result => reply(type, requestId, dshInstallReply(result)))
+            .catch(error => reply(type, requestId, { error: 'INTERNAL', detail: error instanceof Error ? error.message : String(error) }))
           return
         }
 
