@@ -21,9 +21,14 @@ class PaneHeaderActions extends StatelessWidget {
     this.viewerColor,
     this.details,
     this.modelPicker,
+    this.terminal = false,
   });
 
   final bool zoomed, composerVisible;
+
+  /// The pane is a shell, not a harness: Restart and Stop say so, because
+  /// "Stop Harness" over a terminal reads as a button for something else.
+  final bool terminal;
   final VoidCallback? onShare;
   final VoidCallback? onZoom, onRestart, onDelete, onClose, onToggleComposer;
 
@@ -125,9 +130,17 @@ class PaneHeaderActions extends StatelessWidget {
               onZoom,
             ),
             const SizedBox(width: 2),
-            action('Restart Harness', LucideIcons.refreshCw, onRestart),
+            action(
+              terminal ? 'Restart Terminal' : 'Restart Harness',
+              LucideIcons.refreshCw,
+              onRestart,
+            ),
             const SizedBox(width: 2),
-            action('Stop Harness', Icons.stop_rounded, onDelete),
+            action(
+              terminal ? 'Stop Terminal' : 'Stop Harness',
+              Icons.stop_rounded,
+              onDelete,
+            ),
             const SizedBox(width: 2),
             action('Close Pane', LucideIcons.x, onClose),
           ],

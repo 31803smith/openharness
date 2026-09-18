@@ -1408,6 +1408,7 @@ class _PaneContent extends StatelessWidget {
                   pane.machineId,
                   agent.id,
                   agent.name,
+                  engine: agent.engine,
                 ),
           zoomed: notifier.zoomedPaneId == pane.id,
           onToggleZoom:

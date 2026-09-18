@@ -1031,6 +1031,7 @@ class _AgentRowState extends State<_AgentRow> {
     state.machine.machineId,
     agent.id,
     agent.name,
+    engine: agent.engine,
   );
 
   Future<void> _restartAgent() =>
