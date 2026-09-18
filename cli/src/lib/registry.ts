@@ -177,6 +177,13 @@ export interface RegisteredSession {
    * a shell rather than a `claude`. Not a type — `engine` still says what the pane IS right now.
    */
   terminalHost?: boolean
+  /**
+   * The agent this one was FORKED from (`agent_fork`): a new session opened with the source's whole
+   * history, the source left as it was. Recorded once at creation so the pane can say "forked from X"
+   * and link back; `name` is the source's name at that moment, kept because the source may be renamed
+   * or gone by the time anyone reads it. Absent on every other agent.
+   */
+  forkedFrom?: { agentId: string; name: string } | null
   /** Legacy launcher-owned snapshots may still contain this field. New records never write it. */
   launcherId?: string
   transcriptPath: string | null
@@ -472,6 +479,7 @@ function strictPersistedRow(value: unknown): RegisteredSession | null {
     projectDir: row.projectDir,
     defaultName: normalizedDefaultName(row.defaultName),
     agent: normalizedAgentName((row as { agent?: unknown }).agent),
+    ...(normalizedForkedFrom((row as { forkedFrom?: unknown }).forkedFrom)),
     cwd: typeof row.cwd === 'string' ? row.cwd : null,
     runtimes,
     primaryRuntimeKey: normalizedPrimary,
@@ -487,6 +495,14 @@ function strictPersistedRow(value: unknown): RegisteredSession | null {
     lastHookAt: typeof row.lastHookAt === 'number' ? row.lastHookAt : Date.now(),
     lastTranscriptAt: typeof row.lastTranscriptAt === 'number' ? row.lastTranscriptAt : Date.now(),
   }
+}
+
+/** `forkedFrom` as written by this daemon, or nothing: a row from before the field, or a hand-edited one. */
+function normalizedForkedFrom(value: unknown): { forkedFrom: { agentId: string; name: string } } | Record<string, never> {
+  if (!value || typeof value !== 'object') return {}
+  const v = value as { agentId?: unknown; name?: unknown }
+  if (typeof v.agentId !== 'string' || !v.agentId) return {}
+  return { forkedFrom: { agentId: v.agentId, name: typeof v.name === 'string' ? v.name.slice(0, 120) : '' } }
 }
 
 function normalizedLaunch(value: unknown): AgentLaunch | undefined {
@@ -1096,6 +1112,8 @@ class Registry {
     defaultName?: string | null
     /** Who the agent is, for the name Harness gives it: a DSH's own name ("Blender"); the engine's by default. */
     label?: string | null
+    /** The agent this one is a fork of — see RegisteredSession.forkedFrom. */
+    forkedFrom?: { agentId: string; name: string } | null
   }): RegisteredSession | null {
     if (this.writeBlocked) return null
     const runtimes = normalizedRuntimes(input.runtimes)
@@ -1122,6 +1140,7 @@ class Registry {
       ...(input.bypassPermission ? { bypassPermission: true } : {}),
       ...(permissionModeName(input.permissionMode) ? { permissionMode: input.permissionMode } : {}),
       ...(isTerminalEngine(input.engine) ? { terminalHost: true } : {}),
+      ...(input.forkedFrom ? { forkedFrom: { agentId: input.forkedFrom.agentId, name: input.forkedFrom.name } } : {}),
       transcriptPath: null,
       projectDir: basename(input.cwd ?? '') || agentId,
       cwd: input.cwd ?? null,

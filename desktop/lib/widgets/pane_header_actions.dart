@@ -11,6 +11,7 @@ class PaneHeaderActions extends StatelessWidget {
     required this.zoomed,
     this.onZoom,
     this.onRestart,
+    this.onFork,
     this.onShare,
     this.onDelete,
     this.onClose,
@@ -30,7 +31,12 @@ class PaneHeaderActions extends StatelessWidget {
   /// "Stop Harness" over a terminal reads as a button for something else.
   final bool terminal;
   final VoidCallback? onShare;
-  final VoidCallback? onZoom, onRestart, onDelete, onClose, onToggleComposer;
+  final VoidCallback? onZoom,
+      onRestart,
+      onFork,
+      onDelete,
+      onClose,
+      onToggleComposer;
 
   /// A harness agent's viewer: show it beside this terminal, or hide it.
   /// Absent for an agent that has no viewer.
@@ -136,6 +142,10 @@ class PaneHeaderActions extends StatelessWidget {
               onRestart,
             ),
             const SizedBox(width: 2),
+            if (onFork != null) ...[
+              action('Fork Harness', LucideIcons.gitFork, onFork),
+              const SizedBox(width: 2),
+            ],
             action(
               terminal ? 'Stop Terminal' : 'Stop Harness',
               Icons.stop_rounded,
