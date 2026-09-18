@@ -1,4 +1,9 @@
 #!/usr/bin/env node
+import { mutateDsh } from './dsh/service.js'
+import { HarnessShareOwner } from './sharing/owner.js'
+import { HarnessGrantStore } from './sharing/grants.js'
+import { HarnessShareRelay, type SharedMachineReference } from './sharing/relay.js'
+import { SharedViewerPool } from './sharing/viewer.js'
 import { fingerprint as e2eeCoreFingerprint, b64d as e2eeCoreDecode } from './lib/e2ee/core.js'
 import { AutonomousDeviceDirect } from './lib/autonomous-device/direct.js'
 /**
@@ -78,14 +83,15 @@ import { claudeContinuation, findLiveSession } from './lib/sessionRepair.js'
 import { TmuxBackend } from './lib/tmuxBackend.js'
 import { DEFAULT_HOST_THEME, loadHostTheme, saveHostTheme, type HostTheme } from './lib/hostTheme.js'
 import { createAndRegisterPane } from './lib/createAgentPane.js'
+import { forkName, planFork } from './lib/forkAgent.js'
 import { restoreAgents } from './lib/restoreAgents.js'
 import { buildLaunchOverrides, validateLaunchOverrides, type LaunchOverrides, type LaunchOverridesDeps, type LaunchOverridesResult, type LaunchSource } from './lib/launchOverrides.js'
 import { prepareCodexResume } from './engines/codex/portableHistory.js'
 import { buildHarnessSessionLabel } from './lib/harnessSessionLabel.js'
 import { installedDsh } from './dsh/installed.js'
 import { dshVerdictPath, dshViewerName } from './dsh/manifest.js'
-import { catalogEntry, refreshDshRegistry } from './dsh/catalog.js'
-import { installDsh, resolveInstallSource, removeDsh } from './dsh/install.js'
+import { catalogEntry } from './dsh/catalog.js'
+import { removeDsh } from './dsh/install.js'
 import { preTrustClaudeProject, preTrustCodexProject } from './lib/claudeTrust.js'
 import { materializeWorkspace } from './dsh/materialize.js'
 import { dshLaunch } from './dsh/launch.js'
@@ -1531,6 +1537,7 @@ async function runForeground(session: AuthSession): Promise<void> {
   const dshViewers = new DshViewerManager({
     onUrl: (agentId, url) => {
       dshFrameFor(agentId).viewerUrl = url
+      backendRef?.viewerForwarder.refresh(agentId)
       syncCompanion(agentId)
     },
     log: (line) => console.log(line),
@@ -1606,6 +1613,7 @@ async function runForeground(session: AuthSession): Promise<void> {
     onBackendConnected()
   }, computerId())
   backendRef = backend
+  backend.viewerTargetProvider = (agentId) => dshViewers.forwardingUrl(agentId)
 
   // Bring this machine's grid sign-in into line with its harness sign-in, in the background.
   // This is what makes a machine that signed in to the harness BEFORE grid existed usable after an
@@ -2078,7 +2086,10 @@ async function runForeground(session: AuthSession): Promise<void> {
   }
   const input = new SessionInputController({
     getSession: (id) => registry.resolve(id),
-    onDelivery: (event) => autonomousDeviceService?.delivery(event),
+    onDelivery: (event) => {
+      autonomousDeviceService?.delivery(event)
+      backend.orchestratorDelivery(event)
+    },
     validateRuntime: validateTerminal,
     inject: submitTerminalAction,
     sendKey: keyTerminalAction,
@@ -2329,55 +2340,8 @@ async function runForeground(session: AuthSession): Promise<void> {
   backend.runtimeProfileProvider = (session) => runtimeProfiles.selectedModel(session)
   backend.dshFrameProvider = dshFrameContext
   backend.onDshRemove = (id) => removeDsh(id)
-  backend.onDshInstall = async ({ id, url, ref }, progress) => {
-    const catalog = new Map((await refreshDshRegistry(!!id && !catalogEntry(id))).map(entry => [entry.id, entry]))
-    if (id && !catalog.has(id)) return { ok: false, error: 'INVALID_DSH', detail: `${id} is not in this machine's Store catalog` }
-    const resolved = id ? resolveInstallSource(id) : url ? { source: url, ref } : null
-    if (!resolved) return { ok: false, error: 'INVALID_DSH', detail: `${id ?? url} is not a known harness` }
-    // NARRATE THE LINES, NOT ONLY THE PHASES. A toolchain setup is minutes of npm and uv output, and
-    // a dialog that says "Setting up…" for all of it looks hung; the line the command is on is what
-    // says it is alive and what it is doing. Throttled: a setup can print hundreds of lines a second
-    // (`Updating files: 39%…` arrives as carriage returns on ONE line), and the window redraws on
-    // each push. The doctor's own ok/miss/warn lines go out at once — they are the ones a person
-    // reads, and there are seven of them.
-    let last: import('./dsh/install.js').DshInstallProgress | null = null
-    let pendingLine: string | null = null
-    let timer: NodeJS.Timeout | null = null
-    const flushLine = (): void => {
-      timer = null
-      if (last && pendingLine !== null && last.phase !== 'done' && last.phase !== 'failed') progress({ ...last, line: pendingLine })
-      pendingLine = null
-    }
-    const result = await installDsh({
-      source: resolved.source,
-      expectedId: id,
-      registry: dependencyId => catalog.get(dependencyId),
-      ref: ref ?? resolved.ref,
-      path: 'path' in resolved ? resolved.path : undefined,
-      onProgress: (p) => {
-        if (timer) { clearTimeout(timer); timer = null }
-        pendingLine = null
-        last = p
-        progress(p)
-      },
-      onLine: (raw) => {
-        console.log(`[dsh] install · ${raw}`)
-        // The last carriage-return segment is the line as a terminal would show it.
-        const line = raw.split('\r').filter((s) => s.trim()).pop()?.trim() ?? ''
-        if (!line) return
-        pendingLine = line.slice(0, 200)
-        if (/^(ok|miss|warn)\s/.test(line)) { if (timer) clearTimeout(timer); flushLine(); return }
-        if (!timer) timer = setTimeout(flushLine, 300)
-      },
-    })
-    if (timer) { clearTimeout(timer); timer = null }
-    if (!result.ok) {
-      console.warn(`[dsh] install of ${id ?? url} failed · ${result.error} · ${result.detail}`)
-      return { ok: false, error: result.error, detail: result.detail }
-    }
-    console.log(`[dsh] installed ${result.installed.id} at ${result.installed.dir}`)
-    return { ok: true, id: result.installed.id }
-  }
+  backend.onDshInstall = (input, progress) => mutateDsh(input, progress)
+  backend.onDshUpdate = (id, progress) => mutateDsh({ id, update: true }, progress)
   backend.onAgentRename = (session, name) => { void terminals.setTitle(session, name) }
   backend.onRuntimeProfileUpdate = (sessionId, selectedModel) => runtimeController.setProfile(sessionId, selectedModel)
   runtimeProfiles.onChanged = (sessionId) => {
@@ -2572,7 +2536,20 @@ async function runForeground(session: AuthSession): Promise<void> {
   }
 
 
+  /**
+   * Forks whose engine session has not reported in yet, agentId → the SOURCE's sessionId. A fork's tile
+   * should open with the source's last recap on it, the way its pane opens with the source's transcript
+   * — but the mirror keys by session, and the fork's session id is the engine's to name, minutes later
+   * over a hook. Settled the moment it binds, below.
+   */
+  const pendingForkInherit = new Map<string, string>()
+
   const handleRegistered = async (entry: RegisteredSession, meta: RegisteredMeta): Promise<void> => {
+    const forkSource = pendingForkInherit.get(entry.agentId)
+    if (forkSource && entry.sessionId) {
+      pendingForkInherit.delete(entry.agentId)
+      mirror.inheritSummary(forkSource, entry.sessionId)
+    }
     if (meta.rebound) {
       registry.inheritName(meta.rebound, entry.sessionId)
       mirror.inheritSummary(meta.rebound, entry.sessionId)
@@ -2955,6 +2932,27 @@ async function runForeground(session: AuthSession): Promise<void> {
   // Built HERE rather than beside the cable stack that also uses it (further down), because the hook
   // server starts long before that point and agent restore can sit between the two. A cache bound late
   // is a cache that is still null exactly when a cold boot during an outage needs it most.
+  const sharingIdentity = new E2eeStore()
+  sharingIdentity.init()
+  const sharedViewers = new SharedViewerPool((agentId) => {
+    const agent = registry.resolve(agentId)
+    return agent ? backend.dshFrameProvider?.(agent)?.viewerUrl ?? null : null
+  })
+  backend.harnessSharing = new HarnessShareOwner({
+    machineId: () => backend.machineId,
+    identity: sharingIdentity.getIdentity(),
+    grants: new HarnessGrantStore(join(env.ADAPTER_DATA_DIR, 'harness-shares.json')),
+    terminals, resolveAgent: (id) => registry.resolve(id),
+    send: (id, type, payload) => backend.sendObserver(id, type, payload),
+    publish: (method, path, body) => proxyBackend(method, path, body),
+    watchViewer: (id, send) => sharedViewers.watch(id, send),
+  })
+  const shareRelay = new HarnessShareRelay(auth, env.BACKEND_WS_URL, env.AUTONOMOUS_ENV, async () => {
+    const result = await proxyBackend('GET', '/api/harness-shares')
+    if (result.status !== 200) throw new Error('Shared harnesses are temporarily unavailable.')
+    return ((result.body as { data?: { machines?: SharedMachineReference[] } }).data?.machines ?? [])
+  })
+
   const machineListCache = new MachineListCache(
     () => proxyBackend('GET', '/api/machines'),
     computerId,
@@ -3371,6 +3369,7 @@ async function runForeground(session: AuthSession): Promise<void> {
     onMachineRename: (machineId, name) => proxyBackend('PATCH', `/api/machines/${encodeURIComponent(machineId)}`, { name }),
     onMachineDelete: (machineId) => proxyBackend('DELETE', `/api/machines/${encodeURIComponent(machineId)}`),
     onAuthMe: () => proxyBackend('GET', '/api/auth/me'),
+    onSharedHarnesses: () => proxyBackend('GET', '/api/harness-shares'),
     onStore: (method, path, body) => proxyBackend(method, path, body),
   })
   // Claim the pid file for OURSELVES, and only now that the control port is bound. It used to be
@@ -3409,6 +3408,7 @@ async function runForeground(session: AuthSession): Promise<void> {
   })
 
   const localWsServer = attachLocalWsServer(hookServer, {
+    shareRelay,
     // The window and the dial are one desk: opening an agent in the app brings the dial to it, switching
     // the dial's machine first when the app moved to another one.
     onAppFocusState: (machineId, agentId, connId, expectedRevision) => {
@@ -4030,6 +4030,61 @@ async function runForeground(session: AuthSession): Promise<void> {
    * pass can miss it — retry `triggerHint` a few times with backoff before giving up.
    */
 
+  /**
+   * Watch a pane this daemon just opened until its engine process shows up (ready), dies (failed), or
+   * ten minutes pass. Shared by create and fork: the two open panes the same way and wait the same way.
+   */
+  const watchNewPane = async (engine: AgentEngine, pending: RegisteredSession, spawned: { runtime: TmuxRuntimeRef }, command: string[], installIfMissing: ReturnType<typeof engineInstallRecipe> | undefined): Promise<void> => {
+    const budgetMs = 10 * 60_000
+    const startedAt = Date.now()
+    let delayMs = 50
+    try {
+      while (Date.now() - startedAt < budgetMs) {
+        if (!registry.byAgent(pending.agentId)) return
+        const processIdentity = await resolvePaneEngineProcess(spawned.runtime.paneId, engine)
+        if (processIdentity) {
+          registry.updateProcessIdentity(pending.agentId, processIdentity)
+          const ready = registry.setLaunch(pending.agentId, { state: 'ready' })
+          await clearPaneRemainOnExit(spawned.runtime.paneId)
+          if (ready) announceSession(ready)
+          void agentReconciler.triggerHint(spawned.runtime, engine).catch((error) => {
+            console.warn(`[agent] background bind failed · ${engine} · ${error instanceof Error ? error.message : error}`)
+          })
+          console.log(`[agent] create ready · ${engine} · agent ${pending.agentId} · ${Date.now() - startedAt}ms`)
+          return
+        }
+        const paneState = await tmuxPaneState(spawned.runtime.paneId)
+        if (!paneState) {
+          registry.setTerminalAvailable(pending.agentId, false)
+          announceSession(pending)
+          return
+        }
+        if (paneState.dead) {
+          const installed = await commandAvailableInInteractiveShell(command[0], undefined, installIfMissing)
+          const error = installed ? 'ENGINE_DID_NOT_START' : 'ENGINE_NOT_INSTALLED'
+          const detail = installed
+            ? `${engine} exited before its engine process became ready. See the terminal output for details.`
+            : `${engine} is not installed, or its automatic install failed. See the terminal output for details.`
+          const failed = registry.setLaunch(pending.agentId, { state: 'failed', error, detail })
+          if (failed) announceSession(failed)
+          console.warn(`[agent] create failed · ${engine} · ${detail}`)
+          return
+        }
+        await new Promise<void>((resolve) => {
+          const timer = setTimeout(resolve, delayMs)
+          timer.unref?.()
+        })
+        delayMs = Math.min(delayMs * 2, 750)
+      }
+      const detail = `${engine} did not expose an engine process within 10 minutes. The terminal remains available.`
+      const failed = registry.setLaunch(pending.agentId, { state: 'failed', error: 'START_TIMEOUT', detail })
+      if (failed) announceSession(failed)
+      console.warn(`[agent] create timed out · ${engine} · agent ${pending.agentId}`)
+    } catch (error) {
+      console.warn(`[agent] create watch failed · ${engine} · ${error instanceof Error ? error.message : error}`)
+    }
+  }
+
   backend.onCreateAgent = async ({ engine, cwd, bypassPermission, permissionMode, grid, codexHome, dsh, prompt, name, agent }) => {
     if (!tmuxBackend) return { ok: false, error: 'TMUX_UNAVAILABLE' }
     try {
@@ -4178,59 +4233,103 @@ async function runForeground(session: AuthSession): Promise<void> {
     announceSession(pending)
     if (pending.dsh) attachDsh(pending)
 
-    const watchCreatedPane = async (): Promise<void> => {
-      const budgetMs = 10 * 60_000
-      const startedAt = Date.now()
-      let delayMs = 50
-      try {
-        while (Date.now() - startedAt < budgetMs) {
-          if (!registry.byAgent(pending.agentId)) return
-          const processIdentity = await resolvePaneEngineProcess(spawned.runtime.paneId, engine)
-          if (processIdentity) {
-            registry.updateProcessIdentity(pending.agentId, processIdentity)
-            const ready = registry.setLaunch(pending.agentId, { state: 'ready' })
-            await clearPaneRemainOnExit(spawned.runtime.paneId)
-            if (ready) announceSession(ready)
-            void agentReconciler.triggerHint(spawned.runtime, engine).catch((error) => {
-              console.warn(`[agent] background bind failed · ${engine} · ${error instanceof Error ? error.message : error}`)
-            })
-            console.log(`[agent] create ready · ${engine} · agent ${pending.agentId} · ${Date.now() - startedAt}ms`)
-            return
-          }
-          const paneState = await tmuxPaneState(spawned.runtime.paneId)
-          if (!paneState) {
-            registry.setTerminalAvailable(pending.agentId, false)
-            announceSession(pending)
-            return
-          }
-          if (paneState.dead) {
-            const installed = await commandAvailableInInteractiveShell(command[0], undefined, installIfMissing)
-            const error = installed ? 'ENGINE_DID_NOT_START' : 'ENGINE_NOT_INSTALLED'
-            const detail = installed
-              ? `${engine} exited before its engine process became ready. See the terminal output for details.`
-              : `${engine} is not installed, or its automatic install failed. See the terminal output for details.`
-            const failed = registry.setLaunch(pending.agentId, { state: 'failed', error, detail })
-            if (failed) announceSession(failed)
-            console.warn(`[agent] create failed · ${engine} · ${detail}`)
-            return
-          }
-          await new Promise<void>((resolve) => {
-            const timer = setTimeout(resolve, delayMs)
-            timer.unref?.()
-          })
-          delayMs = Math.min(delayMs * 2, 750)
-        }
-        const detail = `${engine} did not expose an engine process within 10 minutes. The terminal remains available.`
-        const failed = registry.setLaunch(pending.agentId, { state: 'failed', error: 'START_TIMEOUT', detail })
-        if (failed) announceSession(failed)
-        console.warn(`[agent] create timed out · ${engine} · agent ${pending.agentId}`)
-      } catch (error) {
-        console.warn(`[agent] create watch failed · ${engine} · ${error instanceof Error ? error.message : error}`)
-      }
-    }
-    void watchCreatedPane()
+    void watchNewPane(engine, pending, spawned, command, installIfMissing)
     console.log(`[agent] create pane open · ${engine} · agent ${pending.agentId}`)
     return { ok: true, session: pending }
+  }
+
+  /**
+   * Fork an agent (`agent_fork`): open a NEW pane whose engine starts with everything the source's
+   * session has — `claude --resume <id> --fork-session`, `codex fork <id>` — or, for an engine that
+   * cannot fork but takes a first prompt, a handoff message composed from what this daemon remembers
+   * of the source (lib/forkAgent.ts). Same folder, same harness, same permission mode, same named
+   * agent; a grid agent is refused rather than half-copied. The source is not touched — it is not even
+   * paused — which is why it has to be IDLE: a fork taken mid-turn is a transcript cut in half.
+   */
+  backend.onForkAgent = async ({ agentId, name, prompt }) => {
+    if (!tmuxBackend) return { ok: false, error: 'TMUX_UNAVAILABLE' }
+    const source = registry.byAgent(agentId)
+    if (!source) return { ok: false, error: 'AGENT_NOT_FOUND' }
+    const sourceName = projectDisplayName(source)
+    if (!source.cwd) return { ok: false, error: 'CWD_NOT_FOUND', detail: `${sourceName} has no working folder on record.` }
+    try {
+      if (!statSync(source.cwd).isDirectory()) return { ok: false, error: 'CWD_NOT_FOUND' }
+    } catch {
+      return { ok: false, error: 'CWD_NOT_FOUND' }
+    }
+    if (source.gridLaunch || source.grid) {
+      return { ok: false, error: 'FORK_ON_GRID_UNSUPPORTED', detail: `${sourceName} runs on a grid; forking a grid agent is not supported.` }
+    }
+    if (source.sessionId && mirror.isBusy(source.sessionId)) {
+      return { ok: false, error: 'AGENT_BUSY', detail: `${sourceName} is in the middle of a turn. Wait for it to finish, then fork.` }
+    }
+    const engine = source.engine
+    const memory = {
+      asks: source.sessionId ? mirror.recentAsks(source.sessionId) : [],
+      recaps: source.sessionId ? mirror.recent(source.sessionId, 5).map((t) => t.recap || t.text) : [],
+      lastAnswer: source.sessionId ? mirror.lastFullText(source.sessionId) : undefined,
+    }
+    const plan = planFork({ engine, sessionId: source.sessionId, name: sourceName, cwd: source.cwd }, memory, prompt)
+    if (!plan.ok) return { ok: false, error: plan.error, detail: plan.detail }
+
+    // The harness the source was created as: its env and argv, not a second materialisation — the
+    // folder already holds the template, AGENTS.md and skill links the source got.
+    let dshEnv: Record<string, string> | undefined
+    let dshArgs: string[] = []
+    let dshLabel: string | undefined
+    if (source.dsh) {
+      const installed = installedDsh(source.dsh)
+      if (!installed) return { ok: false, error: 'INVALID_DSH', detail: `${source.dsh} is no longer installed on this machine` }
+      const launch = dshLaunch(installed, source.cwd)
+      dshEnv = launch.env
+      dshArgs = launch.args
+      dshLabel = installed.manifest.name
+    }
+    const label = buildHarnessSessionLabel(engine)
+    const installIfMissing = enginePathOverride(engine) ? undefined : engineInstallRecipe(engine)
+    const extraArgs = [...dshArgs, ...(source.agent ? namedAgentArgs(engine, source.agent) : [])]
+    const firstPrompt = plan.level === 'native' ? (prompt ?? undefined) : plan.firstPrompt
+    const launchOptions = {
+      bypassPermission: source.bypassPermission ?? false,
+      ...(source.permissionMode ? { permissionMode: source.permissionMode } : {}),
+      extraArgs: extraArgs.length ? extraArgs : undefined,
+      installIfMissing,
+      cwd: source.cwd,
+      harnessNode: source.dsh ? true : undefined,
+      ...(plan.level === 'native' ? { forkSessionId: plan.forkSessionId } : {}),
+      ...(firstPrompt ? { firstPrompt } : {}),
+    }
+    const command = buildEngineCommandArgv(engine, launchOptions)
+    const argv = buildEngineLaunchArgv(engine, launchOptions)
+    const result = await createAndRegisterPane({
+      tmuxBackend,
+      registry,
+      engine,
+      cwd: source.cwd,
+      sessionLabel: label,
+      argv,
+      env: mergedLaunchEnv(source.codexHome ? { CODEX_HOME: source.codexHome } : undefined, dshEnv),
+      grid: null,
+      gridLaunchRecord: null,
+      codexHome: source.codexHome ?? null,
+      dsh: source.dsh ?? null,
+      agent: source.agent ?? null,
+      bypassPermission: source.bypassPermission ?? false,
+      permissionMode: source.permissionMode ?? null,
+      defaultName: name ?? forkName(sourceName),
+      label: dshLabel,
+      forkedFrom: { agentId: source.agentId, name: sourceName },
+    })
+    if (!result.ok) return { ok: false, error: result.error, detail: result.detail }
+    const { spawned, pending } = result
+    // The new tile starts with the source's last recap on it, the way a native fork's pane starts with
+    // the source's transcript: memory in both places, not one. Settled when the engine names its session.
+    if (source.sessionId) pendingForkInherit.set(pending.agentId, source.sessionId)
+    announceSession(pending)
+    if (pending.dsh) attachDsh(pending)
+    void watchNewPane(engine, pending, spawned, command, installIfMissing)
+    console.log(`[agent] fork pane open · ${engine} · ${plan.level} · ${source.agentId} → ${pending.agentId}`)
+    return { ok: true, session: pending, level: plan.level }
   }
 
   /**
@@ -4632,7 +4731,8 @@ async function runForeground(session: AuthSession): Promise<void> {
     console.log(`[msg] ${sid(sessionId)} recv · engine=${engine} · bytes=${Buffer.byteLength(adapted, 'utf8')}`)
     input.submit(record?.agentId ?? sessionId, adapted, deliveryId)
   }
-  backend.onMessage = (id, content) => submitAgent(id, content)
+  backend.onMessage = (id, content, deliveryId) => submitAgent(id, content, deliveryId)
+  backend.onCancelOrchestratorMessage = id => input.cancelDelivery(id)
 
   // Keep the log file under its cap. This daemon writes it through an inherited stdout fd, so a size
   // check on a timer is the only place that can see it grow — `prepareLogFile` at spawn time alone
@@ -4687,6 +4787,8 @@ async function runForeground(session: AuthSession): Promise<void> {
     ;(hookServer as unknown as { closeAllConnections?: () => void }).closeAllConnections?.()
     // Release the fixed hook port before the child binds. Process-owned agents stay in the persisted
     // registry and are revalidated by the new daemon's first discovery passes.
+    shareRelay.close()
+    sharedViewers.stop()
     await localWsServer.close()
     hookServer.close()
     shutdownSummaryPool()
@@ -4829,6 +4931,8 @@ async function runForeground(session: AuthSession): Promise<void> {
     for (const r of devinReaders.values()) r.stop()
     await cursorDiscovery.stop()
     await watcher.stop()
+    shareRelay.close()
+    sharedViewers.stop()
     await localWsServer.close()
     hookServer.close()
     shutdownSummaryPool()
@@ -4947,6 +5051,13 @@ async function runForeground(session: AuthSession): Promise<void> {
     // at another computer entirely.
     // A notification tap, which asks for a tile of its OWN — see CableHost.openAgent.
     opened: (machineId, agentId) => backend.sendLocal({ type: 'dial_open', payload: { machineId, agentId } }),
+    forked: (machineId, agentId, sourceAgentId) => backend.sendLocal({ type: 'dial_forked', payload: { machineId, agentId, sourceAgentId } }),
+    // The dial's Fork: the same path the window's `agent_fork` takes, then `forked` above lands on it.
+    forkAgent: async (agentId) => {
+      if (!backend.onForkAgent) return { ok: false, error: 'UNSUPPORTED' }
+      const result = await backend.onForkAgent({ agentId, name: null, prompt: null })
+      return result.ok ? { ok: true, agentId: result.session.agentId } : { ok: false, error: result.error, detail: result.detail }
+    },
     // No `edge`. It used to ride along for an agent the window had no tile for, naming which end of the
     // desk to replace; the carousel now only walks tiles that exist, so every focus is about one of them.
     focused: (machineId, agentId) =>
@@ -5950,6 +6061,8 @@ async function logsExportCommand(json: boolean): Promise<void> {
   process.exit(0)
 }
 
+import { orchestratorCommand } from './orchestrator/command.js'
+
 // ── arg parse ──────────────────────────────────────────────────────────────────────────────────
 const [, , cmd, ...rest] = process.argv
 const flags = rest.filter((a) => a.startsWith('-'))
@@ -5977,6 +6090,9 @@ const onError = (err: unknown): never => {
 }
 
 switch (cmd) {
+  case 'orchestrator':
+    orchestratorCommand(rest).then(code => { process.exitCode = code }).catch(onError)
+    break
   case 'login':
     loginCommand(foreground, flags.includes('--force'), flags.includes('--json')).catch(onError)
     break

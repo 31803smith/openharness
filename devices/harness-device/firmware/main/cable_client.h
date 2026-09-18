@@ -172,6 +172,9 @@ void cable_client_send_focus(const char *agent_id);
 // of its own, because the turn that just finished is a new thing to look at, not a replacement for what
 // the person was already watching. The window opens a new one, or reuses its last when the grid is full.
 void cable_client_send_open(const char *agent_id);
+// Ask for a FORK of this agent: a second one with its whole history, which the daemon opens in the window
+// beside it. The dial hears back only on refusal (a `toast`).
+void cable_client_send_fork(const char *agent_id);
 
 // One report of a finger on the glass, on its way to the window on the computer.
 //

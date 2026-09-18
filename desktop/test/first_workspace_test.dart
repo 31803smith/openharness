@@ -160,8 +160,9 @@ void main() {
       await tester.pumpAndSettle();
       Future<void> tabTo(FocusNode node, {bool back = false}) async {
         if (back) await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
-        // Include the optional help buttons in the dialog's tab order.
-        for (var i = 0; i < 20 && !node.hasPrimaryFocus; i++) {
+        // Include the optional help buttons and the task field in the
+        // dialog's tab order.
+        for (var i = 0; i < 30 && !node.hasPrimaryFocus; i++) {
           await tester.sendKeyEvent(LogicalKeyboardKey.tab);
           await tester.pump();
         }

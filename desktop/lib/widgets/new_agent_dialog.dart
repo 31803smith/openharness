@@ -11,6 +11,7 @@ import '../state/pane_arrangement.dart';
 import '../core/engine_availability.dart';
 import '../core/codex_profiles.dart';
 import '../core/dsh_catalog.dart';
+import '../core/first_task.dart';
 import '../core/permission_modes.dart';
 import '../core/project_folder.dart';
 import '../core/repository_clone.dart';
@@ -64,6 +65,15 @@ Future<NewAgentDialogResult?> showNewAgentDialog(
   // Reported here rather than at each call site: the doors are four and
   // growing, and one that forgets to track is a hole in the funnel that only
   // shows up as a number quietly being too small.
+  if (notifier.stateOf(machineId)?.machine.isShared == true) {
+    machineId =
+        notifier.machineStates.values
+            .where((m) => !m.machine.isShared)
+            .firstOrNull
+            ?.machine
+            .machineId ??
+        '';
+  }
   analytics.newAgentOpened(source: source);
   return showAppDialog<NewAgentDialogResult>(
     context: context,
@@ -119,10 +129,34 @@ class _NewAgentDialog extends StatefulWidget {
 }
 
 class _NewAgentDialogState extends State<_NewAgentDialog> {
-  /// Sent as the harness's first message; the person can drop it before creating.
-  late String? _firstPrompt = widget.initialPrompt?.trim().isEmpty == true
-      ? null
-      : widget.initialPrompt?.trim();
+  /// The task: sent, exactly as written, as the harness's first message. Empty
+  /// starts the harness with nothing sent. The Store's "Try this prompt" fills
+  /// it, and the person can change it before creating.
+  late final _task = TextEditingController(
+    text: widget.initialPrompt?.trim() ?? '',
+  );
+  String? get _firstPrompt {
+    final task = _task.text.trim();
+    return task.isEmpty || !_takesTask || _taskTooLong ? null : task;
+  }
+
+  /// Whether the chosen agent can start on a task at all: only some engines
+  /// can be opened with a first message, and a machine refuses one for the
+  /// rest. The field says so and keeps what was typed, unsent.
+  bool get _takesTask => takesFirstTask(_baseEngine(_engine));
+
+  /// Longer than a machine accepts: Create waits until it is shortened, rather
+  /// than sending something the machine refuses or cutting it.
+  bool get _taskTooLong =>
+      _takesTask && _task.text.trim().length > kFirstTaskMaxLength;
+  late bool _taskWasTooLong = _taskTooLong;
+
+  /// Rebuilds the dialog, not just the field, when Create's answer changes.
+  void _onTaskChanged() {
+    if (_taskTooLong == _taskWasTooLong) return;
+    setState(() => _taskWasTooLong = _taskTooLong);
+  }
+
   final _folderFocus = FocusNode(debugLabel: 'Working folder');
   final _agentSearchFocus = FocusNode(debugLabel: 'Agent search');
   final _actionFocus = FocusNode(debugLabel: 'Create or check agent');
@@ -171,6 +205,7 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
 
   @override
   void dispose() {
+    _task.dispose();
     _folderFocus.dispose();
     _agentSearchFocus.dispose();
     _actionFocus.dispose();
@@ -181,6 +216,7 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
   @override
   void initState() {
     super.initState();
+    _task.addListener(_onTaskChanged);
     final remembered = widget.notifier.agentPreference.value;
     final asked = widget.initialEngine;
     if (asked != null &&
@@ -271,16 +307,21 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
     return entry != null && !entry.installed;
   }
 
-  /// What it makes and whose it is — "CAD · Autonomous" — the
-  /// machine's words first, this build's when the machine has not answered,
-  /// the description when there is nothing else.
-  String? _harnessDetail(DshEntry harness) {
+  /// The line under a harness's name in the agent search: its tagline, in
+  /// the project's own words. The machine's catalog first, this build's words
+  /// when the machine's CLI does not send one, then its domain, then its
+  /// description.
+  String? _harnessTagline(DshEntry harness) {
     final identity = engineIdentity(harness.id);
-    final parts = [
+    for (final line in [
+      harness.tagline,
+      identity.tagline,
       harness.category ?? identity.category,
-      harness.author ?? identity.creator,
-    ].whereType<String>().where((s) => s.isNotEmpty);
-    return parts.isEmpty ? harness.description : parts.join(' · ');
+      harness.description,
+    ]) {
+      if (line != null && line.trim().isNotEmpty) return line.trim();
+    }
+    return null;
   }
 
   /// The harnesses to list after the engines: what the machine named when it
@@ -610,6 +651,7 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
                 : _projectFolder != null)) &&
         !_picking &&
         !_submitting &&
+        (_confirmationPending || !_taskTooLong) &&
         (_confirmationPending || !_waitingForCodexProfile);
 
     return CallbackShortcuts(
@@ -682,10 +724,42 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
                         ),
                       ),
                     ),
-                    if (_firstPrompt case final prompt?) ...[
-                      const SizedBox(height: _gapBlock),
-                      _firstMessage(prompt),
-                    ],
+                    // Last: who, where and which folder are chosen, then what
+                    // to do, said right beside the button that starts it.
+                    //
+                    // Outside the choices' traversal group, and locked the
+                    // same way: that group orders Tab by when a focus node
+                    // attached, and choosing a machine rebuilds the project
+                    // tiles — inside the group they would come AFTER this
+                    // field, and Shift-Tab would bounce between the two.
+                    AbsorbPointer(
+                      absorbing: _choicesLocked,
+                      child: ExcludeFocus(
+                        excluding: _choicesLocked,
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            SizedBox(height: compactHeight ? 24 : 32),
+                            _sectionHeader(
+                              'First task',
+                              _takesTask
+                                  ? 'What should your agent work on? (Optional)'
+                                  : '${_labelOf(_engine)} starts without one. '
+                                        'Tell it once it opens.',
+                              null,
+                              compactHeight: compactHeight,
+                            ),
+                            _taskField(
+                              minHeight: _tileHeight(
+                                MediaQuery.textScalerOf(context),
+                                compactHeight: compactHeight,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
                     // Under everything chosen, and OUTSIDE the AbsorbPointer
                     // above: the choices lock while the install runs, and a
                     // panel inside that lock cannot be clicked (owner,
@@ -769,17 +843,21 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
                       focusNode: _actionFocus,
                       onPressed: canCreate ? _submit : null,
                       style: FilledButton.styleFrom(
-                        minimumSize: const Size(192, 56),
+                        // Taller and larger type, in proportion with the
+                        // tile-tall rows above it; no wider at rest, so the
+                        // settings beside it keep their one line at 900.
+                        minimumSize: const Size(192, 64),
+                        maximumSize: const Size(420, double.infinity),
                         padding: const EdgeInsets.symmetric(
                           horizontal: 32,
-                          vertical: 16,
+                          vertical: 18,
                         ),
                         backgroundColor: grid.AppPalette.accent,
                         foregroundColor: Colors.white,
                         textStyle: TextStyle(
                           fontFamily: grid.AppFont.sans,
                           fontFamilyFallback: grid.AppFont.sansFallback,
-                          fontSize: 16,
+                          fontSize: 18,
                           fontWeight: FontWeight.w600,
                         ),
                         shape: const StadiumBorder(),
@@ -802,16 +880,23 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
                                     ),
                                   ),
                                   const SizedBox(width: 8),
-                                  Text(
-                                    _checkingCreation
-                                        ? 'Checking status…'
-                                        : _folderSource ==
-                                                  _FolderSource.remote &&
-                                              _preparedFolder == null
-                                        ? 'Cloning and starting…'
-                                        : _installing
-                                        ? 'Installing ${_labelOf(_engine)}…'
-                                        : 'Creating harness…',
+                                  // A long harness name ends in an ellipsis
+                                  // rather than pushing the button past the
+                                  // footer.
+                                  Flexible(
+                                    child: Text(
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      _checkingCreation
+                                          ? 'Checking status…'
+                                          : _folderSource ==
+                                                    _FolderSource.remote &&
+                                                _preparedFolder == null
+                                          ? 'Cloning and starting…'
+                                          : _installing
+                                          ? 'Installing ${_labelOf(_engine)}…'
+                                          : 'Creating harness…',
+                                    ),
                                   ),
                                 ],
                               ),
@@ -898,6 +983,22 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
     ),
   );
 
+  /// A tile's height, which depends on the text size and the window's height
+  /// but never on its width — so the task field, laid out outside the tiles'
+  /// LayoutBuilder, can be the same height as they are.
+  static double _tileHeight(TextScaler scaler, {required bool compactHeight}) {
+    final labelLine =
+        scaler.scale(AppChoiceTileContent.labelSize) *
+        AppChoiceTileContent.lineHeight;
+    final detailLine =
+        scaler.scale(AppChoiceTileContent.detailSize) *
+        AppChoiceTileContent.lineHeight;
+    return math.max(
+      compactHeight ? 96 : 100,
+      math.max(labelLine * 2 + detailLine, labelLine + detailLine * 2) + 38,
+    );
+  }
+
   Widget _choices() => LayoutBuilder(
     builder: (context, constraints) {
       final scaler = MediaQuery.textScalerOf(context);
@@ -919,18 +1020,9 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
       // line at this width, and on one it arrived as "Documents · Typst Gm…".
       // Which line is spent where is decided per tile, against the name it
       // actually holds: AppChoiceTileContent.linesFor.
-      final labelLine =
-          scaler.scale(AppChoiceTileContent.labelSize) *
-          AppChoiceTileContent.lineHeight;
-      final detailLine =
-          scaler.scale(AppChoiceTileContent.detailSize) *
-          AppChoiceTileContent.lineHeight;
       final tileSize = Size(
         (constraints.maxWidth - AppChoiceTile.gap * (columns - 1)) / columns,
-        math.max(
-          compactHeight ? 96 : 100,
-          math.max(labelLine * 2 + detailLine, labelLine + detailLine * 2) + 38,
-        ),
+        _tileHeight(scaler, compactHeight: compactHeight),
       );
       return Column(
         mainAxisSize: MainAxisSize.min,
@@ -961,7 +1053,9 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
                 AgentChoice(
                   id: identity.id,
                   label: _labelOf(identity.id),
-                  detail: identity.detail,
+                  detail: identity.tagline ?? identity.category,
+                  creator: identity.creator,
+                  keywords: identity.category,
                   description: identity.blurb,
                   mark: (size) => EngineMark(engine: identity.id, size: size),
                 ),
@@ -971,14 +1065,17 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
                 AgentChoice(
                   id: harness.id,
                   label: harness.name,
-                  // No "on Codex" here: the engine underneath is a backend
-                  // detail (owner, 2026-09-15) — the settings row says it.
-                  // What it makes, in a word or two; the machine's word first,
-                  // this build's when the machine has not answered.
-                  detail: _harnessDetail(harness),
-                  // The Store's broad shelf, for the search alone: "media"
-                  // finds Typst beside its own "Documents".
-                  keywords: storeCategoryFor(harness),
+                  // "MuJoCo by Google DeepMind" over "Advanced physics
+                  // simulation" (owner, 2026-09-17). No "on Codex": the engine
+                  // underneath is a backend detail (owner, 2026-09-15).
+                  detail: _harnessTagline(harness),
+                  creator: harness.author ?? engineIdentity(harness.id).creator,
+                  // For the search alone: the Store's shelf and the package's
+                  // own domain, so "engineering" and "PCB" both find Circuit.
+                  keywords: [
+                    storeCategoryFor(harness),
+                    ?(harness.category ?? engineIdentity(harness.id).category),
+                  ].join(' '),
                   description:
                       harness.description ??
                       engineIdentity(harness.id).blurb ??
@@ -1114,60 +1211,98 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
     ],
   );
 
-  /// The message the harness starts on, quoted, with a way to start without it.
-  Widget _firstMessage(String prompt) => Container(
-    key: const Key('new-agent-first-message'),
-    padding: const EdgeInsets.fromLTRB(16, 12, 8, 12),
-    decoration: BoxDecoration(
-      color: grid.AppPalette.cardBg,
-      borderRadius: BorderRadius.circular(12),
-    ),
-    child: Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Padding(
-          padding: const EdgeInsets.only(top: 2),
-          child: Icon(
-            LucideIcons.messageSquareText300,
-            size: 16,
-            color: grid.AppPalette.accentOnSurface,
-          ),
+  /// The task field: what the harness is told first, exactly as typed, with no
+  /// guessing about it (owner, 2026-09-17: "you just pick exactly what you want
+  /// and enter the exact task"). One line tall at rest — as tall as the agent
+  /// box and the tiles above it, [minHeight] — and taller as lines are added.
+  /// Return adds a line; ⌘Return creates, as it does anywhere in the dialog.
+  Widget _taskField({required double minHeight}) => ListenableBuilder(
+    listenable: _task,
+    builder: (context, _) {
+      final radius = BorderRadius.circular(grid.AppControl.radius);
+      final line = MediaQuery.textScalerOf(context).scale(16) * 1.45;
+      final padding = ((minHeight - line) / 2).clamp(12.0, double.infinity);
+      final tooLong = _taskTooLong;
+      final errorBorder = OutlineInputBorder(
+        borderRadius: radius,
+        borderSide: BorderSide(
+          color: Theme.of(context).colorScheme.error,
+          width: 1.5,
         ),
-        const SizedBox(width: 12),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'Starts with',
-                style: TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w600,
-                  color: grid.AppPalette.textSecondary,
-                ),
-              ),
-              const SizedBox(height: 4),
-              Text(
-                prompt,
-                style: TextStyle(
-                  fontSize: 14,
-                  height: 1.45,
-                  color: grid.AppPalette.textPrimary,
-                ),
-              ),
-            ],
-          ),
+      );
+      return TextField(
+        key: const Key('new-agent-task'),
+        controller: _task,
+        // Kept, not cleared, for an agent that cannot take it: choosing one
+        // that can sends it after all.
+        enabled: _takesTask,
+        minLines: 1,
+        maxLines: 6,
+        keyboardType: TextInputType.multiline,
+        textInputAction: TextInputAction.newline,
+        style: TextStyle(
+          fontSize: 16,
+          height: 1.45,
+          color: grid.AppPalette.textPrimary,
         ),
-        AppIconButton(
-          key: const Key('new-agent-first-message-remove'),
-          icon: LucideIcons.x300,
-          tooltip: 'Start without this message',
-          onPressed: _choicesLocked
+        decoration: InputDecoration(
+          hintText: 'Tell your agent what to do first.',
+          // Readable, not faint: the hint says what the field is for.
+          hintStyle: TextStyle(
+            fontSize: 16,
+            height: 1.45,
+            color: grid.AppPalette.textSecondary,
+          ),
+          // One line, so an empty box is exactly a tile tall at any width.
+          hintMaxLines: 1,
+          errorText: tooLong
+              ? 'A first task can be up to $kFirstTaskMaxLength characters. '
+                    'This one is ${_task.text.trim().length}.'
+              : null,
+          errorMaxLines: 2,
+          errorBorder: errorBorder,
+          focusedErrorBorder: errorBorder,
+          filled: true,
+          fillColor: grid.AppSurface.recess,
+          isDense: true,
+          // One line fills exactly [minHeight]: the padding is what a line of
+          // text at this size leaves. A minimum height on the decoration would
+          // reserve the space but paint the fill only around the text.
+          contentPadding: EdgeInsets.fromLTRB(18, padding, 8, padding),
+          border: OutlineInputBorder(
+            borderRadius: radius,
+            borderSide: BorderSide.none,
+          ),
+          enabledBorder: OutlineInputBorder(
+            borderRadius: radius,
+            borderSide: BorderSide.none,
+          ),
+          disabledBorder: OutlineInputBorder(
+            borderRadius: radius,
+            borderSide: BorderSide.none,
+          ),
+          focusedBorder: OutlineInputBorder(
+            borderRadius: radius,
+            borderSide: BorderSide(
+              color: grid.AppPalette.swarmAccent.withValues(alpha: .7),
+              width: 1.5,
+            ),
+          ),
+          // A disabled field takes no clicks, so it offers none.
+          suffixIcon: _task.text.isEmpty || !_takesTask
               ? null
-              : () => setState(() => _firstPrompt = null),
+              : Padding(
+                  padding: const EdgeInsets.only(right: 8),
+                  child: AppIconButton(
+                    key: const Key('new-agent-task-clear'),
+                    icon: LucideIcons.x300,
+                    tooltip: 'Clear the task',
+                    onPressed: _choicesLocked ? null : _task.clear,
+                  ),
+                ),
         ),
-      ],
-    ),
+      );
+    },
   );
 
   Widget _settingsRow() => Wrap(
@@ -1245,7 +1380,9 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
       (machine.nodeOnline == true && !machine.needsLink);
 
   List<MachineState> get _orderedMachines {
-    final machines = widget.notifier.machineStates.values.toList();
+    final machines = widget.notifier.machineStates.values
+        .where((m) => !m.machine.isShared)
+        .toList();
     int priority(MachineState machine) => machine.isLocalMachine
         ? 0
         : _machineOnline(machine)
@@ -1282,23 +1419,24 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
         .toList(),
     options: [
       for (final machine in widget.notifier.machineStates.values)
-        SelectOption(
-          value: machine.machine.machineId,
-          label: machine.machine.displayName,
-          detail: machine.isLocalMachine ? 'This computer' : 'Remote',
-          leading: () => Icon(
-            _machineOnline(machine)
-                ? (machine.isLocalMachine
-                      ? LucideIcons.laptop
-                      : LucideIcons.monitor)
-                : LucideIcons.monitorOff,
-            size: 22,
-            color: _machineOnline(machine)
-                ? grid.AppPalette.textPrimary
-                : grid.AppPalette.textFaint,
-            semanticLabel: _machineOnline(machine) ? 'Online' : 'Offline',
+        if (!machine.machine.isShared)
+          SelectOption(
+            value: machine.machine.machineId,
+            label: machine.machine.displayName,
+            detail: machine.isLocalMachine ? 'This computer' : 'Remote',
+            leading: () => Icon(
+              _machineOnline(machine)
+                  ? (machine.isLocalMachine
+                        ? LucideIcons.laptop
+                        : LucideIcons.monitor)
+                  : LucideIcons.monitorOff,
+              size: 22,
+              color: _machineOnline(machine)
+                  ? grid.AppPalette.textPrimary
+                  : grid.AppPalette.textFaint,
+              semanticLabel: _machineOnline(machine) ? 'Online' : 'Offline',
+            ),
           ),
-        ),
     ],
     onChanged: (id) {
       if (id == _machineId || _choicesLocked) return;

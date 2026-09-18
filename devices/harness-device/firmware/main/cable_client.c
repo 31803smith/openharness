@@ -176,6 +176,15 @@ void cable_client_send_focus(const char *agent_id)
     send_json(root);
 }
 
+void cable_client_send_fork(const char *agent_id)
+{
+    if (!agent_id || !agent_id[0]) return;
+    cJSON *root = msg("agent.fork");
+    if (!root) return;
+    cJSON_AddStringToObject(root, "agentId", agent_id);
+    send_json(root);
+}
+
 void cable_client_send_open(const char *agent_id)
 {
     if (!agent_id || !agent_id[0]) return;
