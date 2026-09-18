@@ -55,7 +55,7 @@ import { renderLoginSuccessHtml } from './lib/loginPage.js'
 import { AuthSessionError, AuthSessionManager, clearAuthSession, readAuthSession, writeAuthSession, type AuthSession } from './lib/authSession.js'
 import { handOffToGrid } from './lib/gridHandoff.js'
 import { ensureGridInstalled } from './lib/gridInstall.js'
-import { ensureHarnessGrid } from './lib/gridEnsure.js'
+import { ensureHarnessGrid, type EnsureStatus } from './lib/gridEnsure.js'
 import { passThroughToGridLogout } from './lib/gridLogout.js'
 import { clearGridMcpUrlCache } from './lib/gridMcpUrl.js'
 import { warnIfGridSignInRemains } from './lib/gridCredentials.js'
@@ -555,22 +555,39 @@ async function attachGridToSignIn(token: string, json: boolean): Promise<Record<
     note(handoff.message)
     return { grid: { signedIn: false, code: handoff.code } }
   }
-  // The name is the backend's to mint and remember — this CLI holds neither the account's email nor
-  // its id (see backend/src/routes/grid.ts). A backend without the route is simply an older backend:
-  // no grid is ensured, nothing fails, and the next sign-in after it ships picks this up.
+  const { status, name } = await ensureAccountGrid(note)
+  return { grid: { signedIn: true, ensured: status, ...(name ? { name } : {}) } }
+}
+
+/**
+ * The account's private grid exists — its name minted or read, then the grid itself created if it is
+ * not there yet.
+ *
+ * The second half of attaching a machine to grid, and the half `harness grid login` used to skip:
+ * that command signed in and stopped, so an account whose grid had never been created was left
+ * signed in to nothing, with an empty model picker and no way to tell why. Shared from here so the
+ * sign-in's grid half and the explicit command cannot drift apart again.
+ *
+ * **The name is the backend's to mint and remember** — this CLI holds neither the account's email
+ * nor its id (see `backend/src/routes/grid.ts`). A backend without the route is simply an older
+ * backend: no grid is ensured, nothing fails, and the next sign-in after it ships picks this up.
+ *
+ * Best-effort throughout: every failure is a note through `note` and nothing more.
+ */
+async function ensureAccountGrid(note: (line: string) => void): Promise<{ status: EnsureStatus; name: string | null }> {
   let gridName: string | null = null
   try {
     const { headers } = await controlPlaneAuth()
     gridName = (await postJson<{ gridName?: string }>('/api/grid/name', {}, headers)).gridName ?? null
   } catch (err) {
     note(`Could not read this account's grid name (${(err as Error).message}); skipping grid setup.`)
-    return { grid: { signedIn: true, ensured: 'skipped' } }
+    return { status: 'skipped', name: null }
   }
-  if (!gridName) return { grid: { signedIn: true, ensured: 'skipped' } }
+  if (!gridName) return { status: 'skipped', name: null }
   const ensured = await ensureHarnessGrid(gridName)
   if (ensured.status === 'failed' || ensured.status === 'skipped') note(ensured.message)
   else if (ensured.status === 'created') note(`Created your private grid '${gridName}'.`)
-  return { grid: { signedIn: true, ensured: ensured.status, name: gridName } }
+  return { status: ensured.status, name: gridName }
 }
 
 async function loginCommand(
@@ -757,6 +774,14 @@ async function gridLoginCommand(force: boolean, json: boolean): Promise<void> {
   }
   const handoff = await handOffToGrid(token, { json })
   if (handoff.code !== 'OK') { fail(handoff.code, handoff.message, handoff.exitCode, gridSaid(handoff)); return }
+  // The sign-in on its own leaves an account whose grid was never created signed in to nothing —
+  // this command used to stop here, and the empty model picker that followed named no cause. Same
+  // second half the harness sign-in does, and best-effort in the same way.
+  //
+  // Deliberately NOT on the result line: that line is this command's pinned contract (the sign-in's
+  // outcome and what `grid` itself said), and a client driving it reads exactly those keys. A person
+  // on the human path gets the notes on stderr, where every other note from this command goes.
+  await ensureAccountGrid((line) => { if (!json) console.error(`  · ${line}`) })
   if (!json) return
   // The same key `harness login --json` uses, present only when it is true, so a client driving the
   // two reads one contract rather than two — the harness sign-in's own line is worded exactly so.
@@ -1598,11 +1623,10 @@ async function runForeground(session: AuthSession): Promise<void> {
   let gridAttachDone = false
   let gridAttachAttempts = 0
   // A hard ceiling on how long the RPCs will gate on an attempt, INDEPENDENT of whether it settled.
-  // `mintName` is bounded below, but the hand-off child (`grid login --harness`) has no watchdog of
-  // its own — a control plane that black-holes its connection could keep an attempt pending for the
-  // daemon's life, and without this ceiling every grid RPC would then pay the full per-call wait
-  // forever. Past the ceiling the probe returns null and the RPCs stop waiting; an attempt that
-  // lands later still publishes the name through `onName`.
+  // Every step inside an attempt is bounded on its own now — `mintName` by its abort signal, the
+  // hand-off and the ensure by their own watchdogs — so this is the backstop rather than the only
+  // guard: whatever an attempt does, the RPCs stop paying for it after the ceiling. Past it the
+  // probe returns null; an attempt that lands later still publishes the name through `onName`.
   let gridAttachDeadline = 0
 
   const runGridAttach = (): void => {
