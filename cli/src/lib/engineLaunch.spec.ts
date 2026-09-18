@@ -61,6 +61,46 @@ describe('buildEngineLaunchArgv', () => {
     ])
   })
 
+  describe('a terminal (engine `terminal`)', () => {
+    it('is the login shell itself behind a non-interactive wrapper that only raises the limit and enters the folder', () => {
+      expect(buildEngineLaunchArgv('terminal', { cwd: '/work/project' }, '/bin/zsh')).toEqual([
+        '/bin/zsh', '-c',
+        `${RAISE_OPEN_FILES_SH}if ! cd -- "$1"; then printf '%s\\n' 'harness: the selected working directory is unavailable.' >&2; fi\nshift\nexec "$@"`,
+        'harness-terminal', '/work/project', '/bin/zsh', '-l',
+      ])
+    })
+
+    it('gives bash no login flag (its rc file is where Ubuntu keeps PATH edits), and no folder means no cd', () => {
+      expect(buildEngineLaunchArgv('terminal', {}, '/bin/bash')).toEqual([
+        '/bin/bash', '-c', `${RAISE_OPEN_FILES_SH}shift\nexec "$@"`, 'harness-terminal', '', '/bin/bash',
+      ])
+    })
+
+    it('falls back to /bin/sh rather than to an engine command when no shell resolves', () => {
+      expect(buildEngineLaunchArgv('terminal', {}, 'relative-shell')).toEqual([
+        '/bin/sh', '-c', `${RAISE_OPEN_FILES_SH}shift\nexec "$@"`, 'harness-terminal', '', '/bin/sh',
+      ])
+    })
+
+    it('ignores every engine option: nothing to bypass, resume, prompt or install', () => {
+      const argv = buildEngineLaunchArgv('terminal', {
+        cwd: '/w', bypassPermission: true, resumeSessionId: 'abc', firstPrompt: 'hi', extraArgs: ['--x'],
+      }, '/bin/zsh')
+      expect(argv.slice(-2)).toEqual(['/bin/zsh', '-l'])
+      expect(argv.join(' ')).not.toContain('abc')
+      expect(argv.join(' ')).not.toContain('--x')
+    })
+
+    it('is a script a real shell accepts and that keeps a cd failure from ending the terminal', () => {
+      const script = buildEngineLaunchArgv('terminal', { cwd: '/nowhere/at/all' }, '/bin/sh')[2]
+      expect(() => execFileSync('/bin/sh', ['-n', '-c', script])).not.toThrow()
+      // The wrapper's `exec "$@"` runs the shell handed in argv; `true` in its place proves the
+      // wrapper reaches the exec even when the cd failed (the terminal still opens, at $HOME).
+      const out = execFileSync('/bin/sh', ['-c', script, 'harness-terminal', '/nowhere/at/all', '/bin/sh', '-c', 'echo reached'], { stdio: ['ignore', 'pipe', 'pipe'] })
+      expect(out.toString()).toContain('reached')
+    })
+  })
+
   it('hands the engine a soft open-files limit fit for it, however low the pane started', async () => {
     // A tmux server started by the desktop app passes launchd's 256 to every pane; Claude Code will
     // not start under that. The pane's own shell lifts it before exec, so the server never has to.

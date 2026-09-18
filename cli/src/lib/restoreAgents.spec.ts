@@ -58,7 +58,7 @@ interface Harness {
   released: string[]
 }
 
-function harness(rows: RegisteredSession[], opts: { livePanes?: string[]; failCreate?: boolean; refuseLaunch?: boolean; budgetMs?: number; settleMs?: number } = {}): Harness {
+function harness(rows: RegisteredSession[], opts: { livePanes?: string[]; liveTerminalPanes?: string[]; failCreate?: boolean; refuseLaunch?: boolean; budgetMs?: number; settleMs?: number } = {}): Harness {
   const h: Harness = {
     calls: [],
     rows: new Map(rows.map((r) => [r.agentId, r])),
@@ -98,7 +98,14 @@ function harness(rows: RegisteredSession[], opts: { livePanes?: string[]; failCr
       updateProcessIdentity: (id, pi) => { note(`updateIdentity:${id}:${pi.pid}`); const r = h.rows.get(id); if (r) r.processIdentity = pi; return !!r },
       unbindSession: (sid) => { note(`unbind:${sid}`); return true },
       inheritName: (from, to) => { note(`inheritName:${from}->${to}`) },
+      releaseEngine: (id) => {
+        note(`releaseEngine:${id}`)
+        const r = h.rows.get(id); if (!r || !r.terminalHost) return null
+        r.engine = 'terminal'; r.sessionId = ''; r.processIdentity = null; r.launch = { state: 'ready' }; r.active = true
+        return r
+      },
     },
+    liveTerminalPane: async (runtime) => (opts.liveTerminalPanes ?? []).includes(runtime.paneId),
     liveProcess: async (_entry, runtime) => live.has(runtime.paneId) ? identity(1000 + Number(runtime.paneId.slice(1))) : null,
     buildLaunch: async (entry, o) => {
       h.launches.push({ agentId: entry.agentId, ...(o.resumeSessionId ? { resumeSessionId: o.resumeSessionId } : {}) })
@@ -374,5 +381,59 @@ describe('restoreAgents — waiting for the engine', () => {
     await restoreAgents(deps)
     await settled(h, 1)
     expect(h.calls.filter((c) => c.startsWith('setLaunch:agent-a:failed'))).toEqual([])
+  })
+})
+
+describe('restoreAgents — terminals', () => {
+  const terminal = (overrides: Partial<RegisteredSession> = {}) =>
+    row({ agentId: 'term-1', engine: 'terminal', terminalHost: true, sessionId: '', boundAt: null, ...overrides })
+
+  it('leaves a terminal whose pane is still there alone — a shell has no engine process to look for', async () => {
+    const h = harness([terminal()], { liveTerminalPanes: ['%3'] })
+    const summary = await restoreAgents(h.deps)
+    expect(summary).toEqual({ restored: [], skipped: [], failed: [] })
+    expect(h.paneCreates).toBe(0)
+    expect(h.calls).toEqual([])
+  })
+
+  it('recreates a terminal whose pane is gone as a ready shell: no hold, no engine watch', async () => {
+    const h = harness([terminal()])
+    const summary = await restoreAgents(h.deps)
+    expect(summary).toEqual({ restored: ['term-1'], skipped: [], failed: [] })
+    expect(h.launches).toEqual([{ agentId: 'term-1' }])
+    expect(h.calls).toEqual([
+      'clearIdentity:term-1@tx',
+      'createPane:term-1@tx',
+      'updateRuntimes:term-1:%0@tx',
+      'setLaunch:term-1:ready@tx',
+      'clearRemainOnExit:%0@tx',
+    ])
+    expect(h.rows.get('term-1')?.launch).toEqual({ state: 'ready' })
+  })
+
+  it('puts a terminal whose adopted engine exited while the daemon was down back to a shell, pane kept', async () => {
+    const h = harness([terminal({ engine: 'claude', sessionId: 'session-t', boundAt: 1, processIdentity: identity(7) })], { liveTerminalPanes: ['%3'] })
+    const summary = await restoreAgents(h.deps)
+    expect(summary).toEqual({ restored: [], skipped: [], failed: [] })
+    expect(h.calls).toEqual(['releaseEngine:term-1'])
+    expect(h.rows.get('term-1')).toMatchObject({ engine: 'terminal', sessionId: '' })
+  })
+
+  it('keeps a terminal whose adopted engine is still running exactly as an agent', async () => {
+    const h = harness([terminal({ engine: 'claude', sessionId: 'session-t', boundAt: 1 })], { liveTerminalPanes: ['%3'], livePanes: ['%3'] })
+    const summary = await restoreAgents(h.deps)
+    expect(summary).toEqual({ restored: [], skipped: [], failed: [] })
+    expect(h.calls).toEqual(['updateIdentity:term-1:1003'])
+    expect(h.rows.get('term-1')?.engine).toBe('claude')
+  })
+
+  it('brings a terminal whose adopted engine AND pane are gone back as a shell, never as the engine', async () => {
+    const h = harness([terminal({ engine: 'claude', sessionId: 'session-t', boundAt: 1 })])
+    const summary = await restoreAgents(h.deps)
+    expect(summary).toEqual({ restored: ['term-1'], skipped: [], failed: [] })
+    expect(h.calls[0]).toBe('releaseEngine:term-1')
+    expect(h.launches).toEqual([{ agentId: 'term-1' }])
+    expect(h.launched[0].launch.argv[0]).toBe('terminal')
+    expect(h.rows.get('term-1')).toMatchObject({ engine: 'terminal', launch: { state: 'ready' } })
   })
 })

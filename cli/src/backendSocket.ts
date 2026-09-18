@@ -26,7 +26,7 @@ import { env } from './config/env.js'
 import { AuthSessionManager, AuthSessionError } from './lib/authSession.js'
 import { VERSION } from './version.js'
 import { registry, projectDisplayName, type RegisteredSession } from './lib/registry.js'
-import { ENGINES, type AgentEngine } from './engines/types.js'
+import { ENGINES, PROCESS_ENGINES, isTerminalEngine, type AgentEngine, type ProcessEngine } from './engines/types.js'
 import { listDir } from './lib/fsBrowse.js'
 import { linkCodexProfile, listCodexProfiles } from './lib/codexProfiles.js'
 import { gridCliPresence } from './lib/gridExec.js'
@@ -224,14 +224,27 @@ export function copilotHistoryPage(lines: string[], paginated: boolean):
 
 export function deviceAgentListItem(
   raw: unknown,
-): { id: unknown; name?: string; engine?: 'claude' | 'codex' | 'cursor' | 'opencode' | 'pi' | 'hermes' | 'commandcode' | 'devin' | 'muse' | 'amp' | 'kilo' | 'grok' | 'agy' | 'copilot'; selectedModel?: string | null } {
+): { id: unknown; name?: string; engine?: ProcessEngine; selectedModel?: string | null } {
   const o = (raw ?? {}) as Record<string, unknown>
-  const item: { id: unknown; name?: string; engine?: 'claude' | 'codex' | 'cursor' | 'opencode' | 'pi' | 'hermes' | 'commandcode' | 'devin' | 'muse' | 'amp' | 'kilo' | 'grok' | 'agy' | 'copilot'; selectedModel?: string | null } = { id: o.id }
+  const item: { id: unknown; name?: string; engine?: ProcessEngine; selectedModel?: string | null } = { id: o.id }
   if (typeof o.name === 'string') item.name = clipDeviceAgentName(o.name)
-  if (o.engine === 'claude' || o.engine === 'codex' || o.engine === 'cursor' || o.engine === 'opencode' || o.engine === 'pi' || o.engine === 'hermes' || o.engine === 'commandcode' || o.engine === 'devin' || o.engine === 'muse' || o.engine === 'amp' || o.engine === 'kilo' || o.engine === 'grok' || o.engine === 'agy' || o.engine === 'copilot') item.engine = o.engine
+  // The dial only ever meets process engines — a terminal never reaches it (see `deviceAgentRow`),
+  // and the union here says so rather than repeating fourteen string literals.
+  if (typeof o.engine === 'string' && (PROCESS_ENGINES as readonly string[]).includes(o.engine)) item.engine = o.engine as ProcessEngine
   // Runtime model/effort profile (opaque runtime-v1:...) — lets the device render + change model/effort.
   if (typeof o.selectedModel === 'string' || o.selectedModel === null) item.selectedModel = o.selectedModel
   return item
+}
+
+/**
+ * Whether an agent row belongs on a device at all. The dial drives agents — a terminal with nobody
+ * running in it has no turn to watch, no question to answer and no model to switch, so it is not
+ * listed there; the same row becomes listable the moment an engine is started inside it and its
+ * `engine` flips (registry `adoptEngine`).
+ */
+export function deviceAgentRow(raw: unknown): boolean {
+  const o = (raw ?? {}) as Record<string, unknown>
+  return !isTerminalEngine(typeof o.engine === 'string' ? o.engine : undefined)
 }
 
 /**
@@ -1393,7 +1406,7 @@ export class BackendSocket {
           // sorts by the same rule; the two must stay identical.
           projects.sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt) || a.id.localeCompare(b.id))
           if (this.e2ee.sessionRole(connId) === 'device') {
-            reply(type, requestId, { agents: projects.slice(0, DEVICE_AGENT_LIST_LIMIT).map(deviceAgentListItem) })
+            reply(type, requestId, { agents: projects.filter(deviceAgentRow).slice(0, DEVICE_AGENT_LIST_LIMIT).map(deviceAgentListItem) })
             return
           }
           reply(type, requestId, { agents: projects })
@@ -1750,7 +1763,7 @@ export class BackendSocket {
                 installed: entry.installed,
                 command: entry.command,
                 installable: entry.installable,
-                installCommand: entry.installable ? engineInstallRecipe(entry.engine).command : null,
+                installCommand: entry.installable ? engineInstallRecipe(entry.engine)?.command ?? null : null,
                 // Static per-CLI-version capability, not a probe result: its mere presence is what
                 // lets an older CLI (which never sends the field) keep reading as "unknown" rather
                 // than "no", per the desktop app's `EngineAvailability.fromJson`.
@@ -1868,7 +1881,11 @@ export class BackendSocket {
           catch (error) {
             reply(type, requestId, { error: error instanceof ProjectFolderError ? error.code : 'INVALID_PROJECT_SOURCE' }); return
           }
-          if (!projectFolder && (typeof cwd !== 'string' || !isAbsolute(cwd))) { reply(type, requestId, { error: 'INVALID_CWD' }); return }
+          // A terminal opens where a terminal app would — the home directory — when the client names
+          // no folder; every other engine works IN a folder and must be told which.
+          const terminal = isTerminalEngine(engine)
+          if (terminal && projectFolder) { reply(type, requestId, { error: 'INVALID_PROJECT_SOURCE', detail: 'a terminal opens in a folder, it does not prepare one' }); return }
+          if (!projectFolder && !(terminal && cwd === undefined) && (typeof cwd !== 'string' || !isAbsolute(cwd))) { reply(type, requestId, { error: 'INVALID_CWD' }); return }
           if (!this.onCreateAgent) { reply(type, requestId, { error: 'UNSUPPORTED_ON_REMOTE' }); return }
           const creationId = payload.creationId
           if (creationId !== undefined && !validCreationId(creationId)) {
@@ -1882,6 +1899,7 @@ export class BackendSocket {
           // that quietly ran on the engine's own login would look like it worked.
           const grid = parseGridLaunchOverride(payload.grid)
           if (grid.state === 'invalid') { reply(type, requestId, { error: 'INVALID_GRID', detail: grid.reason }); return }
+          if (terminal && grid.state === 'ok') { reply(type, requestId, { error: 'INVALID_GRID', detail: 'a terminal has no engine to point at a grid' }); return }
           // Same validation the desktop app already applies client-side (`Agent._safeCodexHome`) —
           // repeated here because a client's own check is not a guarantee about what actually
           // arrives on the wire.
@@ -1956,7 +1974,7 @@ export class BackendSocket {
           }
           const input = {
             engine,
-            cwd: typeof cwd === 'string' ? cwd : '',
+            cwd: typeof cwd === 'string' ? cwd : terminal ? homedir() : '',
             // On unless a client says otherwise: a harness works without stopping to ask for each command.
             bypassPermission: permissionMode ? permissionModeApproves(permissionMode) : payload.bypassPermission !== false,
             permissionMode,

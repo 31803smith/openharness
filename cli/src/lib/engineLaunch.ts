@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process'
 import { homedir, userInfo } from 'node:os'
 import { isAbsolute, basename, dirname, join } from 'node:path'
-import type { AgentEngine } from '../engines/types.js'
+import { isTerminalEngine, type AgentEngine } from '../engines/types.js'
 import { binaryOnPath } from './binaryOnPath.js'
 import { engineBin } from './engineBin.js'
 import type { EngineInstallRecipe } from './engineInstall.js'
@@ -33,6 +33,8 @@ export const BYPASS_PERMISSION_FLAGS: Readonly<Record<AgentEngine, string[] | nu
   grok: null,
   agy: null,
   copilot: null,
+  // A shell has no permissions to bypass.
+  terminal: null,
 }
 
 /**
@@ -104,6 +106,7 @@ export const FIRST_PROMPT_ARGS: Readonly<Record<AgentEngine, readonly string[] |
   grok: null,
   agy: null,
   copilot: null,
+  terminal: null,
 }
 
 /** A first prompt is a message, not a document. Enforced at the wire (`agent_create`) before any pane
@@ -158,6 +161,7 @@ export const NAMED_AGENT_ARGS: Readonly<Record<AgentEngine, readonly string[] | 
   grok: null,
   agy: null,
   copilot: null,
+  terminal: null,
 }
 
 /** An agent name is an identifier the engine looks a file up by — never a path, never prose. */
@@ -361,6 +365,7 @@ export function buildEngineLaunchArgv(
   runtimeNode: string = managedNodePath(),
   gridBinary: string = gridBinaryPath(),
 ): string[] {
+  if (isTerminalEngine(engine)) return buildTerminalLaunchArgv(opts, shell)
   const command = buildEngineCommandArgv(engine, opts)
   const interactive = interactiveEngineShell(shell)
   if (!interactive) return command
@@ -389,6 +394,31 @@ export function buildEngineLaunchArgv(
   // started the server, and an engine (Claude Code refuses outright) or an npm install under 256 is
   // the failure the person then reads in the pane. See openFiles.ts.
   return [interactive.path, ...interactive.args, RAISE_OPEN_FILES_SH + prelude + cwdPrelude + body, 'harness-engine', ...(opts.cwd ? [opts.cwd] : []), ...command]
+}
+
+/**
+ * Full argv for a plain terminal pane: the user's login shell, nothing exec'd over it.
+ *
+ * The outer `-c` shell is non-interactive on purpose — it loads no rc files, only raises the
+ * open-files limit (a `claude` typed into this terminal later would otherwise refuse under
+ * launchd's 256, exactly as a launched engine would) and enters the workspace — then `exec`s the
+ * interactive shell, which loads the user's startup files once, the way Terminal.app would. zsh
+ * gets `-l` so its login files run; bash reads .bashrc on an interactive non-login start, which is
+ * where Ubuntu keeps nvm and vendor PATH edits, so it gets no flag (same reasoning as
+ * `interactiveEngineShell`). Without a resolvable shell the pane runs `/bin/sh`, which at least
+ * gives the person a prompt.
+ */
+export function buildTerminalLaunchArgv(
+  opts: Pick<LaunchCommandOptions, 'cwd'> = {},
+  shell: string | undefined = undefined,
+): string[] {
+  const candidate = shell === undefined ? currentUserShell() : shell
+  const path = candidate && isAbsolute(candidate) ? candidate : '/bin/sh'
+  const loginArgs = basename(path).toLowerCase() === 'zsh' ? ['-l'] : []
+  const cwdPrelude = opts.cwd
+    ? `if ! cd -- "$1"; then printf '%s\\n' 'harness: the selected working directory is unavailable.' >&2; fi\n`
+    : ''
+  return [path, '-c', RAISE_OPEN_FILES_SH + cwdPrelude + 'shift\nexec "$@"', 'harness-terminal', opts.cwd ?? '', path, ...loginArgs]
 }
 
 /**

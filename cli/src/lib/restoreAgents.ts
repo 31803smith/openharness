@@ -27,7 +27,7 @@
  * spend the wrong account while looking identical — and is marked so the app can say why.
  */
 
-import type { AgentEngine } from '../engines/types.js'
+import { isTerminalEngine, type AgentEngine } from '../engines/types.js'
 import type { AgentLaunch, ProcessIdentity, RegisteredSession } from './registry.js'
 import type { TerminalRuntimeRef, TmuxRuntimeRef } from './terminalTypes.js'
 import { terminalRouteKey } from './terminalRuntime.js'
@@ -53,7 +53,16 @@ export interface RestoreAgentsDeps {
     updateProcessIdentity(agentId: string, processIdentity: ProcessIdentity): boolean
     unbindSession(sessionId: string): boolean
     inheritName(fromSessionId: string, toSessionId: string): void
+    /** A terminal's adopted engine is gone: back to a shell (registry.ts). */
+    releaseEngine(agentId: string): RegisteredSession | null
   }
+  /**
+   * Whether a TERMINAL's pane is still there — a live pane in a session this daemon named for a
+   * terminal. A terminal has no engine process to find (`liveProcess` answers null for one by
+   * construction), so pane existence is its liveness. Optional so a caller without tmux inventory
+   * (tests) treats every terminal pane as gone.
+   */
+  liveTerminalPane?: (runtime: TmuxRuntimeRef) => Promise<boolean>
   /** The engine process still running in this row's pane, or null when tmux does not know the pane
    *  at all — including when no tmux server is running — or the pane has become something else. */
   liveProcess: (entry: RegisteredSession, runtime: TmuxRuntimeRef) => Promise<ProcessIdentity | null>
@@ -131,6 +140,27 @@ export async function restoreAgents(deps: RestoreAgentsDeps): Promise<RestoreSum
     const runtime = tmuxRuntime(entry)
     if (!runtime) { summary.skipped.push({ agentId: entry.agentId, reason: 'no tmux pane' }); continue }
     if (entry.launch?.state === 'failed') { summary.skipped.push({ agentId: entry.agentId, reason: 'last launch failed' }); continue }
+    // A terminal — bare, or one that adopted an engine — is alive as long as its PANE is: the shell
+    // is what the person opened, and it survives whatever was typed into it. An adopted engine that
+    // exited while the daemon was down is exactly the exit the reconciler would have caught, so the
+    // row is put back to a terminal here; a pane that is gone comes back below as a terminal, too,
+    // never as the engine (its session is gone with the pane).
+    if (entry.terminalHost) {
+      const paneAlive = await deps.liveTerminalPane?.(runtime) ?? false
+      if (paneAlive) {
+        const engineLive = isTerminalEngine(entry.engine) ? null : await deps.liveProcess(entry, runtime)
+        if (engineLive) {
+          if (!entry.processIdentity) deps.registry.updateProcessIdentity(entry.agentId, engineLive)
+        } else if (!isTerminalEngine(entry.engine)) {
+          deps.registry.releaseEngine(entry.agentId)
+          deps.log(`[restore] ${entry.engine} → terminal · agent ${entry.agentId} · its engine exited while the daemon was down`)
+        }
+        continue
+      }
+      if (!isTerminalEngine(entry.engine)) deps.registry.releaseEngine(entry.agentId)
+      missing.push({ entry: deps.registry.byAgent(entry.agentId) ?? entry, runtime })
+      continue
+    }
     const live = await deps.liveProcess(entry, runtime)
     if (live) {
       // Still running. A row that lost its identity without losing its pane (a reboot the boot
@@ -181,6 +211,15 @@ export async function restoreAgents(deps: RestoreAgentsDeps): Promise<RestoreSum
         continue
       }
       const key = terminalRouteKey(created.runtime)
+      // A terminal is up the moment its pane is — no engine to wait for, no route to hold.
+      if (isTerminalEngine(entry.engine)) {
+        deps.registry.updateRuntimes(entry.agentId, [created.runtime], key)
+        deps.registry.setLaunch(entry.agentId, { state: 'ready' })
+        await deps.clearRemainOnExit(created.runtime)
+        summary.restored.push(entry.agentId)
+        deps.log(`[restore] terminal · agent ${entry.agentId} · pane ${dead.paneId} → ${created.runtime.paneId}`)
+        continue
+      }
       deps.holdRoute(key, budgetMs + HOLD_SLACK_MS)
       deps.registry.updateRuntimes(entry.agentId, [created.runtime], key)
       deps.registry.setLaunch(entry.agentId, { state: 'starting' })
