@@ -62,6 +62,27 @@ class CurrentUserProfile {
   }
 }
 
+/// A view-only invitation. It never contains a full machine credential.
+class SharedHarness {
+  const SharedHarness({
+    required this.id,
+    required this.agentId,
+    required this.name,
+    this.engine,
+    required this.expiresAt,
+  });
+  final String id, agentId, name;
+  final String? engine;
+  final DateTime expiresAt;
+  factory SharedHarness.fromJson(Map<String, dynamic> j) => SharedHarness(
+    id: j['id'] as String,
+    agentId: j['agentId'] as String,
+    name: j['name'] as String,
+    engine: j['engine'] as String?,
+    expiresAt: DateTime.parse(j['expiresAt'] as String),
+  );
+}
+
 /// Control-plane machine (GET /api/machines).
 class Machine {
   final String machineId;
@@ -73,6 +94,9 @@ class Machine {
   final String? engine;
   final String? name;
   final String? hostname;
+  final bool isShared;
+  final String? ownerName;
+  final List<SharedHarness> sharedHarnesses;
   final String? status;
 
   const Machine({
@@ -83,6 +107,9 @@ class Machine {
     this.engine,
     this.name,
     this.hostname,
+    this.isShared = false,
+    this.ownerName,
+    this.sharedHarnesses = const [],
     this.status,
   });
 
@@ -101,6 +128,12 @@ class Machine {
     engine: j['engine'] as String?,
     name: j['name'] as String?,
     hostname: j['hostname'] as String?,
+    isShared: j['shared'] == true,
+    ownerName: j['ownerName'] as String?,
+    sharedHarnesses: [
+      for (final row in j['shares'] as List? ?? const [])
+        SharedHarness.fromJson(Map<String, dynamic>.from(row as Map)),
+    ],
     status: j['status'] as String?,
   );
 
@@ -112,6 +145,9 @@ class Machine {
     engine: engine,
     name: name ?? this.name,
     hostname: hostname,
+    isShared: isShared,
+    ownerName: ownerName,
+    sharedHarnesses: sharedHarnesses,
     status: status,
   );
 }
@@ -195,6 +231,9 @@ class Agent {
   /// when there is none (yet). A change means the viewer pane must navigate.
   final String? viewerUrl;
 
+  /// Why this remote viewer could not be forwarded, including old-daemon update guidance.
+  final String? viewerError;
+
   /// What the harness's viewer pane is called — the shared viewer's own name ("3D Viewer"), or
   /// the harness's name and "Viewer" for one it ships ("Marp Viewer") — as the daemon worked it
   /// out. Null from an older daemon or with no viewer; see [PaneGrid] for what stands in.
@@ -225,6 +264,7 @@ class Agent {
     this.dsh,
     this.dshName,
     this.viewerUrl,
+    this.viewerError,
     this.viewerName,
     this.verdict,
   });
@@ -287,6 +327,7 @@ class Agent {
       dsh: _safeDsh(j['dsh']),
       dshName: _safeLabel(j['dshName']),
       viewerUrl: _safeViewerUrl(j['viewerUrl']),
+      viewerError: _safeDetail(j['viewerError']),
       viewerName: _safeLabel(j['viewerName']),
       verdict: AgentVerdict.fromJson(j['verdict']),
     );
@@ -314,6 +355,7 @@ class Agent {
     dsh: dsh,
     dshName: dshName,
     viewerUrl: viewerUrl,
+    viewerError: viewerError,
     viewerName: viewerName,
     verdict: verdict,
   );

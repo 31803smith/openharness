@@ -391,6 +391,8 @@ class AppNotifier extends ChangeNotifier {
   // Backend REST can fail while the daemon and its WebSocket remain ready. Recover that list
   // independently, with capped backoff and the same in-flight request as a manual retry.
   Timer? _machineRecoveryTimer;
+  Timer? _sharingDiscoveryTimer;
+  bool _sharingDiscoveryBusy = false;
   int _machineRecoveryAttempts = 0;
   String? _machineLoadError;
 
@@ -2849,6 +2851,21 @@ class AppNotifier extends ChangeNotifier {
   /// machines", which an empty list alone cannot say.
   bool machinesLoading = false;
 
+  Future<Map<String, dynamic>> manageHarnessShares(
+    String machineId,
+    String agentId,
+    String action, [
+    Map<String, dynamic> payload = const {},
+  ]) {
+    if (machineStates[machineId]?.machine.isShared == true) {
+      return Future.error(StateError('Only the owner can change sharing.'));
+    }
+    return _conn(machineId).request(
+      'harness_share_$action',
+      payload: {'agentId': agentId, ...payload},
+    );
+  }
+
   Future<void> refreshMachines() async {
     final revision = _authRevision;
     if (!_authWorkCurrent(revision)) return;
@@ -3037,6 +3054,31 @@ class AppNotifier extends ChangeNotifier {
         (state) => state..machine = machine,
         ifAbsent: () => MachineState(machine),
       );
+      if (machine.isShared) {
+        state.agents = [
+          for (final grant in machine.sharedHarnesses)
+            Agent(
+              id: grant.agentId,
+              name: grant.name,
+              engine: grant.engine,
+              terminalAvailable: true,
+            ),
+        ];
+        state.agentLoadStatus = AgentLoadStatus.loaded;
+        state.needsLink = false;
+        state.nodeOnline = machine.status == 'running';
+        for (final pane in allPanes.where(
+          (p) => p.machineId == machine.machineId,
+        )) {
+          pane.sharedHarness =
+              machine.sharedHarnesses
+                  .where((g) => g.agentId == pane.agentId)
+                  .firstOrNull ??
+              pane.sharedHarness;
+          pane.sharedOwnerName = machine.ownerName;
+        }
+        continue;
+      }
       state.localOnly =
           localComputerId != null &&
           _normalizeComputerId(machine.computerId) == localComputerId;
@@ -3050,6 +3092,28 @@ class AppNotifier extends ChangeNotifier {
     }
     if (localEndpoint != null) _updateLocalProjectSnapshot(localEndpoint);
     _autoConnectAndLoadMachines();
+    _sharingDiscoveryTimer ??= Timer.periodic(const Duration(seconds: 15), (
+      _,
+    ) async {
+      if (_disposed ||
+          status != AppStatus.authenticated ||
+          _sharingDiscoveryBusy ||
+          machinesRefreshing) {
+        return;
+      }
+      final discoveryRevision = _authRevision;
+      _sharingDiscoveryBusy = true;
+      try {
+        await refreshMachines();
+      } catch (error) {
+        if (_authWorkCurrent(discoveryRevision)) {
+          _reportMachineLoadError(error, automatic: true);
+          notifyListeners();
+        }
+      } finally {
+        _sharingDiscoveryBusy = false;
+      }
+    });
     notifyListeners();
   }
 
@@ -3200,6 +3264,7 @@ class AppNotifier extends ChangeNotifier {
           prev.dsh != agent.dsh ||
           prev.dshName != agent.dshName ||
           prev.viewerUrl != agent.viewerUrl ||
+          prev.viewerError != agent.viewerError ||
           prev.viewerName != agent.viewerName ||
           prev.verdict != agent.verdict) {
         return false;
@@ -3462,6 +3527,7 @@ class AppNotifier extends ChangeNotifier {
   }
 
   void _connectMachine(MachineState machine) {
+    if (machine.machine.isShared) return;
     // connFor() starts a new socket and reports `connecting` through onStatus,
     // or returns the existing socket with its current status intact. Do not
     // overwrite an already-connected socket when the user collapses and
@@ -3715,6 +3781,9 @@ class AppNotifier extends ChangeNotifier {
   }
 
   WsConn _conn(String machineId) {
+    if (machineStates[machineId]?.machine.isShared == true) {
+      throw StateError('This harness is shared with view-only access.');
+    }
     final testConnection = connectionForTest;
     if (testConnection != null) return testConnection(machineId);
     // The local-manual dev fixture exercises a locally-run backend+node stack directly (no real
@@ -3792,6 +3861,7 @@ class AppNotifier extends ChangeNotifier {
     MachineState machine, {
     bool force = false,
   }) async {
+    if (machine.machine.isShared) return;
     if (!_machineWorkCurrent(machine, _authRevision)) return;
     if (machine.agentLoadStatus == AgentLoadStatus.loaded && !force) return;
     if (machine.isLocalMachine && !machine.usesLocalTransport) {
@@ -4036,10 +4106,22 @@ class AppNotifier extends ChangeNotifier {
   /// narrates progress through `dsh_install_status` pushes, which land in
   /// [MachineDsh.installs] for the dialog's status line. Null on success, else
   /// a sentence for the person who clicked.
-  Future<String?> installDsh(String machineId, String id) async {
+  Future<String?> installDsh(String machineId, String id) =>
+      _installOrUpdateDsh(machineId, id, update: false);
+
+  Future<String?> updateDsh(String machineId, String id) =>
+      _installOrUpdateDsh(machineId, id, update: true);
+
+  Future<String?> _installOrUpdateDsh(
+    String machineId,
+    String id, {
+    required bool update,
+  }) async {
     final machine = machineStates[machineId];
     if (machine == null) return 'Machine not found';
     final machineName = machine.machine.displayName;
+    final action = update ? 'Update' : 'Install';
+    final verb = update ? 'update' : 'install';
     // A new run every time the button is pressed: a retry after a failure is
     // its own attempt, with its own clock.
     machine.dsh.runs.remove(id);
@@ -4047,9 +4129,9 @@ class AppNotifier extends ChangeNotifier {
     notifyListeners();
     try {
       final result = await _conn(machineId).request(
-        'dsh_install',
+        update ? 'dsh_update' : 'dsh_install',
         payload: {'id': id},
-        timeout: const Duration(minutes: 10),
+        timeout: const Duration(minutes: 90),
       );
       if (result['ok'] != true) {
         final detail = result['detail'];
@@ -4058,26 +4140,26 @@ class AppNotifier extends ChangeNotifier {
           id,
           detail is String && detail.isNotEmpty
               ? detail
-              : 'Install failed on $machineName',
+              : '$action failed on $machineName',
         );
       }
     } on WsRequestFailure catch (failure) {
       return _finishInstall(machine, id, switch (failure.code) {
         'UNSUPPORTED' || 'UNSUPPORTED_ON_REMOTE' =>
-          'Update the harness CLI on $machineName to install harnesses',
+          'Update the harness CLI on $machineName to $verb harnesses',
         _ =>
           failure.detail?.isNotEmpty == true
               ? failure.detail!
-              : 'Install failed on $machineName (${failure.code})',
+              : '$action failed on $machineName (${failure.code})',
       });
     } on WsRequestTimeout {
       return _finishInstall(
         machine,
         id,
-        '$machineName is still installing. Try again in a few minutes.',
+        '$machineName is still ${update ? 'updating' : 'installing'}. Try again in a few minutes.',
       );
     } catch (_) {
-      return _finishInstall(machine, id, 'Install failed on $machineName');
+      return _finishInstall(machine, id, '$action failed on $machineName');
     }
     machine.dsh.applyInstall(DshInstallProgress(id: id, phase: 'done'));
     notifyListeners();
@@ -4345,9 +4427,10 @@ class AppNotifier extends ChangeNotifier {
   void _syncViewerPane(MachineState machine, Agent agent) {
     final machineId = machine.machine.machineId;
     final url = agent.viewerUrl;
+    final viewerState = url ?? agent.viewerError;
     final dismissed =
-        url != null &&
-        _dismissedViewers[_viewerKey(machineId, agent.id)] == url;
+        viewerState != null &&
+        _dismissedViewers[_viewerKey(machineId, agent.id)] == viewerState;
     var changed = false;
     // Tab by tab: wherever this agent's terminal is, its viewer is beside it,
     // and nowhere else. A terminal opened in a second tab gets a second
@@ -4366,7 +4449,7 @@ class AppNotifier extends ChangeNotifier {
               pane.ownerAgentId == agent.id)
             pane,
       ];
-      if (url == null || at < 0) {
+      if (viewerState == null || at < 0) {
         for (final pane in viewers) {
           swarm.remove(pane);
           changed = true;
@@ -4378,6 +4461,7 @@ class AppNotifier extends ChangeNotifier {
         // place rather than reopening a tile.
         for (final pane in viewers) {
           pane.url = url;
+          pane.viewerError = agent.viewerError;
         }
         continue;
       }
@@ -4390,6 +4474,7 @@ class AppNotifier extends ChangeNotifier {
         machineId: machineId,
         kind: PaneKind.web,
         url: url,
+        viewerError: agent.viewerError,
         ownerAgentId: agent.id,
       );
       swarm.panes.insert(insertion, pane);
@@ -4439,7 +4524,11 @@ class AppNotifier extends ChangeNotifier {
     }
     final machine = machineStates[machineId];
     final agent = machine?.agents.where((a) => a.id == agentId).firstOrNull;
-    if (machine == null || agent == null || agent.viewerUrl == null) return;
+    if (machine == null ||
+        agent == null ||
+        (agent.viewerUrl == null && agent.viewerError == null)) {
+      return;
+    }
     _dismissedViewers.remove(_viewerKey(machineId, agentId));
     _syncViewerPane(machine, agent);
     notifyListeners();
@@ -4921,6 +5010,8 @@ class AppNotifier extends ChangeNotifier {
               '${detail ?? 'Install it there, then try again.'}',
         'PROMPT_UNSUPPORTED' =>
           'This engine cannot be opened with a first message on $machine.',
+        'PROMPT_TOO_LONG' =>
+          'This first task is too long for $machine. Shorten it and try again.',
         'AGENT_UNSUPPORTED' =>
           'This engine cannot be opened as a named agent on $machine.',
         _ => 'Create harness failed: ${detail ?? code}',
@@ -5038,6 +5129,8 @@ class AppNotifier extends ChangeNotifier {
         'INVALID_CODEX_HOME',
         'INVALID_DSH',
         'PROMPT_UNSUPPORTED',
+        'PROMPT_TOO_LONG',
+        'INVALID_PROMPT',
         'AGENT_UNSUPPORTED',
         'TMUX_UNAVAILABLE',
         'TMUX_TOO_OLD_FOR_GRID',
@@ -5592,6 +5685,12 @@ class AppNotifier extends ChangeNotifier {
         shared ??
         TerminalPane(id: _nextPaneId++, machineId: machineId, agentId: agentId);
     final firstAgent = targetPanes.every((pane) => pane.agentId == null);
+    if (machine.machine.isShared) {
+      pane.sharedHarness = machine.machine.sharedHarnesses
+          .where((g) => g.agentId == agentId)
+          .firstOrNull;
+      pane.sharedOwnerName = machine.machine.ownerName;
+    }
     targetPanes.insert(insertion.clamp(0, targetPanes.length), pane);
     if (split != null) {
       target.pinnedSlots.updateAll(
@@ -5663,6 +5762,14 @@ class AppNotifier extends ChangeNotifier {
     if (wantedAgentId == null) return;
     final machine = machineStates[pane.machineId];
     if (machine == null) return;
+    if (machine.machine.isShared) {
+      pane.sharedHarness = machine.machine.sharedHarnesses
+          .where((g) => g.agentId == wantedAgentId)
+          .firstOrNull;
+      pane.sharedOwnerName = machine.machine.ownerName;
+      notifyListeners();
+      return;
+    }
     if (machine.nodeOnline == false) return;
     if (!machine.terminalCapabilityAvailable) return;
 
@@ -6055,8 +6162,9 @@ class AppNotifier extends ChangeNotifier {
       // frame carries the same URL and must not reopen it. A different URL —
       // a new artifact, a restarted viewer — is news, and opens again.
       final owner = pane.ownerAgentId;
-      if (owner != null && pane.url != null) {
-        _dismissedViewers[_viewerKey(pane.machineId, owner)] = pane.url!;
+      final viewerState = pane.url ?? pane.viewerError;
+      if (owner != null && viewerState != null) {
+        _dismissedViewers[_viewerKey(pane.machineId, owner)] = viewerState;
       }
     }
     if (pane.agentId != null) {
@@ -6781,6 +6889,7 @@ class AppNotifier extends ChangeNotifier {
     _localGitProjects.dispose();
     sessionPreviews.dispose();
     _disposed = true;
+    _sharingDiscoveryTimer?.cancel();
     _stopMachineRecovery();
     if (signingIn) cliLogin.cancel();
     _closedHistory.clear();

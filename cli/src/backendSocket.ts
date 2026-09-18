@@ -1,3 +1,5 @@
+import type { HarnessShareOwner } from './sharing/owner.js'
+import { SHARE_REQUEST_TYPES, SHARE_RESULT_TYPES } from './sharing/protocol.js'
 import { AutonomousDeviceRelay } from './lib/autonomous-device/relay.js'
 import type { AutonomousDeviceService, AutonomousDeviceFrame } from './lib/autonomous-device/service.js'
 /**
@@ -56,6 +58,8 @@ import { tailFile } from './lib/sessions.js'
 import { messagesToEvents, windowRawLines, subagentStatsFromRawLines, type SessionEvent } from './lib/normalize.js'
 import { listFileTree, readProjectFile } from './lib/files.js'
 import { MediaPreviewError, readMediaPreviewChunk } from './lib/mediaPreview.js'
+import { ViewerForwarder } from './lib/viewerForwarder.js'
+import { VIEWER_DOWN_TYPES } from './lib/viewerWire.js'
 import { codexMessagesToEvents, windowCodexLines } from './engines/codex/normalizer.js'
 import { codexSubagentResolverFor } from './engines/codex/subagent.js'
 import { parseHostTheme, type HostTheme } from './lib/hostTheme.js'
@@ -379,10 +383,26 @@ export class BackendSocket {
   /** Called on `dsh_install` — cli.ts clones/sets up/doctors the harness and reports each phase. */
   onDshInstall: ((input: { id?: string; url?: string; ref?: string }, progress: (p: DshInstallProgress) => void) =>
     Promise<{ ok: true; id: string } | { ok: false; error: string; detail: string }>) | null = null
+  /** An explicit update follows the installed source and retains the previous package on failure. */
+  onDshUpdate: ((id: string, progress: (p: DshInstallProgress) => void) =>
+    Promise<{ ok: true; id: string } | { ok: false; error: string; detail: string }>) | null = null
   /** Called on `dsh_remove` — cli.ts uninstalls the harness from this machine. */
   onDshRemove: ((id: string) => { ok: true } | { ok: false; error: string; detail: string }) | null = null
   /** What the daemon knows about an agent's DSH companions (viewer URL, verdict); null when nothing. */
+  harnessSharing: HarnessShareOwner | null = null
   dshFrameProvider: ((session: RegisteredSession) => AgentDshContext | null) | null = null
+  viewerTargetProvider: ((agentId: string) => string | null) | null = null
+  readonly viewerForwarder = new ViewerForwarder({
+    target: (agentId) => this.viewerTargetProvider?.(agentId) ?? null,
+    send: (connId, type, payload) => {
+      if (this.localClients.has(connId)) { this.sendTo(connId, { type, payload }); return true }
+      if (!this.isConnected()) return false
+      const frame = this.e2ee.wrapTarget(connId, type, payload)
+      if (!frame) return false
+      this.sendTo(connId, frame)
+      return true
+    },
+  })
   private readonly agentCreations = new AgentCreationReceipts(join(env.ADAPTER_DATA_DIR, 'agent-creations'))
   /** Injectable for queue-isolation tests; production uses the machine-local probe. */
   engineProbeProvider: typeof probeEngines = probeEngines
@@ -594,6 +614,7 @@ export class BackendSocket {
       isConnectionAvailable: connId => this.directDeviceSinks.has(connId) || this.isConnected(),
       onIdentityPaired: (connId, pub) => { if (this.directDeviceSinks.has(connId)) this.directDevicePins.set(connId, pub) },
       onIdentityRevoked: identity => { this.autonomousDeviceRelay?.revoke(identity); this.onDirectDeviceRevoked?.(fingerprint(b64d(identity))) },
+      onSessionDropped: (connId) => this.viewerForwarder.closeConnection(connId),
     })
     this.terminalP2p = new TerminalP2pResponderPool({
       sendSignal: (connId, type, payload) => this.sendP2pSignal(connId, type, payload),
@@ -730,7 +751,9 @@ export class BackendSocket {
       // default the recap gate to OFF (safe value) instead of holding a stale count — otherwise a turn
       // completing during the gap burns a `claude -p` recap that goes nowhere. attachAdapter always
       // re-pushes the true count via recomputeAndSendClients on reconnect (and 0→N re-fires the replay).
+      this.harnessSharing?.closeAll()
       this.setCommanderCount(0, null) // active count is unknown until the next __clients snapshot
+      this.viewerForwarder.closeAll()
       void this.terminalStreams?.closeConnectionsWhere(
         (connId) => !isLocalClientId(connId),
         'backend disconnected',
@@ -801,12 +824,14 @@ export class BackendSocket {
   async stop(): Promise<void> {
     this.closed = true
     this.orchestratorService?.stop()
+    this.viewerForwarder.closeAll()
     if (this.heartbeat) this.heartbeat.stop()
     if (this.appPing) clearInterval(this.appPing)
     await this.terminalStreams?.stop()
     await this.terminalP2p.stop()
     try { this.ws?.close() } catch { /* ignore */ }
     this.ws = null
+    await this.harnessSharing?.stop()
   }
 
   /** Send an up-frame (event or RPC reply) to the WEB audience. Queued while disconnected.
@@ -845,6 +870,10 @@ export class BackendSocket {
   }
 
   /** Send an up-frame to exactly ONE web connection (E2EE pairing/welcome + targeted RPC replies). */
+  sendObserver(connId: string, type: string, payload: Record<string, unknown>): boolean {
+    return this.sendBestEffort({ t: 'up', targetConnId: connId, webEligible: false, commanderEligible: false, frame: { type, payload } })
+  }
+
   sendTo(connId: string, frame: Frame): void {
     const direct = this.directDeviceSinks.get(connId)
     if (direct) { direct(frame); return }
@@ -954,6 +983,7 @@ export class BackendSocket {
   /** Release all connection-scoped state when the loopback WebSocket closes. */
   async unregisterLocalClient(connId: string): Promise<void> {
     if (!this.localClients.delete(connId)) return
+    this.viewerForwarder.closeConnection(connId)
     // The window left before any link could hear it attach: nothing happened, as far as the backend
     // is concerned, and a later link must not be told otherwise.
     if (this.localClients.size === 0) this.appOpenOwed = false
@@ -1153,12 +1183,12 @@ export class BackendSocket {
   private emitReply(connId: string, type: string, requestId: unknown, payload: Record<string, unknown>): void {
     const resultType = `${type}_result`
     // Before the E2EE wrap: an RPC reply is only readable here.
-    if (env.LOG_FRAMES && type !== 'agent_read_file' && type !== 'project_preview') logFrame('→', connId ? `conn:${sid(connId)}` : 'backend', { type: resultType, payload: { requestId, ...payload } })
+    if (env.LOG_FRAMES && type !== 'agent_read_file' && type !== 'project_preview' && !SHARE_REQUEST_TYPES.has(type)) logFrame('→', connId ? `conn:${sid(connId)}` : 'backend', { type: resultType, payload: { requestId, ...payload } })
     if (this.localClients.has(connId)) {
       this.sendTo(connId, { type: resultType, payload: { requestId, ...payload } })
       return
     }
-    if (connId && this.e2ee.hasSession(connId) && ENCRYPTED_RPC_RESULT_TYPES.has(resultType)) {
+    if (connId && this.e2ee.hasSession(connId) && (ENCRYPTED_RPC_RESULT_TYPES.has(resultType) || SHARE_RESULT_TYPES.has(resultType))) {
       let replyPayload = payload
       if (resultType === 'agent_recent_result') {
         const trim = fitRecentReplyPayloadForDevice(
@@ -1181,7 +1211,7 @@ export class BackendSocket {
     // adapter plaintext. A real client gets a targeted error; the legacy backend nodeRequest awaiter
     // (`connId === ''`) gets a broadcast error with the same requestId so it fails closed without data.
     // 
-    if (ENCRYPTED_RPC_RESULT_TYPES.has(resultType)) {
+    if ((ENCRYPTED_RPC_RESULT_TYPES.has(resultType) || SHARE_RESULT_TYPES.has(resultType))) {
       const errorFrame = { type: resultType, payload: { requestId, error: 'E2EE_REQUIRED' } }
       if (connId) this.sendTo(connId, errorFrame)
       else this.send(errorFrame)
@@ -1193,6 +1223,11 @@ export class BackendSocket {
   private async dispatchDown(frame: Frame, connId: string, transport: 'relay' | 'p2p' = 'relay'): Promise<void> {
     const type = frame.type as string | undefined
     if (!type) return
+    if (connId.startsWith('observer:')) {
+      await this.harnessSharing?.receive(connId, type, (frame.payload ?? {}) as Record<string, unknown>)
+      return
+    }
+    if (type.startsWith('observer_')) return
     const local = this.localClients.has(connId)
     // E2EE control frames (pairing/handshake) are handled by the manager, never as node RPCs.
     if (type.startsWith('e2e_')) {
@@ -1209,7 +1244,7 @@ export class BackendSocket {
     }
     // Client→adapter encrypted frames: chat messages plus trusted web control actions. Plaintext
     // passes through for legacy/device transition paths; undecryptable ciphertext is dropped.
-    if (!local && isEncryptedDownType(type)) {
+    if (!local && (isEncryptedDownType(type) || SHARE_REQUEST_TYPES.has(type) || VIEWER_DOWN_TYPES.has(type))) {
       if (type !== 'message' && type !== 'question_response' && !isWrapped(frame.payload)) {
         const requestId = (frame.payload as { requestId?: unknown } | undefined)?.requestId
         if (requestId !== undefined) this.emitReply(connId, type, requestId, { error: 'E2EE_REQUIRED' })
@@ -1227,10 +1262,16 @@ export class BackendSocket {
     // than as an opaque __e2e envelope.
     // Terminal frames contain raw keystrokes, paste text and screen bytes after
     // unwrap. Never pass them to the frame logger, even in diagnostic mode.
-    if (env.LOG_FRAMES && !type.startsWith('terminal_') && type !== 'agent_read_file' && type !== 'project_preview' && type !== 'orchestrator') {
+    if (env.LOG_FRAMES && !type.startsWith('terminal_') && !type.startsWith('viewer_') && type !== 'agent_read_file' && type !== 'project_preview' && type !== 'orchestrator' && !SHARE_REQUEST_TYPES.has(type)) {
       logFrame('←', connId ? `conn:${sid(connId)}` : 'backend', frame)
     }
     const reply = (t: string, rid: unknown, p: Record<string, unknown>): void => this.emitReply(connId, t, rid, p)
+    if (SHARE_REQUEST_TYPES.has(type)) {
+      const p = (frame.payload ?? {}) as Record<string, unknown>
+      const result = await this.harnessSharing?.manage(type, p).catch(() => ({ error: 'SHARING_UNAVAILABLE', detail: 'Sharing is temporarily unavailable. Try again.' }))
+      reply(type, p.requestId, result ?? { error: 'UNSUPPORTED' })
+      return
+    }
     // Cross-instance client snapshot. Generation detects leave/join cycles that coalesce to the same
     // count; count rise remains the compatibility fallback for older backends.
     if (type === '__clients') {
@@ -1261,6 +1302,7 @@ export class BackendSocket {
       // terminal controller lease until the 30-second heartbeat timeout.
       this.autonomousDeviceRelay?.drop(connId)
       this.e2ee.dropSession(connId)
+      this.viewerForwarder.closeConnection(connId)
       await this.terminalP2p.closeConnection(connId, 'client_disconnected', false)
       this.p2pPendingOpens.delete(connId)
       this.p2pStreams.delete(connId)
@@ -1301,6 +1343,13 @@ export class BackendSocket {
       void orchestratorRequest(this.orchestration(), payload)
         .then(result => reply(type, requestId, result))
         .catch(() => reply(type, requestId, { error: 'ORCHESTRATOR_FAILED' }))
+      return
+    }
+
+    if (type.startsWith('viewer_')) {
+      if (VIEWER_DOWN_TYPES.has(type) && (local || this.e2ee.sessionRole(connId) === 'web')) {
+        this.viewerForwarder.handle(connId, type, payload)
+      }
       return
     }
 
@@ -1653,6 +1702,16 @@ export class BackendSocket {
           const id = dshRemoveId(payload)
           if (!id) { reply(type, requestId, { error: 'INVALID_DSH', detail: 'dsh_remove needs an id' }); return }
           reply(type, requestId, dshRemoveReply(id, this.onDshRemove(id)))
+          return
+        }
+
+        case 'dsh_update': {
+          if (!this.onDshUpdate) { reply(type, requestId, { error: 'UNSUPPORTED_ON_REMOTE' }); return }
+          const id = dshRemoveId(payload)
+          if (!id) { reply(type, requestId, { error: 'INVALID_DSH', detail: 'dsh_update needs an id' }); return }
+          void this.onDshUpdate(id, p => this.send({ type: 'dsh_install_status', payload: dshInstallStatus(p, { id }) }))
+            .then(result => reply(type, requestId, dshInstallReply(result)))
+            .catch(error => reply(type, requestId, { error: 'INTERNAL', detail: error instanceof Error ? error.message : String(error) }))
           return
         }
 

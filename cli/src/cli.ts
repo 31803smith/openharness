@@ -1,4 +1,9 @@
 #!/usr/bin/env node
+import { mutateDsh } from './dsh/service.js'
+import { HarnessShareOwner } from './sharing/owner.js'
+import { HarnessGrantStore } from './sharing/grants.js'
+import { HarnessShareRelay, type SharedMachineReference } from './sharing/relay.js'
+import { SharedViewerPool } from './sharing/viewer.js'
 import { fingerprint as e2eeCoreFingerprint, b64d as e2eeCoreDecode } from './lib/e2ee/core.js'
 import { AutonomousDeviceDirect } from './lib/autonomous-device/direct.js'
 /**
@@ -80,8 +85,8 @@ import { prepareCodexResume } from './engines/codex/portableHistory.js'
 import { buildHarnessSessionLabel } from './lib/harnessSessionLabel.js'
 import { installedDsh } from './dsh/installed.js'
 import { dshVerdictPath, dshViewerName } from './dsh/manifest.js'
-import { catalogEntry, refreshDshRegistry } from './dsh/catalog.js'
-import { installDsh, resolveInstallSource, removeDsh } from './dsh/install.js'
+import { catalogEntry } from './dsh/catalog.js'
+import { removeDsh } from './dsh/install.js'
 import { preTrustClaudeProject, preTrustCodexProject } from './lib/claudeTrust.js'
 import { materializeWorkspace } from './dsh/materialize.js'
 import { dshLaunch } from './dsh/launch.js'
@@ -1479,6 +1484,7 @@ async function runForeground(session: AuthSession): Promise<void> {
   const dshViewers = new DshViewerManager({
     onUrl: (agentId, url) => {
       dshFrameFor(agentId).viewerUrl = url
+      backendRef?.viewerForwarder.refresh(agentId)
       syncCompanion(agentId)
     },
     log: (line) => console.log(line),
@@ -1550,6 +1556,7 @@ async function runForeground(session: AuthSession): Promise<void> {
     })
   }, computerId())
   backendRef = backend
+  backend.viewerTargetProvider = (agentId) => dshViewers.forwardingUrl(agentId)
 
   /**
    * Is ANY device surface watching this machine?
@@ -2218,55 +2225,8 @@ async function runForeground(session: AuthSession): Promise<void> {
   backend.runtimeProfileProvider = (session) => runtimeProfiles.selectedModel(session)
   backend.dshFrameProvider = dshFrameContext
   backend.onDshRemove = (id) => removeDsh(id)
-  backend.onDshInstall = async ({ id, url, ref }, progress) => {
-    const catalog = new Map((await refreshDshRegistry(!!id && !catalogEntry(id))).map(entry => [entry.id, entry]))
-    if (id && !catalog.has(id)) return { ok: false, error: 'INVALID_DSH', detail: `${id} is not in this machine's Store catalog` }
-    const resolved = id ? resolveInstallSource(id) : url ? { source: url, ref } : null
-    if (!resolved) return { ok: false, error: 'INVALID_DSH', detail: `${id ?? url} is not a known harness` }
-    // NARRATE THE LINES, NOT ONLY THE PHASES. A toolchain setup is minutes of npm and uv output, and
-    // a dialog that says "Setting up…" for all of it looks hung; the line the command is on is what
-    // says it is alive and what it is doing. Throttled: a setup can print hundreds of lines a second
-    // (`Updating files: 39%…` arrives as carriage returns on ONE line), and the window redraws on
-    // each push. The doctor's own ok/miss/warn lines go out at once — they are the ones a person
-    // reads, and there are seven of them.
-    let last: import('./dsh/install.js').DshInstallProgress | null = null
-    let pendingLine: string | null = null
-    let timer: NodeJS.Timeout | null = null
-    const flushLine = (): void => {
-      timer = null
-      if (last && pendingLine !== null && last.phase !== 'done' && last.phase !== 'failed') progress({ ...last, line: pendingLine })
-      pendingLine = null
-    }
-    const result = await installDsh({
-      source: resolved.source,
-      expectedId: id,
-      registry: dependencyId => catalog.get(dependencyId),
-      ref: ref ?? resolved.ref,
-      path: 'path' in resolved ? resolved.path : undefined,
-      onProgress: (p) => {
-        if (timer) { clearTimeout(timer); timer = null }
-        pendingLine = null
-        last = p
-        progress(p)
-      },
-      onLine: (raw) => {
-        console.log(`[dsh] install · ${raw}`)
-        // The last carriage-return segment is the line as a terminal would show it.
-        const line = raw.split('\r').filter((s) => s.trim()).pop()?.trim() ?? ''
-        if (!line) return
-        pendingLine = line.slice(0, 200)
-        if (/^(ok|miss|warn)\s/.test(line)) { if (timer) clearTimeout(timer); flushLine(); return }
-        if (!timer) timer = setTimeout(flushLine, 300)
-      },
-    })
-    if (timer) { clearTimeout(timer); timer = null }
-    if (!result.ok) {
-      console.warn(`[dsh] install of ${id ?? url} failed · ${result.error} · ${result.detail}`)
-      return { ok: false, error: result.error, detail: result.detail }
-    }
-    console.log(`[dsh] installed ${result.installed.id} at ${result.installed.dir}`)
-    return { ok: true, id: result.installed.id }
-  }
+  backend.onDshInstall = (input, progress) => mutateDsh(input, progress)
+  backend.onDshUpdate = (id, progress) => mutateDsh({ id, update: true }, progress)
   backend.onAgentRename = (session, name) => { void terminals.setTitle(session, name) }
   backend.onRuntimeProfileUpdate = (sessionId, selectedModel) => runtimeController.setProfile(sessionId, selectedModel)
   runtimeProfiles.onChanged = (sessionId) => {
@@ -2844,6 +2804,27 @@ async function runForeground(session: AuthSession): Promise<void> {
   // Built HERE rather than beside the cable stack that also uses it (further down), because the hook
   // server starts long before that point and agent restore can sit between the two. A cache bound late
   // is a cache that is still null exactly when a cold boot during an outage needs it most.
+  const sharingIdentity = new E2eeStore()
+  sharingIdentity.init()
+  const sharedViewers = new SharedViewerPool((agentId) => {
+    const agent = registry.resolve(agentId)
+    return agent ? backend.dshFrameProvider?.(agent)?.viewerUrl ?? null : null
+  })
+  backend.harnessSharing = new HarnessShareOwner({
+    machineId: () => backend.machineId,
+    identity: sharingIdentity.getIdentity(),
+    grants: new HarnessGrantStore(join(env.ADAPTER_DATA_DIR, 'harness-shares.json')),
+    terminals, resolveAgent: (id) => registry.resolve(id),
+    send: (id, type, payload) => backend.sendObserver(id, type, payload),
+    publish: (method, path, body) => proxyBackend(method, path, body),
+    watchViewer: (id, send) => sharedViewers.watch(id, send),
+  })
+  const shareRelay = new HarnessShareRelay(auth, env.BACKEND_WS_URL, env.AUTONOMOUS_ENV, async () => {
+    const result = await proxyBackend('GET', '/api/harness-shares')
+    if (result.status !== 200) throw new Error('Shared harnesses are temporarily unavailable.')
+    return ((result.body as { data?: { machines?: SharedMachineReference[] } }).data?.machines ?? [])
+  })
+
   const machineListCache = new MachineListCache(
     () => proxyBackend('GET', '/api/machines'),
     computerId,
@@ -3260,6 +3241,7 @@ async function runForeground(session: AuthSession): Promise<void> {
     onMachineRename: (machineId, name) => proxyBackend('PATCH', `/api/machines/${encodeURIComponent(machineId)}`, { name }),
     onMachineDelete: (machineId) => proxyBackend('DELETE', `/api/machines/${encodeURIComponent(machineId)}`),
     onAuthMe: () => proxyBackend('GET', '/api/auth/me'),
+    onSharedHarnesses: () => proxyBackend('GET', '/api/harness-shares'),
     onStore: (method, path, body) => proxyBackend(method, path, body),
   })
   // Claim the pid file for OURSELVES, and only now that the control port is bound. It used to be
@@ -3298,6 +3280,7 @@ async function runForeground(session: AuthSession): Promise<void> {
   })
 
   const localWsServer = attachLocalWsServer(hookServer, {
+    shareRelay,
     // The window and the dial are one desk: opening an agent in the app brings the dial to it, switching
     // the dial's machine first when the app moved to another one.
     onAppFocusState: (machineId, agentId, connId, expectedRevision) => {
@@ -4577,6 +4560,8 @@ async function runForeground(session: AuthSession): Promise<void> {
     ;(hookServer as unknown as { closeAllConnections?: () => void }).closeAllConnections?.()
     // Release the fixed hook port before the child binds. Process-owned agents stay in the persisted
     // registry and are revalidated by the new daemon's first discovery passes.
+    shareRelay.close()
+    sharedViewers.stop()
     await localWsServer.close()
     hookServer.close()
     shutdownSummaryPool()
@@ -4719,6 +4704,8 @@ async function runForeground(session: AuthSession): Promise<void> {
     for (const r of devinReaders.values()) r.stop()
     await cursorDiscovery.stop()
     await watcher.stop()
+    shareRelay.close()
+    sharedViewers.stop()
     await localWsServer.close()
     hookServer.close()
     shutdownSummaryPool()
