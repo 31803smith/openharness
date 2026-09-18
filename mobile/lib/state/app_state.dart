@@ -2575,67 +2575,84 @@ class AppNotifier extends ChangeNotifier {
       onAuthFailure: _signedOutAtRuntime,
       onLocalFailure: _onLocalFailure,
       onEvent: _handleEvent,
-      onStatus: (machineId, nextStatus) {
-        final machine = machineStates[machineId];
-        if (machine == null) return;
-        machine.connectionStatus = nextStatus;
-        if (nextStatus == ConnectionStatus.connected) {
-          machine.needsLink = false;
-          _stopLinkRetry(machineId);
-          // A daemon that just came up — first connect, or a reconnect after it
-          // restarted — has never been told what is on the grid. Without this
-          // the dial goes back to beeping about tiles in plain sight until the
-          // next time a pane happens to change.
-          _announceOpenPanesToDial();
-          // ...nor which tile this window is looking at. The daemon repeats that to the dial after every
-          // list push, which is what keeps the two screens from drifting apart — but it can only repeat
-          // something it has been told, and until now the first telling waited for the focus to CHANGE.
-          // A daemon restarted mid-session therefore had nothing to say, and a dial that re-anchored onto
-          // the wrong tile stayed there.
-          _announceAppFocus();
-          // The local CLI never hands back `connected` until it has terminated E2EE (or confirmed
-          // none is needed, for its own machine) — every machine's data is ready to load right away,
-          // with no separate app-side readiness gate to wait on anymore.
-          if (machine.isLocalMachine) {
-            machine.transportMode = MachineTransportMode.localPlaintext;
-          } else {
-            machine.transportMode = MachineTransportMode.cloudE2ee;
-          }
-          // Route through _applyNodeStatus (not just `machine.nodeOnline = true`) for every machine,
-          // not only the local one — a successful select IS the machine being reachable again, and
-          // this is what lets a pending agent (captured below on disconnect) reattach automatically
-          // instead of leaving the user stuck on the empty "select a machine" placeholder.
-          unawaited(_applyNodeStatus(machine, true));
-          unawaited(_loadMachineData(machine, force: true));
-          _startAgentSyncTimer(machineId);
-        } else if (nextStatus == ConnectionStatus.reconnecting ||
-            nextStatus == ConnectionStatus.disconnected) {
-          _stopAgentSyncTimer(machineId);
-          _clearMachineActivity(machine);
-          if (machine.isLocalMachine) {
-            machine.transportMode = MachineTransportMode.localOffline;
-          }
-          // Same reasoning as above, mirrored: capture pendingOfflineAgentId from the currently-open
-          // terminal (if any) so the connected branch above can reattach it, for every machine — this
-          // used to be local-only, which is why a remote machine's terminal never came back on its own
-          // after `harness start` on that machine, even though the guide screen promised it would.
-          //
-          // NOT while the machine is unlinked. NO_PEER_LINK is the local CLI failing a lookup in its
-          // own peer table (remoteRelay.ts `dial`) before anything is dialled, so neither that close
-          // nor the one `_startLinkRetry`'s `closeMachine` fires every few seconds says anything about
-          // whether the OTHER computer is up — our socket never reaches it. Forcing nodeOnline false
-          // here overwrote the REST `/api/machines` status, the one signal that does, and painted
-          // every unlinked machine as off. Keyed on the sticky flag rather than the 4404 close on
-          // purpose: the retry loop's own close() lands as a plain `disconnected` too. needsLink is
-          // set by onLocalFailure, which runs before this branch for 4404 (see WsConn._onDone).
-          if (!machine.needsLink) {
-            unawaited(_applyNodeStatus(machine, false));
-          }
-        }
-        notifyListeners();
-      },
+      onStatus: _onConnectionStatus,
     );
   }
+
+  /// What a machine's socket coming up, dropping or re-dialling does to the model.
+  void _onConnectionStatus(String machineId, ConnectionStatus nextStatus) {
+    final machine = machineStates[machineId];
+    if (machine == null) return;
+    machine.connectionStatus = nextStatus;
+    if (nextStatus == ConnectionStatus.connected) {
+      machine.needsLink = false;
+      _stopLinkRetry(machineId);
+      // A daemon that just came up — first connect, or a reconnect after it
+      // restarted — has never been told what is on the grid. Without this
+      // the dial goes back to beeping about tiles in plain sight until the
+      // next time a pane happens to change.
+      _announceOpenPanesToDial();
+      // ...nor which tile this window is looking at. The daemon repeats that to the dial after every
+      // list push, which is what keeps the two screens from drifting apart — but it can only repeat
+      // something it has been told, and until now the first telling waited for the focus to CHANGE.
+      // A daemon restarted mid-session therefore had nothing to say, and a dial that re-anchored onto
+      // the wrong tile stayed there.
+      _announceAppFocus();
+      // The local CLI never hands back `connected` until it has terminated E2EE (or confirmed
+      // none is needed, for its own machine) — every machine's data is ready to load right away,
+      // with no separate app-side readiness gate to wait on anymore.
+      if (machine.isLocalMachine) {
+        machine.transportMode = MachineTransportMode.localPlaintext;
+      } else {
+        machine.transportMode = MachineTransportMode.cloudE2ee;
+      }
+      // Route through _applyNodeStatus (not just `machine.nodeOnline = true`) for every machine,
+      // not only the local one — a successful select IS the machine being reachable again, and
+      // this is what lets a pending agent (captured below on disconnect) reattach automatically
+      // instead of leaving the user stuck on the empty "select a machine" placeholder.
+      unawaited(_applyNodeStatus(machine, true));
+      unawaited(_loadMachineData(machine, force: true));
+      _startAgentSyncTimer(machineId);
+    } else if (nextStatus == ConnectionStatus.reconnecting ||
+        nextStatus == ConnectionStatus.disconnected) {
+      _stopAgentSyncTimer(machineId);
+      _clearMachineActivity(machine);
+      if (machine.isLocalMachine) {
+        machine.transportMode = MachineTransportMode.localOffline;
+      }
+      // Same reasoning as above, mirrored: capture pendingOfflineAgentId from the currently-open
+      // terminal (if any) so the connected branch above can reattach it, for every machine — this
+      // used to be local-only, which is why a remote machine's terminal never came back on its own
+      // after `harness start` on that machine, even though the guide screen promised it would.
+      //
+      // NOT while the machine is unlinked. NO_PEER_LINK is the local CLI failing a lookup in its
+      // own peer table (remoteRelay.ts `dial`) before anything is dialled, so neither that close
+      // nor the one `_startLinkRetry`'s `closeMachine` fires every few seconds says anything about
+      // whether the OTHER computer is up — our socket never reaches it. Forcing nodeOnline false
+      // here overwrote the REST `/api/machines` status, the one signal that does, and painted
+      // every unlinked machine as off. Keyed on the sticky flag rather than the 4404 close on
+      // purpose: the retry loop's own close() lands as a plain `disconnected` too. needsLink is
+      // set by onLocalFailure, which runs before this branch for 4404 (see WsConn._onDone).
+      //
+      // ⚠️ Nor from a viewer. Its socket is the phone's own line to the relay — backgrounding the
+      // app drops it, and so does a tunnel — and losing it says nothing about the machine at the
+      // other end, which `node_status`, `/api/machines` and a timed-out request still report. Read
+      // as offline, every return to the app flashed "Offline" and threw the pager away. The
+      // streams on it are dead all the same: told so, and put back once the socket is.
+      if (!machine.needsLink) {
+        if (viewer == null) {
+          unawaited(_applyNodeStatus(machine, false));
+        } else {
+          _markSessionsUnreachable(machine, 'Connection lost. Reconnecting…');
+        }
+      }
+    }
+    notifyListeners();
+  }
+
+  @visibleForTesting
+  void connectionStatusForTest(String machineId, ConnectionStatus status) =>
+      _onConnectionStatus(machineId, status);
 
   /// The machine list is being fetched and there is nothing to show meanwhile.
   ///

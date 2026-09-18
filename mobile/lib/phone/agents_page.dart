@@ -291,12 +291,11 @@ Future<void> showAgentActions(
   ],
 );
 
-/// The one way into [NewAgentPage] — this page's header button, its empty state, and the Agents
-/// tab's `+` all come through here rather than drifting into three ways of opening it.
+/// The one way into [NewAgentPage] — every door to the form comes through here rather than
+/// drifting into several ways of opening it.
 ///
 /// ⚠️ [machineId] is not a detail the caller may guess at. A new agent needs the machine to list
-/// its folders and name the engines it has, so every door has to establish which machine FIRST:
-/// this page already knows, and the tab asks (`agents_tab.dart`).
+/// its folders and name the engines it has, so every door has to establish which machine FIRST.
 /// Returns when the form closes — by creating an agent or by being backed out
 /// of — so a caller whose own chrome depends on being the top route can rebuild
 /// (see `terminal_page.dart`). Callers that do not care can ignore it.

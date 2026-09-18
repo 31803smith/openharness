@@ -74,8 +74,24 @@ class _Body extends StatelessWidget {
     // Taken from [visibleMachines] rather than partitioned here so the page and the list cannot
     // drift apart — the split below is presentation, the order is not.
     final ordered = visibleMachines(notifier);
-    if (ordered.isEmpty && notifier.machinesLoading) {
+    if (ordered.isEmpty &&
+        (notifier.machinesLoading || notifier.machinesRefreshing)) {
       return const PhoneListSkeleton();
+    }
+    // ⚠️ A list that could not be fetched is not an empty one. Drawn as "No machines yet", it told
+    // somebody with three machines to go and set one up — and with nothing in the list there was no
+    // pull-to-refresh either, so no way to try again short of restarting the app.
+    final failure = notifier.lastError;
+    if (ordered.isEmpty && failure != null) {
+      return EmptyState(
+        icon: LucideIcons.circleAlert300,
+        title: "Couldn't load your machines",
+        message: failure,
+        action: FilledButton(
+          onPressed: () => unawaited(notifier.retryMachines()),
+          child: const Text('Try again'),
+        ),
+      );
     }
     if (ordered.isEmpty) {
       return const EmptyState(

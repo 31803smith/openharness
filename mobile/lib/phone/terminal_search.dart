@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import 'package:harness_mobile/shared/theme/app_theme.dart';
+import 'package:harness_mobile/shared/widgets/touch_target.dart';
 import 'package:harness_mobile/state/app_state.dart';
 
 import 'phone_search_index.dart';
@@ -362,17 +363,19 @@ class _ClearButton extends StatelessWidget {
           : Semantics(
               button: true,
               label: 'Clear',
-              child: GestureDetector(
-                behavior: HitTestBehavior.opaque,
-                onTap: onTap,
-                child: Padding(
-                  // Padding, not size: the glyph stays small while the target
-                  // reaches a thumb.
-                  padding: const EdgeInsets.only(left: 8),
-                  child: Icon(
-                    LucideIcons.circleX300,
-                    size: 16,
-                    color: AppPalette.textFaint,
+              // The padding alone left a 24x16 target; [TouchTarget] takes it
+              // to a thumb's without moving the field beside it.
+              child: TouchTarget(
+                child: GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onTap: onTap,
+                  child: Padding(
+                    padding: const EdgeInsets.only(left: 8),
+                    child: Icon(
+                      LucideIcons.circleX300,
+                      size: 16,
+                      color: AppPalette.textFaint,
+                    ),
                   ),
                 ),
               ),

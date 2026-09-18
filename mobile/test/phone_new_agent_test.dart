@@ -3,7 +3,6 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:harness_mobile/auth/auth_session.dart';
 import 'package:harness_mobile/core/config.dart';
 import 'package:harness_mobile/core/models.dart';
-import 'package:harness_mobile/phone/agents_tab.dart';
 import 'package:harness_mobile/phone/new_agent_page.dart';
 import 'package:harness_mobile/state/app_state.dart';
 import 'package:harness_mobile/ws/ws_conn.dart';
@@ -33,7 +32,7 @@ class _Conn extends WsConn {
 ///
 /// The second is the whole point of the picker's filter: an agent cannot be created on a machine
 /// that has not listed its folders or named its engines, so it must not be offered as a host.
-AppNotifier _app({required bool anyReady}) {
+AppNotifier _app() {
   final app = AppNotifier(
     config: AppConfig.dev,
     authSession: AuthSession(),
@@ -53,7 +52,7 @@ AppNotifier _app({required bool anyReady}) {
   );
   app.machines = [ready, sleeping];
   app.machineStates['ready'] = MachineState(ready)
-    ..nodeOnline = anyReady
+    ..nodeOnline = true
     ..connectionStatus = ConnectionStatus.connected
     ..agentLoadStatus = AgentLoadStatus.loaded;
   // Harness is not running there: offline, whatever the socket says.
@@ -64,48 +63,27 @@ AppNotifier _app({required bool anyReady}) {
   return app;
 }
 
-Future<void> _pump(WidgetTester tester, AppNotifier app) async {
-  await tester.pumpWidget(MaterialApp(home: AgentsTab(notifier: app)));
-  await tester.pumpAndSettle();
-}
-
 void main() {
-  testWidgets(
-    'the + opens the form on the first machine answering, and offers no other',
-    (tester) async {
-      final app = _app(anyReady: true);
-      addTearDown(app.dispose);
-      await _pump(tester, app);
-
-      await tester.tap(find.byType(FloatingActionButton));
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 600));
-
-      // ⚠️ Scoped to the form. Both machines also name themselves in the
-      // filter bar behind it, so an unscoped finder sees every machine twice
-      // and reads the offline one as offered when it is not.
-      Finder inForm(String text) => find.descendant(
-        of: find.byType(NewAgentPage),
-        matching: find.text(text),
-      );
-
-      expect(inForm('Studio'), findsOneWidget);
-      expect(
-        inForm('Laptop'),
-        findsNothing,
-        reason: 'an offline machine cannot host a new agent',
-      );
-    },
-  );
-
-  testWidgets('no + at all while nothing can host an agent', (tester) async {
-    final app = _app(anyReady: false);
+  testWidgets('the form offers only machines that can host an agent', (
+    tester,
+  ) async {
+    final app = _app();
     addTearDown(app.dispose);
-    await _pump(tester, app);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: NewAgentPage(notifier: app, machineId: 'ready'),
+      ),
+    );
+    await tester.pumpAndSettle();
+    // The machine row unfolds into the others there are to choose from.
+    await tester.tap(find.text('Studio'));
+    await tester.pumpAndSettle();
 
-    // Absent, not disabled: the empty state already says to open the Machines
-    // tab, and a button whose only outcome is that same explanation is worse
-    // than no button.
-    expect(find.byType(FloatingActionButton), findsNothing);
+    expect(find.text('Studio'), findsOneWidget);
+    expect(
+      find.text('Laptop'),
+      findsNothing,
+      reason: 'an offline machine cannot host a new agent',
+    );
   });
 }

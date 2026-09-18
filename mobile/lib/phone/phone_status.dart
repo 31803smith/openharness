@@ -39,6 +39,22 @@ PhoneMachineStatus phoneMachineStatusOf(MachineState machine) {
   return answering ? PhoneMachineStatus.ready : PhoneMachineStatus.connecting;
 }
 
+/// Whether [machine]'s agents belong on the agent screens: it is answering, or it answered and its
+/// socket is only dialling again.
+///
+/// ⚠️ **The second half is what keeps a terminal on screen through a dropped socket.** Backgrounding
+/// the app drops it every time, and a machine counted only while [PhoneMachineStatus.ready] took its
+/// agents out of the list for the length of the redial — the pager, whose pages ARE that list, was
+/// thrown away and the screen fell back to "Connecting to your machine…" on every return to the app.
+/// A first connect has no list yet, so it still waits like one.
+bool phoneMachineListsAgents(MachineState machine) =>
+    switch (phoneMachineStatusOf(machine)) {
+      PhoneMachineStatus.ready => true,
+      PhoneMachineStatus.connecting =>
+        machine.agentLoadStatus == AgentLoadStatus.loaded,
+      PhoneMachineStatus.needsPassword || PhoneMachineStatus.offline => false,
+    };
+
 PhoneSummary phoneMachineSummary(MachineState machine) =>
     switch (phoneMachineStatusOf(machine)) {
       PhoneMachineStatus.needsPassword => (

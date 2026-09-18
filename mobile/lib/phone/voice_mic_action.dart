@@ -71,10 +71,10 @@ VoiceMicAction _tapAction(VoiceInputController voice, TerminalSession session) {
 ///    [VoiceInputController.startHold] and [VoiceInputController.finishHold] —
 ///    a start and a release that know about each other, rather than two calls
 ///    racing over a status neither of them owns.
-///  - **Words held from a failed send are sent by holding again.** The tap mode
-///    shows an arrow for that; here the retry rides along with the next take,
-///    because `submit` sends the whole transcript and a take that transcribes to
-///    nothing still carries what was held.
+///  - **Words held from a failed send go with the next press.** A quick tap on
+///    the retry face sends them as they are — a take too short to be speech is
+///    no failure, see [VoiceInputController.submit] — and a hold that says more
+///    sends them with what it adds.
 VoiceMicAction _holdAction(
   VoiceInputController voice,
   TerminalSession session,

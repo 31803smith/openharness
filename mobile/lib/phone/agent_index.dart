@@ -33,16 +33,16 @@ class AgentEntry {
 
 /// Every agent the account can reach, ordered the way the tab draws them.
 ///
-/// Only machines that are LINKED and answering contribute: an offline machine's agent list is
-/// whatever was last seen there, and drawing it beside live ones would offer rows that cannot be
-/// opened. Those machines are reachable on the Machines tab instead, which is where the thing to
-/// do about them lives.
+/// Only machines that are LINKED and answering contribute — or only re-dialling after answering, see
+/// [phoneMachineListsAgents]: an offline machine's agent list is whatever was last seen there, and
+/// drawing it beside live ones would offer rows that cannot be opened. Those machines are reachable
+/// on the Machines tab instead, which is where the thing to do about them lives.
 List<AgentEntry> agentIndex(AppNotifier notifier) {
   final entries = <AgentEntry>[];
   for (final machine in notifier.machines) {
     final state = notifier.stateOf(machine.machineId);
     if (state == null) continue;
-    if (phoneMachineStatusOf(state) != PhoneMachineStatus.ready) continue;
+    if (!phoneMachineListsAgents(state)) continue;
     for (final agent in state.agents) {
       entries.add(AgentEntry(machine: state, agent: agent));
     }

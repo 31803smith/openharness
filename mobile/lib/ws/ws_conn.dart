@@ -300,7 +300,9 @@ class WsConn {
   void _onRaw(dynamic raw) {
     final codec = _codec;
     if (raw is List<int>) {
-      final bytes = Uint8List.fromList(raw);
+      // The socket already hands over a Uint8List; copying it cost one allocation per chunk of
+      // terminal output, for nothing.
+      final bytes = raw is Uint8List ? raw : Uint8List.fromList(raw);
       _inboundTail = _inboundTail
           .then((_) async {
             final local = codec == null ? bytes : codec.decodeBinary(bytes);

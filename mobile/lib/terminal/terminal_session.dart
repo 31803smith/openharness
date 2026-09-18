@@ -11,6 +11,7 @@ import 'control_chord.dart';
 import 'terminal_binary.dart';
 import 'terminal_input.dart';
 import 'terminal_viewport.dart';
+import 'utf8_chunks.dart';
 
 typedef TerminalFrameSender = Future<bool> Function(
   String type,
@@ -567,7 +568,7 @@ class TerminalSession extends ChangeNotifier {
             }
             // Publish a complete screen atomically. A damaged snapshot must
             // leave the retained screen available while resync recovers.
-            final decoded = _decodeUtf8(_prepareKeyframeBytes(bytes));
+            final decoded = decodeUtf8Chunk(_prepareKeyframeBytes(bytes));
             final replacement = _newTerminal(bindCallbacks: false)
               ..resize(_clampCols(nextCols), _clampRows(nextRows))
               ..write(decoded.text);
@@ -714,41 +715,10 @@ class TerminalSession extends ChangeNotifier {
     // Most packets end on a scalar boundary. Decode their existing byte view
     // directly; only a split UTF-8 scalar needs a joined buffer.
     final combined = _utf8Tail.isEmpty ? bytes : <int>[..._utf8Tail, ...bytes];
-    final decoded = _decodeUtf8(combined);
+    final decoded = decodeUtf8Chunk(combined);
     if (decoded.text.isNotEmpty) _writeTerminalText(decoded.text);
     _utf8Tail = decoded.tail;
     return true;
-  }
-
-  ({String text, List<int> tail}) _decodeUtf8(List<int> combined) {
-    for (
-      var tailLength = 0;
-      tailLength <= min(3, combined.length);
-      tailLength++
-    ) {
-      try {
-        final text = utf8.decoder.convert(
-          combined,
-          0,
-          combined.length - tailLength,
-        );
-        return (
-          text: text,
-          tail: tailLength == 0
-              ? const []
-              : combined.sublist(combined.length - tailLength),
-        );
-      } on FormatException {
-        // A UTF-8 scalar can span at most four bytes; retain only a trailing
-        // partial scalar before falling back to replacement rendering below.
-      }
-    }
-    // PTY output is byte-oriented. A snapshot cut can rarely land between the
-    // leading and continuation bytes of a scalar, leaving a continuation byte
-    // at the start of the post-cut frame. Real terminals render malformed UTF-8
-    // as U+FFFD; resyncing the entire screen creates a second keyframe race and
-    // cannot recover the missing pre-cut byte anyway.
-    return (text: utf8.decode(combined, allowMalformed: true), tail: const []);
   }
 
   List<int> _prepareKeyframeBytes(Uint8List bytes) {

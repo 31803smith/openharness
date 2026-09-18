@@ -225,11 +225,18 @@ class VoiceInputController extends ChangeNotifier {
   /// when delivery fails, so nothing said has to be said twice.
   ///
   /// Send while still talking ends the take first: one tap finishes the
-  /// sentence and sends it. A take that comes back as nothing sends nothing,
-  /// rather than the half of the message that was heard before it.
+  /// sentence and sends it. A take that FAILED sends nothing, rather than the
+  /// half of the message that was heard before it.
+  ///
+  /// ⚠️ A take too short to be speech is not a failure: nothing was said in it,
+  /// so nothing is missing. That is the retry face held to talk — a quick tap
+  /// on it has to send the words kept from the send that did not land, and it
+  /// used to be dropped with the tap, leaving no way to send them but saying
+  /// something new.
   Future<void> submit(Future<bool> Function(String text) deliver) async {
     if (_isSending || _status == VoiceInputStatus.transcribing) return;
-    if (_status == VoiceInputStatus.listening && !await _transcribeTake()) {
+    if (_status == VoiceInputStatus.listening &&
+        await _transcribeTake() == _Take.failed) {
       return;
     }
     final text = transcript.trim();
@@ -276,14 +283,14 @@ class VoiceInputController extends ChangeNotifier {
     super.dispose();
   }
 
-  /// True when the take's words, if any, joined the transcript.
-  Future<bool> _transcribeTake() async {
+  /// Ends the take, and adds what it heard to the transcript.
+  Future<_Take> _transcribeTake() async {
     final take = _take;
     _takeLimit?.cancel();
     _setStatus(VoiceInputStatus.transcribing);
     try {
       final recording = await _recorder.stop();
-      if (take != _take) return false;
+      if (take != _take) return _Take.failed;
       appLog.info(
         'voice',
         recording == null
@@ -296,23 +303,23 @@ class VoiceInputController extends ChangeNotifier {
       // something the person did not mean to do.
       if (recording != null && recording.length < minTake) {
         _setStatus(VoiceInputStatus.idle);
-        return false;
+        return _Take.tap;
       }
       if (recording == null || recording.peak < silencePeak) {
         _setStatus(VoiceInputStatus.idle, notice: VoiceNotice.noSound);
-        return false;
+        return _Take.failed;
       }
       final language = _language.value;
       final words = await transcriber(recording.wav, language);
       // The count, never the words: a transcript is what someone said.
       appLog.info('voice', 'stt[$language]: ${words.length} chars');
-      if (take != _take) return false;
+      if (take != _take) return _Take.failed;
       _heard = _joinWords(_heard, words);
       _setStatus(
         VoiceInputStatus.idle,
         notice: words.isEmpty ? VoiceNotice.nothingHeard : null,
       );
-      return words.isNotEmpty;
+      return words.isEmpty ? _Take.failed : _Take.heard;
     } catch (error) {
       // ⚠️ Every throwable, not only [Exception]: a reply of an unexpected shape
       // fails as a TypeError, and one that escaped would leave the status on
@@ -321,7 +328,7 @@ class VoiceInputController extends ChangeNotifier {
       if (take == _take) {
         _setStatus(VoiceInputStatus.idle, notice: VoiceNotice.notTranscribed);
       }
-      return false;
+      return _Take.failed;
     }
   }
 
@@ -385,3 +392,16 @@ class VoiceInputController extends ChangeNotifier {
 
 String _joinWords(String first, String second) =>
     [first.trim(), second.trim()].where((part) => part.isNotEmpty).join(' ');
+
+/// How a take ended, as [VoiceInputController.submit] needs to know it.
+enum _Take {
+  /// Its words joined the transcript.
+  heard,
+
+  /// Too short to be speech — a tap, with nothing said and so nothing lost.
+  tap,
+
+  /// Something was meant and did not arrive: silence, nothing transcribed, an
+  /// upload that failed, or a take abandoned mid-flight.
+  failed,
+}
