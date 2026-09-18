@@ -23,6 +23,12 @@
  * `POST /api/grid/name` (idempotent, mostly a read) and nothing else. A grid sign-in is created or
  * refreshed only when the gate says it is missing or belongs to another account.
  *
+ * ⚠️ It converges only where the grid CAN exist. An account that cannot hold this grid at all — the
+ * free-plan network limit is the real case — never satisfies the gate, so every daemon start signs in
+ * again and tries again. That costs a token rotation per start, not a loop within one, and it is the
+ * deliberate trade: the alternative is remembering a failure across starts on disk, which would also
+ * remember it after the account was fixed. `ensure`'s own message says which limit was hit.
+ *
  * **Overwrite is deliberate.** When this machine is signed in to grid as a *different* account, the
  * hand-off overwrites it, matching `grid login`'s own rule (a swap is a line, never a refusal) and
  * the harness's "grid sign-in is part of harness sign-in" contract. `grid login --harness` never
@@ -127,8 +133,10 @@ export async function reconcileGridAttach(deps: GridAttachDeps): Promise<GridAtt
   if (email) {
     try {
       names = await deps.gridNames()
-    } catch {
-      // A local read that failed reads as "not there", which the hand-off + ensure below handle.
+    } catch (err) {
+      // Could not read the local registry. That cannot PROVE the machine is set up, so it falls
+      // through to the hand-off below — which rewrites that registry, so the next start reads it.
+      deps.log(`could not read this machine's grid list (${msg(err)}) — signing in again to rebuild it`)
     }
   }
   if (email && names.includes(name)) {
@@ -167,7 +175,14 @@ export async function reconcileGridAttach(deps: GridAttachDeps): Promise<GridAtt
  * cheap. An unparsable answer is no names, which the caller treats as "ensure it".
  */
 export async function gridNamesLocal(): Promise<string[]> {
-  const { value } = await gridJson<Array<{ grid?: unknown }>>(['--remote', 'ls'])
-  if (!Array.isArray(value)) return []
+  const { value, result } = await gridJson<Array<{ grid?: unknown }>>(['--remote', 'ls'])
+  // ⚠️ A FAILED read is NOT an empty list, and conflating the two is how "this machine has no grids"
+  // stops being a fact and becomes a guess — one that would make the gate below answer "not set up"
+  // forever on a machine whose registry is unreadable. Thrown rather than returned as `[]` so the
+  // caller says which of the two happened in its log.
+  if (result.code !== 'OK') {
+    throw new Error(result.stderr.trim() || result.message || `\`grid ls\` exited ${result.exitCode}`)
+  }
+  if (!Array.isArray(value)) throw new Error('`grid ls --json` did not answer a list')
   return value.map((row) => (typeof row.grid === 'string' ? row.grid : '')).filter(Boolean)
 }

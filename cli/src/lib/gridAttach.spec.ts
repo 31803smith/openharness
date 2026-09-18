@@ -90,6 +90,17 @@ describe('reconcileGridAttach — the daemon-start convergence', () => {
     expect(d.ensure).toHaveBeenCalledWith(NAME)
   })
 
+  it('signs in again when the local grid list cannot be read — an unreadable registry is not "no grids"', async () => {
+    const d = deps({ gridNames: async () => { throw new Error('grid ls exited 1') } })
+    const r = await reconcileGridAttach(d)
+
+    // It must NOT treat the failed read as proof of anything: the safe direction is to sign in
+    // again, which rewrites the registry the next start reads.
+    expect(r.status).toBe('signed-in')
+    expect(d.handoff).toHaveBeenCalledOnce()
+    expect(d.ensure).toHaveBeenCalledWith(NAME)
+  })
+
   it('does nothing and reports no-cli when there is no grid binary', async () => {
     const d = deps({ gridAvailable: () => false, mintName: vi.fn() as never })
     const r = await reconcileGridAttach(d)

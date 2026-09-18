@@ -281,10 +281,14 @@ const CONNECT_WAIT_MS = 10_000
 /** Bounds the `POST /api/grid/name` inside the daemon-start grid reconcile, so a stalled control-plane
  *  connection cannot hold it open. */
 const GRID_MINT_TIMEOUT_MS = 10_000
-/** How long the grid RPCs will gate on the daemon-start reconcile before answering without it,
- *  whether or not it has settled — the ceiling that keeps a stuck reconcile from degrading every
- *  grid RPC for the daemon's whole life (`gridReadyProbe`). */
+/** How long the grid RPCs will gate on a grid-attach attempt before answering without it, whether or
+ *  not it has settled — the ceiling that keeps a stuck attempt from degrading every grid RPC for the
+ *  daemon's whole life (`gridReadyProbe`). */
 const GRID_ATTACH_CEILING_MS = 30_000
+/** How many grid-attach attempts one daemon makes before giving up until its next start. Retries are
+ *  driven by backend reconnects, and a link that flaps could otherwise sign in to grid on every one;
+ *  a machine still unattached after this many reachable moments has a problem retrying won't fix. */
+const GRID_ATTACH_MAX_ATTEMPTS = 5
 
 /** Between session-binding attempts for a process whose engine store is not resolvable yet. */
 const REPAIR_RETRY_MS = 60_000
@@ -1557,6 +1561,9 @@ async function runForeground(session: AuthSession): Promise<void> {
   let appVoiceFocus: { machineId: string; agentId: string; connId: string } | undefined
   let backendRef: BackendSocket | undefined
   let fullReconcile: (announceDevice?: boolean) => Promise<void> = async () => {}
+  /** Assigned below, once the grid reconcile exists. A backend (re)connect is the signal that the
+   *  control plane is reachable again, which is precisely what an earlier attempt may have lacked. */
+  let onBackendConnected: () => void = () => {}
 
   const auth = new AuthSessionManager(backendHttpBase())
   const backend = new BackendSocket(session.machineId ?? session.computerId, auth, (connected) => {
@@ -1566,10 +1573,11 @@ async function runForeground(session: AuthSession): Promise<void> {
     void fullReconcile(true).catch((err) => {
       console.error('[runtime-profile] connect reconcile failed:', err instanceof Error ? err.message : err)
     })
+    onBackendConnected()
   }, computerId())
   backendRef = backend
 
-  // Bring this machine's grid sign-in into line with its harness sign-in, once, in the background.
+  // Bring this machine's grid sign-in into line with its harness sign-in, in the background.
   // This is what makes a machine that signed in to the harness BEFORE grid existed usable after an
   // update: it has the `grid` binary now (above), but no grid credentials and no grid to point at
   // until something signs it in — and the login *event* that used to do that never fires again for
@@ -1579,46 +1587,67 @@ async function runForeground(session: AuthSession): Promise<void> {
   // Best-effort and non-blocking: it awaits the managed grid, mints/reads the account's name, and
   // signs in + creates the grid only when the machine is not already there. The RPCs that need the
   // name wait briefly for it through `gridReadyProbe`.
-  let gridAttachSettled = false
-  // A hard ceiling on how long the RPCs will gate on the reconcile, INDEPENDENT of whether it
-  // settled. `mintName` is bounded below, but the hand-off child (`grid login --harness`) has no
-  // watchdog of its own — a control plane that black-holes its connection could keep the reconcile
-  // pending for the daemon's life, and without this ceiling every grid RPC would then pay the full
-  // per-call wait forever. Past the ceiling the probe returns null and the RPCs stop waiting; a
-  // reconcile that lands later still publishes the name through `onName`.
-  const gridReadyDeadline = Date.now() + GRID_ATTACH_CEILING_MS
-  const gridAttachInFlight = reconcileGridAttach({
-    managedGridReady,
-    gridAvailable: () => gridAvailable(),
-    // The backend mints and remembers the name; this CLI holds neither the account's email nor its
-    // id. An older backend (no route) answers nothing, which the reconcile treats as "no grid yet".
-    // Bounded so a stalled control-plane connection cannot hold the reconcile open indefinitely.
-    mintName: async () => {
-      const { headers } = await controlPlaneAuth()
-      return (await postJson<{ gridName?: string }>('/api/grid/name', {}, headers, AbortSignal.timeout(GRID_MINT_TIMEOUT_MS))).gridName ?? null
-    },
-    accessToken: () => new AuthSessionManager(backendHttpBase()).accessToken(),
-    signedInEmail: () => signedInGridEmail(),
-    gridNames: () => gridNamesLocal(),
-    handoff: (token) => handOffToGrid(token, { json: true }),
-    ensure: (name) => ensureHarnessGrid(name),
-    onName: (name) => {
-      // Answer the picker with this account's grid at once, and drop the memos a stale or absent
-      // sign-in may have filled — the model list, the derived name, and the web-tools URL.
-      backend.setHarnessGridName(name)
-      forgetGridModels()
-      resetGridDeriveMemo()
-      clearGridMcpUrlCache()
-    },
-    log: (line) => console.log(`[grid-attach] ${line}`),
-  }).catch((err) => {
-    console.error('[grid-attach] reconcile failed:', err instanceof Error ? (err.stack ?? err.message) : err)
-    return null
-  }).finally(() => { gridAttachSettled = true })
-  void gridAttachInFlight
-  // While the reconcile is still running AND within the ceiling, the RPCs that need the grid name
-  // wait briefly on it; once it settles, or the ceiling passes, they read the name directly.
-  backend.gridReadyProbe = () => (gridAttachSettled || Date.now() >= gridReadyDeadline ? null : gridAttachInFlight)
+  //
+  // ⚠️ Retried on backend RECONNECT, not just at start, and this is not belt-and-braces: the daemon
+  // OUTLIVES the desktop app (it must keep running after the window closes), and `harness start`
+  // against a live daemon returns without starting a new one. So "start" can be days ago, and a
+  // single attempt that lost to a control plane which was not reachable yet — the ordinary shape of
+  // a daemon coming up with the network — would leave the account with no grid until the next real
+  // restart. A connect is the evidence the control plane is reachable, so it is when to try again.
+  let gridAttachInFlight: Promise<unknown> | null = null
+  let gridAttachDone = false
+  let gridAttachAttempts = 0
+  // A hard ceiling on how long the RPCs will gate on an attempt, INDEPENDENT of whether it settled.
+  // `mintName` is bounded below, but the hand-off child (`grid login --harness`) has no watchdog of
+  // its own — a control plane that black-holes its connection could keep an attempt pending for the
+  // daemon's life, and without this ceiling every grid RPC would then pay the full per-call wait
+  // forever. Past the ceiling the probe returns null and the RPCs stop waiting; an attempt that
+  // lands later still publishes the name through `onName`.
+  let gridAttachDeadline = 0
+
+  const runGridAttach = (): void => {
+    if (gridAttachDone || gridAttachInFlight || gridAttachAttempts >= GRID_ATTACH_MAX_ATTEMPTS) return
+    gridAttachAttempts += 1
+    gridAttachDeadline = Date.now() + GRID_ATTACH_CEILING_MS
+    gridAttachInFlight = reconcileGridAttach({
+      managedGridReady,
+      gridAvailable: () => gridAvailable(),
+      // The backend mints and remembers the name; this CLI holds neither the account's email nor its
+      // id. An older backend (no route) answers nothing, which the reconcile treats as "no grid yet".
+      // Bounded so a stalled control-plane connection cannot hold the attempt open indefinitely.
+      mintName: async () => {
+        const { headers } = await controlPlaneAuth()
+        return (await postJson<{ gridName?: string }>('/api/grid/name', {}, headers, AbortSignal.timeout(GRID_MINT_TIMEOUT_MS))).gridName ?? null
+      },
+      accessToken: () => new AuthSessionManager(backendHttpBase()).accessToken(),
+      signedInEmail: () => signedInGridEmail(),
+      gridNames: () => gridNamesLocal(),
+      handoff: (token) => handOffToGrid(token, { json: true }),
+      ensure: (name) => ensureHarnessGrid(name),
+      onName: (name) => {
+        // Answer the picker with this account's grid at once, and drop the memos a stale or absent
+        // sign-in may have filled — the model list, the derived name, and the web-tools URL.
+        backend.setHarnessGridName(name)
+        forgetGridModels()
+        resetGridDeriveMemo()
+        clearGridMcpUrlCache()
+      },
+      log: (line) => console.log(`[grid-attach] ${line}`),
+    }).then((result) => {
+      // Only an outcome that actually attached stops the retries. `no-cli`, `no-name` and
+      // `handoff-failed` are all "the control plane or this machine was not ready", which is exactly
+      // what a later connect may have fixed.
+      if (result.status === 'converged' || result.status === 'signed-in') gridAttachDone = true
+    }).catch((err) => {
+      console.error('[grid-attach] reconcile failed:', err instanceof Error ? (err.stack ?? err.message) : err)
+    }).finally(() => { gridAttachInFlight = null })
+  }
+
+  // While an attempt is running AND within its ceiling, the RPCs that need the grid name wait
+  // briefly on it; otherwise they read the name directly.
+  backend.gridReadyProbe = () => (gridAttachInFlight && Date.now() < gridAttachDeadline ? gridAttachInFlight : null)
+  onBackendConnected = runGridAttach
+  runGridAttach()
 
   /**
    * Is ANY device surface watching this machine?
