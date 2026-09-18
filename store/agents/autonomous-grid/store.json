@@ -1,0 +1,8 @@
+{
+  "homepage": "https://github.com/autonomous-ai/autonomous-grid",
+  "upstream": "https://github.com/autonomous-ai/autonomous-grid",
+  "license": "MIT",
+  "screenshots": [
+    "https://raw.githubusercontent.com/autonomous-ai/openharness/main/store/agents/autonomous-grid/screenshots/grid-topology.png"
+  ]
+}

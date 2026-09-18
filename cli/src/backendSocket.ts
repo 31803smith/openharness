@@ -1,5 +1,5 @@
 import type { HarnessShareOwner } from './sharing/owner.js'
-import { SHARE_REQUEST_TYPES, SHARE_RESULT_TYPES } from './sharing/protocol.js'
+import { SHARE_REQUEST_TYPES } from './sharing/protocol.js'
 import { AutonomousDeviceRelay } from './lib/autonomous-device/relay.js'
 import type { AutonomousDeviceService, AutonomousDeviceFrame } from './lib/autonomous-device/service.js'
 /**
@@ -30,6 +30,7 @@ import { ENGINES, type AgentEngine } from './engines/types.js'
 import { listDir } from './lib/fsBrowse.js'
 import { linkCodexProfile, listCodexProfiles } from './lib/codexProfiles.js'
 import { gridCliPresence } from './lib/gridExec.js'
+import { GridFleetRpc, GRID_FLEET_PROTOCOL, GRID_FLEET_MAX_TIMEOUT_MS, parseGridFleetRequest } from './lib/gridFleetRpc.js'
 import { gridCapableEngines, parseGridLaunchOverride, type GridLaunchOverride } from './lib/gridLaunch.js'
 import { listGridModels, resolveGridTarget } from './lib/gridModels.js'
 import { deriveHarnessGridName } from './lib/gridDerive.js'
@@ -90,7 +91,8 @@ import {
   TerminalHopDirection,
   type TerminalBinaryClear,
 } from './lib/terminalBinary.js'
-import { b64d, fingerprint, ENCRYPTED_RPC_RESULT_TYPES, isEncryptedDownType, isWrapped } from './lib/e2ee/core.js'
+import { b64d, fingerprint, isWrapped } from './lib/e2ee/core.js'
+import { encryptDownFrame, encryptRpcResult } from './lib/e2ee/applicationFrames.js'
 import { DEVICE_RECENT_SAFE_FRAME_BYTES, fitRecentReplyPayloadForDevice } from './lib/deviceRecentTrim.js'
 import { shouldReplayCommander } from './lib/commanderReplay.js'
 import { RuntimeProfileControlError, type RuntimeProfileErrorCode } from './lib/runtimeProfileController.js'
@@ -340,6 +342,7 @@ async function enrichSubagentStats(events: SessionEvent[], transcriptPath: strin
 }
 
 export class BackendSocket {
+  private readonly gridFleet = new GridFleetRpc()
   private ws: WebSocket | null = null
   private connecting = false
   /** A 401 on the upgrade is being answered with a token refresh; that refresh owns the next connect. */
@@ -1250,12 +1253,12 @@ export class BackendSocket {
   private emitReply(connId: string, type: string, requestId: unknown, payload: Record<string, unknown>): void {
     const resultType = `${type}_result`
     // Before the E2EE wrap: an RPC reply is only readable here.
-    if (env.LOG_FRAMES && type !== 'agent_read_file' && type !== 'project_preview' && !SHARE_REQUEST_TYPES.has(type)) logFrame('→', connId ? `conn:${sid(connId)}` : 'backend', { type: resultType, payload: { requestId, ...payload } })
+    if (env.LOG_FRAMES && !type.startsWith('grid_fleet_') && type !== 'agent_read_file' && type !== 'project_preview' && !SHARE_REQUEST_TYPES.has(type)) logFrame('→', connId ? `conn:${sid(connId)}` : 'backend', { type: resultType, payload: { requestId, ...payload } })
     if (this.localClients.has(connId)) {
       this.sendTo(connId, { type: resultType, payload: { requestId, ...payload } })
       return
     }
-    if (connId && this.e2ee.hasSession(connId) && (ENCRYPTED_RPC_RESULT_TYPES.has(resultType) || SHARE_RESULT_TYPES.has(resultType))) {
+    if (connId && this.e2ee.hasSession(connId) && encryptRpcResult(resultType)) {
       let replyPayload = payload
       if (resultType === 'agent_recent_result') {
         const trim = fitRecentReplyPayloadForDevice(
@@ -1278,7 +1281,7 @@ export class BackendSocket {
     // adapter plaintext. A real client gets a targeted error; the legacy backend nodeRequest awaiter
     // (`connId === ''`) gets a broadcast error with the same requestId so it fails closed without data.
     // 
-    if ((ENCRYPTED_RPC_RESULT_TYPES.has(resultType) || SHARE_RESULT_TYPES.has(resultType))) {
+    if (encryptRpcResult(resultType)) {
       const errorFrame = { type: resultType, payload: { requestId, error: 'E2EE_REQUIRED' } }
       if (connId) this.sendTo(connId, errorFrame)
       else this.send(errorFrame)
@@ -1331,7 +1334,7 @@ export class BackendSocket {
     }
     // Client→adapter encrypted frames: chat messages plus trusted web control actions. Plaintext
     // passes through for legacy/device transition paths; undecryptable ciphertext is dropped.
-    if (!local && (isEncryptedDownType(type) || SHARE_REQUEST_TYPES.has(type) || VIEWER_DOWN_TYPES.has(type))) {
+    if (!local && encryptDownFrame(type)) {
       if (type !== 'message' && type !== 'question_response' && !isWrapped(frame.payload)) {
         const requestId = (frame.payload as { requestId?: unknown } | undefined)?.requestId
         if (requestId !== undefined) this.emitReply(connId, type, requestId, { error: 'E2EE_REQUIRED' })
@@ -1349,7 +1352,7 @@ export class BackendSocket {
     // than as an opaque __e2e envelope.
     // Terminal frames contain raw keystrokes, paste text and screen bytes after
     // unwrap. Never pass them to the frame logger, even in diagnostic mode.
-    if (env.LOG_FRAMES && !type.startsWith('terminal_') && !type.startsWith('viewer_') && type !== 'agent_read_file' && type !== 'project_preview' && type !== 'orchestrator' && !SHARE_REQUEST_TYPES.has(type)) {
+    if (env.LOG_FRAMES && !type.startsWith('terminal_') && !type.startsWith('viewer_') && !type.startsWith('grid_fleet_') && type !== 'agent_read_file' && type !== 'project_preview' && type !== 'orchestrator' && !SHARE_REQUEST_TYPES.has(type)) {
       logFrame('←', connId ? `conn:${sid(connId)}` : 'backend', frame)
     }
     const reply = (t: string, rid: unknown, p: Record<string, unknown>): void => this.emitReply(connId, t, rid, p)
@@ -1464,6 +1467,21 @@ export class BackendSocket {
 
     try {
       switch (type) {
+        case 'grid_fleet_capabilities':
+          reply(type, requestId, { protocol: GRID_FLEET_PROTOCOL, gridCli: gridCliPresence(), maxTimeoutMs: GRID_FLEET_MAX_TIMEOUT_MS, thinkingControl: true })
+          return
+        case 'grid_fleet_run': {
+          const request = parseGridFleetRequest(payload)
+          if (!request || typeof requestId !== 'string') { reply(type, requestId, { error: 'INVALID_GRID_COMMAND' }); return }
+          // Detached: pulls/builds can take minutes. Keep typing, cancellation, and telemetry responsive.
+          void this.gridFleet.run(connId, requestId, request)
+            .then(result => reply(type, requestId, { ...result }))
+            .catch(() => reply(type, requestId, { ok: false, code: 1, error: 'Grid command failed unexpectedly.' }))
+          return
+        }
+        case 'grid_fleet_cancel':
+          reply(type, requestId, { cancelled: typeof payload.commandId === 'string' && this.gridFleet.cancel(connId, payload.commandId) })
+          return
         case 'device_e2ee_pair':
           await this.e2ee.pairDeviceFromTrustedWeb(connId, payload)
           return
