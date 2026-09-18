@@ -2,6 +2,8 @@
 
 Work is isolated on `codex/orchestrator-workspace` in `/Users/d/code/autonomous-harness-orchestrator`. The shared main checkout, installed app, running daemon, other agent sessions, and account configuration were not replaced.
 
+Update: the [pre-PR verification round](2026-09-18-orchestrator-pr-verification.md) repeats the full suites, native checks, production builds, and a second successful live CAD project, and includes captures of the implemented launcher.
+
 ## What you can try
 
 This is built and pushed, **not installed over your running app/daemon**. The normal debug app is at `desktop/build/macos/Build/Products/Debug/Harness.app`. Full production use needs this branch's desktop **and matching CLI**; an older daemon will ask for a CLI update. A deliberate switch can happen when you are ready, without disturbing the other worktrees overnight.
