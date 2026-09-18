@@ -178,6 +178,21 @@ export class RemoteRelayPool {
     private readonly peers: MachinePeerStore,
   ) {}
 
+  /** Background CLI jobs must not replace the desktop window's one pooled sink. Each isolated
+   * client gets its own encrypted session, released immediately instead of retained for reconnect. */
+  async acquireIsolated(
+    machineId: string, autonomousEnv: string, selectFrame: Frame,
+    sink: LocalClientSink, onClosed: (code: number, reason: string) => void,
+  ): Promise<RelaySession> {
+    const isolated = new RemoteRelayPool(this.auth, this.backendWsBase, this.selfIdentity, this.peers)
+    const session = await isolated.acquire(machineId, autonomousEnv, selectFrame, {
+      ...sink,
+      sendFrame: frame => sink.sendFrame(frame.type === 'connected'
+        ? { ...frame, payload: { ...framePayload(frame), relayIsolation: true } } : frame),
+    }, onClosed)
+    return { ...session, detach: () => isolated.invalidate(machineId) }
+  }
+
   /** Force-drops a pooled entry so the next `acquire()` dials fresh instead of reusing it. For when
    *  the transport itself never closed but the app-level session behind it is known dead anyway — e.g.
    *  the relayed machine's own Harness process restarted, dropping its in-memory E2EE session state

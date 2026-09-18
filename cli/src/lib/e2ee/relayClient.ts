@@ -11,6 +11,7 @@
  */
 import { WebSocket } from 'ws'
 import * as C from './core.js'
+import { encryptDownFrame } from './applicationFrames.js'
 import { deriveTerminalBinaryKey, openTerminalBinary, sealTerminalBinary, type TerminalBinaryClear } from '../terminalBinary.js'
 import { pwCpaceGenerator, pwContext, stretchPassword } from './passwordPake.js'
 import { ReplayWindow } from './replayWindow.js'
@@ -103,7 +104,7 @@ export class RelaySessionCrypto {
   /** Encrypt an outgoing (local app → remote machine) frame if its type requires it. */
   wrapOutgoing(frame: Frame): Frame {
     const type = frame.type as string | undefined
-    if (!type || !this.c2s || !C.isEncryptedDownType(type)) return frame
+    if (!type || !this.c2s || !encryptDownFrame(type)) return frame
     const payload = C.wrapPayload(this.c2s, 'p', this.c2sCounter++, type, undefined, frame.payload)
     return { ...frame, payload }
   }
