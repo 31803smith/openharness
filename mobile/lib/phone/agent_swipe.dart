@@ -4,54 +4,10 @@ import 'package:flutter/material.dart';
 
 import 'package:harness_mobile/state/app_state.dart';
 
-import 'agent_index.dart';
 import 'agent_neighbour_warmer.dart';
+import 'agent_swipe_list.dart';
 import 'terminal_page.dart';
 import 'voice_input_controller.dart';
-
-/// The agents a terminal page can swipe between, in the order the list drew them.
-///
-/// A SNAPSHOT, taken when the page opens. The Agents tab sorts partly on state that moves by itself
-/// — an idle agent that starts working sorts upward — so a pager recomputing this list would
-/// renumber its own pages under the finger: the page to the right could become a different agent
-/// between one swipe and the next, for a reason nothing on screen explains.
-///
-/// Only entries that can actually be opened are kept. A row with no terminal does nothing when
-/// tapped in the list, and a page for it would be a screen of "Attaching…" that never resolves —
-/// worse mid-swipe than in a list, where at least the row is still readable.
-class AgentSwipeList {
-  AgentSwipeList(List<AgentEntry> entries)
-    : entries = [
-        for (final entry in entries)
-          if (entry.agent.terminalAvailable) entry,
-      ];
-
-  final List<AgentEntry> entries;
-
-  bool get isEmpty => entries.isEmpty;
-
-  /// Whether the pager wraps around — past the last agent is the first one again.
-  ///
-  /// Needs at least TWO agents, and that is not a formality. With one, every page of an endless
-  /// pager is the same agent: the screen would take a swipe, move, and land on what it just left,
-  /// which reads as the gesture having failed rather than as a list with one thing in it. One agent
-  /// gets one page and no swipe at all.
-  bool get wraps => entries.length > 1;
-
-  /// Where an agent sits in the snapshot, or null if it is not in it.
-  ///
-  /// Used once, to find the page to open on: the tapped row may be a "Waiting for you" row, an
-  /// agent with no terminal may have been dropped by the constructor above, and neither the list's
-  /// index nor the row's position can be assumed to survive either.
-  int? indexOf(String machineId, String agentId) {
-    for (final (index, entry) in entries.indexed) {
-      if (entry.machineId == machineId && entry.agent.id == agentId) {
-        return index;
-      }
-    }
-    return null;
-  }
-}
 
 /// One agent's terminal, with the agents beside it a swipe away.
 ///
@@ -90,7 +46,7 @@ class AgentSwipeHost extends StatefulWidget {
   /// whenever the account's state moves, so a host still naming the agent this opened on would snap
   /// the screen back to it mid-session. Every pushed pager is popped rather than rebuilt around a
   /// different agent, and passes null.
-  final ValueChanged<({String machineId, String agentId})>? onAgentChanged;
+  final ValueChanged<AgentRef>? onAgentChanged;
 
   @override
   State<AgentSwipeHost> createState() => _AgentSwipeHostState();
@@ -117,7 +73,7 @@ class _AgentSwipeHostState extends State<AgentSwipeHost> {
   /// is on screen decides who may hold the keyboard, and which AGENT is on screen decides which pane
   /// [_detachAll] spares on the way out. A page number cannot answer the second — the agent it names
   /// has panes attached under other page numbers too.
-  late ({String machineId, String agentId}) _current = (
+  late AgentRef _current = (
     machineId: widget.machineId,
     agentId: widget.agentId,
   );
@@ -132,7 +88,7 @@ class _AgentSwipeHostState extends State<AgentSwipeHost> {
   /// Recorded rather than recomputed: by the time this page is disposed the list may have moved on,
   /// and the panes to close are the ones actually opened, not the ones a fresh list would name.
   /// [_warmer] adds to it and prunes it as the pager moves — see [AgentNeighbourWarmer].
-  final Set<({String machineId, String agentId})> _attached = {};
+  final Set<AgentRef> _attached = {};
 
   /// Opens the agents either side of the one on screen once it is live. Null for a pager with nothing
   /// to swipe to.
@@ -248,8 +204,15 @@ class _AgentSwipeHostState extends State<AgentSwipeHost> {
     //
     // [ScrollStartNotification] is the first frame of the finger's movement,
     // which is the moment the person has shown they are leaving this terminal.
+    //
+    // ⚠️ **Depth 0 only — the pager's own drag.** The terminal inside each page
+    // is a vertical [Scrollable] whose notifications bubble through here too;
+    // taken for a swipe, reading back through the scrollback put the keyboard
+    // away, and with no keyboard up it left the next one raised ignored until it
+    // had come and gone once.
     return NotificationListener<ScrollStartNotification>(
-      onNotification: (_) {
+      onNotification: (notification) {
+        if (notification.depth != 0) return false;
         dismissKeyboardForSwipe();
         // Let it bubble: the pager's own scroll machinery is listening too.
         return false;

@@ -365,7 +365,11 @@ class CustomTextEditState extends State<CustomTextEdit> with TextInputClient {
     if (submitted == null) return false;
     // The newline either lands on the buffer the action was performed on, or
     // after this side's reset has already emptied it — whichever wins the race.
-    if (value.text != '$submitted\n' && value.text != '\n') return false;
+    // "Emptied" is the delete-detection padding when that is on.
+    if (value.text != '$submitted\n' &&
+        value.text != '${_initEditingState.text}\n') {
+      return false;
+    }
     _connection?.setEditingState(_currentEditingState);
     return true;
   }
@@ -422,6 +426,13 @@ class CustomTextEditState extends State<CustomTextEdit> with TextInputClient {
       widget.onInsert(edit.inserted);
     }
     _terminalText = value;
+    // ⚠️ The padding is spent one space per Backspace past the typed text, and
+    // the buffer is kept between keys (Telex needs it), so nothing else puts it
+    // back: two deletes into a line the keyboard never typed — a voice
+    // transcript, a recalled command — and Backspace goes dead again.
+    if (widget.deleteDetection && !value.startsWith(_initEditingState.text)) {
+      resetEditingState();
+    }
   }
 
   int _composingBacktrackCells(int composingStart) {

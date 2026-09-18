@@ -16,6 +16,21 @@ typedef AccessTokenProvider = Future<String> Function(
   String? failedToken,
 );
 
+/// Thrown by an [AccessTokenProvider] when the session is gone for good — the refresh token was
+/// refused, or there never was one. Only this signs the person out.
+///
+/// ⚠️ Anything else a provider throws is taken for a blip and retried. A refresh that never reached
+/// the server says nothing about the session, and a sign-out cannot be undone by the network
+/// coming back.
+class WsCredentialRevoked implements Exception {
+  const WsCredentialRevoked(this.message);
+
+  final String message;
+
+  @override
+  String toString() => message;
+}
+
 enum WsTransportKind { cloudE2ee, localPlaintext }
 
 /// A `request()` call got no reply within its timeout — distinct from other request-level errors
@@ -114,6 +129,12 @@ class WsConn {
   Timer? _reconnectTimer;
   String? _tokenUsed;
   bool _forceRelayReconnect = false;
+
+  /// How long a dial may take to open before it counts as failed. Without one, a socket dialled
+  /// into a network that swallows packets waits out the OS's own TCP timeout — over a minute on
+  /// iOS — with the machine showing "reconnecting" the whole time.
+  static const _dialTimeout = Duration(seconds: 15);
+
   final _pending = <String, _PendingRpc>{};
   final _readinessWaiters = <Completer<void>>{};
   final _queue = <Map<String, dynamic>>[];
@@ -178,6 +199,7 @@ class WsConn {
     if (_closing || _connecting) return;
     _connecting = true;
     _ready = false;
+    WebSocketChannel? dialing;
     onStatus(
       _attempt == 0
           ? ConnectionStatus.connecting
@@ -221,11 +243,11 @@ class WsConn {
           },
         );
       }
-      final channel = isLocal
+      final channel = dialing = isLocal
           ? WebSocketChannel.connect(uri)
           : WebSocketChannel.connect(uri, protocols: [token!]);
       _channel = channel;
-      await channel.ready;
+      await channel.ready.timeout(_dialTimeout);
       if (_closing || !identical(_channel, channel)) {
         await channel.sink.close();
         return;
@@ -245,11 +267,34 @@ class WsConn {
           if (isLocal && forceRelayReconnect) 'forceReconnect': true,
         },
       });
+    } on WsCredentialRevoked catch (error) {
+      _signOut(error.message);
     } catch (_) {
+      _abandonDial(dialing);
       if (!_closing) _scheduleReconnect();
     } finally {
       _connecting = false;
     }
+  }
+
+  /// Lets go of a channel whose dial failed.
+  ///
+  /// ⚠️ Left in place, it reads as a live socket: [reconnectNow] skips a connection that has one,
+  /// so the app coming back to the foreground would wait out the whole backoff — up to 30s — rather
+  /// than dial.
+  void _abandonDial(WebSocketChannel? channel) {
+    if (channel == null || !identical(_channel, channel)) return;
+    _channel = null;
+    final sub = _sub;
+    _sub = null;
+    unawaited(sub?.cancel());
+    unawaited(channel.sink.close().catchError((Object _) {}));
+  }
+
+  void _signOut(String message) {
+    _closing = true;
+    onStatus(ConnectionStatus.disconnected);
+    onAuthFailure(message);
   }
 
   void _onRaw(dynamic raw) {
@@ -410,7 +455,7 @@ class WsConn {
       return;
     }
     final eventType = message['type'];
-    if (eventType is String && _worthLogging(eventType)) {
+    if (eventType is String && worthLogging(eventType)) {
       appLog.debug('ws', '↓ $eventType ${summariseForLog(payload)}');
     }
     await onEvent({...message, 'payload': payload});
@@ -440,9 +485,26 @@ class WsConn {
     'dial_focus',
     'ping',
     'pong',
+    // Every agent's live chat, pushed to every client selecting the machine
+    // (`SessionEvent`/`LiveEvent` in cli/src/lib/normalize.ts). It is what the
+    // person typed and what the agent answered — prompts, tool input and
+    // output, even pasted images — and it streams several frames a second per
+    // agent, each one a synchronous flushed write on the UI thread.
+    'user_message',
+    'thinking_delta',
+    'thinking_title',
+    'text_delta',
+    'tool_start',
+    'tool_end',
+    'context_compact',
+    'done',
+    'turn_started',
+    'turn_heartbeat',
+    'subagent_finished',
   };
 
-  static bool _worthLogging(String type) => !_unlogged.contains(type);
+  @visibleForTesting
+  static bool worthLogging(String type) => !_unlogged.contains(type);
 
   Future<Map<String, dynamic>> request(
     String type, {
@@ -462,7 +524,7 @@ class WsConn {
       }
     });
     _pending[requestId] = _PendingRpc(completer, timer);
-    if (_worthLogging(type)) {
+    if (worthLogging(type)) {
       appLog.debug('ws', '→ $type ${summariseForLog(payload)}');
       // A second listener on the same future purely to record how it ended. It
       // handles its own error, so the caller's handling is unchanged and nothing
@@ -695,9 +757,7 @@ class WsConn {
       return;
     }
     if (code == 4403) {
-      _closing = true;
-      onStatus(ConnectionStatus.disconnected);
-      onAuthFailure('SSO environment does not match this backend');
+      _signOut('SSO environment does not match this backend');
       return;
     }
     _scheduleReconnect();
@@ -707,12 +767,15 @@ class WsConn {
     onStatus(ConnectionStatus.reconnecting);
     try {
       await accessTokenProvider(true, _tokenUsed);
-      if (!_closing) await connect();
+    } on WsCredentialRevoked {
+      _signOut('Your SSO session expired. Please sign in again.');
+      return;
     } catch (_) {
-      _closing = true;
-      onStatus(ConnectionStatus.disconnected);
-      onAuthFailure('Your SSO session expired. Please sign in again.');
+      // The token is still stale, so the next dial refreshes again on its own.
+      _scheduleReconnect();
+      return;
     }
+    if (!_closing) await connect();
   }
 
   void _scheduleReconnect() {

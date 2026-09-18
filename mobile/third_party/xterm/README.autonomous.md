@@ -192,3 +192,23 @@ it if one is dropped.
     gets the same single delete through the usual sync. An empty buffer still
     sends it straight on; Ctrl/Alt/Meta+Backspace and desktop platforms are
     untouched.
+
+13. **Delete detection survives a kept buffer**
+    (`lib/src/ui/custom_text_edit.dart`). iOS answers Backspace over an empty
+    native buffer with nothing at all (`deleteBackward` in
+    `FlutterTextInputPlugin.mm`), so the phone turns `deleteDetection` on and
+    Backspace eats a two-space padding instead. Upstream reset the buffer after
+    every edit, which refilled it; this copy keeps the buffer between keys for
+    Telex (note 12's neighbour), so two Backspaces into a line the keyboard
+    never typed — a voice transcript, a recalled command — spent the padding and
+    Backspace went dead. The buffer is now reset whenever the padding has been
+    eaten into, and the Return echo of note 11 also matches a newline appended
+    to the padding. Regression: `mobile/test/terminal_ime_input_test.dart`.
+
+14. **A plain space paints nothing** (`lib/src/ui/painter.dart`). Every frame
+    paints every cell on screen, one `drawParagraph` per cell, and a TUI's
+    screen is mostly spaces — padding, box interiors, the tail of every short
+    line. A space has no ink (its colour is the background pass's), so it now
+    returns before the hash, the cache lookup and the draw. An underlined
+    space still draws, through the existing U+00A0 substitution. Regression:
+    `mobile/test/terminal_painter_test.dart`.

@@ -2,6 +2,8 @@ import 'dart:convert';
 
 import 'local_key_value_store.dart';
 
+/// One agent, named by the machine it runs on — what a relaunch reopens, a pager page shows, and
+/// every pane it opens is about.
 typedef AgentRef = ({String machineId, String agentId});
 
 /// The agent the phone had on screen, so a relaunch can put the person back on it.

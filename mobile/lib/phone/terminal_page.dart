@@ -65,9 +65,9 @@ class TerminalPage extends StatefulWidget {
   /// two mounted pages both passing `focused: true` race for the software keyboard, and the winner
   /// can be the page off-screen. What gets typed then reaches an agent nobody is looking at.
   ///
-  /// It also drives the panel's `visible`, which is what releases focus and stops the renderer and
-  /// the auto-resize for a page that has slid away — three terminals all resizing themselves to the
-  /// layout would send SIGWINCH to three remote shells at once.
+  /// It also drives the panel's `visible`, which is what releases focus and stops the auto-resize for
+  /// a page that has slid away — three terminals all resizing themselves to the layout would send
+  /// SIGWINCH to three remote shells at once.
   final bool isActive;
 
   @override
@@ -124,9 +124,13 @@ void resetKeyboardSession() {
 /// its own: the inset is still falling, and the metrics ticks of that fall put
 /// it back. [_keyboardDismissing] is what makes the clear stick until the
 /// platform agrees.
+///
+/// ⚠️ Held off only when a keyboard is actually up. With none, no inset ever
+/// falls to zero to end the hold-off, and it would swallow the rise of the next
+/// keyboard summoned — which the page would then not know it owns.
 void dismissKeyboardForSwipe() {
+  _keyboardDismissing = _keyboardDismissing || _keyboardIsUp;
   _keyboardIsUp = false;
-  _keyboardDismissing = true;
   FocusManager.instance.primaryFocus?.unfocus();
 }
 
@@ -164,8 +168,8 @@ class _TerminalPageState extends State<TerminalPage>
   bool _keyboardUp = false;
 
   /// Whether the keyboard is mid-animation, and so the pane's height is still
-  /// changing frame by frame. Handed to [TerminalPanel.settling], which freezes
-  /// the renderer and the auto-resize until this clears.
+  /// changing frame by frame. Handed to [TerminalPanel.settling], which holds
+  /// the remote resize until this clears.
   bool _keyboardSettling = false;
 
   /// Whether a hold in progress on the mic has been dragged off it, so letting
@@ -221,17 +225,19 @@ class _TerminalPageState extends State<TerminalPage>
   /// only a stream of [didChangeMetrics] ticks — so the end is detected by the
   /// inset going quiet. The window is a little longer than one frame at 60Hz so
   /// a slow frame mid-animation does not read as the end of it.
-  double? _lastInset;
+  ///
+  /// Starts at zero: see [didChangeMetrics] for why an unknown inset is taken
+  /// for a keyboard that is down.
+  double _lastInset = 0;
   Timer? _settleTimer;
   static const _settleWindow = Duration(milliseconds: 80);
 
-  /// Stops the settle watch, leaving the renderer live.
+  /// Stops the settle watch, leaving the remote resize live.
   ///
   /// ⚠️ Called from [dispose], so it must not touch [setState].
   void _cancelSettle() {
     _settleTimer?.cancel();
     _settleTimer = null;
-    _lastInset = null;
   }
 
   @override
@@ -240,11 +246,10 @@ class _TerminalPageState extends State<TerminalPage>
     WidgetsBinding.instance.addObserver(this);
   }
 
-  /// Releases the freeze when this page is parked mid-animation.
+  /// Releases the resize hold when this page is parked mid-animation.
   ///
-  /// A settle that never ends would otherwise be waiting on [didChangeMetrics]
-  /// ticks that only the page ON SCREEN gets, and the pane would come back from
-  /// the pager with its renderer still gated.
+  /// A settle left running would end on a page that is no longer on screen, and
+  /// the pane would come back from the pager still holding its resize.
   @override
   void didUpdateWidget(TerminalPage oldWidget) {
     super.didUpdateWidget(oldWidget);
@@ -445,12 +450,15 @@ class _TerminalPageState extends State<TerminalPage>
     // so the ticks this page gets for everything else — a rotation, a status
     // bar resizing — never freeze a pane whose height is not moving.
     //
-    // The very first tick is deliberately not a move: `_lastInset` starts null
-    // and only seeds the baseline, so arriving on this page cannot begin a
-    // settle of its own.
+    // ⚠️ The baseline starts at zero, a keyboard that is DOWN. The first tick a
+    // page ever sees is almost always the keyboard's first frame on its way up,
+    // and taking that tick as a mere baseline let the pane resize the remote
+    // shell at the half-risen height before the settle began — two SIGWINCHes
+    // and two redraws for one keyboard. A page arriving under a keyboard already
+    // up costs one needless 80ms hold, and nothing else.
     final previous = _lastInset;
     _lastInset = inset;
-    if (previous != null && inset != previous) {
+    if (inset != previous) {
       _settleTimer?.cancel();
       _settleTimer = Timer(_settleWindow, () {
         _settleTimer = null;
@@ -699,7 +707,13 @@ class _TerminalPageState extends State<TerminalPage>
                                       // moves this pane's height: the header slides
                                       // OVER the terminal rather than out of its
                                       // column — see [_SlideAway].
-                                      settling: _keyboardSettling,
+                                      //
+                                      // ⚠️ Held for as long as search is open, too:
+                                      // its keyboard is typing a query over a faded
+                                      // terminal, and resizing the agent's shell for
+                                      // it redrew the whole TUI on the way in and
+                                      // again on the way out.
+                                      settling: _keyboardSettling || _searching,
                                       // ⚠️ The tap is taken in the panel, not by a
                                       // `Listener` over it. xterm's own `_onTapDown`
                                       // calls `requestKeyboard()`, so anything that

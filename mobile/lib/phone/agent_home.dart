@@ -10,6 +10,7 @@ import 'package:harness_mobile/state/app_state.dart';
 
 import 'agent_index.dart';
 import 'agent_swipe.dart';
+import 'agent_swipe_list.dart';
 import 'agents_page.dart' show openNewAgent;
 import 'machines_tab.dart';
 import 'phone_fab.dart';

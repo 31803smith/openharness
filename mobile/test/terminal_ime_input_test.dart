@@ -11,14 +11,22 @@ void main() {
   Terminal newTerminal() =>
       Terminal(maxLines: 200, reflowEnabled: false)..resize(80, 12);
 
-  Future<void> pumpTerminal(WidgetTester tester, Terminal terminal) async {
+  Future<void> pumpTerminal(
+    WidgetTester tester,
+    Terminal terminal, {
+    bool deleteDetection = false,
+  }) async {
     await tester.pumpWidget(
       MaterialApp(
         home: Scaffold(
           body: SizedBox(
             width: 400,
             height: 320,
-            child: TerminalView(terminal, autofocus: true),
+            child: TerminalView(
+              terminal,
+              autofocus: true,
+              deleteDetection: deleteDetection,
+            ),
           ),
         ),
       ),
@@ -126,6 +134,74 @@ void main() {
     },
     variant: TargetPlatformVariant.only(TargetPlatform.iOS),
   );
+
+  group('with delete detection, as a phone runs it', () {
+    /// What UIKit's `deleteBackward` does to the buffer it holds: one character
+    /// fewer, and NOTHING at all once the buffer is empty.
+    Future<void> deleteBackward(WidgetTester tester) async {
+      final text = tester.testTextInput.editingState!['text'] as String;
+      if (text.isEmpty) return;
+      final left = text.substring(0, text.length - 1);
+      tester.testTextInput.updateEditingValue(
+        TextEditingValue(
+          text: left,
+          selection: TextSelection.collapsed(offset: left.length),
+        ),
+      );
+      await tester.pump();
+    }
+
+    testWidgets('Backspace keeps rubbing out a line the keyboard never typed', (
+      tester,
+    ) async {
+      final terminal = newTerminal();
+      final outbound = <String>[];
+      terminal.onOutput = outbound.add;
+      await pumpTerminal(tester, terminal, deleteDetection: true);
+
+      // A voice transcript sits in the prompt; the native buffer knows
+      // nothing of it.
+      for (var press = 0; press < 5; press++) {
+        await deleteBackward(tester);
+      }
+
+      expect(outbound, List.filled(5, '\x7f'));
+    }, variant: TargetPlatformVariant.only(TargetPlatform.iOS));
+
+    testWidgets(
+      'Return submits once when iOS appends its newline to the padding',
+      (tester) async {
+        final terminal = newTerminal();
+        final outbound = <String>[];
+        terminal.onOutput = outbound.add;
+        await pumpTerminal(tester, terminal, deleteDetection: true);
+
+        tester.testTextInput.updateEditingValue(
+          const TextEditingValue(
+            text: '  hi',
+            selection: TextSelection.collapsed(offset: 4),
+          ),
+        );
+        await tester.pump();
+        outbound.clear();
+
+        await tester.testTextInput.receiveAction(TextInputAction.newline);
+        await tester.pump();
+        // The race's other winner: the reset landed first, so the newline
+        // arrives on the padding rather than on the line.
+        tester.testTextInput.updateEditingValue(
+          const TextEditingValue(
+            text: '  \n',
+            selection: TextSelection.collapsed(offset: 3),
+          ),
+        );
+        await tester.pump();
+
+        expect(outbound, ['\r']);
+      },
+      variant: TargetPlatformVariant.only(TargetPlatform.iOS),
+    );
+  });
 
   testWidgets(
     'Telex sends the composed word, not the letters it was typed from',

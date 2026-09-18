@@ -96,4 +96,76 @@ void main() {
     await tester.pump(const Duration(seconds: 1));
     expect(resizes, isEmpty);
   });
+
+  testWidgets('the keyboard search raises leaves the terminal its size', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: TerminalPage(
+          notifier: notifier,
+          machineId: 'm',
+          agentId: 'a',
+          voice: voice,
+        ),
+      ),
+    );
+    await tester.pump(const Duration(milliseconds: 100));
+    resizes.clear();
+
+    await tester.tap(find.text(TerminalHeader.searchHint));
+    await tester.pump();
+    // The search field's keyboard slides up, and the page shrinks above it.
+    tester.view.viewInsets = const FakeViewPadding(bottom: 900);
+    addTearDown(tester.view.resetViewInsets);
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 1));
+
+    // The terminal is faded behind the search screen: resizing the agent's shell
+    // for a keyboard that is typing a query redraws its whole TUI for nothing,
+    // and again when the search closes.
+    expect(resizes, isEmpty);
+  });
+
+  testWidgets('the first keyboard up resizes the terminal once, when it lands', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: TerminalPage(
+          notifier: notifier,
+          machineId: 'm',
+          agentId: 'a',
+          voice: voice,
+        ),
+      ),
+    );
+    await tester.pump(const Duration(milliseconds: 100));
+    resizes.clear();
+
+    // The keyboard's slide, frame by frame — with REAL time between the frames,
+    // as a phone has: the session sends a resize straight away once the last
+    // one is 50ms of wall clock old, and fake time never gets it there.
+    for (final inset in const [300.0, 600.0, 900.0]) {
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 60)),
+      );
+      tester.view.viewInsets = FakeViewPadding(bottom: inset);
+      await tester.pump(const Duration(milliseconds: 16));
+    }
+    await tester.pump(const Duration(seconds: 1));
+
+    // One SIGWINCH at the final height — not a first one at whatever height the
+    // slide's opening frame happened to have.
+    expect(resizes, hasLength(1));
+
+    // Down again and settled inside the test, so no resize is left in flight
+    // when the view is reset for the next one.
+    tester.view.resetViewInsets();
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 1));
+    // The settle's end lays the terminal out on the frame above; its resize
+    // coalesces for one more beat.
+    await tester.pump(const Duration(milliseconds: 100));
+  });
 }

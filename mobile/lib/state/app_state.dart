@@ -8,6 +8,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../analytics/analytics.dart';
 import '../api/api_client.dart';
+import '../viewer/direct_auth_api.dart';
 import '../viewer/sign_in_browser.dart';
 import '../viewer/viewer_services.dart';
 import '../auth/auth_session.dart';
@@ -1369,7 +1370,12 @@ class AppNotifier extends ChangeNotifier {
   /// Publish the selected pane to the existing local CLI connection. The CLI
   /// shares this focus with paired devices and the dial; terminal attachments
   /// and operating-system window activation do not define the selected agent.
+  ///
+  /// ⚠️ **Never from a viewer.** Only the CLI's loopback server reads these (`localWsServer.ts`); a
+  /// viewer's socket is the relay, where nothing does — and the type is not in `encryptedDownTypes`,
+  /// so every swipe sent the agent id past the backend in the clear for no one to read.
   void _announceAppFocus() {
+    if (viewer != null) return;
     final pane = focusedPane;
     final machineId = pane?.agentId == null ? null : pane?.machineId;
     final previousMachineId = _announcedFocusMachineId;
@@ -1408,9 +1414,11 @@ class AppNotifier extends ChangeNotifier {
   /// The dial belongs to whichever daemon owns the cable, and only a complete
   /// roster lets that one judge; the others store a list they never use, which
   /// costs nothing and saves the window from having to know which is which.
+  ///
+  /// Never from a viewer, for [_announceAppFocus]'s reasons — and these carry swarm names too.
   void _announceOpenPanesToDial() {
     final pool = _pool;
-    if (pool == null) return;
+    if (pool == null || viewer != null) return;
     final agentIds = <String>[for (final pane in panes) ?pane.agentId];
     // The swarms travel with the tiles: the dial names the one on screen above the agent and offers
     // the others, and a pick there comes back as `dial_swarm`. Names and member ids only — the layout
@@ -2531,7 +2539,9 @@ class AppNotifier extends ChangeNotifier {
       'This machine is no longer linked. Link it again to reconnect.',
     );
     notifyListeners();
-    _startLinkRetry(machineId);
+    // ⚠️ Not a viewer's. Its links change only through its own password form, which reconnects
+    // when it lands — polling cannot fix what only that form can, and each round redrew the app.
+    if (viewer == null) _startLinkRetry(machineId);
   }
 
   void _ensurePool() {
@@ -2545,7 +2555,14 @@ class AppNotifier extends ChangeNotifier {
       accessTokenProvider: (force, failedToken) async {
         final directAuth = viewer?.auth;
         if (directAuth != null) {
-          return directAuth.accessToken(force: force, failedToken: failedToken);
+          // Only a session that is gone for good may sign the person out — see
+          // [WsCredentialRevoked]. An outage fails the refresh too, and is retried.
+          return directAuth
+              .accessToken(force: force, failedToken: failedToken)
+              .onError<DirectAuthException>(
+                (error, _) => throw WsCredentialRevoked(error.message),
+                test: (error) => error.signedOut,
+              );
         }
         final fixture = localManualFixture;
         if (fixture != null) return fixture.apiKey;
@@ -5667,6 +5684,11 @@ class AppNotifier extends ChangeNotifier {
           }
         }
         break;
+      // ⚠️ Everything else changed nothing here, so it must not redraw. The machine streams every
+      // agent's live chat — `text_delta`, `tool_start`, … — down this socket, several per second
+      // per agent, and each one used to rebuild every screen listening to this notifier.
+      default:
+        return;
     }
     notifyListeners();
   }

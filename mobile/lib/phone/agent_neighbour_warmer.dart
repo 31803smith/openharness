@@ -3,9 +3,7 @@ import 'dart:async';
 import 'package:harness_mobile/state/app_state.dart';
 import 'package:harness_mobile/terminal/terminal_session.dart';
 
-import 'agent_swipe.dart';
-
-typedef AgentRef = ({String machineId, String agentId});
+import 'agent_swipe_list.dart';
 
 /// Opens the agents one swipe either side of the one on screen, and closes the ones further out.
 ///
