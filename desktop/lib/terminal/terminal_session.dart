@@ -81,9 +81,12 @@ class TerminalSession extends ChangeNotifier {
   final Duration resyncTimeout;
   final bool readOnly;
 
+  // A controllable clock keeps coalescing tests independent of host scheduling.
+  final DateTime Function() _now;
+
   /// Lets input batching tests hold the clock inside the four-millisecond window under host load.
   @visibleForTesting
-  DateTime Function() inputClockForTest = DateTime.now;
+  late DateTime Function() inputClockForTest = _now;
 
   /// Forces a fresh transport dial (see `WsConn.forceReconnect`) — called once when the very first
   /// `terminal_open` never gets a `terminal_ready` back within [resyncTimeout]. Covers the relay
@@ -102,7 +105,8 @@ class TerminalSession extends ChangeNotifier {
     this.onOpenStalled,
     this.readOnly = false,
     this.resyncTimeout = const Duration(seconds: 4),
-  }) {
+    DateTime Function()? now,
+  }) : _now = now ?? DateTime.now {
     terminal = _newTerminal();
   }
 
@@ -1140,8 +1144,7 @@ class TerminalSession extends ChangeNotifier {
     _pendingRows = _clampRows(height);
     final last = _lastResizeFlushAt;
     final idle =
-        last == null ||
-        DateTime.now().difference(last) >= _resizeCoalesceWindow;
+        last == null || _now().difference(last) >= _resizeCoalesceWindow;
     if (_resizeTimer == null && idle) {
       unawaited(_flushResize());
       return;
@@ -1167,7 +1170,7 @@ class TerminalSession extends ChangeNotifier {
     if (nextCols == cols && nextRows == rows) return;
     cols = nextCols;
     rows = nextRows;
-    _lastResizeFlushAt = DateTime.now();
+    _lastResizeFlushAt = _now();
     final generation = _generation;
     final sent = await send('terminal_resize', {
       'streamId': streamId,

@@ -139,6 +139,11 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
       let menu = main as? HarnessKeymapMenu ?? HarnessKeymapMenu.replacing(main)
       if NSApp.mainMenu !== menu { NSApp.mainMenu = menu }
       menu.update(map, window: window)
+      menu.dispatchViewerCommand = { [weak self] command in
+        guard let self, self.actionsEnabled else { return false }
+        self.channel.invokeMethod("keymapCommand", arguments: ["command": command])
+        return true
+      }
     }
     syncMenuKeys()
   }

@@ -50,6 +50,8 @@ import '../widgets/swarm_wallpaper.dart';
 import '../widgets/agent_action_icons.dart';
 import '../widgets/swarm_icon.dart';
 import '../widgets/task_palette.dart';
+import '../orchestrator/orchestrator_launcher.dart';
+import '../orchestrator/orchestrator_workspace.dart';
 
 class SwarmScreen extends StatefulWidget {
   const SwarmScreen({
@@ -1294,6 +1296,8 @@ class _SwarmScreenState extends State<SwarmScreen> {
     ShortcutAction.newAgent: _newAgent,
     ShortcutAction.routeTask: () =>
         _dialog(() => showTaskPalette(context, app)),
+    ShortcutAction.orchestrate: () =>
+        _dialog(() => showOrchestratorLauncher(context, app)),
     ShortcutAction.reload: app.retryMachines,
     ShortcutAction.showLayout: () =>
         _dialog(() => showLayoutPalette(context, app)),
@@ -1506,7 +1510,16 @@ class _SwarmScreenState extends State<SwarmScreen> {
                             key: ValueKey('harness-start-background'),
                             child: SwarmWallpaper(),
                           ),
-                        if (app.activeSwarm.isStore)
+                        if (app.activeSwarm.isOrchestrator)
+                          OrchestratorWorkspace(
+                            key: ValueKey(
+                              'orchestrator:${app.activeSwarm.orchestratorId}',
+                            ),
+                            notifier: app,
+                            machineId: app.activeSwarm.orchestratorMachineId!,
+                            projectId: app.activeSwarm.orchestratorId!,
+                          )
+                        else if (app.activeSwarm.isStore)
                           StoreTab(
                             key: ValueKey('store-tab:${app.activeSwarmId}'),
                             notifier: app,

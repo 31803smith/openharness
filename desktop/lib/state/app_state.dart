@@ -61,6 +61,7 @@ import 'pending_question.dart';
 import 'session_preview.dart';
 import '../usage/remote_usage.dart';
 import '../usage/usage_accounts.dart';
+import '../orchestrator/orchestrator_controller.dart';
 
 enum AppStatus {
   bootstrapping,
@@ -545,6 +546,74 @@ class AppNotifier extends ChangeNotifier {
   Iterable<TerminalPane> get allPanes => swarms.expand((s) => s.panes).toSet();
   String get activeSwarmId => activeSwarm.id;
 
+  final _orchestratorProjects = <String, OrchestratorController>{};
+
+  Future<Map<String, dynamic>> orchestratorRequest(
+    String machineId,
+    Map<String, dynamic> payload,
+  ) async {
+    if (machineId != localMachineState?.machine.machineId) {
+      throw StateError(
+        'Orchestrator projects currently run on this computer only.',
+      );
+    }
+    try {
+      return await _conn(machineId).request(
+        'orchestrator',
+        payload: payload,
+        timeout: const Duration(seconds: 35),
+      );
+    } on WsRequestFailure catch (e) {
+      if (e.code == 'UNSUPPORTED') {
+        throw StateError(
+          'Update the local Harness CLI to use the orchestrator.',
+        );
+      }
+      rethrow;
+    }
+  }
+
+  OrchestratorController orchestratorProject(String machineId, String id) =>
+      _orchestratorProjects.putIfAbsent(
+        '$machineId/$id',
+        () => OrchestratorController(
+          id: id,
+          request: (payload) => orchestratorRequest(machineId, payload),
+        ),
+      );
+
+  void openOrchestratorProject(String machineId, String id, String title) {
+    final existing = swarms
+        .where(
+          (s) => s.orchestratorId == id && s.orchestratorMachineId == machineId,
+        )
+        .firstOrNull;
+    if (existing != null) {
+      selectSwarm(existing.id);
+      return;
+    }
+    final name = title.trim().replaceAll(RegExp(r'\s+'), ' ');
+    newSwarm(
+      name: name.isEmpty
+          ? 'Orchestrator'
+          : name.substring(0, name.length.clamp(0, 48)),
+    );
+    activeSwarm
+      ..kind = 'orchestrator'
+      ..orchestratorId = id
+      ..orchestratorMachineId = machineId;
+    _persistLayout();
+    notifyListeners();
+  }
+
+  Future<void> inspectOrchestratorAgent(
+    String machineId,
+    String agentId,
+  ) async {
+    newSwarm(name: 'Inspect agent');
+    await addAgentToSwarm(machineId, agentId, swarmId: activeSwarmId);
+  }
+
   // A New Tab remains temporary until it has content or a custom name.
   // The return destination is session-local; abandoned drafts are never saved.
   final _draftSwarmReturns = <String, String>{};
@@ -839,6 +908,8 @@ class AppNotifier extends ChangeNotifier {
       return;
     }
     final restored = Swarm(id: saved.id, name: saved.name, kind: saved.kind)
+      ..orchestratorId = saved.orchestratorId
+      ..orchestratorMachineId = saved.orchestratorMachineId
       ..gridColumns = saved.gridColumns
       ..presets.addAll(saved.presets)
       ..paneSizes.addAll(saved.paneSizes);
@@ -6232,17 +6303,32 @@ class AppNotifier extends ChangeNotifier {
             raw['kind'] == 'store' ||
             (raw['name'] == Swarm.storeName && (raw['panes'] as List).isEmpty);
         if (isStore && restored.any((s) => s.isStore)) continue;
-        final swarm = Swarm(
-          id: id,
-          name:
-              raw['name'] is String && (raw['name'] as String).trim().isNotEmpty
-              ? (raw['name'] as String).substring(
-                  0,
-                  (raw['name'] as String).length.clamp(0, 80),
-                )
-              : Swarm.defaultName,
-          kind: isStore ? 'store' : 'harness',
-        );
+        final swarm =
+            Swarm(
+                id: id,
+                name:
+                    raw['name'] is String &&
+                        (raw['name'] as String).trim().isNotEmpty
+                    ? (raw['name'] as String).substring(
+                        0,
+                        (raw['name'] as String).length.clamp(0, 80),
+                      )
+                    : Swarm.defaultName,
+                kind: isStore
+                    ? 'store'
+                    : raw['kind'] == 'orchestrator'
+                    ? 'orchestrator'
+                    : 'harness',
+              )
+              ..orchestratorId =
+                  raw['orchestratorId'] is String &&
+                      RegExp(r'^[a-f0-9]{32}$')
+                          .hasMatch(raw['orchestratorId'] as String)
+                  ? raw['orchestratorId'] as String
+                  : null
+              ..orchestratorMachineId = raw['orchestratorMachineId'] is String
+                  ? raw['orchestratorMachineId'] as String
+                  : null;
         for (final item in (raw['panes'] as List).take(maxPanes)) {
           final entry = PaneLayoutEntry.fromJson(item);
           if (entry == null) continue;
@@ -6459,6 +6545,10 @@ class AppNotifier extends ChangeNotifier {
     if (machine == null) return;
     final type = event['type'] as String? ?? '';
     final payload = (event['payload'] as Map<String, dynamic>?) ?? {};
+    if (type == 'orchestrator_changed') {
+      _orchestratorProjects['$machineId/${payload['id']}']?.changed();
+      return;
+    }
     // Only terminal protocol frames visit the session pool. Heartbeats, dial
     // scroll and discovery events must not await every retained terminal.
     // Each session still sees terminal frames: ready replies match their own
@@ -6791,6 +6881,9 @@ class AppNotifier extends ChangeNotifier {
 
   @override
   void dispose() {
+    for (final project in _orchestratorProjects.values) {
+      project.dispose();
+    }
     grid.AppTheme.palette.removeListener(_announceTerminalThemeEverywhere);
     terminalThemeStore.removeListener(_announceTerminalThemeEverywhere);
     _localGitProjects.dispose();
