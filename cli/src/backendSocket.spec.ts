@@ -15,6 +15,35 @@ import { randomUUID } from 'node:crypto'
 import { fakeGridAnswers, installFakeGrid, type FakeGrid } from './lib/__fixtures__/fakeGrid.js'
 import { clearGridMcpUrlCache } from './lib/gridMcpUrl.js'
 
+describe('viewer forwarding authentication', () => {
+  it('requires encryption and a web-role session remotely, while permitting trusted local clients', async () => {
+    const socket = new BackendSocket('token')
+    const internals = socket as any
+    const handle = vi.spyOn(socket.viewerForwarder, 'handle').mockImplementation(() => {})
+    const role = vi.spyOn(internals.e2ee, 'sessionRole').mockReturnValue('web')
+    const frame = { type: 'viewer_request', payload: { streamId: 'v', agentId: 'a' } }
+    const unwrap = vi.spyOn(internals.e2ee, 'unwrapDown').mockReturnValue(frame)
+    await internals.dispatchDown(frame, 'remote')
+    expect(unwrap).not.toHaveBeenCalled()
+    expect(handle).not.toHaveBeenCalled()
+    const encrypted = { type: 'viewer_request', payload: { __e2e: { v: 1, k: 'p', n: 1, ct: 'fixture' } } }
+    role.mockReturnValue('device')
+    await internals.dispatchDown(encrypted, 'remote')
+    expect(handle).not.toHaveBeenCalled()
+    role.mockReturnValue('web')
+    await internals.dispatchDown(encrypted, 'remote')
+    expect(handle).toHaveBeenCalledWith('remote', 'viewer_request', frame.payload)
+    socket.registerLocalClient('local:viewer', { sendFrame: () => true, sendBinary: () => true })
+    await internals.dispatchDown(frame, 'local:viewer')
+    expect(handle).toHaveBeenCalledWith('local:viewer', 'viewer_request', frame.payload)
+    handle.mockClear()
+    await internals.dispatchDown({ type: 'viewer_arbitrary', payload: {} }, 'local:viewer')
+    expect(handle).not.toHaveBeenCalled()
+    await socket.unregisterLocalClient('local:viewer')
+    await socket.stop()
+  })
+})
+
 const wsMock = vi.hoisted(() => {
   const instances: MockWebSocket[] = []
 
