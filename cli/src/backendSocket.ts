@@ -1187,7 +1187,13 @@ export class BackendSocket {
   private async dispatchDown(frame: Frame, connId: string, transport: DownTransport = 'relay'): Promise<void> {
     const type = frame.type as string | undefined
     if (!type) return
-    const local = this.localClients.has(connId)
+    // Whether this frame came from a process on THIS machine — the trust boundary four gates below
+    // turn on. The membership half is a dispatch-time question about a connection that may already
+    // be gone: frames run through a per-connId queue, so a local client that disconnects between
+    // sending and being dispatched used to leave `localClients.has()` false, and its already-queued
+    // frames were then read as the BACKEND's. The transport half closes that, because it is stamped
+    // at enqueue by the caller that had just verified membership. Either one being true is local.
+    const local = transport === 'local' || this.localClients.has(connId)
     // E2EE control frames (pairing/handshake) are handled by the manager, never as node RPCs.
     if (type.startsWith('e2e_')) {
       if (local) {
@@ -1280,6 +1286,10 @@ export class BackendSocket {
       // port redirect the account's inference somewhere of its choosing, and a leftover test script
       // doing exactly that by accident cost hours to find. No client sends this frame; there is
       // nothing to be compatible with.
+      //
+      // Stricter than the `!local` its neighbours use, on purpose: this says "the backend link", so
+      // it keeps holding if the p2p allowlist (`TERMINAL_P2P_DOWN_TYPES`) ever widens. "Not local"
+      // would quietly start admitting p2p on the day that set grew.
       if (transport !== 'relay') {
         console.warn(`[backend] ignoring machine_meta from ${transport} (${connId}) — only the backend may send it`)
         return
