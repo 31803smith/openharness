@@ -90,10 +90,52 @@ function binaryBytes(raw: RawData): Uint8Array {
   return new Uint8Array()
 }
 
+/** One local client attached to a pooled upstream: where its frames go, and what to tell it on close. */
+interface AttachedClient {
+  sink: LocalClientSink
+  onClosed: (code: number, reason: string) => void
+}
+
+/**
+ * `entry.sink` / `entry.onClosed` as the fan-out over what is attached: a frame reaches every client,
+ * a client whose socket refuses it is dropped, and a close is told to each. Null when nobody is
+ * attached — which is what the linger and the viewer proxy already key on.
+ */
+function bindAttached(entry: Entry): void {
+  const clients = entry.attached
+  if (clients.size === 0) { entry.sink = null; entry.onClosed = null; return }
+  entry.sink = {
+    sendFrame: (frame) => {
+      let delivered = false
+      for (const client of [...clients]) {
+        if (client.sink.sendFrame(frame)) delivered = true
+        else clients.delete(client)
+      }
+      return delivered
+    },
+    sendBinary: (frame) => {
+      let delivered = false
+      for (const client of [...clients]) {
+        if (client.sink.sendBinary(frame)) delivered = true
+        else clients.delete(client)
+      }
+      return delivered
+    },
+  }
+  entry.onClosed = (code, reason) => { for (const client of [...clients]) client.onClosed(code, reason) }
+}
+
 interface Entry {
   viewers?: RemoteViewerProxy
   ws: WebSocket
   crypto: RelaySessionCrypto
+  /**
+   * Every local client selected onto this machine right now. ONE upstream session per machine — the
+   * desktop's, usually — but a second local client (`harness remote` creating a terminal there, an
+   * E2E script watching) must not take the desktop's place: `sink` fans out to all of them and
+   * `onClosed` tells each, and the entry lingers only once the last one has detached.
+   */
+  attached: Set<AttachedClient>
   sink: LocalClientSink | null
   onClosed: ((code: number, reason: string) => void) | null
   lingerTimer: ReturnType<typeof setTimeout> | null
@@ -220,23 +262,24 @@ export class RemoteRelayPool {
     sink: LocalClientSink,
     onClosed: (code: number, reason: string) => void,
   ): Promise<RelaySession> {
+    const client: AttachedClient = { sink, onClosed }
     const existing = this.entries.get(machineId)
     if (existing) {
       if (existing.lingerTimer) { clearTimeout(existing.lingerTimer); existing.lingerTimer = null }
-      existing.sink = sink
-      existing.onClosed = onClosed
+      existing.attached.add(client)
+      bindAttached(existing)
       sink.sendFrame({ type: 'connected', payload: { machineId, e2ee: false } })
-      return this.sessionFor(machineId, existing)
+      return this.sessionFor(machineId, existing, client)
     }
     const inFlight = this.pending.get(machineId)
     const entry = await (inFlight ?? this.connect(machineId, autonomousEnv, selectFrame))
-    entry.sink = sink
+    entry.attached.add(client)
+    bindAttached(entry)
     // The real backend `connected{machineId}` ack that resolved the connect above was consumed
     // internally by dial()'s handshake logic, not forwarded — this local client (whether it triggered
     // the dial or joined one already in flight) still needs its own ack to know the select succeeded.
     sink.sendFrame({ type: 'connected', payload: { machineId, e2ee: false } })
-    entry.onClosed = onClosed
-    return this.sessionFor(machineId, entry)
+    return this.sessionFor(machineId, entry, client)
   }
 
   private connect(machineId: string, autonomousEnv: string, selectFrame: Frame): Promise<Entry> {
@@ -274,6 +317,7 @@ export class RemoteRelayPool {
     const entry: Entry = {
       ws,
       crypto,
+      attached: new Set(),
       sink: null,
       onClosed: null,
       lingerTimer: null,
@@ -515,7 +559,7 @@ export class RemoteRelayPool {
     return entry
   }
 
-  private sessionFor(machineId: string, entry: Entry): RelaySession {
+  private sessionFor(machineId: string, entry: Entry, client: AttachedClient | null = null): RelaySession {
     return {
       send: async (frame) => {
         const payload = framePayload(frame)
@@ -566,9 +610,12 @@ export class RemoteRelayPool {
         if (p2pFailed) this.demoteP2p(machineId, entry, 'send_failed')
       },
       detach: () => {
+        // This client only; the upstream stays for whoever else is on it, and lingers a while for
+        // the next select once nobody is.
+        if (client) entry.attached.delete(client)
+        bindAttached(entry)
+        if (entry.attached.size > 0) return
         entry.viewers?.reset()
-        entry.sink = null
-        entry.onClosed = null
         entry.lingerTimer = setTimeout(() => {
           if (!entry.sink) {
             if (entry.p2pRetryTimer) clearTimeout(entry.p2pRetryTimer)

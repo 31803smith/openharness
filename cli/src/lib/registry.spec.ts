@@ -1644,8 +1644,9 @@ describe('a terminal: a pane that becomes an engine and back', () => {
 
     const released = registry.releaseEngine(opened.agentId)!
     expect(released.agentId).toBe(opened.agentId)
-    expect(released).toMatchObject({ engine: 'terminal', terminalHost: true, active: true, launch: { state: 'ready' }, sessionId: '', processIdentity: null, transcriptPath: null })
-    expect(released.bypassPermission).toBeUndefined()
+    expect(released).toMatchObject({ engine: 'terminal', terminalHost: true, active: true, launch: { state: 'ready' }, sessionId: '', processIdentity: null, transcriptPath: null, grid: null, model: null })
+    // The pane's launch shape survives the engine: the same flags come back with the next launch.
+    expect(released.bypassPermission).toBe(true)
     expect(registry.bySession('session-r')).toBeUndefined()
     expect(registry.byProcess('claude', processIdentity(912))).toBeUndefined()
     expect(registry.byRuntimeTerminal(pane)?.agentId).toBe(opened.agentId)

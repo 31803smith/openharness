@@ -53,6 +53,7 @@ import { DSH_ID_RE } from './dsh/manifest.js'
 import { refreshDshRegistry } from './dsh/catalog.js'
 import type { DshInstallProgress } from './dsh/install.js'
 import { dshInstallReply, dshInstallRequest, dshInstallStatus, dshListRows, dshRemoveId, dshRemoveReply } from './dsh/wire.js'
+import { terminalHandoffRequest } from './lib/terminalHandoff.js'
 import { routeVoiceTask } from './lib/voiceRouter.js'
 import { tailFile } from './lib/sessions.js'
 import { messagesToEvents, windowRawLines, subagentStatsFromRawLines, type SessionEvent } from './lib/normalize.js'
@@ -401,6 +402,8 @@ export class BackendSocket {
     Promise<{ ok: true; id: string } | { ok: false; error: string; detail: string }>) | null = null
   /** Called on `dsh_remove` — cli.ts uninstalls the harness from this machine. */
   onDshRemove: ((id: string) => { ok: true } | { ok: false; error: string; detail: string }) | null = null
+  /** Called on `remote_terminal_handoff` — cli.ts names the agent whose tile is that tmux pane, or null. */
+  onTerminalHandoff: ((tmuxPane: string) => string | null) | null = null
   /** What the daemon knows about an agent's DSH companions (viewer URL, verdict); null when nothing. */
   harnessSharing: HarnessShareOwner | null = null
   dshFrameProvider: ((session: RegisteredSession) => AgentDshContext | null) | null = null
@@ -1715,6 +1718,27 @@ export class BackendSocket {
           const id = dshRemoveId(payload)
           if (!id) { reply(type, requestId, { error: 'INVALID_DSH', detail: 'dsh_remove needs an id' }); return }
           reply(type, requestId, dshRemoveReply(id, this.onDshRemove(id)))
+          return
+        }
+
+        case 'remote_terminal_handoff': {
+          // `harness remote`, typed INSIDE one of this machine's terminal tiles, opened a terminal on
+          // another machine and asks the window showing the tile to swap it over: the tile it was
+          // typed in (named by its tmux pane, the one fact the shell has about itself) becomes the new
+          // agent's, and the old shell is ended by the window. Asked over loopback only (the command
+          // runs on this machine), but PUSHED to every audience: the window showing a tile of this
+          // machine may be on another computer, reached through the relay — nothing in the payload
+          // but ids, so it travels plain like dsh_install_status.
+          if (!this.localClients.has(connId)) { reply(type, requestId, { error: 'UNSUPPORTED' }); return }
+          const handoff = terminalHandoffRequest(payload)
+          if (!handoff) { reply(type, requestId, { error: 'INVALID_HANDOFF', detail: 'remote_terminal_handoff needs tmuxPane (%N), machineId and agentId' }); return }
+          const fromAgentId = this.onTerminalHandoff?.(handoff.tmuxPane) ?? null
+          if (!fromAgentId) { reply(type, requestId, { error: 'NOT_A_HARNESS_PANE', detail: `${handoff.tmuxPane} is not a Harness terminal on this machine` }); return }
+          // Who could hear it: other loopback clients (a window on this computer) and the web audience
+          // (a window elsewhere, relayed). None means nobody is here to swap the tile.
+          const windows = [...this.localClients.keys()].filter((id) => id !== connId).length + this.commanderCount
+          this.send({ type: 'remote_terminal_handoff', payload: { fromAgentId, machineId: handoff.machineId, agentId: handoff.agentId } })
+          reply(type, requestId, { ok: true, fromAgentId, windows })
           return
         }
 

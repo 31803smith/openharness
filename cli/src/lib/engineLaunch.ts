@@ -207,6 +207,12 @@ export interface LaunchCommandOptions {
    */
   firstPrompt?: string
   /**
+   * Terminal only: a file whose absence means this machine has not yet been told about
+   * `harness remote`; the shell prints the hint before its prompt and writes the file. The daemon
+   * names one under its data dir; a test names none and gets no hint.
+   */
+  terminalHintMarker?: string
+  /**
    * Extra argv the caller has already composed, appended last.
    *
    * Exists for engines whose endpoint is configured on the command line rather than through the
@@ -423,8 +429,10 @@ export function buildEngineLaunchArgv(
  */
 export function engineFallbackPrelude(engine: AgentEngine, shellPath: string, tmuxBinary: string | null): string {
   const loginArgs = basename(shellPath).toLowerCase() === 'zsh' ? ' -l' : ''
+  // Named by the command a person would type (`cursor-agent`, `cmd`), not the engine id.
+  const command = basename(engineBin(engine)) || engine
   const mark = tmuxBinary && isAbsolute(tmuxBinary)
-    ? `  [ -n "$TMUX_PANE" ] && ${shellSingleQuote(tmuxBinary)} set-option -p -t "$TMUX_PANE" ${ENGINE_EXIT_PANE_OPTION} "$harness_status" >/dev/null 2>&1 || true\n`
+    ? `  [ -n "\${TMUX_PANE:-}" ] && ${shellSingleQuote(tmuxBinary)} set-option -p -t "$TMUX_PANE" ${ENGINE_EXIT_PANE_OPTION} "$harness_status" >/dev/null 2>&1 || true\n`
     : ''
   return 'harness_engine() {\n'
     + '  harness_status=0\n'
@@ -434,7 +442,7 @@ export function engineFallbackPrelude(engine: AgentEngine, shellPath: string, tm
     // Only a pane — something with a terminal on stdin — gets a shell to type into. Run without one
     // (a spec exercising the script, a wrapper piped somewhere) the engine's own status is the answer.
     + '  if ! [ -t 0 ]; then exit "$harness_status"; fi\n'
-    + `  printf '\\n%s\\n' ${shellSingleQuote(`harness: ${engine} exited ($harness_status). This pane is a shell now — run ${engine} again, or stop the pane.`).replace('($harness_status)', `('"$harness_status"')`)}\n`
+    + `  printf '\\n%s\\n' ${shellSingleQuote(`harness: ${command} exited ($harness_status). This pane is a shell now — run ${command} again, or stop the pane.`).replace('($harness_status)', `('"$harness_status"')`)}\n`
     + `  exec ${shellSingleQuote(shellPath)}${loginArgs}\n`
     + '}\n'
 }
@@ -451,8 +459,19 @@ export function engineFallbackPrelude(engine: AgentEngine, shellPath: string, tm
  * `interactiveEngineShell`). Without a resolvable shell the pane runs `/bin/sh`, which at least
  * gives the person a prompt.
  */
+/**
+ * What the first terminal on a machine says before its prompt — once, ever: the marker file names
+ * the machine as told. Only a tile can act on it (`harness remote` swaps the tile it is typed in),
+ * and a tile is where every terminal the daemon opens lives.
+ */
+export const TERMINAL_HINT_LINES = [
+  'harness: a terminal on this machine. To open one on another of your machines, type',
+  'harness:   harness remote',
+  'harness: pick the machine, and this tile switches to it.',
+] as const
+
 export function buildTerminalLaunchArgv(
-  opts: Pick<LaunchCommandOptions, 'cwd'> = {},
+  opts: Pick<LaunchCommandOptions, 'cwd' | 'terminalHintMarker'> = {},
   shell: string | undefined = undefined,
 ): string[] {
   const candidate = shell === undefined ? currentUserShell() : shell
@@ -461,7 +480,13 @@ export function buildTerminalLaunchArgv(
   const cwdPrelude = opts.cwd
     ? `if ! cd -- "$1"; then printf '%s\\n' 'harness: the selected working directory is unavailable.' >&2; fi\n`
     : ''
-  return [path, '-c', RAISE_OPEN_FILES_SH + cwdPrelude + 'shift\nexec "$@"', 'harness-terminal', opts.cwd ?? '', path, ...loginArgs]
+  // `$2` is the marker: absent, the hint is printed and the marker written, so it is said once per
+  // machine. Written with `:>` rather than touch, so nothing outside the shell is needed; a folder
+  // that cannot be written just says it again next time.
+  const hintPrelude = opts.terminalHintMarker
+    ? `if [ -n "$2" ] && [ ! -e "$2" ]; then printf '%s\\n' ${TERMINAL_HINT_LINES.map(shellSingleQuote).join(' ')} ''; : > "$2" 2>/dev/null || true; fi\n`
+    : ''
+  return [path, '-c', RAISE_OPEN_FILES_SH + cwdPrelude + hintPrelude + 'shift 2\nexec "$@"', 'harness-terminal', opts.cwd ?? '', opts.terminalHintMarker ?? '', path, ...loginArgs]
 }
 
 /**

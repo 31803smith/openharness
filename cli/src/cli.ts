@@ -47,7 +47,7 @@ import { registry, projectDisplayName, type RegisteredSession } from './lib/regi
 import { engineSessionTitle } from './lib/sessionTitle.js'
 import { installAmpPlugin, installCodexHooks, installCommandCodeHooks, installCursorHooks, installDevinHooks, installGrokHooks, installAgyHooks, installCopilotHooks, installHermesHooks, installKiloPlugin, installOpencodePlugin, installPiExtension, installSessionHooks } from './lib/hooks.js'
 import { installOpencodeHarnessComputeSkill } from './lib/harnessComputeSkill.js'
-import { PID_FILE, daemonPort, isAlive, readPid } from './lib/daemonState.js'
+import { PID_FILE, daemonPort, isAlive, isDaemonRunning, readPid } from './lib/daemonState.js'
 import {
   BIND_WAIT_MS, connectFailure, defaultLaunchDeps, removePidFileIf, waitForBind, waitForReady,
 } from './lib/daemonLaunch.js'
@@ -116,6 +116,7 @@ import { TerminalStreamManager } from './lib/terminalStreamManager.js'
 import { terminalRouteKey, terminalRuntimeLabel } from './lib/terminalRuntime.js'
 import { TerminalAgentReconciler } from './lib/terminalAgentReconciler.js'
 import { processRows, type DiscoveredTerminalAgent } from './lib/terminalAgentDiscovery.js'
+import { remoteCommand } from './remoteCommand.js'
 import {
   terminalActionNotStarted,
   type HookTerminalHint,
@@ -200,7 +201,6 @@ import { RuntimeProfileManager, parseRuntimeProfile } from './lib/runtimeProfile
 import { RuntimeProfileController, inspectRuntimePane } from './lib/runtimeProfileController.js'
 import { deviceErrorText } from './lib/deviceErrors.js'
 import { correlateAgentEvent, turnHeartbeatFrame } from './lib/agentEvent.js'
-
 // Before ANY child is spawned: on Linux an absent locale makes tmux and ps mangle their output,
 // which silently costs the daemon every pane it would have discovered. See lib/childLocale.ts.
 ensureUtf8Locale()
@@ -208,6 +208,9 @@ import {
   installTimestampedConsole, sid, preview,
   prepareLogFile, trimLogFile, LOG_CHECK_INTERVAL_MS,
 } from './lib/log.js'
+
+/** Written once the first terminal on this machine has said how `harness remote` works (engineLaunch.ts). */
+const TERMINAL_HINT_MARKER = join(env.ADAPTER_DATA_DIR, 'terminal-remote-hint-shown')
 
 // Claude's Stop hook fires when the agent finishes, but the transcript can lag a moment behind
 // (docs: "the transcript file may lag behind the in-memory conversation"). Acting immediately races
@@ -314,6 +317,7 @@ Machine:
   harness logs export          zip the last 7 days of logs (app, CLI, dial, daemon) to the Desktop
   harness machines             list the machines on this account (this computer's is marked)
   harness machines delete <id> remove ANOTHER machine (refuses this one; use \`harness logout\`)
+  harness remote               from a Harness terminal tile: open a terminal on another machine and switch to it
   harness version              print the installed version (v${VERSION})
   harness update [--force]     update to the latest build now (it also self-updates in the background;
                                neither touches a local install-cli.sh build without --force)
@@ -2231,6 +2235,10 @@ async function runForeground(session: AuthSession): Promise<void> {
   backend.runtimeProfileProvider = (session) => runtimeProfiles.selectedModel(session)
   backend.dshFrameProvider = dshFrameContext
   backend.onDshRemove = (id) => removeDsh(id)
+  // `harness remote` names the tile it was typed in by its tmux pane; the registry knows whose it is.
+  backend.onTerminalHandoff = (tmuxPane) => registry.advertised()
+    .find((session) => session.tmuxPane === tmuxPane
+      || session.runtimes.some((runtime) => runtime.backend === 'tmux' && runtime.paneId === tmuxPane))?.agentId ?? null
   backend.onDshInstall = (input, progress) => mutateDsh(input, progress)
   backend.onDshUpdate = (id, progress) => mutateDsh({ id, update: true }, progress)
   backend.onAgentRename = (session, name) => { void terminals.setTitle(session, name) }
@@ -2697,7 +2705,9 @@ async function runForeground(session: AuthSession): Promise<void> {
       // The live argv is the truth about the bypass flag, and this is the one place every running
       // agent passes through — so a row written before the flag was persisted at all (or by a build
       // that did not yet) learns it here, before any pane recreation ever needs it.
-      registry.setBypassPermission(current.agentId, bypassPermissionActive(current.engine, observed.args))
+      // `observed.engine`, not `current.engine`: for a terminal that just adopted one, the row's
+      // engine was `terminal` a line ago, which has no bypass flag and would read every launch as "no".
+      registry.setBypassPermission(current.agentId, bypassPermissionActive(observed.engine, observed.args))
       // Same idea for a Codex profile: a row that never learned which CODEX_HOME its process runs
       // under learns it from the process, before the hook path validates a transcript against it.
       // Fill-only — a profile the row already knows is never re-derived.
@@ -3763,6 +3773,7 @@ async function runForeground(session: AuthSession): Promise<void> {
         const { env: launchEnv, extraArgs, clearEnv } = built.overrides
         const argv = buildEngineLaunchArgv(entry.engine, {
           ...opts,
+          terminalHintMarker: TERMINAL_HINT_MARKER,
           bypassPermission: entry.bypassPermission === true,
           ...(entry.permissionMode ? { permissionMode: entry.permissionMode } : {}),
           installIfMissing: enginePathOverride(entry.engine) ? undefined : engineInstallRecipe(entry.engine),
@@ -4052,7 +4063,7 @@ async function runForeground(session: AuthSession): Promise<void> {
     const extraArgs = [...(gridLaunch?.args ?? []), ...dshArgs, ...(agent ? namedAgentArgs(engine, agent) : [])]
     // The first prompt is a launch option only — never part of `extraArgs`, which the registry row
     // carries into a relaunch (engineLaunch.ts, `firstPrompt`).
-    const launchOptions = { bypassPermission, ...(permissionMode ? { permissionMode } : {}), extraArgs: extraArgs.length ? extraArgs : undefined, installIfMissing, clearEnv, cwd, harnessNode: dsh ? true : undefined, ...(prompt ? { firstPrompt: prompt } : {}) }
+    const launchOptions = { bypassPermission, ...(permissionMode ? { permissionMode } : {}), extraArgs: extraArgs.length ? extraArgs : undefined, installIfMissing, clearEnv, cwd, harnessNode: dsh ? true : undefined, ...(prompt ? { firstPrompt: prompt } : {}), terminalHintMarker: TERMINAL_HINT_MARKER }
     const command = buildEngineCommandArgv(engine, launchOptions)
     const argv = buildEngineLaunchArgv(engine, launchOptions)
     // A tmux route is enough to stream its screen. Register it before looking for a process so both
@@ -4472,7 +4483,7 @@ async function runForeground(session: AuthSession): Promise<void> {
     if (tmuxBackend) {
       const runtimes = s.runtimes.filter((runtime): runtime is TmuxRuntimeRef => runtime.backend === 'tmux')
       void Promise.all(runtimes.map((runtime) => tmuxBackend.kill(runtime))).then(() => {
-        console.log(`[delete] ${sid(sessionId)} terminal · pane closed`)
+        console.log(`[delete] ${sid(sessionId)} ${s.engine} · pane closed`)
         if (isTerminalEngine(s.engine)) clearDeleted(sessionId)
         void agentReconciler.trigger()
       }).catch((err) => {
@@ -5722,6 +5733,36 @@ async function linkConnectCommand(machineId: string | undefined, stdin: boolean,
   process.exit(0)
 }
 
+/**
+ * The link itself, as `harness link connect` and `harness remote` both do it: this computer's SSO
+ * token and identity, the remote password proved against THAT machine, and its peer pinned here.
+ */
+async function linkMachineWithPassword(machineId: string, password: string, displayName?: string): Promise<{ ok: true; fingerprint: string } | { ok: false; error: string; message: string }> {
+  const session = readAuthSession()
+  if (!session) return { ok: false, error: 'NOT_SIGNED_IN', message: 'Not signed in. Run: harness login' }
+  const auth = new AuthSessionManager(backendHttpBase())
+  let accessToken: string
+  try {
+    accessToken = await auth.accessToken()
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err)
+    return { ok: false, error: 'AUTH_FAILED', message: `Could not refresh this computer's SSO session (${detail}). Run: harness login` }
+  }
+  const store = new E2eeStore()
+  store.init()
+  const result = await connectWithPassword({
+    targetMachineId: machineId,
+    password,
+    selfIdentity: store.getIdentity(),
+    accessToken,
+    backendWsBase: env.BACKEND_WS_URL.replace(/\/$/, ''),
+    autonomousEnv: session.autonomousEnv,
+  })
+  if (!result.ok) return { ok: false, error: result.error, message: humanizeLinkError(result.error, displayName || machineId, result.retryAt) }
+  new MachinePeerStore().pin(machineId, b64e(result.peerPub), 'harness link', Date.now())
+  return { ok: true, fingerprint: result.fingerprint }
+}
+
 /** `harness link list` — machines this one has linked (CLI-to-CLI/machine-node trust, not browsers). */
 async function linkListCommand(): Promise<void> {
   const peers = new MachinePeerStore().list()
@@ -6009,6 +6050,29 @@ switch (cmd) {
     dshCommand(args[0], args[0] === undefined ? rest : withoutFirst(rest, args[0]))
       .then((code) => { process.exitCode = code })
       .catch(onError)
+    break
+  case 'remote':
+    remoteCommand({
+      tmuxPane: process.env.TMUX_PANE,
+      localMachineId: readAuthSession()?.machineId ?? null,
+      port: daemonPort(),
+      daemonRunning: isDaemonRunning,
+      listMachines: async () => {
+        const { session, headers } = await controlPlaneAuth()
+        return (await fetchMachines(headers)).map((machine) => ({
+          machineId: machine.machineId,
+          label: machineLabel(machine),
+          status: machine.status || 'unknown',
+          current: machine.machineId === session.machineId,
+        }))
+      },
+      isLinked: (machineId) => new MachinePeerStore().get(machineId) !== null,
+      link: (machineId, password) => linkMachineWithPassword(machineId, password),
+      promptPassword,
+      input: process.stdin,
+      output: process.stdout,
+      error: (line) => console.error(line),
+    }).then((code) => { process.exitCode = code }).catch(onError)
     break
   case 'machines':
     if (!args[0]) machinesListCommand(flags.includes('--json')).catch(onError)

@@ -1429,12 +1429,18 @@ class Registry {
    *
    * For every agent, not only one that began as a terminal — an engine the app launched runs
    * inside its pane's shell too (engineLaunch.ts `harness_engine`), and `/exit` or Ctrl-C leaves
-   * that shell at its prompt with the engine's last screen above it. Everything that belonged to
-   * the engine goes — session, transcript, process, grid, profile, model, permission choices —
-   * because the next thing typed into this shell may be a different engine, and `unboundRouteOwner`
-   * only claims a route for a row with no session. The row itself, its id, its pane and its name
-   * stay: this is the opposite of dormant, the terminal is live. `terminalHost` is set from here on,
-   * since that is what the pane now is.
+   * that shell at its prompt with the engine's last screen above it.
+   *
+   * What goes is what described the PROCESS and its session — session id, transcript, pid,
+   * gateway, grid assignment, model, title — because the next thing typed into this shell may be a
+   * different engine, and `unboundRouteOwner` only claims a route for a row with no session. What
+   * stays is what describes the PANE's launch — `gridLaunch`, `codexHome`, `dsh`, `agent`, the
+   * permission choice: the tmux session's environment still carries the grid endpoint and the
+   * Codex profile, the workspace is still that harness's, and a restart or a relaunch after a
+   * reboot puts the same engine back with the same shape. Dropping `gridLaunch` in particular made
+   * a released grid agent unrestorable ("credential not persisted"). The row itself, its id, its
+   * pane and its name stay: this is the opposite of dormant, the terminal is live. `terminalHost`
+   * is set from here on, since that is what the pane now is.
    */
   releaseEngine(agentId: string): RegisteredSession | null {
     const entry = this.agents.get(agentId)
@@ -1448,16 +1454,9 @@ class Registry {
     entry.active = true
     entry.gateway = null
     entry.grid = null
-    entry.gridLaunch = null
-    entry.gridWebSearch = null
     entry.subscriptionModel = null
-    entry.codexHome = null
-    entry.dsh = null
-    entry.agent = null
     entry.model = null
     entry.title = null
-    delete entry.bypassPermission
-    delete entry.permissionMode
     entry.updatedAt = Date.now()
     this.index(entry)
     this.terminalAvailableAgents.add(entry.agentId)
