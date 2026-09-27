@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 
 import 'package:harness_mobile/shared/theme/app_theme.dart';
@@ -131,6 +132,25 @@ class _ScanToConnectPageState extends State<ScanToConnectPage> {
             'On your Mac: Harness ▸ Add Phone…',
             color: tty.faint,
             size: TtySize.meta,
+          ),
+        ),
+        const SizedBox(height: 10),
+        // The one line of trust on the way in: the scan hands a phone the run of a computer, and
+        // the first-time reviewer's question was what stops anyone else reading it.
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: Tty.origin),
+          child: Row(
+            children: [
+              Icon(LucideIcons.lock300, size: 13, color: tty.faint),
+              const SizedBox(width: 6),
+              Expanded(
+                child: TtyText(
+                  'End-to-end encrypted, phone to computer.',
+                  color: tty.faint,
+                  size: TtySize.meta,
+                ),
+              ),
+            ],
           ),
         ),
         const SizedBox(height: 16),
