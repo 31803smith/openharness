@@ -288,30 +288,6 @@ class SpokenTaskRequest {
   final String cmd;
 }
 
-/// One line in the rail: a machine, or an agent under one.
-///
-/// A record rather than a widget key, because the cursor has to survive a
-/// rebuild that changes what is on screen — an agent finishing, a machine going
-/// offline — and an index into a list of widgets does not.
-@immutable
-class RailRow {
-  const RailRow({required this.machineId, this.agentId});
-
-  final String machineId;
-
-  /// Null for the machine's own row.
-  final String? agentId;
-
-  @override
-  bool operator ==(Object other) =>
-      other is RailRow &&
-      other.machineId == machineId &&
-      other.agentId == agentId;
-
-  @override
-  int get hashCode => Object.hash(machineId, agentId);
-}
-
 /// What every `agents_list` asks for.
 ///
 /// ⚠️ **`includeStopped` is not optional polish — without it the fleet is
@@ -735,7 +711,6 @@ class AppNotifier extends ChangeNotifier {
       _draftSwarmReturns.remove(abandoned);
     }
     _activeSwarmId = id;
-    railFocused = false;
     final pane = focusedPane;
     selectedMachineId = pane?.machineId;
     _persistLayout();
@@ -812,7 +787,6 @@ class AppNotifier extends ChangeNotifier {
     }
     if (owner.zoomedPaneId != null) owner.zoomedPaneId = pane.id;
     _activeSwarmId = owner.id;
-    railFocused = false;
     selectedMachineId = machineId;
     _paneFocusRequest++;
     _persistLayout();
@@ -1406,147 +1380,6 @@ class AppNotifier extends ChangeNotifier {
   bool isAgentInPane(String machineId, String agentId) =>
       paneOfAgent(machineId, agentId) != null;
 
-  /// True while the KEYBOARD is in the rail rather than on the grid.
-  ///
-  /// Folded into [isPaneFocused] on purpose, and it does two jobs at once. The
-  /// terminal re-claims the native input connection when `focused` goes false →
-  /// true (TerminalPanel.didUpdateWidget), so flipping this is what hands the
-  /// keys over and what takes them back. And the focus ring leaves the tile
-  /// while the rail has the cursor, which is the honest thing to draw: a ring on
-  /// a pane that is not receiving keys is a lie the whole feature would rest on.
-  bool railFocused = false;
-
-  /// Which row the rail's cursor is on, indexing [railRows].
-  int railCursor = 0;
-
-  bool isPaneFocused(int paneId) => !railFocused && focusedPaneId == paneId;
-
-  /// The rail as a flat list of rows, in the order it is drawn.
-  ///
-  /// ONE source for the cursor and for the highlight. The rail builds its own
-  /// tree from the same pieces, and a second traversal that "should" agree is
-  /// exactly how an arrow key ends up selecting a different row than the one
-  /// lit up — so the widget reads its highlight from this list too.
-  ///
-  /// Local machine first, then the backend's order, which is what the rail has
-  /// always drawn; a machine that is collapsed contributes its own row and none
-  /// of its agents, because a cursor cannot rest on something not on screen.
-  List<RailRow> railRows() {
-    final rows = <RailRow>[];
-    final ordered = <Machine>[
-      ...machines.where((m) => stateOf(m.machineId)?.isLocalMachine == true),
-      ...machines.where((m) => stateOf(m.machineId)?.isLocalMachine != true),
-    ];
-    for (final machine in ordered) {
-      rows.add(RailRow(machineId: machine.machineId));
-      if (!expandedMachines.contains(machine.machineId)) continue;
-      for (final agent
-          in stateOf(machine.machineId)?.agents ?? const <Agent>[]) {
-        rows.add(RailRow(machineId: machine.machineId, agentId: agent.id));
-      }
-    }
-    return rows;
-  }
-
-  /// Hand the keyboard to the rail — ⌘h off the left edge of the grid.
-  ///
-  /// The cursor starts on the agent the window is already looking at, so the
-  /// first press of `j` steps off it rather than jumping to the top of a list
-  /// of thirty. Same reasoning as the layout palette's cursor.
-  void focusRail() {
-    final rows = railRows();
-    if (rows.isEmpty) return;
-    final pane = panes.where((p) => p.id == focusedPaneId).firstOrNull;
-    var at = 0;
-    if (pane?.agentId != null) {
-      final found = rows.indexWhere(
-        (row) =>
-            row.agentId == pane!.agentId && row.machineId == pane.machineId,
-      );
-      if (found >= 0) at = found;
-    }
-    railFocused = true;
-    railCursor = at;
-    notifyListeners();
-  }
-
-  /// Give it back. The focused tile re-claims the keys on the next frame.
-  void unfocusRail() {
-    if (!railFocused) return;
-    railFocused = false;
-    notifyListeners();
-  }
-
-  /// The row the cursor is on, or null when the rail has changed under it.
-  ///
-  /// Bounds-checked rather than clamped, and that distinction is the point: an
-  /// agent finishing or a machine collapsing can shorten the list between a
-  /// keypress and the frame that draws it, and clamping would silently light up
-  /// a DIFFERENT row than the one the cursor was on. Null draws nothing, which
-  /// is the honest answer for one frame.
-  RailRow? railRowAt(int index) {
-    final rows = railRows();
-    if (index < 0 || index >= rows.length) return null;
-    return rows[index];
-  }
-
-  void moveRailCursor(int delta) {
-    final rows = railRows();
-    if (rows.isEmpty) return;
-    // Clamped, not wrapped: the rail is a column you can see the ends of, and a
-    // cursor that leaps from the last machine back to the first reads as a
-    // mis-key. The grid's own focus wraps because it is a loop of tiles.
-    railCursor = (railCursor + delta).clamp(0, rows.length - 1);
-    notifyListeners();
-  }
-
-  /// Enter on the cursor's row.
-  ///
-  /// A machine row toggles; an agent row opens and gives the keyboard back —
-  /// because "go to this agent" is a request to work in it, and leaving the
-  /// keys in the sidebar would make every open a two-step.
-  Future<void> activateRailRow() async {
-    final rows = railRows();
-    if (railCursor < 0 || railCursor >= rows.length) return;
-    final row = rows[railCursor];
-    if (row.agentId == null) {
-      toggleExpand(row.machineId);
-      return;
-    }
-    railFocused = false;
-    notifyListeners();
-    await selectAgent(row.machineId, row.agentId!);
-  }
-
-  /// `h` in the rail — out of an agent list, then out of the rail.
-  ///
-  /// Two steps rather than one, and that is the vim shape: `h` at the top level
-  /// leaves, `h` inside something closes it first. Pressed on an agent it jumps
-  /// to that agent's machine row and folds it, which is where the eye already
-  /// is; pressed on a machine row it hands the keyboard back to the grid.
-  void railCollapseOrExit() {
-    final rows = railRows();
-    if (railCursor < 0 || railCursor >= rows.length) {
-      unfocusRail();
-      return;
-    }
-    final row = rows[railCursor];
-    if (row.agentId != null) {
-      final head = rows.indexWhere(
-        (r) => r.machineId == row.machineId && r.agentId == null,
-      );
-      if (head >= 0) railCursor = head;
-      toggleExpand(row.machineId);
-      notifyListeners();
-      return;
-    }
-    if (expandedMachines.contains(row.machineId)) {
-      toggleExpand(row.machineId);
-      return;
-    }
-    unfocusRail();
-  }
-
   /// Show or hide one tile's composer textbox, and remember the choice.
   void toggleComposer(int paneId) {
     for (final pane in panes) {
@@ -1560,8 +1393,7 @@ class AppNotifier extends ChangeNotifier {
 
   void focusPane(int paneId, {bool reveal = false}) {
     if (!panes.any((pane) => pane.id == paneId)) return;
-    final moved = focusedPaneId != paneId || railFocused;
-    railFocused = false;
+    final moved = focusedPaneId != paneId;
     // Remembered only on a REAL move. Re-focusing the tile you are already on
     // happens constantly — see the note below about why it is announced anyway
     // — and recording it would make ⌘; a key that returns you to where you
@@ -6438,48 +6270,6 @@ class AppNotifier extends ChangeNotifier {
       }
     }
     return best;
-  }
-
-  /// ⌘h / ⌘l, and ⌘← / ⌘→ — the tile beside this one, by POSITION.
-  ///
-  /// Spatial, like its vertical twin, and that is a change: left and right used
-  /// to walk the panes in list order while up and down read the geometry, so
-  /// half the compass answered "the next one" and half answered "the one over
-  /// there". A vim user pressing `l` means the window to their right, and a
-  /// scheme that means it in two directions out of four is one nobody can hold.
-  void focusPaneHorizontally(int delta) {
-    // THE RAIL IS A SEAT IN THE RING, not a wall at one end of it.
-    //
-    // No new key for "go to the sidebar": the sidebar is what is to the left of
-    // the leftmost tile, so the key that means left already says it — the motion
-    // vim users have, where `Ctrl-w h` out of the last split does not stop, it
-    // reaches the next thing.
-    //
-    // And the ring CLOSES. Walking off either edge seats you in the rail, and
-    // walking out of the rail continues round to the far side: left out of it
-    // lands on the last tile, right onto the first. A ring that stopped dead at
-    // one end would make the same key mean "go left" in the middle of the grid
-    // and "do nothing" at its edge, which is a key people stop trusting.
-    if (railFocused) {
-      if (panes.isEmpty) return;
-      unfocusRail();
-      focusPane(delta < 0 ? panes.last.id : panes.first.id);
-      return;
-    }
-    final to = _neighbour(dx: delta, dy: 0);
-    if (to != null) {
-      focusPane(panes[to].id);
-      return;
-    }
-    if (hasNavigationRail) focusRail();
-    // An EMPTY rail is not a seat, so the ring skips it rather than stopping on
-    // it. focusRail refuses when there is nothing to put a cursor on — no
-    // machines yet, or a list that has not loaded — and without this the key
-    // would simply do nothing at the edge, which is the exact behaviour the ring
-    // exists to remove.
-    if (!railFocused && panes.isNotEmpty) {
-      focusPane(delta < 0 ? panes.last.id : panes.first.id);
-    }
   }
 
   /// ⇧⌘h j k l — put this pane where its neighbour is, and that one here.
