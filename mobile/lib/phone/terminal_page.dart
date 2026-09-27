@@ -1093,11 +1093,9 @@ class _TerminalPageState extends State<TerminalPage>
   static String _windowName(String name) =>
       name.length <= 12 ? name : name.substring(0, 12);
 
-  /// Where the reader is while scrolled up in the history — see [_CopyModePosition].
+  /// Where the reader is while scrolled up in the history, or null at the end — what holds the
+  /// terminal still under a reader ([_AnchoredTerminal.reading]).
   final _scrollback = ValueNotifier<({int above, int total})?>(null);
-
-  /// Bumped by the position's tap to take the terminal back to the end.
-  int _jumpToEnd = 0;
 
   /// How far left a drag has gone, for the swipe that opens a new agent.
   double _swipedLeft = 0;
@@ -1999,11 +1997,9 @@ class _TerminalPageState extends State<TerminalPage>
                                                             ),
                                                       onLineTap: _onLineTap,
                                                       showHeader: false,
-                                                      // tmux's copy-mode position while
-                                                      // reading back — see [_CopyModePosition].
+                                                      // Where the reader is in the history —
+                                                      // what holds the view still under them.
                                                       scrollback: _scrollback,
-                                                      jumpToEndRequest:
-                                                          _jumpToEnd,
                                                       // No composer, and so no grip above it: the
                                                       // page hands the pane its full height and the
                                                       // software keyboard drives the terminal
@@ -2154,27 +2150,9 @@ class _TerminalPageState extends State<TerminalPage>
                         ),
                       ),
                     ),
-                    // tmux's copy-mode position, top right, while reading back
-                    // through the history: `[42/1380]`. One tap is back at the end.
-                    Positioned(
-                      // The pane's own row 0, flush right, as tmux draws it.
-                      top: 0,
-                      right: 0,
-                      child: ValueListenableBuilder<({int above, int total})?>(
-                        valueListenable: _scrollback,
-                        builder: (context, position, _) =>
-                            position == null || _ownsInput
-                            ? const SizedBox.shrink()
-                            : _CopyModePosition(
-                                above: position.above,
-                                total: position.total,
-                                onTap: () {
-                                  _scrollback.value = null;
-                                  setState(() => _jumpToEnd++);
-                                },
-                              ),
-                      ),
-                    ),
+                    // ⚠️ No `[42/1380]` at the top right while reading back, by the owner's
+                    // call (2026-09-27): "we don't need the scrolling indicator". The history
+                    // scrolls like any list; scrolling down is the way back to the stream.
                     // The line above the mic: what is going on, in a few words — see [_statusLine].
                     if (!_ownsInput)
                       Positioned(
@@ -3294,45 +3272,6 @@ String _clipTitle(String name) {
 /// dead space either side and the three stay 24px each — under the 44 iOS asks
 /// for. Fixing that belongs in the shared button, where every screen's header
 /// would get it, not in a wrapper one page defines.
-
-/// tmux's copy-mode position — `[42/1380]` on tmux's yellow, top right — while the reader is up in
-/// the history: 42 lines above the end, of 1380. The view holds still as output arrives, and the
-/// first number counts it. One tap is back at the end, following the stream.
-class _CopyModePosition extends StatelessWidget {
-  const _CopyModePosition({
-    required this.above,
-    required this.total,
-    required this.onTap,
-  });
-
-  final int above;
-  final int total;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final tty = Tty.of(context);
-    return Semantics(
-      button: true,
-      label: '$above lines above the end. Back to the latest output',
-      child: GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onTap: onTap,
-        child: Padding(
-          // A full touch target around a one-line tag.
-          padding: const EdgeInsets.all(8),
-          child: ColoredBox(
-            color: tty.yellow,
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 4),
-              child: TtyText('[$above/$total]', color: tty.theme.black),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
 
 /// Slides the title off the top as [progress] runs 0 → 1, fading it as it goes.
 class _SlideAway extends StatelessWidget {
