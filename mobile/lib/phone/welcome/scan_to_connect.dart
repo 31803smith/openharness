@@ -32,6 +32,7 @@ class ScanToConnectPage extends StatefulWidget {
     required this.onUseEmail,
     required this.onBack,
     this.signingIn = false,
+    this.fallbackLabel = 'Use email instead',
     this.camera,
   });
 
@@ -41,6 +42,10 @@ class ScanToConnectPage extends StatefulWidget {
 
   /// A code was read and the phone is signing in with it.
   final bool signingIn;
+
+  /// The way out without a camera or a code: email on the first screen, the computer's password
+  /// when unlocking one ([onUseEmail] is called either way).
+  final String fallbackLabel;
 
   /// Stands in for the camera in tests and renders. Null opens the real one.
   final Widget? camera;
@@ -130,7 +135,7 @@ class _ScanToConnectPageState extends State<ScanToConnectPage> {
         const SizedBox(height: 16),
         Center(
           child: TtyTextButton(
-            label: 'Use email instead',
+            label: widget.fallbackLabel,
             color: tty.faint,
             onPressed: widget.onUseEmail,
           ),

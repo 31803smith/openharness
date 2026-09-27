@@ -6,17 +6,25 @@ import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import 'package:harness_mobile/state/app_state.dart';
 
+import '../phone_navigation.dart' show phoneRoute;
 import '../tty.dart';
 import '../tty_controls.dart';
+import 'connect_code.dart';
+import 'scan_to_connect.dart';
 
-/// Unlocking a computer from this phone: its phone password, once — the page behind a locked
-/// computer's row.
+/// Unlocking a computer from this phone — the page behind a locked computer's row. The way the
+/// first computer was added comes first: scan the QR its Harness ▸ Add Phone… shows, no password.
+/// A computer with no desktop app (a server over SSH) has no QR to show, so its phone password
+/// stays, right under it.
 ///
 /// ```
 /// Unlock M2
-/// Enter the phone password you set on M2.
+/// On M2, open Harness ▸ Add Phone…, then scan it.
+/// [          Scan its code           ]
+///
+/// or enter its phone password
 /// [ ••••••••                          Show ]
-/// [               Unlock               ]
+///                                   Unlock
 ///
 /// Forgot it, or never set one? On M2, run
 /// $ harness remote-password set          Copy
@@ -30,10 +38,14 @@ class UnlockComputer extends StatefulWidget {
     required this.notifier,
     required this.machineState,
     this.onUnlocked,
+    this.scanCamera,
   });
 
   final AppNotifier notifier;
   final MachineState machineState;
+
+  /// Stands in for the camera on the scan page, in tests. Null opens the real one.
+  final Widget? scanCamera;
 
   /// Called once the computer is unlocked.
   final VoidCallback? onUnlocked;
@@ -47,17 +59,15 @@ class _UnlockComputerState extends State<UnlockComputer> {
   final _focus = FocusNode();
   bool _obscure = true;
   bool _busy = false;
+
+  /// Pairing by a scanned code — the scan button's own busy state, apart from the password's.
+  bool _pairing = false;
   String? _error;
   String? _stage;
   bool _copied = false;
 
-  @override
-  void initState() {
-    super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) _focus.requestFocus();
-    });
-  }
+  // ⚠️ No autofocus on the password: it is the second way in now, and a keyboard raised on
+  // arrival covered the scan button — the first.
 
   @override
   void dispose() {
@@ -107,6 +117,68 @@ class _UnlockComputerState extends State<UnlockComputer> {
     }
   }
 
+  /// The camera, over this page; a code of this computer's pairs the phone with it, the way the
+  /// first one was added — its one-time code, armed by its Add Phone dialog, and no password.
+  Future<void> _scan() async {
+    if (_busy || _pairing) return;
+    ConnectCode? scanned;
+    await Navigator.of(context).push(
+      phoneRoute(
+        (page) => Scaffold(
+          backgroundColor: Tty.of(page).ground,
+          body: SafeArea(
+            child: ScanToConnectPage(
+              camera: widget.scanCamera,
+              fallbackLabel: 'Use its password instead',
+              onCode: (code) {
+                scanned = code;
+                Navigator.of(page).pop();
+              },
+              onUseEmail: () => Navigator.of(page).pop(),
+              onBack: () => Navigator.of(page).pop(),
+            ),
+          ),
+        ),
+      ),
+    );
+    final code = scanned;
+    if (!mounted || code == null) return;
+    final machine = widget.machineState.machine;
+    final pairCode = code.pairCode;
+    if (code.machineId == null || pairCode == null) {
+      setState(
+        () => _error = "That code can't unlock a computer. Scan the one in Harness ▸ Add Phone….",
+      );
+      return;
+    }
+    if (code.machineId != machine.machineId) {
+      setState(
+        () => _error =
+            'That code is for another computer. Scan the one on ${machine.displayName}.',
+      );
+      return;
+    }
+    setState(() {
+      _pairing = true;
+      _error = null;
+    });
+    final error = await widget.notifier.connectWithCode(
+      machine.machineId,
+      pairCode,
+    );
+    if (!mounted) return;
+    setState(() {
+      _pairing = false;
+      _error = error;
+    });
+    if (error == null) {
+      HapticFeedback.mediumImpact();
+      widget.onUnlocked?.call();
+    } else {
+      HapticFeedback.heavyImpact();
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final tty = Tty.of(context);
@@ -117,10 +189,23 @@ class _UnlockComputerState extends State<UnlockComputer> {
         TtyText('Unlock $name', size: 24, weight: FontWeight.w600),
         const SizedBox(height: 12),
         Text(
-          'Enter the phone password you set on $name.',
+          'On $name, open Harness ▸ Add Phone…, then scan it.',
           style: tty.style(size: TtySize.row, color: tty.faint),
         ),
         const SizedBox(height: 18),
+        TtyPrimaryButton(
+          key: const ValueKey('unlock-scan'),
+          label: 'Scan its code',
+          busy: _pairing,
+          busyLabel: 'Pairing with $name…',
+          onPressed: _busy ? null : () => unawaited(_scan()),
+        ),
+        const SizedBox(height: 28),
+        Text(
+          'or enter its phone password',
+          style: tty.style(size: TtySize.meta, color: tty.faint),
+        ),
+        const SizedBox(height: 8),
         _PasswordField(
           controller: _password,
           focus: _focus,
@@ -136,12 +221,15 @@ class _UnlockComputerState extends State<UnlockComputer> {
               style: tty.style(size: TtySize.meta, color: tty.red),
             ),
           ),
-        const SizedBox(height: 16),
-        TtyPrimaryButton(
-          label: 'Unlock',
-          busy: _busy,
-          busyLabel: _stage == null ? 'Unlocking…' : _say(_stage!),
-          onPressed: _unlock,
+        const SizedBox(height: 4),
+        Align(
+          alignment: Alignment.centerRight,
+          child: TtyTextButton(
+            label: _busy
+                ? (_stage == null ? 'Unlocking…' : _say(_stage!))
+                : 'Unlock',
+            onPressed: _busy || _pairing ? null : _unlock,
+          ),
         ),
         const SizedBox(height: 32),
         Text(
