@@ -84,9 +84,22 @@ String redactSecretsInText(String input) {
 typedef _Redaction = ({RegExp pattern, String Function(Match) replace});
 
 final List<_Redaction> _textRedactions = [
-  // `Bearer <token>` — the shape auth takes if it ever lands in output.
+  // `Bearer <token>` — the shape auth takes if it ever lands in output. The
+  // alphabet is RFC 6750's `b64token`, `+`, `/`, `~` and padding included: a
+  // narrower one cut an opaque plain-base64 token short at its first `+`, and
+  // left all of it on disk when that came before the eighth character.
   (
-    pattern: RegExp(r'(Bearer\s+)[A-Za-z0-9._\-]{8,}', caseSensitive: false),
+    pattern: RegExp(
+      r'(Bearer\s+)[A-Za-z0-9._~+/\-]{8,}=*',
+      caseSensitive: false,
+    ),
+    replace: (m) => '${m[1]}<redacted>',
+  ),
+  // `Basic <base64 of user:password>` — the other scheme an `Authorization`
+  // header carries, and a password outright. Case-sensitive, unlike the rule
+  // above, so "basic authentication" in prose stays readable.
+  (
+    pattern: RegExp(r'(Basic\s+)[A-Za-z0-9+/]{8,}=*'),
     replace: (m) => '${m[1]}<redacted>',
   ),
   // Vendor keys with a well-known prefix (OpenAI `sk-…`, Anthropic `sk-ant-…`).
@@ -103,10 +116,12 @@ final List<_Redaction> _textRedactions = [
     ),
     replace: (m) => '${m[1]}<redacted>',
   ),
-  // A `?…token=…` or `?…key=…` inside a logged URL.
+  // A `?…token=…` or `?…key=…` inside a logged URL — and the two a sign-in
+  // puts there: an OAuth redirect's one-time `code`, which is a credential
+  // until it is spent, and a password (`pass…`, `pwd`).
   (
     pattern: RegExp(
-      r'([?&][^=\s&]*(?:token|key|secret|sig|signature)[^=\s&]*=)[^\s&]+',
+      r'([?&][^=\s&]*(?:token|key|secret|sig|signature|code|pass|pwd)[^=\s&]*=)[^\s&]+',
       caseSensitive: false,
     ),
     replace: (m) => '${m[1]}<redacted>',
