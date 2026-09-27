@@ -64,4 +64,15 @@ hosting PR #5 and this readiness branch have not been deployed.
 | Sharing and comments | Actual anonymous, invited and denied browser accounts; encrypted output/comments, responsive layout, reload, moderation, restart persistence, revocation and rejected observer controls. |
 | Settings and phone | Shared preferences, learning/practice, browser activity and remote account usage. Real welcome phone QR, protocol-error regression and cryptographic phone pairing tests. |
 | Native platform operations | Local daemon installation, firmware, OS notifications, native image clipboard, keyboard dotfiles and local transcript ledgers stay in desktop; browser settings already omit or explain these controls, with Download app as the handoff. Managed-viewer streaming does not forward native dialogs, downloads or audio. |
-| Hosting and release | Existing public preview and hosting pipeline remain unchanged. Shared-link hosting is PR #5 against `deploy/flutter-web`; source is PR #394 plus this branch. Final production artifact results are recorded below after packaging committed source. |
+| Hosting and release | Existing public preview and hosting pipeline remain unchanged. Shared-link hosting is PR #5 against `deploy/flutter-web`; source is PR #394 plus this branch. The committed production web archive, native debug app and CLI release bundle all build successfully. |
+
+## Final build record
+
+Source: `a84e6c6b27b3b4298d601ed8ba08c32ede6dfd84`. The code and test tree were clean before packaging.
+
+- Production web: `FLUTTER_BIN=/Users/ab/development/flutter-3.47.2/bin/flutter bash scripts/build-web-release.sh 0.1.4` from `desktop/`. Built with the real API default, `/harness-web/` asset base and local CanvasKit resources, with no fixture defines. Archive content, embedded source commit and SHA-256 were verified.
+- Local archive: `desktop/build/web-dist/harness-web-0.1.4.tar.gz`, 33,085,657 bytes, 250 files. SHA-256: `0e4b92fc0642fc09af9cc99cfe04465a4e04e35c86e1a063c07cc470c11c1d9c`.
+- Native compatibility: `flutter build macos --debug --no-pub --target lib/main.dart` passed. The installed app was not replaced or launched.
+- Daemon packaging: `npm run bundle` from `cli/` passed, producing the self-contained CLI and notification hook.
+
+Version `0.1.4` above labels a local verification artifact. No tag, GitHub release, website bundle or daemon deployment was published. Release the sharing backend and updated owner daemon before the desktop/web bundle, and merge the hosting route change when publishing that bundle. The final source and hosting changes still require review and release.
