@@ -288,6 +288,7 @@ class TerminalSession extends ChangeNotifier {
     _showingKeptScreen = true;
     notifyListeners();
   }
+
   int _lastRenderedSeq = -1;
   int _framesSinceAck = 0;
   int _renderedSinceAckBytes = 0;
@@ -622,6 +623,13 @@ class TerminalSession extends ChangeNotifier {
         if (!watching) takeover = false;
         _resyncTimer?.cancel();
         _resyncTimer = null;
+        // ⚠️ Cancelled first: a second `terminal_ready` for this same open is
+        // real — the open-timeout path resends the SAME request, so a reply
+        // that was only slow and the reply to the resend both match while no
+        // screen has landed yet. Overwritten, the first timer ran on unowned
+        // for the life of the process, beating twice as often and still
+        // beating after [dispose].
+        _heartbeat?.cancel();
         _heartbeat = Timer.periodic(
           const Duration(seconds: 5),
           (_) => unawaited(_sendHeartbeat()),
