@@ -6,7 +6,6 @@ import 'package:harness_mobile/phone/phone_shell_scope.dart';
 import 'package:harness_mobile/phone/welcome/connect_code.dart';
 import 'package:harness_mobile/phone/welcome/connect_computer.dart';
 import 'package:harness_mobile/phone/welcome/focus_hints.dart';
-import 'package:harness_mobile/phone/welcome/how_it_works.dart';
 import 'package:harness_mobile/phone/welcome/phone_welcome.dart';
 import 'package:harness_mobile/phone/welcome/pick_up_page.dart';
 import 'package:harness_mobile/phone/welcome/scan_to_connect.dart';

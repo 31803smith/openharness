@@ -218,8 +218,9 @@ class _NewAgentPageState extends State<NewAgentPage> {
       );
       return;
     }
-    if (voice.status == VoiceInputStatus.idle)
+    if (voice.status == VoiceInputStatus.idle) {
       unawaited(voice.startListening());
+    }
   }
 
   /// Takes back what the form was left holding — see [NewAgentDraft].
@@ -1207,8 +1208,7 @@ class _NewAgentPageState extends State<NewAgentPage> {
         for (final folder in [
           ...notifier.projectHistory.recent(id),
           for (final agent in machine.agents)
-            if (agent.project?.root ?? agent.project?.cwd case final path?)
-              path,
+            ?(agent.project?.root ?? agent.project?.cwd),
         ])
           if (folder.isNotEmpty && !_isHarnessWorktree(folder)) folder,
       };

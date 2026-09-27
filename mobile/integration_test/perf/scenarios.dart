@@ -344,8 +344,9 @@ class PerfSuite {
     while (true) {
       final frame = await nextFrame();
       if (done()) return frame;
-      if (watch.elapsed > limit)
+      if (watch.elapsed > limit) {
         throw StateError('Timed out waiting for $what');
+      }
     }
   }
 
