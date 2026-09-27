@@ -15,6 +15,7 @@ import 'package:harness_mobile/core/models.dart';
 import 'package:harness_mobile/core/snapshot_store.dart';
 import 'package:harness_mobile/notify/system_notices.dart';
 import 'package:harness_mobile/state/app_state.dart';
+import 'package:harness_mobile/state/desk_sync.dart';
 import 'package:harness_mobile/state/pane_layout_store.dart';
 import 'package:harness_mobile/terminal/terminal_binary.dart';
 import 'package:harness_mobile/terminal/terminal_session.dart';
@@ -142,18 +143,43 @@ class FakeApi extends ApiClient {
     return onMachines();
   }
 
+  /// Answers `/api/auth/me` in place of [profile] when set — held open, or
+  /// throwing.
+  Future<Map<String, dynamic>?> Function()? onProfile;
+
   @override
   Future<Map<String, dynamic>?> me() async {
     profileReads++;
-    return profile;
+    final answer = onProfile;
+    return answer == null ? profile : await answer();
   }
 
   @override
-  Future<Map<String, dynamic>?> desk() async => null;
+  Future<Map<String, dynamic>?> desk() async => _deskDocument;
+
+  /// The account's tabs; null answers as a backend with no desk at all.
+  List<DeskTab>? deskTabs;
+  int deskRevision = 0;
+
+  /// The desk ops this phone sent, in order.
+  final List<Map<String, dynamic>> deskWrites = [];
+
+  Map<String, dynamic>? get _deskDocument => deskTabs == null
+      ? null
+      : {
+          'revision': deskRevision,
+          'tabs': [for (final tab in deskTabs!) tab.toJson()],
+        };
 
   @override
-  Future<Map<String, dynamic>?> deskOps(List<Map<String, dynamic>> ops) async =>
-      null;
+  Future<Map<String, dynamic>?> deskOps(List<Map<String, dynamic>> ops) async {
+    final tabs = deskTabs;
+    if (tabs == null) return null;
+    deskWrites.addAll(ops);
+    deskTabs = applyDeskOps(tabs, ops);
+    deskRevision++;
+    return _deskDocument;
+  }
 
   @override
   Future<String?> renameMachine({
