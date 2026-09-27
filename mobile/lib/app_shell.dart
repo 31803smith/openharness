@@ -1,35 +1,20 @@
-import 'dart:async';
-import 'dart:ui' show AppExitResponse;
-
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'analytics/analytics_lifecycle.dart';
 import 'core/crash_log.dart';
-import 'screens/login_screen.dart';
 import 'state/app_state.dart';
 import 'viewer/viewer_services.dart';
 import 'ws/terminal_transport_plugin.dart';
 import 'shared/theme/app_theme.dart' as grid;
 import 'shared/theme/appearance_prefs_store.dart';
-import 'terminal/terminal_font_store.dart';
-import 'widgets/bootstrapping_screen.dart';
-import 'widgets/layout_palette.dart';
-import 'widgets/environment_preflight_screen.dart';
-import 'widgets/environment_setup_screen.dart';
-import 'widgets/flash_firmware_dialog.dart';
 import 'core/startup.dart';
 import 'logging/app_log.dart';
 import 'logging/install.dart';
 import 'logging/startup_trace.dart';
 import 'shortcuts/app_keymap.dart';
-import 'widgets/shortcuts_sheet.dart';
-import 'widgets/update_notice.dart';
 
-/// The screen an app puts up once someone is signed in — the desktop's swarm of
-/// panes, or the phone's one-agent-at-a-time shell. It is the only thing the two
-/// entry points disagree about; everything below is shared.
+/// A screen the app puts up for one of its states — signed in, signed out, starting.
 typedef AuthenticatedScreenBuilder = Widget Function(AppNotifier app);
 
 /// Everything both entry points do before their first frame: file logs, the
@@ -43,13 +28,11 @@ typedef AuthenticatedScreenBuilder = Widget Function(AppNotifier app);
 Future<void> startHarness({
   required AuthenticatedScreenBuilder authenticatedScreen,
 
-  /// The signed-out screen, when the platform has its own — the phone's welcome. Null keeps
-  /// [LoginScreen].
-  AuthenticatedScreenBuilder? signedOutScreen,
+  /// The signed-out screen — the phone's welcome.
+  required AuthenticatedScreenBuilder signedOutScreen,
 
-  /// The screen while the app starts, when the platform has its own. Null keeps
-  /// [BootstrappingScreen], which speaks of a window and a local service — the desktop's.
-  AuthenticatedScreenBuilder? bootScreen,
+  /// The screen while the app starts.
+  required AuthenticatedScreenBuilder bootScreen,
 
   /// A viewer build's second wire to each machine (see
   /// [TerminalTransportPlugin]); the desktop passes none.
@@ -103,13 +86,13 @@ class HarnessApp extends StatelessWidget {
     super.key,
     this.keymap,
     required this.authenticatedScreen,
-    this.signedOutScreen,
-    this.bootScreen,
+    required this.signedOutScreen,
+    required this.bootScreen,
   });
   final AppKeymap? keymap;
   final AuthenticatedScreenBuilder authenticatedScreen;
-  final AuthenticatedScreenBuilder? signedOutScreen;
-  final AuthenticatedScreenBuilder? bootScreen;
+  final AuthenticatedScreenBuilder signedOutScreen;
+  final AuthenticatedScreenBuilder bootScreen;
 
   @override
   Widget build(BuildContext context) {
@@ -227,150 +210,54 @@ class _GridTokenScope extends StatelessWidget {
   }
 }
 
-/// Carries "Check for Updates…" from the macOS application menu into Dart.
+/// Which screen the app's state calls for.
 ///
-/// The item is installed natively (MainFlutterWindow.swift) so the rest of the
-/// menu bar keeps coming from the nib; all this side does is act on the tap.
-const _appMenuChannel = MethodChannel('harness/app_menu');
-
-class RootShell extends ConsumerStatefulWidget {
+/// ⚠️ **What a desktop window also had here, and why it is gone.** The macOS application menu
+/// (`harness/app_menu`: check for updates, flash firmware, layouts, shortcuts, terminal font
+/// size), the update band, and the two first-run provisioning screens. No iOS or Android runner
+/// registers that channel, and a viewer build never provisions or self-updates:
+/// `AppNotifier.bootstrap` skips both whenever it has a [ViewerServices], which it always does on
+/// a phone (`kViewerMode`).
+class RootShell extends ConsumerWidget {
   const RootShell({
     super.key,
     required this.authenticatedScreen,
-    this.signedOutScreen,
-    this.bootScreen,
+    required this.signedOutScreen,
+    required this.bootScreen,
   });
 
   final AuthenticatedScreenBuilder authenticatedScreen;
-  final AuthenticatedScreenBuilder? signedOutScreen;
-  final AuthenticatedScreenBuilder? bootScreen;
+  final AuthenticatedScreenBuilder signedOutScreen;
+  final AuthenticatedScreenBuilder bootScreen;
 
   @override
-  ConsumerState<RootShell> createState() => _RootShellState();
-}
-
-class _RootShellState extends ConsumerState<RootShell>
-    with WidgetsBindingObserver {
-  bool _menuDialogOpen = false;
-
-  @override
-  void initState() {
-    super.initState();
-    WidgetsBinding.instance.addObserver(this);
-    _appMenuChannel.setMethodCallHandler(_onAppMenu);
-  }
-
-  @override
-  void dispose() {
-    WidgetsBinding.instance.removeObserver(this);
-    _appMenuChannel.setMethodCallHandler(null);
-    super.dispose();
-  }
-
-  @override
-  Future<AppExitResponse> didRequestAppExit() async {
-    // Save the final arrangement, with a bound so an unavailable disk cannot
-    // trap the user in the app. Input and tab switching never wait for disk.
-    await ref
-        .read(appStateProvider)
-        .flushPaneLayout()
-        .timeout(const Duration(seconds: 1), onTimeout: () {});
-    return AppExitResponse.exit;
-  }
-
-  Future<void> _onAppMenu(MethodCall call) async {
-    if (!mounted) return;
-    switch (call.method) {
-      case 'checkForUpdates':
-        final app = ref.read(appStateProvider);
-        await _menuDialog(() async {
-          final result = await app.checkForUpdates();
-          if (!mounted) return;
-          await showUpdateCheckDialog(context, app, result);
-        });
-      case 'flashFirmware':
-        await _menuDialog(() => showFlashFirmwareDialog(context));
-      case 'showLayout':
-        if (advanceLayoutPalette()) return;
-        await _menuDialog(
-          () => showLayoutPalette(context, ref.read(appStateProvider)),
-        );
-      case 'showShortcuts':
-        await _menuDialog(() => showShortcutsSheet(context));
-      case 'increaseTerminalFontSize':
-        await terminalFontStore.increaseSize();
-      case 'decreaseTerminalFontSize':
-        await terminalFontStore.decreaseSize();
-      case 'resetTerminalFontSize':
-        await terminalFontStore.reset();
-    }
-  }
-
-  Future<void> _menuDialog(Future<void> Function() action) async {
-    if (_menuDialogOpen || ModalRoute.isCurrentOf(context) == false) return;
-    // Reserve before the first frame too: held menu shortcuts can arrive
-    // before the new dialog has changed the route's current state.
-    _menuDialogOpen = true;
-    try {
-      await action();
-    } finally {
-      _menuDialogOpen = false;
-    }
-  }
-
-  Widget _signedOut(AppNotifier app) =>
-      widget.signedOutScreen?.call(app) ?? LoginScreen(notifier: app);
-
-  @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final app = ref.watch(appStateProvider);
     return ListenableBuilder(
       listenable: app,
-      builder: (context, _) {
-        final Widget screen;
-        switch (app.status) {
-          case AppStatus.bootstrapping:
-            // `bootstrapping` covers two unrelated moments: the app starting
-            // cold, and a sign-in the user just began. The second keeps
-            // LoginScreen, which carries the wait as a state of its own
-            // button; swapping the window for a separate screen there was a
-            // hard cut in the middle of a flow, and it is why that button's
-            // spinner was almost never seen.
-            //
-            // ⚠️ Keyed on `signingIn`, NOT on `pendingAuthorizeUrl`. The URL
-            // only exists for the middle stretch of the flow — the CLI has to
-            // start before it can print one, and it is cleared again while
-            // the post-login restore is still running — so keying on it blew
-            // the user's own screen away twice per sign-in: once on the click
-            // and again on success.
-            screen = app.signingIn
-                ? _signedOut(app)
-                : widget.bootScreen?.call(app) ??
-                      BootstrappingScreen(statusMessage: app.bootStatusMessage);
-          case AppStatus.checkingEnvironment:
-            screen = EnvironmentPreflightScreen(
-              readiness: app.environmentReadiness,
-            );
-          case AppStatus.preparingEnvironment:
-            screen = EnvironmentSetupScreen(notifier: app);
-          case AppStatus.unauthenticated:
-            screen = _signedOut(app);
-          case AppStatus.authenticated:
-            screen = widget.authenticatedScreen(app);
-        }
-        // The band takes a row of its own rather than floating over one. As an
-        // overlay it landed on the screen's own head — covering the controls
-        // along the top edge, which is the one strip that must stay reachable.
-        return Column(
-          children: [
-            if (app.hasAvailableUpdate &&
-                app.status != AppStatus.bootstrapping &&
-                app.status != AppStatus.checkingEnvironment &&
-                app.status != AppStatus.preparingEnvironment)
-              UpdateNotice(notifier: app),
-            Expanded(child: screen),
-          ],
-        );
+      builder: (context, _) => switch (app.status) {
+        // `bootstrapping` covers two unrelated moments: the app starting
+        // cold, and a sign-in the user just began. The second keeps the
+        // signed-out screen, which carries the wait as a state of its own
+        // button; swapping the window for a separate screen there was a
+        // hard cut in the middle of a flow, and it is why that button's
+        // spinner was almost never seen.
+        //
+        // ⚠️ Keyed on `signingIn`, NOT on `pendingAuthorizeUrl`. The URL
+        // only exists for the middle stretch of the flow — the CLI has to
+        // start before it can print one, and it is cleared again while
+        // the post-login restore is still running — so keying on it blew
+        // the user's own screen away twice per sign-in: once on the click
+        // and again on success.
+        AppStatus.bootstrapping =>
+          app.signingIn ? signedOutScreen(app) : bootScreen(app),
+        // Provisioning a computer for the harness CLI — a state only a desktop build enters (see
+        // above). Named so the switch stays exhaustive, and drawn as the boot screen should it
+        // ever be reached.
+        AppStatus.checkingEnvironment ||
+        AppStatus.preparingEnvironment => bootScreen(app),
+        AppStatus.unauthenticated => signedOutScreen(app),
+        AppStatus.authenticated => authenticatedScreen(app),
       },
     );
   }

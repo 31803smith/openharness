@@ -536,7 +536,7 @@ class AppNotifier extends ChangeNotifier {
   Timer? _environmentRecheckTimer;
 
   /// Whether a stuck step is being auto-polled right now — drives the "Checking automatically…"
-  /// caption on [EnvironmentSetupScreen] alongside its Recheck button.
+  /// caption on the desktop's `EnvironmentSetupScreen` alongside its Recheck button.
   bool get environmentRecheckPending => _environmentRecheckTimer != null;
 
   /// Whether a provisioning run (initial or a per-step recheck) is in flight — lets the setup
@@ -1913,8 +1913,8 @@ class AppNotifier extends ChangeNotifier {
           config = _store.config;
         }
         // Forced, not read from persisted config: staging is a dev-only
-        // escape hatch with no UI to reach it anymore (see login_screen.dart
-        // history) — a stale `stag` value saved before that removal must
+        // escape hatch with no UI to reach it anymore (see the desktop's
+        // login_screen.dart history) — a stale `stag` value saved before that removal must
         // never silently resurrect it.
         _autonomousEnv = 'prod';
         api = _newApiClient();
@@ -2565,7 +2565,7 @@ class AppNotifier extends ChangeNotifier {
   static const _signedOutMessage =
       'You were signed out on this computer. Sign in again to reconnect.';
 
-  /// The session went away while the app was already running — send the user to [LoginScreen] with a
+  /// The session went away while the app was already running — send the user to the signed-out screen with a
   /// reason, and stop the background work that can only fail from here.
   ///
   /// Cold start already handles this: [bootstrap] asks the CLI whether it is signed in. The hole this
