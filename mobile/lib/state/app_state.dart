@@ -3425,6 +3425,8 @@ class AppNotifier extends ChangeNotifier {
           prev.updatedAt != agent.updatedAt ||
           prev.lastOpenedAt != agent.lastOpenedAt ||
           prev.gridModel != agent.gridModel ||
+          // The model sheet's sentence under a Local model.
+          prev.gridWebSearch != agent.gridWebSearch ||
           prev.selectedModel != agent.selectedModel ||
           prev.dshName != agent.dshName ||
           prev.sessionId != agent.sessionId ||
@@ -3439,7 +3441,14 @@ class AppNotifier extends ChangeNotifier {
           prev.launchDetail != agent.launchDetail ||
           prev.status != agent.status ||
           prev.terminalAvailable != agent.terminalAvailable ||
-          prev.terminalUnavailableReason != agent.terminalUnavailableReason) {
+          prev.terminalUnavailableReason != agent.terminalUnavailableReason ||
+          // A row's stats line (`sheet_agent_lines.dart`) — the desktop
+          // compares these three too.
+          prev.tokensUsed != agent.tokensUsed ||
+          prev.tokensUpdatedAt != agent.tokensUpdatedAt ||
+          prev.outputStats != agent.outputStats ||
+          // Whether a stopped row can be opened at all ([Agent.canPauseAndResume]).
+          prev.resumeMode != agent.resumeMode) {
         return false;
       }
     }
@@ -7309,9 +7318,14 @@ class AppNotifier extends ChangeNotifier {
         break;
       case 'agent_deleted':
         final agentId = _eventAgentId(machine, event, payload);
-        if (agentId != null) {
-          await _removeAgent(machine, agentId);
-        } else {
+        if (agentId != null) await _removeAgent(machine, agentId);
+        // ⚠️ **`retained` is a stop, not a deletion — the desktop's rule.** The
+        // daemon's `forgetSession` ends the live agent and keeps its work as a
+        // stopped harness in the same breath, and says only this; the stopped
+        // row is in the next `agents_list` (`includeStopped`), never in a push.
+        // Without the read the harness vanished from the phone until the
+        // 60-second sync — the one row somebody opens to resume it.
+        if (agentId == null || payload['retained'] == true) {
           unawaited(_loadMachineData(machine, force: true));
         }
         break;

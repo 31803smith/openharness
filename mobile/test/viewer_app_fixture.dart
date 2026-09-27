@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:harness_mobile/api/api_client.dart';
@@ -11,6 +12,8 @@ import 'package:harness_mobile/core/config.dart';
 import 'package:harness_mobile/core/machine_cache.dart';
 import 'package:harness_mobile/core/models.dart';
 import 'package:harness_mobile/state/app_state.dart';
+import 'package:harness_mobile/terminal/terminal_binary.dart';
+import 'package:harness_mobile/terminal/terminal_session.dart';
 import 'package:harness_mobile/viewer/direct_auth.dart';
 import 'package:harness_mobile/viewer/direct_auth_api.dart';
 import 'package:harness_mobile/viewer/direct_link.dart';
@@ -428,3 +431,105 @@ Future<void> settle() async {
     await Future<void>.delayed(Duration.zero);
   }
 }
+
+/// A signed-in phone whose machines — [agents]' keys — each list their agents
+/// and speak the current terminal protocol, every socket up.
+Future<ViewerRig> signedInWith(
+  Map<String, List<String>> agents, {
+  bool noTakeover = true,
+  Duration turnActivityTimeout = const Duration(seconds: 12),
+}) async {
+  final rig = viewerApp(turnActivityTimeout: turnActivityTimeout);
+  rig.api.onMachines = () async => [
+    for (final id in agents.keys) remoteMachine(id),
+  ];
+  for (final MapEntry(key: machineId, value: ids) in agents.entries) {
+    final answers = rig.conn(machineId).answers;
+    answers['agents_list'] = (_) => {
+      'agents': [for (final id in ids) agentJson(id)],
+    };
+    answers['terminal_capabilities'] = (_) =>
+        capabilities(noTakeover: noTakeover);
+  }
+  await rig.app.bootstrap();
+  await settle();
+  for (final machineId in agents.keys) {
+    rig.app.connectionStatusForTest(machineId, ConnectionStatus.connected);
+  }
+  await settle();
+  return rig;
+}
+
+var _streams = 0;
+
+/// A stream id as a daemon mints one — the binary framing carries it as a UUID.
+String newStreamId() =>
+    '00000000-0000-4000-8000-${(++_streams).toString().padLeft(12, '0')}';
+
+/// The machine answering the last open [session] sent: a stream, then its
+/// first screen. Returns the stream's id.
+Future<String> answerOpen(
+  ViewerRig rig,
+  TerminalSession session, {
+  String screen = 'prompt> ',
+}) async {
+  final open = rig
+      .conn(session.machineId)
+      .opens
+      .lastWhere((open) => open['agentId'] == session.agentId);
+  final streamId = newStreamId();
+  await rig.app.handleEventForTest(session.machineId, {
+    'type': 'terminal_ready',
+    'payload': {
+      'requestId': open['requestId'],
+      'agentId': session.agentId,
+      'protocolVersion': TerminalSession.protocolVersion,
+      'streamId': streamId,
+    },
+  });
+  await rig.app.handleTerminalBinaryForTest(
+    session.machineId,
+    encodeTerminalLocal(
+      TerminalBinaryFrame(
+        kind: TerminalBinaryKind.keyframe,
+        streamId: streamId,
+        seq: 0,
+        bytes: Uint8List.fromList(utf8.encode(screen)),
+        compressed: false,
+        cols: 80,
+        rows: 24,
+      ),
+    )!,
+  );
+  return streamId;
+}
+
+/// A person opening [agentId] on this phone, and the machine answering: the
+/// session, live.
+Future<TerminalSession> openAgent(
+  ViewerRig rig,
+  String machineId,
+  String agentId,
+) async {
+  final opening = rig.app.selectAgent(machineId, agentId);
+  await settle();
+  final session = rig.app.paneOfAgent(machineId, agentId)!.session!;
+  // The panel measuring itself, which is what the open waits for.
+  session.reportViewport(80, 24);
+  await opening;
+  await answerOpen(rig, session);
+  return session;
+}
+
+/// A machine event, as its socket delivers one.
+Future<void> push(
+  ViewerRig rig,
+  String machineId,
+  String type, [
+  Map<String, dynamic> payload = const {},
+  Map<String, dynamic> frame = const {},
+]) => rig.app.handleEventForTest(machineId, {
+  ...frame,
+  'type': type,
+  'payload': payload,
+});
