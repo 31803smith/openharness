@@ -16,27 +16,24 @@ void main() {
     expect(config.autonomousEnv, 'prod');
   });
 
-  test('nothing saved: production, and no skipped update', () async {
+  test('nothing saved: production', () async {
     final store = ConfigStore(storage: _Store({}));
     final config = await store.load();
     expect(config.apiBaseUrl, ConfigStore.defaultBaseUrl);
     expect(config.autonomousEnv, 'prod');
-    expect(store.skippedDesktopUpdateVersion, isNull);
   });
 
   test('what was saved comes back, in one batched read', () async {
     final storage = _Store({
       'app_api_base_url': 'https://staging.example',
       'app_autonomous_environment': 'stag',
-      'skipped_desktop_update_version': '  1.4.0 ',
     });
     final store = ConfigStore(storage: storage);
     final config = await store.load();
     expect(config.apiBaseUrl, 'https://staging.example');
     expect(config.autonomousEnv, 'stag');
-    expect(store.skippedDesktopUpdateVersion, '1.4.0');
     expect(store.config.apiBaseUrl, 'https://staging.example');
-    // `readMany`, never three reads: each read on the real store takes the
+    // `readMany`, never two reads: each read on the real store takes the
     // file lock and re-parses `state.json` on the launch path.
     expect(storage.batches, 1);
     expect(storage.reads, 0);
@@ -44,14 +41,10 @@ void main() {
 
   test('an environment that is not staging is production', () async {
     final store = ConfigStore(
-      storage: _Store({
-        'app_autonomous_environment': 'Stag ',
-        'skipped_desktop_update_version': '   ',
-      }),
+      storage: _Store({'app_autonomous_environment': 'Stag '}),
     );
     final config = await store.load();
     expect(config.autonomousEnv, 'prod');
-    expect(store.skippedDesktopUpdateVersion, isNull);
   });
 }
 

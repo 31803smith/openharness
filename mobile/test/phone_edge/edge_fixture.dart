@@ -7,16 +7,16 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:harness_mobile/api/api_client.dart';
 import 'package:harness_mobile/auth/auth_session.dart';
 import 'package:harness_mobile/auth/cli_link.dart';
-import 'package:harness_mobile/auth/cli_login.dart';
 import 'package:harness_mobile/auth/peer_link_client.dart';
 import 'package:harness_mobile/core/config.dart';
-import 'package:harness_mobile/core/harness_cli_runner.dart';
 import 'package:harness_mobile/core/models.dart';
 import 'package:harness_mobile/demo/sample_mode.dart';
 import 'package:harness_mobile/phone/voice_input_controller.dart';
 import 'package:harness_mobile/shared/theme/app_theme.dart' as grid;
 import 'package:harness_mobile/state/app_state.dart';
 import 'package:harness_mobile/terminal/terminal_session.dart';
+import 'package:harness_mobile/viewer/viewer_key_store.dart';
+import 'package:harness_mobile/viewer/viewer_services.dart';
 import 'package:harness_mobile/ws/ws_conn.dart';
 
 import '../agent_pager_fixture.dart' show goLive;
@@ -226,8 +226,11 @@ AppNotifier edgeApp({
     configStore: null,
     connectionForTest: (_) => conn ?? EdgeConn(),
     peerLinks: links ?? EdgeLinks(),
-    cliLink: CliLink(runner: _noCli()),
-    cliLogin: CliLogin(runner: _noCli()),
+    viewer: ViewerServices(
+      config: AppConfig.dev,
+      session: session,
+      keys: ViewerKeyStore(storage: MemoryKeyValueStore()),
+    ),
   );
   app.api = EdgeApi(app, session);
   if (noMachines) return app;
@@ -320,15 +323,6 @@ class EdgeLinks implements PeerLinkClient {
   @override
   Future<String?> unlink(String machineId) async => null;
 }
-
-/// A `harness` CLI that is never there: every run fails as a binary that could not be started
-/// would, and nothing is spawned.
-HarnessCliRunner _noCli() => HarnessCliRunner(
-  runProcess: (executable, arguments, {environment}) =>
-      throw const ProcessException('harness', [], 'not in tests'),
-  startProcess: (executable, arguments, {environment}) =>
-      throw const ProcessException('harness', [], 'not in tests'),
-);
 
 /// [count] agents, `a0`…, the first named [firstName] when given.
 List<Agent> manyAgents(int count, {String? firstName}) => [
