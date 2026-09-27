@@ -238,7 +238,7 @@ class _Body extends StatelessWidget {
     if (sample != null) {
       return SettingsRow(
         key: const ValueKey('settings-leave-sample'),
-        title: 'Leave sample',
+        title: 'Leave the sample',
         onTap: () => sample.leave(),
       );
     }

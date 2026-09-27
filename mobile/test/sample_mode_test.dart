@@ -146,7 +146,9 @@ void main() {
 
     final screen = screenOf(notifier, 'sample-docs-site', 'sample-laptop');
     expect(screen, contains('> add a search box'));
-    expect(screen, contains('⏺ On it — add a search box'));
+    // Says what it is on, in its own words — never the request said back.
+    expect(screen, contains('⏺ Building'));
+    expect(screen, isNot(contains('On it — add a search box')));
     expect(screen, contains('Update(src/components/Header.astro)'));
     expect(screen, contains('Done —'));
     await closeDown(tester);
@@ -163,7 +165,8 @@ void main() {
 
     final screen = screenOf(notifier, 'sample-mobile-ui', 'sample-laptop');
     expect(screen, contains('› run the tests and fix whatever fails'));
-    expect(screen, contains('• On it — run the tests and fix whatever fails'));
+    expect(screen, contains('• Running the tests first.'));
+    expect(screen, isNot(contains('On it — run the tests')));
     expect(screen, contains('Ran flutter test'));
     await closeDown(tester);
   });
@@ -255,7 +258,8 @@ void main() {
     await settle(tester, const Duration(seconds: 6));
     final screen = screenOf(notifier, id);
     expect(screen, contains('› add rate limiting to the login route'));
-    expect(screen, contains('• On it — add rate limiting to the login route'));
+    expect(screen, contains('• Building'));
+    expect(screen, isNot(contains('On it — add rate limiting')));
     await closeDown(tester);
   });
 
@@ -302,7 +306,7 @@ void main() {
     await tester.tap(find.text('Settings'));
     await settle(tester, const Duration(seconds: 1));
     expect(find.text('Sign out'), findsNothing);
-    await tester.tap(find.text('Leave sample'));
+    await tester.tap(find.text('Leave the sample'));
     await settle(tester, const Duration(seconds: 2));
 
     expect(find.byType(PhoneShell), findsNothing);

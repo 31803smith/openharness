@@ -380,8 +380,16 @@ class SampleRuntime implements SampleHarnessHost {
               'name': 'home',
               'own': true,
               'models': [
-                {'id': 'qwen3-coder-30b', 'node': machineId},
-                {'id': 'gpt-oss-20b', 'node': machineId},
+                // A node by the name the computer goes by, as a real one reports it — the
+                // sample's machine ids (`sample-studio`) are fixture plumbing, not names.
+                {
+                  'id': 'qwen3-coder-30b',
+                  'node': machineId.replaceFirst('sample-', ''),
+                },
+                {
+                  'id': 'gpt-oss-20b',
+                  'node': machineId.replaceFirst('sample-', ''),
+                },
                 {'id': 'devstral-small', 'node': 'laptop'},
               ],
             },

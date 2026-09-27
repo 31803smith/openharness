@@ -44,12 +44,12 @@ class _PickUpPageState extends State<PickUpPage> {
     super.dispose();
   }
 
-  /// `12 sessions on MacBook Pro`, or `on 2 computers`.
+  /// `12 harnesses on MacBook Pro`, or `on 2 computers` — the app's word for one, not "session".
   String _where() {
     final entries = visibleAgents(agentIndex(widget.notifier));
     final computers = {for (final entry in entries) entry.machineName};
     final sessions =
-        '${entries.length} ${entries.length == 1 ? 'session' : 'sessions'}';
+        '${entries.length} ${entries.length == 1 ? 'harness' : 'harnesses'}';
     return computers.length == 1
         ? '$sessions on ${computers.single}'
         : '$sessions on ${computers.length} computers';

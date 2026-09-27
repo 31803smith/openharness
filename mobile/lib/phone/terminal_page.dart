@@ -976,6 +976,9 @@ class _TerminalPageState extends State<TerminalPage>
     if (view != null && _answerKeys(view) == null) {
       return _StatusLine(text: 'answer on screen', color: tty.yellow);
     }
+    // Not while reading back through the history: the line sat on the rows being read, halving
+    // one ("FAIL src/auth/…"). It is back the moment the reader is at the end again.
+    if (_scrollback.value != null) return null;
     if (_sampleGuide() case final guide?) {
       return _StatusLine(text: guide.text, glide: guide.glide, dot: true);
     }
@@ -2164,6 +2167,7 @@ class _TerminalPageState extends State<TerminalPage>
                             listenable: Listenable.merge([
                               widget.voice,
                               _barMessage,
+                              _scrollback,
                             ]),
                             builder: (context, _) =>
                                 _statusLine() ?? const SizedBox.shrink(),
