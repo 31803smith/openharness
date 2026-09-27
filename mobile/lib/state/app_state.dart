@@ -136,25 +136,6 @@ String? _normalizeComputerId(String? raw) {
   return RegExp(r'^[a-f0-9]{16,64}$').hasMatch(value) ? value : null;
 }
 
-/// Explicit, compile-time guarded fixture used only by `main_local_manual.dart`.
-///
-/// It lets a normal Flutter window exercise the local Backend -> Harness CLI ->
-/// tmux path without depending on SSO. The API key is a random, disposable
-/// value produced by the local launcher and is never persisted.
-class LocalManualFixture {
-  final String apiBaseUrl;
-  final String apiKey;
-  final String machineId;
-  final String machineName;
-
-  const LocalManualFixture({
-    required this.apiBaseUrl,
-    required this.apiKey,
-    required this.machineId,
-    required this.machineName,
-  });
-}
-
 class MachineState {
   Machine machine;
   ConnectionStatus connectionStatus = ConnectionStatus.disconnected;
@@ -383,7 +364,6 @@ class AppNotifier extends ChangeNotifier {
 
   /// Words from the dial, for whoever can put a palette on screen.
   Stream<SpokenTaskRequest> get spokenTasks => _spokenTasks.stream;
-  final LocalManualFixture? localManualFixture;
   final Duration turnActivityTimeout;
   final LocalCliDiscovery? localCliDiscovery;
 
@@ -1269,7 +1249,6 @@ class AppNotifier extends ChangeNotifier {
     required AppConfig config,
     required AuthSession authSession,
     ConfigStore? configStore,
-    this.localManualFixture,
     this.localCliDiscovery,
     this.environmentProvisioner,
     this.desktopUpdater,
@@ -1892,11 +1871,6 @@ class AppNotifier extends ChangeNotifier {
   }
 
   Future<void> bootstrap() async {
-    final localFixture = localManualFixture;
-    if (localFixture != null) {
-      _bootstrapLocalManual(localFixture);
-      return;
-    }
     try {
       if (_store != null) {
         try {
@@ -2251,32 +2225,6 @@ class AppNotifier extends ChangeNotifier {
   void _cancelEnvironmentRecheckTimer() {
     _environmentRecheckTimer?.cancel();
     _environmentRecheckTimer = null;
-  }
-
-  void _bootstrapLocalManual(LocalManualFixture fixture) {
-    _autonomousEnv = 'prod';
-    config = AppConfig(apiBaseUrl: fixture.apiBaseUrl);
-    api = _newApiClient();
-    currentUser = const CurrentUserProfile.local();
-    final machine = Machine(
-      machineId: fixture.machineId,
-      apiKey: fixture.apiKey,
-      authMode: MachineAuthMode.remote,
-      name: fixture.machineName,
-      status: 'online',
-    );
-    machines = [machine];
-    machineStates
-      ..clear()
-      ..[machine.machineId] = MachineState(machine);
-    machineStates[machine.machineId]!.nodeOnline = true;
-    expandedMachines.clear();
-    selectedMachineId = null;
-    status = AppStatus.authenticated;
-    _lastError = null;
-    _ensurePool();
-    _autoConnectAndLoadMachines();
-    notifyListeners();
   }
 
   /// Both `bootstrap()` (already signed in) and `login()` (just finished signing in) land here once
@@ -2990,8 +2938,7 @@ class AppNotifier extends ChangeNotifier {
     if (viewer == null) _startLinkRetry(machineId);
   }
 
-  /// The token a token-bearing socket dials with: a viewer's relay socket, or
-  /// the local-manual dev fixture's.
+  /// The token a viewer's relay socket dials with.
   Future<String> _socketToken(bool force, String? failedToken) async {
     final directAuth = viewer?.auth;
     if (directAuth != null) {
@@ -3004,10 +2951,8 @@ class AppNotifier extends ChangeNotifier {
             test: (error) => error.signedOut,
           );
     }
-    final fixture = localManualFixture;
-    if (fixture != null) return fixture.apiKey;
     throw StateError(
-      'unreachable: only a viewer build and the local-manual dev fixture use a token-bearing WS transport',
+      'unreachable: only a viewer build uses a token-bearing WS transport',
     );
   }
 
@@ -3024,8 +2969,7 @@ class AppNotifier extends ChangeNotifier {
       wsBaseUrl: config.wsBaseUrl,
       autonomousEnv: _autonomousEnv,
       // Every real desktop WsConn dials the local CLI's loopback WS (transportKind.localPlaintext, see
-      // _conn()), which never calls this — only the compile-time-only local-manual dev fixture (see
-      // LocalManualFixture) still dials a backend directly with a token.
+      // _conn()), which never calls this — only a viewer's relay socket dials with a token.
       accessTokenProvider: _socketToken,
       relayCodecs: viewer?.relayCodecs,
       transportPlugins: viewer?.transportPlugins,
@@ -3136,10 +3080,6 @@ class AppNotifier extends ChangeNotifier {
   Future<void> refreshMachines() async {
     final revision = _authRevision;
     if (!_authWorkCurrent(revision)) return;
-    if (localManualFixture != null) {
-      notifyListeners();
-      return;
-    }
     if (machines.isEmpty && !machinesLoading) {
       machinesLoading = true;
       notifyListeners();
@@ -3852,12 +3792,10 @@ class AppNotifier extends ChangeNotifier {
   WsConn _conn(String machineId) {
     final testConnection = connectionForTest;
     if (testConnection != null) return testConnection(machineId);
-    // The local-manual dev fixture exercises a locally-run backend+node stack directly (no real
-    // `harness` CLI involved) — keep it on the old direct-cloud dial. Every other (real) machine now
-    // goes through the local CLI daemon regardless of whether it's this computer's own machine or a
-    // relayed one: the CLI proxies foreign machines to backend transparently (see `remoteRelay.ts` in
-    // the harness CLI repo), so this app never dials backend's WS directly anymore.
-    final connection = localManualFixture != null || viewer != null
+    // A viewer dials the relay itself. On a desktop every machine goes through the local CLI daemon
+    // regardless of whether it's this computer's own machine or a relayed one: the CLI proxies
+    // foreign machines to backend transparently (see `remoteRelay.ts` in the harness CLI repo).
+    final connection = viewer != null
         ? _pool!.connFor(machineId, transportKind: WsTransportKind.cloudE2ee)
         : _pool!.connFor(
             machineId,
@@ -3883,14 +3821,6 @@ class AppNotifier extends ChangeNotifier {
   // Every machine — this computer's own, or a relayed one — now speaks the same plaintext local wire
   // protocol to the CLI (which terminates E2EE itself for relayed machines; see remoteRelay.ts in the
   // harness CLI repo). There is no per-machine branching left here at all.
-  //
-  // Known gap: LocalManualFixture (main_local_manual.dart, a compile-time-gated dev entry point that
-  // exercises a locally-run backend+machine-node stack without SSO) used to run its OWN simulated E2EE
-  // handshake against that local stack. That simulation depended on the crypto this app no longer
-  // carries — the fixture now sends/receives plaintext-local-framed terminal data like every other
-  // machine, which needs the target local machine-node to also expect plaintext for the fixture to
-  // keep working end-to-end. Fixing that (if still desired) is a machine-node-side change, out of
-  // scope here.
   void _wireConnectionHooks(WsConn connection, String machineId) {
     connection.onBinaryFrame = (frame) =>
         _handleTerminalBinary(machineId, frame);
@@ -6386,13 +6316,12 @@ class AppNotifier extends ChangeNotifier {
   /// Settings, else the OS's, else its model — `core/device_name.dart` has the
   /// order and why `Platform.localHostname` ("localhost" on iOS) is not it.
   TerminalClientDescriptor phoneClientDescriptor() {
-    final user = currentUser;
     return TerminalClientDescriptor(
       kind: 'phone',
       name: composePhoneName(
         override: phoneNameStore.value,
         device: NativeDeviceInfo.cached,
-        userName: user == null || user.isLocalSession ? null : user.name,
+        userName: currentUser?.name,
       ),
     );
   }

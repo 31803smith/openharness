@@ -353,9 +353,7 @@ class _PhoneNameRow extends StatelessWidget {
               current: override ?? '',
               placeholder: composePhoneName(
                 device: NativeDeviceInfo.cached,
-                userName: notifier.currentUser?.isLocalSession == true
-                    ? null
-                    : notifier.currentUser?.name,
+                userName: notifier.currentUser?.name,
               ),
             ),
           ),
