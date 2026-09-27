@@ -31,17 +31,13 @@ class DirectLink implements PeerLinkClient {
     void Function(String stage)? onProgress,
     String? displayName,
   }) async {
-    final String token;
-    try {
-      token = await auth.accessToken();
-    } on DirectAuthException catch (error) {
-      return CliLinkConnectResult(error: error.message);
-    }
+    final start = await _start();
+    if (start.failed != null) return start.failed!;
     final result = await linkWithPassword(
       machineId: machineId,
       password: password,
-      identity: await keys.identity(),
-      accessToken: token,
+      identity: start.identity!,
+      accessToken: start.token!,
       wsBaseUrl: config.wsBaseUrl,
       autonomousEnv: config.autonomousEnv,
       onProgress: (stage) => onProgress?.call(stage.wireName),
@@ -49,11 +45,7 @@ class DirectLink implements PeerLinkClient {
     );
     switch (result) {
       case PasswordLinked(:final peerPub, :final fingerprint):
-        await keys.pin(machineId, peerPub);
-        return CliLinkConnectResult(
-          linkedMachineId: machineId,
-          fingerprint: fingerprint,
-        );
+        return _pin(machineId, peerPub, fingerprint);
       case PasswordLinkFailed(:final code, :final retryAt):
         // Named the way the CLI's `--name` names it: the id is all a stranger to this rail sees.
         final name = displayName == null || displayName.isEmpty
@@ -73,29 +65,21 @@ class DirectLink implements PeerLinkClient {
     required String label,
     String? displayName,
   }) async {
-    final String token;
-    try {
-      token = await auth.accessToken();
-    } on DirectAuthException catch (error) {
-      return CliLinkConnectResult(error: error.message);
-    }
+    final start = await _start();
+    if (start.failed != null) return start.failed!;
     final result = await linkWithCode(
       machineId: machineId,
       code: code,
       label: label,
-      identity: await keys.identity(),
-      accessToken: token,
+      identity: start.identity!,
+      accessToken: start.token!,
       wsBaseUrl: config.wsBaseUrl,
       autonomousEnv: config.autonomousEnv,
       socket: socket,
     );
     switch (result) {
       case PasswordLinked(:final peerPub, :final fingerprint):
-        await keys.pin(machineId, peerPub);
-        return CliLinkConnectResult(
-          linkedMachineId: machineId,
-          fingerprint: fingerprint,
-        );
+        return _pin(machineId, peerPub, fingerprint);
       case PasswordLinkFailed(:final code):
         final name = displayName == null || displayName.isEmpty
             ? 'the computer'
@@ -111,6 +95,58 @@ class DirectLink implements PeerLinkClient {
           },
         );
     }
+  }
+
+  // ⚠️ **Both links answer with a result, never an exception** — the same contract `CliLink`
+  // keeps. Their callers await them with nothing around them: the password form with its button
+  // disabled until an answer comes, the QR's pairing screen under "Pairing…". A state file that
+  // was locked or full threw straight through here, and left each of them waiting for good.
+
+  /// The session's token and this device's identity — what either link needs before it dials.
+  Future<
+    ({String? token, E2eeIdentity? identity, CliLinkConnectResult? failed})
+  >
+  _start() async {
+    try {
+      return (
+        token: await auth.accessToken(),
+        identity: await keys.identity(),
+        failed: null,
+      );
+    } on DirectAuthException catch (error) {
+      return (
+        token: null,
+        identity: null,
+        failed: CliLinkConnectResult(error: error.message),
+      );
+    } catch (_) {
+      return (
+        token: null,
+        identity: null,
+        failed: const CliLinkConnectResult(
+          error: 'This phone couldn’t read its own keys. Try again.',
+        ),
+      );
+    }
+  }
+
+  /// The machine proved itself; remembering it is the one thing left that can fail.
+  Future<CliLinkConnectResult> _pin(
+    String machineId,
+    List<int> peerPub,
+    String fingerprint,
+  ) async {
+    try {
+      await keys.pin(machineId, peerPub);
+    } catch (_) {
+      return const CliLinkConnectResult(
+        error: 'Linked, but this phone couldn’t save it. Try again.',
+      );
+    }
+    return CliLinkConnectResult(
+      linkedMachineId: machineId,
+      fingerprint: fingerprint,
+    );
   }
 
   @override
