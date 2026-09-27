@@ -4,8 +4,12 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:harness_mobile/api/api_client.dart';
 import 'package:harness_mobile/auth/auth_session.dart';
+import 'package:harness_mobile/auth/cli_link.dart';
+import 'package:harness_mobile/auth/peer_link_client.dart';
 import 'package:harness_mobile/core/config.dart';
+import 'package:harness_mobile/core/harness_cli_runner.dart';
 import 'package:harness_mobile/core/models.dart';
 import 'package:harness_mobile/demo/sample_mode.dart';
 import 'package:harness_mobile/phone/voice_input_controller.dart';
@@ -118,6 +122,9 @@ class EdgeConn extends WsConn {
   final List<(String, Map<String, dynamic>)> frames = [];
   final List<String> requests = [];
 
+  /// How many times a terminal was asked to open.
+  int get opens => frames.where((frame) => frame.$1 == 'terminal_open').length;
+
   @override
   Future<bool> sendTerminalFrame(
     String type,
@@ -158,6 +165,11 @@ Agent edgeAgent(
 
 /// An account with one machine, `m`, running [agents] — as a phone sees it when [online], or as it
 /// sees a machine that has gone away when not.
+///
+/// ⚠️ **Every way out of the process is stubbed, not only the machine's socket.** A notifier left
+/// with its defaults reaches the local `harness` CLI's HTTP port through [ApiClient], and runs the
+/// `harness` binary itself to link a computer by password — the user's real harnesses, from a
+/// test. [EdgeApi], [EdgeLinks] and a CLI runner that refuses to start anything close all three.
 AppNotifier edgeApp({
   List<Agent>? agents,
   String machineName = 'studio',
@@ -165,13 +177,18 @@ AppNotifier edgeApp({
   AgentLoadStatus load = AgentLoadStatus.loaded,
   EdgeConn? conn,
   bool noMachines = false,
+  EdgeLinks? links,
 }) {
+  final session = AuthSession();
   final app = AppNotifier(
     config: AppConfig.dev,
-    authSession: AuthSession(),
+    authSession: session,
     configStore: null,
     connectionForTest: (_) => conn ?? EdgeConn(),
+    peerLinks: links ?? EdgeLinks(),
+    cliLink: CliLink(runner: _noCli()),
   );
+  app.api = EdgeApi(app, session);
   if (noMachines) return app;
   final machine = Machine(
     machineId: 'm',
@@ -190,6 +207,87 @@ AppNotifier edgeApp({
   return app;
 }
 
+/// The control plane, answered from the app's own list — never the local CLI's HTTP port, which
+/// is where a real [ApiClient] outside a viewer build sends everything.
+class EdgeApi extends ApiClient {
+  EdgeApi(this._app, AuthSession session)
+    : super(config: AppConfig.dev, session: session);
+
+  final AppNotifier _app;
+
+  @override
+  Future<Map<String, dynamic>?> me() async => null;
+
+  @override
+  Future<List<Machine>> machines() async => _app.machines;
+
+  @override
+  Future<String?> renameMachine({
+    required String machineId,
+    required String name,
+  }) async => name;
+
+  @override
+  Future<void> deleteMachine({required String machineId}) async {}
+
+  @override
+  Future<Map<String, dynamic>?> desk() async => null;
+
+  @override
+  Future<Map<String, dynamic>?> deskOps(List<Map<String, dynamic>> ops) async =>
+      null;
+
+  @override
+  Future<String> transcribeVoice(Uint8List wav, {required String lang}) async =>
+      '';
+}
+
+/// Linking a computer by password or by code, answered by the test: [error] when set, else
+/// success.
+class EdgeLinks implements PeerLinkClient {
+  String? error;
+  final List<String> passwords = [];
+
+  @override
+  Future<CliLinkConnectResult> connect(
+    String machineId,
+    String password, {
+    void Function(String stage)? onProgress,
+    String? displayName,
+  }) async {
+    passwords.add(password);
+    onProgress?.call('connecting');
+    return error == null
+        ? CliLinkConnectResult(linkedMachineId: machineId)
+        : CliLinkConnectResult(error: error);
+  }
+
+  @override
+  Future<CliLinkConnectResult> connectWithCode(
+    String machineId,
+    String code, {
+    required String label,
+    String? displayName,
+  }) async => error == null
+      ? CliLinkConnectResult(linkedMachineId: machineId)
+      : CliLinkConnectResult(error: error);
+
+  @override
+  Future<CliLinkListResult> list() async => const CliLinkListResult();
+
+  @override
+  Future<String?> unlink(String machineId) async => null;
+}
+
+/// A `harness` CLI that is never there: every run fails as a binary that could not be started
+/// would, and nothing is spawned.
+HarnessCliRunner _noCli() => HarnessCliRunner(
+  runProcess: (executable, arguments, {environment}) =>
+      throw const ProcessException('harness', [], 'not in tests'),
+  startProcess: (executable, arguments, {environment}) =>
+      throw const ProcessException('harness', [], 'not in tests'),
+);
+
 /// [count] agents, `a0`…, the first named [firstName] when given.
 List<Agent> manyAgents(int count, {String? firstName}) => [
   for (var i = 0; i < count; i++)
@@ -202,17 +300,23 @@ List<Agent> manyAgents(int count, {String? firstName}) => [
 
 /// A live terminal for [agentId] on `m`: adopted as the pane and given its first keyframe, so the
 /// page draws a screen rather than its skeleton.
+///
+/// [sent] collects every frame the session sends — a reopen, a resize.
 Future<TerminalSession> liveTerminal(
   AppNotifier app,
   String agentId, {
   String? name,
+  List<(String, Map<String, dynamic>)>? sent,
 }) async {
   final session = TerminalSession(
     machineId: 'm',
     agentId: agentId,
     agentName: name ?? agentId,
     engineId: 'claude',
-    send: (_, _) async => true,
+    send: (type, payload) async {
+      sent?.add((type, payload));
+      return true;
+    },
     sendBinary: (_) async => true,
   );
   app.adoptSessionForTest(session);
