@@ -23,7 +23,15 @@ class RelayLink {
   /// The machine's end of the session, once the phone's hello has been answered.
   MachineSession? machine;
 
-  void send(Map<String, dynamic> frame) => ws.add(jsonEncode(frame));
+  /// Sent if the socket is still open; a machine answering a phone that already hung up says
+  /// nothing to anyone.
+  void send(Map<String, dynamic> frame) {
+    try {
+      ws.add(jsonEncode(frame));
+    } on StateError {
+      // Already hung up.
+    }
+  }
 
   void sendText(String text) => ws.add(text);
 
@@ -90,7 +98,16 @@ class FakeRelay {
     return relay;
   }
 
+  /// When set, a dial waits here before its upgrade is answered — a slow network's handshake.
+  Completer<void>? holdUpgrade;
+
+  /// Completes when a dial has reached the relay (and is being held, if [holdUpgrade] is set).
+  final dialled = StreamController<void>.broadcast();
+
   Future<void> _serve(HttpRequest request) async {
+    dialled.add(null);
+    final hold = holdUpgrade;
+    if (hold != null) await hold.future;
     if (refuse || !WebSocketTransformer.isUpgradeRequest(request)) {
       request.response.statusCode = 404;
       await request.response.close();
