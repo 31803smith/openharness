@@ -58,8 +58,6 @@ import '../update/manual_update_check.dart';
 import '../ws/ws_conn.dart';
 import '../ws/local_cli_discovery.dart';
 import '../ws/ws_pool.dart';
-import 'pane_preset.dart';
-import 'pane_arrangement.dart';
 import 'pending_question.dart';
 import 'search_when.dart';
 import 'session_content_search.dart';
@@ -107,7 +105,6 @@ class AgentCreationAttempt {
   final String _id;
   String? _machineId, _targetId;
   Map<String, dynamic>? _choices;
-  PaneSplitRequest? _split;
   Future<String?>? _inFlight;
   bool _awaitingConfirmation = false, _finished = false;
   String? _outcome;
@@ -647,8 +644,7 @@ class AppNotifier extends ChangeNotifier {
     // restored from builds that did not mark them as drafts.
     if (entry is ClosedSwarm &&
         entry.name == Swarm.defaultName &&
-        entry.panes.isEmpty &&
-        entry.presets.isEmpty) {
+        entry.panes.isEmpty) {
       return;
     }
     _closedHistory.add(entry);
@@ -674,8 +670,7 @@ class AppNotifier extends ChangeNotifier {
     final swarm = swarms.where((swarm) => swarm.id == id).firstOrNull;
     return swarm != null &&
         swarm.panes.isEmpty &&
-        swarm.name == Swarm.defaultName &&
-        swarm.presets.isEmpty;
+        swarm.name == Swarm.defaultName;
   }
 
   void newSwarm({String name = Swarm.defaultName, bool draft = false}) {
@@ -737,7 +732,6 @@ class AppNotifier extends ChangeNotifier {
         target == null ||
         target.panes.isNotEmpty ||
         target.name != Swarm.defaultName ||
-        target.presets.isNotEmpty ||
         swarms.length == 1) {
       return false;
     }
@@ -834,8 +828,7 @@ class AppNotifier extends ChangeNotifier {
     // welcome tabs, evicting the real work from recently closed history.
     if (swarms.length == 1 &&
         swarms.single.panes.isEmpty &&
-        swarms.single.name == Swarm.defaultName &&
-        swarms.single.presets.isEmpty) {
+        swarms.single.name == Swarm.defaultName) {
       return;
     }
     final removed = swarms.removeAt(index);
@@ -902,7 +895,6 @@ class AppNotifier extends ChangeNotifier {
       final present = {
         for (final pane in target.panes) (pane.machineId, pane.agentId),
       };
-      final previousCount = target.panes.length;
       for (final entry in saved.panes) {
         if (!present.add((entry.machineId, entry.agentId))) continue;
         target.panes.add(
@@ -916,22 +908,12 @@ class AppNotifier extends ChangeNotifier {
           ),
         );
       }
-      if (target.panes.length != previousCount) {
-        // An old manual shape for this count describes different membership.
-        // Keep current presets/pins and use the normal layout for added views.
-        target.paneSizes.remove('${target.panes.length}:manual');
-        target.arranged = null;
-        target.arrangedKey = null;
-      }
       target.focusedPaneId ??= target.panes.firstOrNull?.id;
       _paneFocusRequest++;
       selectSwarm(target.id);
       return;
     }
-    final restored = Swarm(id: saved.id, name: saved.name)
-      ..gridColumns = saved.gridColumns
-      ..presets.addAll(saved.presets)
-      ..paneSizes.addAll(saved.paneSizes);
+    final restored = Swarm(id: saved.id, name: saved.name);
     for (final entry in saved.panes) {
       final pane = pool.putIfAbsent(
         (entry.machineId, entry.agentId),
@@ -989,31 +971,7 @@ class AppNotifier extends ChangeNotifier {
           agentId: agent.agentId,
         );
     if (!target.panes.contains(pane)) {
-      final restoreManual =
-          agent.manualLayout != null &&
-          listEquals(
-            target.panes.map((p) => (p.machineId, p.agentId)).toList(),
-            agent.remainingAgents,
-          ) &&
-          (target.panes.length == 1 ||
-              listEquals(
-                target.manualLayout?.tiles,
-                agent.manualLayout!.remove(agent.index)?.tiles,
-              ));
-      if (restoreManual) {
-        target.pinnedSlots.updateAll(
-          (_, slot) => slot >= agent.index ? slot + 1 : slot,
-        );
-      }
       target.panes.insert(agent.index.clamp(0, target.panes.length), pane);
-      if (restoreManual) {
-        target.savePaneSizes(
-          '${target.panes.length}:manual',
-          agent.manualLayout!,
-        );
-      } else if (agent.manualLayout != null) {
-        target.paneSizes.remove('${target.panes.length}:manual');
-      }
       if (agent.pinnedSlot != null &&
           !target.pinnedSlots.containsValue(agent.pinnedSlot)) {
         target.pinnedSlots[pane.id] = agent.pinnedSlot!;
@@ -1078,119 +1036,6 @@ class AppNotifier extends ChangeNotifier {
 
   /// Explicit navigation must reveal and refocus even an already-selected pane.
   int get paneFocusRequest => _paneFocusRequest;
-
-  /// An explicit relayout reveals live output even in tiles whose rectangle
-  /// does not change. This is view intent, so it is never persisted.
-  int _paneLayoutRequest = 0;
-  int get paneLayoutRequest => _paneLayoutRequest;
-
-  /// The chosen shape for a grid of this size, or the shipped one.
-  Map<int, PanePreset> get panePresets => activeSwarm.presets;
-
-  PanePreset? presetFor(int paneCount) =>
-      panePresets[paneCount] ?? PanePreset.defaultFor(paneCount);
-
-  /// Choosing a preset also resets custom sizes for that pane count. Selecting
-  /// the current preset in Command-S is the quick way back to its proportions.
-  void setPreset(int paneCount, PanePreset preset) {
-    if (!preset.supportsCount(paneCount)) return;
-    final resized = activeSwarm.paneSizes.keys.any(
-      (key) => key.startsWith('$paneCount:'),
-    );
-    _paneLayoutRequest++;
-    if (presetFor(paneCount) == preset && !resized) {
-      notifyListeners();
-      return;
-    }
-    panePresets[paneCount] = preset;
-    activeSwarm.paneSizes.removeWhere(
-      (key, _) => key.startsWith('$paneCount:'),
-    );
-    activeSwarm.arranged = null;
-    activeSwarm.arrangedKey = null;
-    notifyListeners();
-    _persistLayout();
-  }
-
-  int _paneResizeRequest = 0;
-  int get paneResizeRequest => _paneResizeRequest;
-  void beginPaneResize() {
-    if (panes.length < 2 || zoomedPaneId != null) return;
-    _paneResizeRequest++;
-    notifyListeners();
-  }
-
-  PaneSplitRequest? preparePaneSplit(PaneResizeAxis axis, {int? paneId}) {
-    if (zoomedPaneId != null || panes.length >= maxPanes) return null;
-    final targetId = paneId ?? focusedPaneId;
-    final before = activeSwarm.arranged;
-    final minimum = activeSwarm.arrangedMinimum;
-    final index = panes.indexWhere(
-      (p) => p.id == targetId && p.agentId != null,
-    );
-    if (before == null ||
-        minimum == null ||
-        before.tiles.length != panes.length) {
-      return null;
-    }
-    final after = before.split(index, axis, minimum: minimum);
-    if (after == null || targetId == null) return null;
-    return PaneSplitRequest(
-      swarmId: activeSwarmId,
-      paneId: targetId,
-      axis: axis,
-      paneIds: panes.map((p) => p.id),
-      before: before,
-      after: after,
-    );
-  }
-
-  bool isPaneSplitCurrent(PaneSplitRequest split) {
-    final target = swarms.where((s) => s.id == split.swarmId).firstOrNull;
-    final minimum = target?.arrangedMinimum;
-    return !_disposed &&
-        target != null &&
-        target.zoomedPaneId == null &&
-        minimum != null &&
-        listEquals(target.panes.map((p) => p.id).toList(), split.paneIds) &&
-        listEquals(target.arranged?.tiles, split.before.tiles) &&
-        split.before.split(
-              split.paneIds.indexOf(split.paneId),
-              split.axis,
-              minimum: minimum,
-            ) !=
-            null;
-  }
-
-  /// Drag frames only update in-memory intent. The completed gesture performs
-  /// one ordinary coalesced layout save; terminal sessions remain untouched.
-  bool resizePanes(
-    String swarmId,
-    String layoutKey,
-    PaneArrangement arrangement, {
-    bool persist = true,
-  }) {
-    if (activeSwarmId != swarmId ||
-        zoomedPaneId != null ||
-        arrangement.tiles.length != panes.length ||
-        activeSwarm.arrangedKey != layoutKey) {
-      return false;
-    }
-    if (identical(activeSwarm.paneSizes[layoutKey], arrangement)) {
-      if (persist) _persistLayout();
-      return true;
-    }
-    activeSwarm.savePaneSizes(layoutKey, arrangement);
-    activeSwarm.arranged = arrangement;
-    _paneLayoutRequest++;
-    notifyListeners();
-    if (persist) _persistLayout();
-    return true;
-  }
-
-  void resetPaneSizes() {
-    setPreset(panes.length, presetFor(panes.length) ?? PanePreset.auto);
-  }
 
   int _nextPaneId = 1;
 
@@ -4736,7 +4581,6 @@ class AppNotifier extends ChangeNotifier {
     String? permissionMode,
     String? codexHome,
     String? swarmId,
-    PaneSplitRequest? split,
     AgentCreationAttempt? attempt,
     String? prompt,
   }) {
@@ -4761,13 +4605,7 @@ class AppNotifier extends ChangeNotifier {
           : permissionModeApproves(permissionMode),
       'codexHome': ?codexHome,
     };
-    return _create(
-      machineId,
-      choices,
-      swarmId: swarmId,
-      split: split,
-      attempt: creation,
-    );
+    return _create(machineId, choices, swarmId: swarmId, attempt: creation);
   }
 
   /// A Claude Code or Codex conversation Harness did not start, opened as a harness that resumes
@@ -4794,7 +4632,6 @@ class AppNotifier extends ChangeNotifier {
     String machineId,
     Map<String, dynamic> choices, {
     String? swarmId,
-    PaneSplitRequest? split,
     AgentCreationAttempt? attempt,
   }) {
     final creation = attempt ?? AgentCreationAttempt();
@@ -4810,18 +4647,14 @@ class AppNotifier extends ChangeNotifier {
     if (creation._choices == null) {
       creation._choices = choices;
       creation._machineId = machineId;
-      creation._targetId = split?.swarmId ?? swarmId ?? activeSwarmId;
-      creation._split = split;
+      creation._targetId = swarmId ?? activeSwarmId;
     }
     final work = _createAgentWithReceipt(creation);
     creation._inFlight = work;
     return work.whenComplete(() => creation._inFlight = null);
   }
 
-  String? _creationPlacementError(String targetId, PaneSplitRequest? split) {
-    if (split != null && !isPaneSplitCurrent(split)) {
-      return 'The layout changed. Close this dialog and split the pane again.';
-    }
+  String? _creationPlacementError(String targetId) {
     final target = swarms.where((s) => s.id == targetId).firstOrNull;
     if (target == null) return 'This tab was closed';
     if (target.panes.length >= maxPanes) {
@@ -4863,7 +4696,6 @@ class AppNotifier extends ChangeNotifier {
   Future<String?> _createAgentWithReceipt(AgentCreationAttempt creation) async {
     final machineId = creation._machineId!;
     final targetId = creation._targetId!;
-    final split = creation._split;
     final choices = creation._choices!;
     final machine = machineStates[machineId];
     if (machine == null) return 'Machine not found';
@@ -4871,7 +4703,7 @@ class AppNotifier extends ChangeNotifier {
     // A status check must remain possible even if the destination closed or a
     // capability probe changed while the first create was already in flight.
     if (!creation.awaitingConfirmation) {
-      final placementError = _creationPlacementError(targetId, split);
+      final placementError = _creationPlacementError(targetId);
       if (placementError != null) return placementError;
       if (choices['codexHome'] != null) {
         if (choices['engine'] != 'codex') {
@@ -5017,7 +4849,7 @@ class AppNotifier extends ChangeNotifier {
     // Apply each creation receipt once, even if its transport result is replayed.
     stats.onAgentSpawned();
     notifyListeners();
-    if (_creationPlacementError(targetId, split) != null) {
+    if (_creationPlacementError(targetId) != null) {
       _lastError =
           'The harness was created, but its original tab or layout changed. '
           'Use Open Harness to find it.';
@@ -5032,13 +4864,7 @@ class AppNotifier extends ChangeNotifier {
       machineId: machineId,
       agentId: agent.id,
     ), name: agent.displayName);
-    await assignAgentToPane(
-      null,
-      machineId,
-      agent.id,
-      swarmId: targetId,
-      split: split,
-    );
+    await assignAgentToPane(null, machineId, agent.id, swarmId: targetId);
     return null;
   }
 
@@ -5918,19 +5744,12 @@ class AppNotifier extends ChangeNotifier {
     String machineId,
     String agentId, {
     String? swarmId,
-    PaneSplitRequest? split,
     bool takeControl = false,
   }) async {
     final target = swarms
         .where((s) => s.id == (swarmId ?? activeSwarmId))
         .firstOrNull;
     if (target == null || _disposed) return;
-    if (split != null &&
-        (split.swarmId != target.id ||
-            paneId != null ||
-            !isPaneSplitCurrent(split))) {
-      return;
-    }
     final targetPanes = target.panes;
     final machine = machineStates[machineId];
     if (machine == null) return;
@@ -5969,9 +5788,7 @@ class AppNotifier extends ChangeNotifier {
       return;
     }
     final insertion = replaced == null
-        ? split == null
-              ? targetPanes.length
-              : split.paneIds.indexOf(split.paneId) + 1
+        ? targetPanes.length
         : targetPanes.indexOf(replaced);
     if (existing != null) target.remove(existing);
     if (replaced != null) target.remove(replaced);
@@ -5980,15 +5797,6 @@ class AppNotifier extends ChangeNotifier {
         TerminalPane(id: _nextPaneId++, machineId: machineId, agentId: agentId);
     final firstAgent = targetPanes.every((pane) => pane.agentId == null);
     targetPanes.insert(insertion.clamp(0, targetPanes.length), pane);
-    if (split != null) {
-      target.pinnedSlots.updateAll(
-        (_, slot) => slot >= insertion ? slot + 1 : slot,
-      );
-      final key = '${targetPanes.length}:manual';
-      target.savePaneSizes(key, split.after);
-      target.arranged = split.after;
-      target.arrangedKey = key;
-    }
     if (firstAgent && target.name == Swarm.defaultName) {
       final name = agent.name.trim();
       if (name.isNotEmpty) {
@@ -6198,130 +6006,7 @@ class AppNotifier extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// How many columns the grid last laid out.
-  ///
-  /// Only `auto` needs telling: it measures the window, so it is the one shape
-  /// whose columns are not in its own description. Reported by the grid as it
-  /// builds; null until then, and then the shape's own guess stands.
-  int? get gridColumns => activeSwarm.gridColumns;
-  set gridColumns(int? value) => activeSwarm.gridColumns = value;
-
   bool hasNavigationRail = true;
-
-  /// Focus the tile above or below the focused one — ⌘↑ / ⌘↓.
-  ///
-  /// SPATIAL, unlike the left/right pair, which walks the tiles in order. Down
-  /// from the top-left of a 2×2 is the tile under it, not the next one along,
-  /// because that is what the arrow is pointing at. The shapes are read from
-  /// [PanePreset.tilesFor] — the same rectangles the layout is built from and
-  /// the picker draws — so this cannot describe a grid the app does not build.
-  ///
-  /// Nothing above or below (a single row, or the edge) leaves the focus where
-  /// it is: an arrow that wraps to the far side of the screen reads as a jump,
-  /// not as a step.
-  void focusPaneVertically(int delta) {
-    final to = _neighbour(dx: 0, dy: delta) ?? _wrapVertically(delta);
-    if (to != null) focusPane(panes[to].id);
-  }
-
-  /// The tile at the far end of this column — ⌘j off the bottom row, ⌘k off the
-  /// top.
-  ///
-  /// IN COLUMN, not in list order. Wrapping to `panes.first` from the bottom
-  /// right of a 2x2 would jump a column as well as a row, which reads as the key
-  /// having misfired rather than as having come round. This finds the tile that
-  /// still overlaps ours horizontally and sits furthest in the direction pressed
-  /// — the one directly above or below, as far as it goes.
-  int? _wrapVertically(int delta) {
-    final count = panes.length;
-    if (count < 2) return null;
-    final shape = activeSwarm.arranged?.tiles.length == count
-        ? activeSwarm.arranged!.tiles
-        : presetFor(count)?.tilesFor(count, columns: gridColumns);
-    if (shape == null || shape.length != count) return null;
-    final at = panes.indexWhere((pane) => pane.id == focusedPaneId);
-    if (at < 0) return null;
-
-    final from = shape[at];
-    int? best;
-    double bestEdge = 0;
-    for (var i = 0; i < count; i++) {
-      if (i == at) continue;
-      final to = shape[i];
-      if ((from.right < to.left + 0.001) || (to.right < from.left + 0.001)) {
-        continue;
-      }
-      // Going DOWN wraps to the topmost; going up, to the bottom-most.
-      final edge = delta > 0 ? -to.top : to.top;
-      if (best == null || edge > bestEdge) {
-        bestEdge = edge;
-        best = i;
-      }
-    }
-    return best;
-  }
-
-  /// ⇧⌘h j k l — put this pane where its neighbour is, and that one here.
-  ///
-  /// A SWAP, not an insert. vim's `Ctrl-w H/J/K/L` — the capitals this mirrors —
-  /// moves a window to the far edge, which needs a tree of splits to mean
-  /// anything; this grid is a list of slots rendered into a shape, so the honest
-  /// equivalent is to trade places with whoever is in the direction pressed.
-  void movePaneDirection({required int dx, required int dy}) {
-    final id = focusedPaneId;
-    if (id == null) return;
-    final at = panes.indexWhere((pane) => pane.id == id);
-    final to = _neighbour(dx: dx, dy: dy);
-    if (at < 0 || to == null) return;
-    final moved = panes.removeAt(at);
-    panes.insert(to, moved);
-    _persistLayout();
-    notifyListeners();
-  }
-
-  /// The index of the tile in the given direction, or null at the edge.
-  ///
-  /// Reads the laid-out RECTANGLES rather than the list, so "left" means left on
-  /// screen whatever order the panes happen to be in. The two rules that make it
-  /// honest: the neighbour has to actually be on that side (a tile whose edge is
-  /// level with ours is not beside us), and the two have to OVERLAP on the other
-  /// axis — otherwise the tile diagonally across counts as "down", which is how
-  /// a 2x2 ends up with a key that moves like a knight.
-  int? _neighbour({required int dx, required int dy}) {
-    final count = panes.length;
-    if (count < 2) return null;
-    final shape = activeSwarm.arranged?.tiles.length == count
-        ? activeSwarm.arranged!.tiles
-        : presetFor(count)?.tilesFor(count, columns: gridColumns);
-    if (shape == null || shape.length != count) return null;
-    final at = panes.indexWhere((pane) => pane.id == focusedPaneId);
-    if (at < 0) return null;
-
-    final from = shape[at];
-    int? best;
-    double bestGap = double.infinity;
-    for (var i = 0; i < count; i++) {
-      if (i == at) continue;
-      final to = shape[i];
-      final double gap;
-      final bool apart;
-      if (dy != 0) {
-        gap = dy > 0 ? to.top - from.top : from.top - to.top;
-        apart =
-            (from.right < to.left + 0.001) || (to.right < from.left + 0.001);
-      } else {
-        gap = dx > 0 ? to.left - from.left : from.left - to.left;
-        apart =
-            (from.bottom < to.top + 0.001) || (to.bottom < from.top + 0.001);
-      }
-      if (gap <= 0.001 || apart) continue;
-      if (gap < bestGap) {
-        bestGap = gap;
-        best = i;
-      }
-    }
-    return best;
-  }
 
   /// ⌘; — the pane focused before this one.
   ///
@@ -6516,8 +6201,7 @@ class AppNotifier extends ChangeNotifier {
       final swarm = swarms.where((swarm) => swarm.id == id).firstOrNull;
       return swarm == null ||
           swarm.panes.isNotEmpty ||
-          swarm.name != Swarm.defaultName ||
-          swarm.presets.isNotEmpty;
+          swarm.name != Swarm.defaultName;
     });
     _layoutRevision++;
     _announceOpenPanesToDial();
@@ -6599,25 +6283,11 @@ class AppNotifier extends ChangeNotifier {
             paneAt(raw['focus']) ?? swarm.panes.firstOrNull?.id;
         swarm.zoomedPaneId = paneAt(raw['zoom']);
         swarm.previousPaneId = paneAt(raw['previousFocus']);
-        if (raw['presets'] case final Map presets) {
-          for (final e in presets.entries) {
-            final count = int.tryParse(e.key.toString());
-            final preset = PanePreset.byId(e.value?.toString());
-            if (count != null &&
-                count >= 2 &&
-                count <= maxPanes &&
-                preset != null &&
-                preset.supportsCount(count)) {
-              swarm.presets[count] = preset;
-            }
-          }
-        }
-        swarm.paneSizes.addAll(PaneArrangement.readSaved(raw['paneSizes']));
         restored.add(swarm);
       }
       if (restored.isNotEmpty) {
         // Older builds saved multiple unused start pages. Retain the selected
-        // one when possible; custom names, presets and real work stay intact.
+        // one when possible; custom names and real work stay intact.
         final starters = restored.where((swarm) => swarm.isEmptyStarter);
         final starter =
             starters
@@ -6645,11 +6315,6 @@ class AppNotifier extends ChangeNotifier {
         return;
       }
     }
-    // Read before the guards below: the dividers are remembered even for a
-    // grid this run has not restored any agents into, so a window that opens
-    // empty and is then filled by hand still comes up the shape it was left.
-    final legacyPresets = await store.loadPresets();
-    if (_disposed || revision != _layoutRevision) return;
     if (allPanes.isNotEmpty ||
         swarms.length != 1 ||
         activeSwarm != initialSwarm) {
@@ -6657,11 +6322,7 @@ class AppNotifier extends ChangeNotifier {
     }
     final entries = await store.load();
     if (_disposed || revision != _layoutRevision) return;
-    panePresets.addAll(legacyPresets);
-    if (entries.isEmpty) {
-      if (panePresets.isNotEmpty) notifyListeners();
-      return;
-    }
+    if (entries.isEmpty) return;
     for (final entry in entries) {
       panes.add(
         TerminalPane(
