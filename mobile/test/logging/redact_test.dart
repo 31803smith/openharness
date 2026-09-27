@@ -27,6 +27,21 @@ void main() {
       );
     });
 
+    test('what the person wrote is a length, never the words', () {
+      expect(
+        redactValue({
+          'engine': 'claude',
+          'prompt': 'fix the flaky login test',
+          'cwd': '/work/app',
+        }),
+        '{engine: claude, prompt: <24 chars>, cwd: /work/app}',
+      );
+      expect(
+        redactValue({'query': 'stripe webhook', 'limit': 20}),
+        '{query: <14 chars>, limit: 20}',
+      );
+    });
+
     test('a list is a count, never its contents', () {
       expect(
         redactValue({

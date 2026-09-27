@@ -20,6 +20,12 @@ final RegExp _secretKey = RegExp(
   caseSensitive: false,
 );
 
+/// Key names whose value is what the person wrote: a harness's first task
+/// (`agent_create`'s `prompt`), a search typed or spoken into Find
+/// (`session_search`'s `query`). Not a credential, but not a diagnostic either —
+/// the log keeps its length, which is all a reader needs, and never the words.
+final RegExp _wordsKey = RegExp(r'^(prompt|query)$', caseSensitive: false);
+
 /// Values longer than this are clipped — a log line is read by a person, and a
 /// base64 blob buries the fields either side of it.
 const int _maxValue = 120;
@@ -46,9 +52,12 @@ String redactValue(Object? value) {
     final parts = <String>[];
     for (final entry in value.entries) {
       final key = '${entry.key}';
+      final words = entry.value;
       parts.add(
         _secretKey.hasMatch(key)
             ? '$key: <redacted>'
+            : _wordsKey.hasMatch(key) && words is String
+            ? '$key: <${words.length} chars>'
             : '$key: ${redactValue(entry.value)}',
       );
     }
