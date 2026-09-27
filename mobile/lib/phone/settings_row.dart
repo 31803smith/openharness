@@ -59,9 +59,15 @@ class SettingsCaption extends StatelessWidget {
       // floating between two cards with nothing to say which it labels.
       padding: const EdgeInsets.fromLTRB(4, 22, 4, 8),
       // Lowercase and 13pt, the way Find heads its sections (`needs you`, `recent`).
+      //
+      // ⚠️ Halfway between faint and secondary, not faint: faint reads 3.4:1 on the page, under
+      // the 4.5:1 small text needs, and a heading is text somebody has to read to find a row.
       child: Text(
         text.toLowerCase(),
-        style: TextStyle(color: AppPalette.textFaint, fontSize: 13),
+        style: TextStyle(
+          color: Color.lerp(AppPalette.textFaint, AppPalette.textSecondary, .5),
+          fontSize: 13,
+        ),
       ),
     );
   }

@@ -167,7 +167,8 @@ class _Body extends StatelessWidget {
       // is deliberate: it is the only run here anybody opens twice. Everything below it is set once
       // and left alone, so burying a figure people check daily under four preferences would be
       // ordering the list by how permanent each row is rather than by how often it is read.
-      const SettingsCaption('Usage'),
+      // No caption: its one row says Usage, and a heading saying it again over it said nothing.
+      const SizedBox(height: 22),
       SettingsGroup(
         children: [
           // No Stats row: counters this app keeps about itself are nobody's daily question.
@@ -342,7 +343,8 @@ class _PhoneNameRow extends StatelessWidget {
       AppTheme.watch(context);
       return SettingsRow(
         key: const ValueKey('settings-phone-name'),
-        title: 'This phone',
+        // What the row sets, not what it is about: "This phone · Phone" read as a heading.
+        title: 'Phone name',
         value: notifier.phoneClientDescriptor().name,
         onTap: () => unawaited(
           showAppDialog<void>(
@@ -396,7 +398,7 @@ class _PhoneNameDialogState extends State<_PhoneNameDialog> {
   Widget build(BuildContext context) {
     AppTheme.watch(context);
     return AlertDialog(
-      title: const Text('This phone'),
+      title: const Text('Phone name'),
       content: SizedBox(
         width: 360,
         child: TextField(
@@ -565,11 +567,13 @@ class _PaletteRow extends StatelessWidget {
     builder: (context, prefs, _) {
       AppTheme.watch(context);
       return SettingsRow(
-        title: 'Palette',
+        // "App colors", beside the terminal's own "Colors": both read Graphite by default, and
+        // two rows with one value looked like the same setting twice.
+        title: 'App colors',
         value: prefs.palette.label,
         onTap: () => showPhoneSheet(
           context,
-          title: 'Color palette',
+          title: 'App colors',
           actions: [
             for (final palette in HarnessPalette.values)
               PhoneSheetAction(
