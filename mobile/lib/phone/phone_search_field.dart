@@ -432,7 +432,17 @@ class _QueryInput extends StatelessWidget {
       // centres that line on the chevron or magnifier beside it instead of
       // letting it sit on the box's top edge.
       textAlignVertical: TextAlignVertical.center,
-      style: TextStyle(color: AppPalette.textPrimary, fontSize: 16),
+      // ⚠️ The face the placeholder and every row under it are in — the terminal's. Left to
+      // TextField, what is typed took the theme's sans and the query changed typeface the moment
+      // the first key landed.
+      style: TextStyle(
+        fontFamily: DefaultTextStyle.of(context).style.fontFamily,
+        fontFamilyFallback: DefaultTextStyle.of(context)
+            .style
+            .fontFamilyFallback,
+        color: AppPalette.textPrimary,
+        fontSize: 16,
+      ),
       cursorColor: AppPalette.accentOnSurface,
       decoration: InputDecoration(
         isDense: true,
