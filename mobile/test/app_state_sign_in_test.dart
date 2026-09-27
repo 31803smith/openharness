@@ -1,10 +1,14 @@
 import 'dart:async';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:harness_mobile/auth/auth_session.dart';
+import 'package:harness_mobile/core/config.dart';
 import 'package:harness_mobile/core/models.dart';
 import 'package:harness_mobile/state/app_state.dart';
+import 'package:harness_mobile/ws/ws_conn.dart';
 
 import 'viewer_app_fixture.dart';
+import 'voice_fakes.dart' show MemoryKeyValueStore;
 
 /// Signing a phone in and out: the viewer build's half of `AppNotifier` —
 /// bootstrap with no CLI beside it, the emailed code and the scanned QR, and
@@ -305,5 +309,79 @@ void main() {
         expect(redraws, 1, reason: 'several sockets can race to say so');
       },
     );
+  });
+
+  group('the token a relay socket dials with', () {
+    test('is the session\'s own', () async {
+      final rig = viewerApp();
+      addTearDown(rig.app.dispose);
+      await rig.app.session.saveLogin(token: 'hna_live', refreshToken: 'r1');
+
+      expect(await rig.app.socketTokenForTest(), 'hna_live');
+      expect(
+        await rig.app.socketTokenForTest(failedToken: 'hna_older'),
+        'hna_live',
+        reason: 'someone already refreshed past the one that failed',
+      );
+    });
+
+    test('no session at all signs the phone out', () async {
+      final rig = viewerApp();
+      addTearDown(rig.app.dispose);
+
+      await expectLater(
+        rig.app.socketTokenForTest(),
+        throwsA(isA<WsCredentialRevoked>()),
+      );
+    });
+
+    test('a refresh the backend refuses signs the phone out', () async {
+      final rig = viewerApp();
+      addTearDown(rig.app.dispose);
+      await rig.app.session.saveLogin(token: 'hna_old', refreshToken: 'r1');
+      rig.viewer.backend.replies['/api/auth/refresh'] = (
+        status: 401,
+        body: {'success': false},
+      );
+
+      await expectLater(
+        rig.app.socketTokenForTest(force: true),
+        throwsA(isA<WsCredentialRevoked>()),
+      );
+    });
+
+    test(
+      'a refresh that cannot reach the backend is retried, not a sign-out',
+      () async {
+        final rig = viewerApp();
+        addTearDown(rig.app.dispose);
+        await rig.app.session.saveLogin(token: 'hna_old', refreshToken: 'r1');
+
+        await expectLater(
+          rig.app.socketTokenForTest(force: true),
+          throwsA(
+            isA<Object>().having(
+              (error) => error is WsCredentialRevoked,
+              'a sign-out',
+              isFalse,
+            ),
+          ),
+        );
+        expect(await rig.app.session.accessToken(), 'hna_old');
+      },
+    );
+
+    test('only a viewer or the dev fixture dials with a token', () async {
+      final app = AppNotifier(
+        config: AppConfig.dev,
+        authSession: AuthSession(storage: MemoryKeyValueStore()),
+        configStore: null,
+        cliLogin: FakeSignIn(),
+      );
+      addTearDown(app.dispose);
+      if (app.viewer != null) return; // a viewer host: nothing to check
+
+      await expectLater(app.socketTokenForTest(), throwsStateError);
+    });
   });
 }

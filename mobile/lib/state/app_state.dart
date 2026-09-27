@@ -2992,6 +2992,34 @@ class AppNotifier extends ChangeNotifier {
     if (viewer == null) _startLinkRetry(machineId);
   }
 
+  /// The token a token-bearing socket dials with: a viewer's relay socket, or
+  /// the local-manual dev fixture's.
+  Future<String> _socketToken(bool force, String? failedToken) async {
+    final directAuth = viewer?.auth;
+    if (directAuth != null) {
+      // Only a session that is gone for good may sign the person out — see
+      // [WsCredentialRevoked]. An outage fails the refresh too, and is retried.
+      return directAuth
+          .accessToken(force: force, failedToken: failedToken)
+          .onError<DirectAuthException>(
+            (error, _) => throw WsCredentialRevoked(error.message),
+            test: (error) => error.signedOut,
+          );
+    }
+    final fixture = localManualFixture;
+    if (fixture != null) return fixture.apiKey;
+    throw StateError(
+      'unreachable: only a viewer build and the local-manual dev fixture use a token-bearing WS transport',
+    );
+  }
+
+  /// [_socketToken], for a test: the pool that asks for it dials for real.
+  @visibleForTesting
+  Future<String> socketTokenForTest({
+    bool force = false,
+    String? failedToken,
+  }) => _socketToken(force, failedToken);
+
   void _ensurePool() {
     if (_pool != null) return;
     _pool = WsPool(
@@ -3000,24 +3028,7 @@ class AppNotifier extends ChangeNotifier {
       // Every real desktop WsConn dials the local CLI's loopback WS (transportKind.localPlaintext, see
       // _conn()), which never calls this — only the compile-time-only local-manual dev fixture (see
       // LocalManualFixture) still dials a backend directly with a token.
-      accessTokenProvider: (force, failedToken) async {
-        final directAuth = viewer?.auth;
-        if (directAuth != null) {
-          // Only a session that is gone for good may sign the person out — see
-          // [WsCredentialRevoked]. An outage fails the refresh too, and is retried.
-          return directAuth
-              .accessToken(force: force, failedToken: failedToken)
-              .onError<DirectAuthException>(
-                (error, _) => throw WsCredentialRevoked(error.message),
-                test: (error) => error.signedOut,
-              );
-        }
-        final fixture = localManualFixture;
-        if (fixture != null) return fixture.apiKey;
-        throw StateError(
-          'unreachable: only a viewer build and the local-manual dev fixture use a token-bearing WS transport',
-        );
-      },
+      accessTokenProvider: _socketToken,
       relayCodecs: viewer?.relayCodecs,
       transportPlugins: viewer?.transportPlugins,
       onAuthFailure: _signedOutAtRuntime,

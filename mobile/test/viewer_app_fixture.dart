@@ -266,16 +266,22 @@ class FakeEmailLogin implements EmailCodeLogin {
 
 /// A viewer's services with every wire faked — see the note at the top.
 class FakeViewer implements ViewerServices {
-  FakeViewer(AuthSession session)
+  FakeViewer(AuthSession session) : this._(session, FakeHttp({}));
+
+  FakeViewer._(AuthSession session, this.backend)
     : keys = ViewerKeyStore(storage: MemoryKeyValueStore()),
       auth = DirectAuth(
         session: session,
-        api: DirectAuthApi(config: AppConfig.dev, dio: FakeHttp({}).dio()),
+        api: DirectAuthApi(config: AppConfig.dev, dio: backend.dio()),
         emailCodes: EmailCodeApi(
           config: AppConfig.dev,
           dio: FakeHttp({}).dio(),
         ),
       );
+
+  /// The backend's auth routes, as the session's refresh reaches them. Empty,
+  /// every request fails the way a dropped network does.
+  final FakeHttp backend;
 
   @override
   final ViewerKeyStore keys;
