@@ -220,14 +220,8 @@ class RootShell extends ConsumerWidget {
         // signed-out screen, which carries the wait as a state of its own
         // button; swapping the window for a separate screen there was a
         // hard cut in the middle of a flow, and it is why that button's
-        // spinner was almost never seen.
-        //
-        // ⚠️ Keyed on `signingIn`, NOT on `pendingAuthorizeUrl`. The URL
-        // only exists for the middle stretch of the flow — the CLI has to
-        // start before it can print one, and it is cleared again while
-        // the post-login restore is still running — so keying on it blew
-        // the user's own screen away twice per sign-in: once on the click
-        // and again on success.
+        // spinner was almost never seen. Keyed on `signingIn`, which spans
+        // the whole of it — see [AppNotifier.signingIn].
         AppStatus.bootstrapping =>
           app.signingIn ? signedOutScreen(app) : bootScreen(app),
         AppStatus.unauthenticated => signedOutScreen(app),

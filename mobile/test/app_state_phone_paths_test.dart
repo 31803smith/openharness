@@ -590,15 +590,17 @@ void main() {
 
   test('closing the app mid sign-in lets go of the sign-in', () async {
     final rig = viewerApp(signedIn: false);
-    rig.viewer.emailLogin.gate = Completer<void>();
+    final gate = rig.viewer.emailLogin.gate = Completer<void>();
 
-    unawaited(
-      rig.app.signInWithCode(email: 'a@b.co', code: '1').catchError((_) {}),
-    );
+    final signingIn = rig.app.signInWithCode(email: 'a@b.co', code: '1');
     await settle();
     rig.app.dispose();
+    gate.complete();
+    await signingIn;
 
-    expect(rig.signIn.cancels, 1);
+    // The code's answer lands on an app that is gone: nothing is fetched for
+    // it, and nothing tells a disposed notifier's listeners (which throws).
+    expect(rig.api.machineFetches, 0);
   });
 }
 

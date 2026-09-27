@@ -88,9 +88,6 @@ void main() {
       await login.auth.signIn(const IssuedTokens(token: 't'));
       expect((await login.checkStatus()).loggedIn, isTrue);
 
-      // Cancelling with nothing in progress is nothing.
-      login.cancel();
-
       await login.logout();
       expect((await login.checkStatus()).loggedIn, isFalse);
       expect(await session.accessToken(), isNull);

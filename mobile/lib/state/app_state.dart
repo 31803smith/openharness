@@ -9,13 +9,11 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../analytics/analytics.dart';
 import '../api/api_client.dart';
 import '../viewer/direct_auth_api.dart';
-import '../viewer/sign_in_browser.dart';
 import '../viewer/viewer_services.dart';
 import '../auth/auth_session.dart';
 import '../auth/peer_link_client.dart';
 import '../auth/sign_in_client.dart';
 import '../auth/cli_link.dart';
-import '../auth/cli_login.dart';
 import '../core/config.dart';
 import '../core/agent_preference.dart';
 import '../core/engine_availability.dart';
@@ -277,15 +275,12 @@ class AppNotifier extends ChangeNotifier {
   AppConfig config;
   late ApiClient api;
 
-  /// Signs in, and says whether this computer is signed in: the harness CLI in a desktop build,
-  /// [ViewerServices.login] in a viewer build — which has no CLI — under one name, so every call
-  /// site reads the same in both.
+  /// Says whether this device is signed in, and signs it out: [ViewerServices.login], the app's own
+  /// session. The name is the desktop's, where the harness CLI holds the session instead.
   late final SignInClient cliLogin;
-  final CliLink cliLink;
 
   /// Links to other machines by remote password — the app itself, through [ViewerServices.links].
-  /// THIS machine's own remote password stays on [cliLink] — a viewer is not a machine, and has no
-  /// password for anyone to link to.
+  /// A viewer is not a machine, so it has no password of its own for anyone to link to.
   late final PeerLinkClient peerLinks;
 
   /// This app's stand-ins for the harness CLI (`lib/viewer/`). It is always a viewer: no CLI runs
@@ -390,8 +385,6 @@ class AppNotifier extends ChangeNotifier {
       !_disposed && revision == _authRevision;
 
   int _invalidateAuthWork() {
-    _resetLoginBrowser();
-    _loginAuthorized = false;
     _profileInFlight = null;
     _retryInFlight = null;
     machinesLoading = false;
@@ -944,28 +937,13 @@ class AppNotifier extends ChangeNotifier {
   int _nextPaneId = 1;
 
   static const maxPanes = 64;
-  // Set only while `harness login --force --json` is waiting for the user to finish SSO in their system
-  // browser. It arrives PART WAY THROUGH the flow — the CLI has to start before it can hand one
-  // over. It identifies the current sign-in link; [signingIn] tracks the whole
-  // attempt, including CLI startup and workspace restoration.
-  String? pendingAuthorizeUrl;
-  bool openingLoginBrowser = false;
-  String? loginBrowserError;
-  int _loginBrowserRevision = 0;
-  bool _loginAuthorized = false;
-  bool get canCancelLogin => signingIn && !_loginAuthorized;
 
-  /// True from the moment the user presses Sign in until the flow settles, one way or the other.
+  /// True from the moment a code is handed in — emailed or scanned — until the flow settles, one
+  /// way or the other.
   ///
-  /// **Not the same question as `pendingAuthorizeUrl != null`, and the difference was a bug.**
-  /// `login()` flips [status] to `bootstrapping` immediately, but the authorize URL only lands
-  /// once the CLI has spawned Node and got as far as printing one — seconds later — and it is
-  /// cleared again in `finally` while `_finishBootstrapSignedIn()` is still restoring panes and
-  /// fetching machines. `RootShell` keyed the sign-in screen off the URL, so both of those windows
-  /// dropped the user onto a bare full-screen spinner: the card they were looking at vanished on
-  /// the click, came back, then vanished again on success.
-  ///
-  /// This flag spans the whole flow, so the screen the user pressed a button on stays put.
+  /// It spans the whole flow, restoring the tiles and fetching the machines included, so the
+  /// screen the user pressed a button on stays put: `RootShell` keeps the signed-out screen up
+  /// while it is set, rather than dropping them onto a bare full-screen spinner.
   bool signingIn = false;
 
   AppNotifier({
@@ -974,7 +952,6 @@ class AppNotifier extends ChangeNotifier {
     ConfigStore? configStore,
     this.connectionForTest,
     SignInClient? cliLogin,
-    CliLink? cliLink,
     PeerLinkClient? peerLinks,
     ViewerServices? viewer,
     PaneLayoutStore? paneLayoutStore,
@@ -1007,7 +984,6 @@ class AppNotifier extends ChangeNotifier {
            machineCache ?? (paneLayoutStore == null ? null : MachineCache()),
        session = authSession,
        _store = configStore,
-       cliLink = cliLink ?? CliLink(),
        config = configStore?.config ?? config,
        viewer =
            viewer ??
@@ -1300,9 +1276,7 @@ class AppNotifier extends ChangeNotifier {
     // The boot spinner holds while the sign-in is checked.
     status = AppStatus.bootstrapping;
     notifyListeners();
-    // Auth now lives entirely with the local `harness` CLI — it owns the SSO session on disk and
-    // refreshes it itself. This app never reads, stores, or refreshes a token of its own; it just
-    // asks the CLI whether this computer is currently signed in.
+    // The session is the app's own (`viewer/direct_auth.dart`): this asks whether one is kept.
     try {
       final authStatus = await StartupTrace.time(
         'boot.checkSignIn',
@@ -1463,7 +1437,6 @@ class AppNotifier extends ChangeNotifier {
     _invalidateAuthWork();
     currentUser = null;
     signingIn = false;
-    pendingAuthorizeUrl = null;
     // The code was scanned into the session that just ended — see [logout].
     pendingPairing = null;
     _awaitingFirstMessage = null;
@@ -1475,65 +1448,6 @@ class AppNotifier extends ChangeNotifier {
     _lastErrorRetryable = true;
     status = AppStatus.unauthenticated;
     notifyListeners();
-  }
-
-  Future<void> login() async {
-    if (_disposed || signingIn) return;
-    final revision = _invalidateAuthWork();
-    _closedHistory.clear();
-    _lastError = null;
-    status = AppStatus.bootstrapping;
-    signingIn = true;
-    pendingAuthorizeUrl = null;
-    notifyListeners();
-    try {
-      await cliLogin.login(
-        onAuthorizeUrl: (url) {
-          if (!_authWorkCurrent(revision)) return;
-          if (pendingAuthorizeUrl == url) return;
-          _resetLoginBrowser();
-          pendingAuthorizeUrl = url;
-          notifyListeners();
-          // Through [openLoginBrowser] rather than straight to the launcher, so
-          // the first handoff is the same one the login screen's retry button
-          // takes and reports its outcome the same way. WHICH browser it opens
-          // is decided in `viewer/sign_in_browser.dart`.
-          unawaited(openLoginBrowser());
-        },
-      );
-      if (!_authWorkCurrent(revision)) return;
-      _loginAuthorized = true;
-      pendingAuthorizeUrl = null;
-      _resetLoginBrowser();
-      notifyListeners();
-      await _enterSignedIn(revision);
-    } catch (error) {
-      if (!_authWorkCurrent(revision)) return;
-      status = AppStatus.unauthenticated;
-      _lastError = error.toString();
-      _lastErrorRetryable = true;
-      // A short code, never `error.toString()` — a CLI failure carries paths
-      // and host names, and this stream is not the place for them. Only the
-      // two the TYPE can tell apart: a cancelled sign-in and a refused one both
-      // arrive as a `StateError` differing in message text, and matching on
-      // English sentences is how a stream starts lying after a copy edit.
-      analytics.signInFailed(
-        error is CliNotAvailableException ? 'cli_missing' : 'failed',
-      );
-    } finally {
-      // Takes the in-app browser view down once the redirect has landed; a no-op
-      // where the page opened in a browser of its own.
-      unawaited(closeSignInPage());
-      // Cleared last, and only here: everything above may still be running when the URL goes, and
-      // dropping the flag any earlier is what put a bare spinner over the user's own screen.
-      if (_authWorkCurrent(revision)) {
-        _resetLoginBrowser();
-        _loginAuthorized = false;
-        pendingAuthorizeUrl = null;
-        signingIn = false;
-      }
-    }
-    if (_authWorkCurrent(revision)) notifyListeners();
   }
 
   /// A session was just saved: load everything behind the login screen, and
@@ -1625,75 +1539,9 @@ class AppNotifier extends ChangeNotifier {
     }
   }
 
-  void _resetLoginBrowser() {
-    ++_loginBrowserRevision;
-    openingLoginBrowser = false;
-    loginBrowserError = null;
-  }
-
-  /// Reopens the current authorization URL without creating another login.
-  Future<void> openLoginBrowser() async {
-    final url = pendingAuthorizeUrl;
-    if (_disposed || !signingIn || url == null || openingLoginBrowser) return;
-    final authRevision = _authRevision;
-    final browserRevision = ++_loginBrowserRevision;
-    openingLoginBrowser = true;
-    loginBrowserError = null;
-    notifyListeners();
-    var opened = false;
-    try {
-      final uri = Uri.tryParse(url);
-      if (uri != null &&
-          uri.hasAuthority &&
-          (uri.scheme == 'https' || uri.scheme == 'http')) {
-        // Not `launchUrl(..., externalApplication)` directly: on a desktop
-        // [openSignInPage] IS that call, and on a phone it must not be. Handing
-        // a phone to Safari suspends this app, and with it the loopback listener
-        // the page redirects back to — the sign-in could then never land.
-        // ⚠️ The reason the desktop insists on a real browser survives here: this
-        // SSO page's Google button uses Google's popup-based Identity Services
-        // flow, where a popup window posts the result back to its opener. Whether
-        // an in-app browser view can satisfy that is open, and flagged in
-        // `sign_in_browser.dart`; it is why the phone case is confined to phones
-        // rather than made the rule.
-        opened = await openSignInPage(uri);
-      }
-    } catch (_) {
-      // Browser handoff failure is recoverable within the same sign-in. Never
-      // put a credential-bearing URL or a raw platform exception in the UI.
-    }
-    if (!_authWorkCurrent(authRevision) ||
-        browserRevision != _loginBrowserRevision ||
-        pendingAuthorizeUrl != url) {
-      return;
-    }
-    openingLoginBrowser = false;
-    if (!opened) {
-      loginBrowserError =
-          'Couldn’t open your browser. Open it again or copy the sign-in link.';
-    }
-    notifyListeners();
-  }
-
-  /// Return immediately; late URLs, results and browser replies belong to the
-  /// cancelled attempt and cannot change a subsequent sign-in.
-  void cancelLogin() {
-    if (_disposed || !canCancelLogin) return;
-    _invalidateAuthWork();
-    signingIn = false;
-    pendingAuthorizeUrl = null;
-    status = AppStatus.unauthenticated;
-    _lastError = null;
-    _lastErrorRetryable = false;
-    cliLogin.cancel();
-    notifyListeners();
-  }
-
   Future<void> logout() async {
     final revision = _invalidateAuthWork();
-    cliLogin.cancel();
     signingIn = false;
-    pendingAuthorizeUrl = null;
     // A scanned code belongs to the session it was scanned into. Held past this,
     // the next sign-in — perhaps another account's — would spend it on the first
     // locked machine of that id and show a pairing error where its password form
@@ -1701,9 +1549,9 @@ class AppNotifier extends ChangeNotifier {
     // code is set before that sign-in on purpose (`phone_welcome.dart`).
     pendingPairing = null;
     _closedHistory.clear();
-    // Best-effort and fire-and-forget: local state is cleared below regardless of whether the CLI
-    // process could be reached, but a real `harness logout` clears its saved session so the NEXT
-    // launch doesn't silently sign back in without ever showing the login screen.
+    // Best-effort and fire-and-forget: local state is cleared below regardless, but the saved
+    // session goes too, so the NEXT launch doesn't silently sign back in without ever showing the
+    // login screen.
     unawaited(cliLogin.logout());
     _stopAllOfflineRetries();
     _stopAllAgentSyncTimers();
@@ -2212,20 +2060,6 @@ class AppNotifier extends ChangeNotifier {
   List<LinkedMachine> linkedMachines = [];
   bool linkedMachinesLoading = false;
   String? linkedMachinesError;
-
-  /// Sets (or replaces) THIS machine's persistent remote password (`harness remote-password
-  /// set --stdin --json`) — another machine later connects with `connectWithPassword` using the
-  /// same password, no token copy/paste involved.
-  Future<RemotePasswordSetResult> setRemotePassword(String password) =>
-      cliLink.setRemotePassword(password);
-
-  /// Queries THIS machine's remote-password state (`harness remote-password status --json`).
-  Future<RemotePasswordStatus> remotePasswordStatus() =>
-      cliLink.remotePasswordStatus();
-
-  /// Clears THIS machine's remote password (`harness remote-password clear --json`). Returns null
-  /// on success.
-  Future<String?> clearRemotePassword() => cliLink.clearRemotePassword();
 
   /// Refreshes the "machines this one trusts" list (`harness link list`).
   Future<void> refreshLinkedMachines() async {
@@ -5958,7 +5792,6 @@ class AppNotifier extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
-    if (signingIn) cliLogin.cancel();
     _closedHistory.clear();
     _stopAllOfflineRetries();
     _stopAllAgentSyncTimers();
