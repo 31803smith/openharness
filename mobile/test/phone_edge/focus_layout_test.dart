@@ -13,6 +13,8 @@ import 'edge_fixture.dart';
 /// phone meets, with the names that break layouts. None may report an overflow.
 void main() {
   setUpAll(loadRealFontsIfAsked);
+  // The keyboard is kept once for the screen, not per page: see `resetKeyboardSession`.
+  setUp(resetKeyboardSession);
 
   Future<void> pumpFocus(
     WidgetTester tester,

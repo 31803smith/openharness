@@ -27,6 +27,9 @@ import 'edge_fixture.dart';
 /// line and by voice.
 void main() {
   setUp(() {
+    // Whether the keyboard is up is kept once for the whole screen, not per page — so it outlives
+    // a test that raised one. A pager clears it as it opens (`AgentSwipeHost`); so does each test.
+    resetKeyboardSession();
     // The sheet's own haptics and the clipboard are platform calls a test has no platform for.
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(SystemChannels.platform, (call) async {
