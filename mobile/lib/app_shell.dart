@@ -195,9 +195,8 @@ class _GridTokenScope extends StatelessWidget {
 /// ⚠️ **What a desktop window also had here, and why it is gone.** The macOS application menu
 /// (`harness/app_menu`: check for updates, flash firmware, layouts, shortcuts, terminal font
 /// size), the update band, and the two first-run provisioning screens. No iOS or Android runner
-/// registers that channel, and a viewer build never provisions or self-updates:
-/// `AppNotifier.bootstrap` skips both whenever it has a [ViewerServices], which it always does on
-/// a phone (`kViewerMode`).
+/// registers that channel, and a viewer build never provisions or self-updates — an app the store
+/// updates installs nothing — so neither the provisioner nor the updater is in this package.
 class RootShell extends ConsumerWidget {
   const RootShell({
     super.key,

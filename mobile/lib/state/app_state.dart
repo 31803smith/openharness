@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:io' show exit, pid;
 import 'dart:math' show Random;
 
 import 'package:dio/dio.dart';
@@ -52,8 +51,6 @@ import 'desk_sync.dart';
 import 'phone_desk.dart';
 import 'swarm.dart';
 import '../terminal/terminal_binary.dart';
-import '../update/desktop_updater.dart';
-import '../update/manual_update_check.dart';
 import '../ws/ws_conn.dart';
 import '../ws/local_cli_discovery.dart';
 import '../ws/ws_pool.dart';
@@ -342,7 +339,6 @@ class AppNotifier extends ChangeNotifier {
   /// default. Touch it earlier and it freezes the wrong `localCliBaseUrl`.
   late final LocalCliDiscovery _discovery =
       localCliDiscovery ?? LocalCliDiscovery(config: config);
-  final DesktopUpdater? desktopUpdater;
   @visibleForTesting
   final WsConn Function(String machineId)? connectionForTest;
   final Map<String, Timer> _turnActivityWatchdogs = {};
@@ -430,14 +426,6 @@ class AppNotifier extends ChangeNotifier {
   /// The last [ensureCliDaemonReady] did not reach a ready daemon — the one
   /// error the supervisor's ready transition is allowed to retry away.
   bool _daemonGateFailed = false;
-  // Update checks do not depend on the daemon or SSO. A signed-out user should
-  // still be able to replace a broken desktop build from the login screen.
-  Timer? _updateCheckTimer;
-  String? _skippedDesktopUpdateVersion;
-  UpdateInfo? availableUpdate;
-  bool isCheckingForUpdate = false;
-  bool isInstallingUpdate = false;
-  String? updateError;
   final Set<String> _offlinePollsInFlight = {};
   final Set<String> _offlineRecoveryInFlight = {};
   bool _disposed = false;
@@ -1044,7 +1032,6 @@ class AppNotifier extends ChangeNotifier {
     required AuthSession authSession,
     ConfigStore? configStore,
     this.localCliDiscovery,
-    this.desktopUpdater,
     this.connectionForTest,
     SignInClient? cliLogin,
     CliLink? cliLink,
@@ -1117,7 +1104,6 @@ class AppNotifier extends ChangeNotifier {
   }
 
   String get autonomousEnv => _autonomousEnv;
-  bool get hasAvailableUpdate => availableUpdate != null;
 
   static const offlineRetryInterval = Duration(seconds: 5);
   static const agentSyncInterval = Duration(seconds: 60);
@@ -1440,12 +1426,7 @@ class AppNotifier extends ChangeNotifier {
         // never silently resurrect it.
         _autonomousEnv = 'prod';
         api = _newApiClient();
-        _skippedDesktopUpdateVersion = _store.skippedDesktopUpdateVersion;
       }
-      // A viewer is updated by its store: the updater serves a computer that runs the harness CLI.
-      // It is not merely useless there — it throws on an architecture it has no channel for
-      // (`ios_arm64`), from inside bootstrap.
-      if (viewer == null) _startUpdateChecking();
       await _checkSignIn();
     } catch (error, stack) {
       debugPrint('bootstrap: fallback to login after error: $error\n$stack');
@@ -1824,94 +1805,6 @@ class AppNotifier extends ChangeNotifier {
     _lastErrorRetryable = true;
     status = AppStatus.unauthenticated;
     notifyListeners();
-  }
-
-  void _startUpdateChecking() {
-    _updateCheckTimer ??= (desktopUpdater ?? DesktopUpdater()).startChecking(
-      onUpdateAvailable: _handleBackgroundUpdate,
-    );
-  }
-
-  void _handleBackgroundUpdate(UpdateInfo info) {
-    if (_disposed) return;
-    if (_skippedDesktopUpdateVersion == info.version) return;
-    if (availableUpdate?.version == info.version) return;
-    availableUpdate = info;
-    updateError = null;
-    notifyListeners();
-  }
-
-  /// A manual check deliberately returns a skipped version too, so the user
-  /// can choose to install it from the account menu after changing their mind.
-  Future<ManualUpdateCheck> checkForUpdates() async {
-    if (isCheckingForUpdate) {
-      return ManualUpdateCheck(update: availableUpdate);
-    }
-    isCheckingForUpdate = true;
-    updateError = null;
-    notifyListeners();
-    try {
-      final info = await (desktopUpdater ?? DesktopUpdater()).checkOnce();
-      if (info == null) return const ManualUpdateCheck();
-      final skipped = _skippedDesktopUpdateVersion == info.version;
-      availableUpdate = info;
-      return ManualUpdateCheck(update: info, isSkipped: skipped);
-    } finally {
-      isCheckingForUpdate = false;
-      if (!_disposed) notifyListeners();
-    }
-  }
-
-  /// Clears a failed install without burying the offer.
-  ///
-  /// Skipping is permanent — it records the version so the background check
-  /// stops raising it. A failure is not a decision about the version, so the
-  /// way out of one has to leave the update on the table.
-  void dismissUpdateError() {
-    if (updateError == null) return;
-    updateError = null;
-    notifyListeners();
-  }
-
-  Future<void> skipAvailableUpdate() async {
-    final info = availableUpdate;
-    if (info == null) return;
-    _skippedDesktopUpdateVersion = info.version;
-    await _store?.saveSkippedDesktopUpdateVersion(info.version);
-    availableUpdate = null;
-    updateError = null;
-    notifyListeners();
-  }
-
-  /// Downloads, verifies, and installs only after an explicit user action.
-  /// A failed operation leaves the running app untouched and retryable.
-  Future<bool> installAvailableUpdate() async {
-    final info = availableUpdate;
-    if (info == null || isInstallingUpdate) return false;
-    isInstallingUpdate = true;
-    updateError = null;
-    notifyListeners();
-    try {
-      final updater = desktopUpdater ?? DesktopUpdater();
-      final staged = await updater.downloadAndStage(info);
-      if (staged == null) {
-        updateError = 'Could not download and verify Harness ${info.version}.';
-        return false;
-      }
-      final applied = await updater.applyStaged(staged, selfPid: pid);
-      if (!applied) {
-        updateError =
-            'This copy of Harness cannot install updates automatically.';
-        return false;
-      }
-      exit(0);
-    } catch (error) {
-      updateError = 'Could not install Harness ${info.version}: $error';
-      return false;
-    } finally {
-      isInstallingUpdate = false;
-      if (!_disposed) notifyListeners();
-    }
   }
 
   Future<void> login() async {
@@ -6639,7 +6532,6 @@ class AppNotifier extends ChangeNotifier {
     if (signingIn) cliLogin.cancel();
     _closedHistory.clear();
     _daemonSupervisionTimer?.cancel();
-    _updateCheckTimer?.cancel();
     _stopAllOfflineRetries();
     _stopAllLinkRetries();
     _stopAllAgentSyncTimers();
