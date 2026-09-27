@@ -201,6 +201,11 @@ class MachineState {
   bool terminalCapabilityLoaded = false;
   bool terminalCapabilityAvailable = false;
   String? terminalCapabilityError;
+
+  /// The negotiation got no answer — a timeout, a dropped socket — rather than the machine saying
+  /// no. That is not a fact about the machine, so the next sync that does get an answer asks again
+  /// (see `_syncAgentsIfChanged`); a refusal or `available: false` is an answer, and stands.
+  bool terminalCapabilityUnanswered = false;
   // Whether this machine's CLI daemon understands `terminal_paste` (a clipboard paste delivered as
   // one atomic tmux paste-buffer, not chunked like ordinary keystrokes — see TerminalSession.pasteText).
   // False for any CLI published before this existed; the panel falls back to the old chunked path.
@@ -3390,6 +3395,11 @@ class AppNotifier extends ChangeNotifier {
       );
       _agentSyncTimeouts.remove(machineId);
       if (!_machineWorkCurrent(machine, revision)) return;
+      // ⚠️ A terminal switched off by a negotiation that never got an answer stayed off until
+      // the next reconnect: the machine answered this, so the link is up — ask again.
+      if (machine.terminalCapabilityUnanswered) {
+        unawaited(_loadTerminalCapabilities(machine, connection, revision));
+      }
       final agents = (response['agents'] as List<dynamic>? ?? [])
           .map((item) => Agent.fromJson(item as Map<String, dynamic>))
           .toList();
@@ -4401,6 +4411,7 @@ class AppNotifier extends ChangeNotifier {
     Map<String, dynamic> result,
   ) {
     machine.terminalCapabilityLoaded = true;
+    machine.terminalCapabilityUnanswered = false;
     machine.terminalCapabilityAvailable =
         result['protocolVersion'] == TerminalSession.protocolVersion &&
         result['backend'] == 'tmux' &&
@@ -4442,9 +4453,10 @@ class AppNotifier extends ChangeNotifier {
       if (machine.terminalCapabilityAvailable) {
         _machineCache?.rememberCapabilities(machine.machine.machineId, result);
       }
-    } catch (_) {
+    } catch (error) {
       if (!_machineWorkCurrent(machine, revision)) return;
       machine.terminalCapabilityLoaded = true;
+      machine.terminalCapabilityUnanswered = error is! WsRequestFailure;
       machine.terminalCapabilityAvailable = false;
       machine.terminalCapabilityError = 'Could not negotiate terminal protocol';
       machine.terminalPasteRawAvailable = false;

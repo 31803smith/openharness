@@ -430,6 +430,55 @@ void main() {
       expect(machine.terminalNoTakeoverAvailable, isFalse);
     });
 
+    test('a negotiation that got no answer is asked again once the machine answers', () async {
+      final rig = viewerApp();
+      addTearDown(rig.app.dispose);
+      rig.api.onMachines = () async => [remoteMachine('m')];
+      rig.conn('m').answers['agents_list'] = (_) => {'agents': <Object>[]};
+      rig.conn('m').answers['terminal_capabilities'] = (_) =>
+          throw const WsRequestTimeout('terminal_capabilities');
+
+      await rig.app.bootstrap();
+      await settle();
+      final machine = rig.app.stateOf('m')!;
+      expect(machine.terminalCapabilityAvailable, isFalse);
+      expect(machine.terminalCapabilityUnanswered, isTrue);
+
+      // The link comes good; the minute's sync gets its answer and asks again. Set on the state
+      // itself: announcing the connection would reload the machine and ask for another reason.
+      machine.connectionStatus = ConnectionStatus.connected;
+      rig.conn('m').answers['terminal_capabilities'] = (_) => capabilities();
+      await rig.app.syncAgentsForTest('m');
+      await settle();
+      expect(machine.terminalCapabilityAvailable, isTrue);
+      expect(machine.terminalCapabilityUnanswered, isFalse);
+    });
+
+    test('a refusal is an answer: the sync does not ask again', () async {
+      final rig = viewerApp();
+      addTearDown(rig.app.dispose);
+      rig.api.onMachines = () async => [remoteMachine('m')];
+      rig.conn('m').answers['agents_list'] = (_) => {'agents': <Object>[]};
+      rig.conn('m').answers['terminal_capabilities'] = (_) =>
+          throw refusal('UNSUPPORTED');
+
+      await rig.app.bootstrap();
+      await settle();
+      rig.app.stateOf('m')!.connectionStatus = ConnectionStatus.connected;
+      final asked = rig
+          .conn('m')
+          .requests
+          .where((r) => r.$1 == 'terminal_capabilities')
+          .length;
+      await rig.app.syncAgentsForTest('m');
+      await settle();
+      expect(
+        rig.conn('m').requests.where((r) => r.$1 == 'terminal_capabilities'),
+        hasLength(asked),
+      );
+      expect(rig.app.stateOf('m')!.terminalCapabilityUnanswered, isFalse);
+    });
+
     test('a machine with tmux gone says so', () async {
       final rig = viewerApp();
       addTearDown(rig.app.dispose);
