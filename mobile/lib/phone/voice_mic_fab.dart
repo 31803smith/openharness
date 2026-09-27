@@ -12,8 +12,7 @@ import 'voice_mic_button.dart';
 import 'voice_mic_face.dart';
 import 'voice_mic_mode.dart';
 
-/// The mic, floating over the terminal's bottom right corner at the top of
-/// [TerminalActionColumn].
+/// The mic, floating over the terminal, in [TerminalActionColumn].
 ///
 /// ⚠️ **Floating rather than in a row.** A row under the terminal would take
 /// its height off the remote shell; floating, the button costs the terminal
@@ -31,7 +30,6 @@ class VoiceMicFab extends StatefulWidget {
     super.key,
     required this.voice,
     required this.session,
-    this.onSlipChanged,
     this.working = false,
   });
 
@@ -40,19 +38,6 @@ class VoiceMicFab extends StatefulWidget {
 
   /// The agent is working — see [VoiceMicCore.working].
   final bool working;
-
-  /// The thumb crossed in or out of the button mid-hold, in
-  /// [VoiceMicMode.holdToTalk]. Unused in the tap mode, which has no hold.
-  final ValueChanged<bool>? onSlipChanged;
-
-  /// What the whole floating cluster asks of the corner it sits in.
-  ///
-  /// Bigger than [VoiceMicButton.extent] because the mic's hit area spills past
-  /// its slot: this is what the page keeps clear of anything else tappable.
-  static const double extent = VoiceMicButton.touchExtent;
-
-  /// How far the cluster sits from the terminal's right and bottom edges.
-  static const double inset = 8;
 
   /// How long a landed send wears its tick before the mic is back at rest.
   static const Duration sentHold = Duration(milliseconds: 900);
@@ -153,7 +138,6 @@ class _VoiceMicFabState extends State<VoiceMicFab>
           : () => unawaited(showVoiceLanguagePicker(context)),
       onHoldStart: action.onHoldStart,
       onHoldFinish: action.onHoldFinish,
-      onSlipChanged: widget.onSlipChanged,
       working: widget.working,
       level: voice.level,
       onSwipeDown: voice.status == VoiceInputStatus.listening

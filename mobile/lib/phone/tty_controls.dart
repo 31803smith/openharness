@@ -227,62 +227,6 @@ class TtyBackButton extends StatelessWidget {
   }
 }
 
-/// A section's header: small, faint, upper case — `NEEDS YOU`, `RECENT`.
-class TtySectionHeader extends StatelessWidget {
-  const TtySectionHeader(this.text, {super.key, this.color, this.trailing});
-
-  final String text;
-  final Color? color;
-  final Widget? trailing;
-
-  @override
-  Widget build(BuildContext context) {
-    final tty = Tty.of(context);
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(Tty.origin, 20, Tty.origin, 6),
-      child: Row(
-        children: [
-          Expanded(
-            child: Text(
-              text.toUpperCase(),
-              maxLines: 1,
-              overflow: TextOverflow.clip,
-              softWrap: false,
-              style: tty
-                  .style(
-                    color: color ?? tty.faint,
-                    size: TtySize.meta - 1,
-                    weight: FontWeight.w600,
-                  )
-                  .copyWith(letterSpacing: 0.8),
-            ),
-          ),
-          ?trailing,
-        ],
-      ),
-    );
-  }
-}
-
-/// A 1px rule across the screen, inset like a grouped list's separator.
-class TtyRule extends StatelessWidget {
-  const TtyRule({super.key, this.indent = 16});
-
-  final double indent;
-
-  @override
-  Widget build(BuildContext context) {
-    final tty = Tty.of(context);
-    return Padding(
-      padding: EdgeInsets.only(left: indent),
-      child: SizedBox(
-        height: 1,
-        child: ColoredBox(color: tty.dim.withValues(alpha: 0.6)),
-      ),
-    );
-  }
-}
-
 /// A form row: a faint label, its value, and `›` — tapped to change the value.
 class TtyFormRow extends StatelessWidget {
   const TtyFormRow({

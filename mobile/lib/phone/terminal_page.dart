@@ -42,7 +42,6 @@ import 'phone_status.dart';
 import 'settings_page.dart';
 import 'terminal_action_column.dart';
 import 'terminal_chrome_scroll.dart';
-import 'terminal_header.dart';
 import 'terminal_input_dock.dart';
 import 'terminal_search.dart';
 import 'tty.dart';
@@ -199,15 +198,6 @@ typedef _PageFacts = ({
   bool imagePaste,
   String? machineName,
 });
-
-/// What a page has asked for back — see [_TerminalPageState._reclaiming].
-enum _Reclaim {
-  /// The keyboard, off another app that holds the terminal or is driving it.
-  control,
-
-  /// A dead stream, reopened.
-  reconnect,
-}
 
 class _TerminalPageState extends State<TerminalPage>
     with WidgetsBindingObserver, TickerProviderStateMixin {
@@ -451,39 +441,6 @@ class _TerminalPageState extends State<TerminalPage>
   /// compares the next tick against.
   _PageFacts? _facts;
 
-  /// What THIS page has asked for back and not yet heard about: the keyboard off another app, or a
-  /// dead stream reopened. Null while it has asked for nothing.
-  ///
-  /// A take holds the banner up through the `opening` that answers it, so the banner can say so —
-  /// rather than blinking out and back as the status moves. A reconnect raises no banner: the
-  /// header draws it as the wait it is, the way it draws Attaching — see [phoneSessionSummary]'s
-  /// `reconnecting`.
-  ///
-  /// ⚠️ **Two kinds, because they read differently.** Both are the same call, and this used to be
-  /// one flag: pressing Reconnect raised a banner saying "Taking control…" over a stream nobody
-  /// else held.
-  ///
-  /// Taken back by [_onNotifier] once that open lands, and by [_takeControl] itself for a request
-  /// the notifier declined without ever changing a status.
-  _Reclaim? _reclaiming;
-
-  /// The header's status as of its last build, for the mark on the actions sheet.
-  ///
-  /// The sheet is a route of its own, so this page's `setState` never reaches it: the mark there
-  /// listens to this instead, and shows the dot the header is showing for as long as the sheet is
-  /// up — a reconnect that starts under it included — rather than the moment it opened.
-  ///
-  /// ⚠️ Moved AFTER the frame, never during the build that works it out: the sheet listening to it
-  /// would otherwise be marked dirty in the middle of this page's build. See
-  /// [_publishActionsStatus].
-  final ValueNotifier<PhoneSummary> _actionsStatus = ValueNotifier((
-    label: '',
-    tone: PhoneTone.quiet,
-  ));
-
-  /// The status the end of this frame hands to [_actionsStatus]; null while none is waiting.
-  PhoneSummary? _nextActionsStatus;
-
   /// The skeleton's one identity across the two places the body draws it.
   ///
   /// ⚠️ **Two places, one skeleton.** It stands in for the panel while there is no session, and
@@ -718,19 +675,7 @@ class _TerminalPageState extends State<TerminalPage>
       _acceptedInput = accepts;
       if (accepts) _raiseForQuestion();
     }
-    // ⚠️ Checked BEFORE the equality bail below, not after. A take that ends where it began —
-    // `takenOver` again, because the other app answered first — moves no fact this page reads, so
-    // the bail would keep the band saying "Taking control…" over a page that had already been
-    // told no. See [_takeControl].
-    final settled =
-        _reclaiming != null &&
-        facts.status != TerminalSessionStatus.opening &&
-        facts.status != null;
-    if (settled) _reclaiming = null;
-    if (facts == _facts) {
-      if (settled) setState(() {});
-      return;
-    }
+    if (facts == _facts) return;
     setState(() => _facts = facts);
   }
 
@@ -786,28 +731,8 @@ class _TerminalPageState extends State<TerminalPage>
     _searchHoldTimer?.cancel();
     _chrome.dispose();
     _searchOpen.dispose();
-    // A sheet still open over a page that is going keeps the last dot it was given; its listener
-    // comes off when it closes, which a disposed notifier allows.
-    _actionsStatus.dispose();
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
-  }
-
-  /// Hands [status] to the actions sheet's mark once this frame is done — see [_actionsStatus].
-  ///
-  /// The last build of a frame is the one handed over, and nothing is scheduled while the status
-  /// stands still.
-  void _publishActionsStatus(PhoneSummary status) {
-    final waiting = _nextActionsStatus != null;
-    if (!waiting && status == _actionsStatus.value) return;
-    _nextActionsStatus = status;
-    if (waiting) return;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      final next = _nextActionsStatus;
-      _nextActionsStatus = null;
-      if (!mounted || next == null) return;
-      _actionsStatus.value = next;
-    });
   }
 
   /// Harnesses other than this one that are asking something — the title's `api-fix asking`,
@@ -1680,15 +1605,6 @@ class _TerminalPageState extends State<TerminalPage>
         machine.agentLoadStatus == AgentLoadStatus.loaded;
     // Captured while the agent is still listed, for the sentence above.
     if (agent != null) _cachedAgentName = agent.displayName;
-    // A dead stream already on its way back: its machine is redialling, or this page has just
-    // asked for it. The header draws that as the wait it is — spinner on the mark, sweep along the
-    // rule — rather than as Disconnected beside a button. See [phoneSessionSummary].
-    //
-    // Never for an agent that is gone: nothing will reopen its stream, however the socket is doing.
-    final reconnecting =
-        !agentGone &&
-        (_reclaiming == _Reclaim.reconnect ||
-            (machine != null && phoneMachineRedialling(machine)));
     // Read-only either way — the terminal was never this pane's (a watcher) or was taken from it.
     // `_AgentGone` owns the page when the agent itself is missing, so this stays out of its way.
     final blocked =
@@ -1706,18 +1622,6 @@ class _TerminalPageState extends State<TerminalPage>
     final keyHints = agentGone || blocked || !(session?.acceptsInput ?? false)
         ? const <KeyHint>[]
         : _questionWatcher?.hints ?? const <KeyHint>[];
-    final takerName = phoneTakerName(
-      session,
-      (id) => widget.notifier.stateOf(id)?.machine.displayName,
-    );
-    final headerStatus = phoneSessionSummary(
-      session,
-      takerName: takerName,
-      reconnecting: reconnecting,
-    );
-    // The actions sheet draws the same dot beside the agent's name, and is not rebuilt by this
-    // page — see [_actionsStatus].
-    _publishActionsStatus(headerStatus);
     // Read this page's own buffer for a dialog, and raise the keyboard when one
     // appears. Must run on every build: the session arrives a frame or two
     // after the page, and the engine with the agent.
@@ -2109,7 +2013,6 @@ class _TerminalPageState extends State<TerminalPage>
                                   machineName:
                                       machine?.machine.displayName ?? '',
                                   agent: agent,
-                                  status: headerStatus,
                                 );
                               },
                             ),
@@ -2198,8 +2101,6 @@ class _TerminalPageState extends State<TerminalPage>
                           child: TerminalActionColumn(
                             voice: widget.voice,
                             session: session,
-                            onSearch: _openSearch,
-                            unread: widget.notifier.agentNotices.unread,
                             working: _agentWorking,
                           ),
                         ),
@@ -2337,14 +2238,7 @@ class _TerminalPageState extends State<TerminalPage>
     });
   }
 
-  void _showActions({
-    required String machineName,
-    required Agent agent,
-    required PhoneSummary status,
-  }) {
-    // Set here, where no build is running, so the sheet opens on the dot the header shows now
-    // rather than on whatever the last frame handed over. See [_actionsStatus].
-    _actionsStatus.value = status;
+  void _showActions({required String machineName, required Agent agent}) {
     final agentName = agent.displayName;
     showPhoneSheet(
       context,
@@ -2354,28 +2248,6 @@ class _TerminalPageState extends State<TerminalPage>
         if (agent.project?.label case final folder?) ':$folder',
       ].join(),
       titleBranch: agent.project?.shownBranch,
-      // The agent, then where it runs — the machine, then the folder with its parent beside the
-      // branch — each behind its icon. The header has no room for the path.
-      titleParts: [agentName],
-      // The engine mark carrying the header's own dot: the sheet's anchor, and the same picture of
-      // this agent the header draws above it. The ring is the sheet's ground, which the dot is
-      // notched out of.
-      titleLeading: ValueListenableBuilder<PhoneSummary>(
-        valueListenable: _actionsStatus,
-        builder: (context, status, _) {
-          AppTheme.watch(context);
-          return BadgedEngineMark(
-            agent: agent,
-            status: status,
-            ring: AppPalette.panelBg,
-            size: 40,
-          );
-        },
-      ),
-      titleDetail: AgentPlaceLines(
-        machineName: machineName,
-        project: agent.project,
-      ),
       // Three cards: what acts on THIS agent, the screens the app itself has, and — alone at the
       // end — the one act that cannot be undone. No caption over the first: the name above it
       // already says which harness its rows act on, which is also why they no longer repeat
@@ -2533,39 +2405,14 @@ class _TerminalPageState extends State<TerminalPage>
     ),
   );
 
-  /// Asks for the terminal this pane is only watching, or reopens the stream it lost — the band's
-  /// button, and the header's.
+  /// Asks for the terminal this pane is only watching, or reopens the stream it lost — a tap or a
+  /// scroll on a terminal held elsewhere.
   ///
-  /// Which of the two it is comes from the stream as it stands, not from the button: somebody else
-  /// holding or driving it makes this a take, and a dead one a reconnect. [_reclaiming] carries
-  /// that through the `opening` this starts, so a take reads as one action answering rather than
-  /// a band that vanished and came back, and a reconnect reads as the header's wait from the
-  /// moment it is pressed. `selectAgent` declines quietly when the pane cannot be attached at all
-  /// (its machine went offline meanwhile, the agent was withdrawn), and that leaves the status
-  /// where it was — so the flag is taken back here too, rather than left armed over a page
-  /// nothing is going to answer for.
-  Future<void> _takeControl() async {
-    final notifier = widget.notifier;
-    final before = notifier
-        .paneOfAgent(widget.machineId, widget.agentId)
-        ?.session;
-    final kind =
-        before != null &&
-            (before.watching ||
-                before.status == TerminalSessionStatus.takenOver)
-        ? _Reclaim.control
-        : _Reclaim.reconnect;
-    if (_reclaiming != kind) setState(() => _reclaiming = kind);
-    await notifier.selectAgent(widget.machineId, widget.agentId);
-    if (!mounted) return;
-    final session = notifier
-        .paneOfAgent(widget.machineId, widget.agentId)
-        ?.session;
-    if (_reclaiming != null &&
-        session?.status != TerminalSessionStatus.opening) {
-      setState(() => _reclaiming = null);
-    }
-  }
+  /// `selectAgent` works out which of the two it is from the stream as it stands, and declines
+  /// quietly when the pane cannot be attached at all (its machine went offline meanwhile, the
+  /// agent was withdrawn).
+  Future<void> _takeControl() =>
+      widget.notifier.selectAgent(widget.machineId, widget.agentId);
 
   /// Restarting is a round trip that can fail, and the phone has no status rail to fail into — so
   /// the answer lands as a snackbar, which is the one surface a pushed page here always has.
@@ -3214,51 +3061,6 @@ class _SkeletonTurn {
   /// The closing meta line, or null for the newest turn, which has not finished.
   final double? meta;
 }
-
-/// The longest agent name the header will print before it cuts.
-///
-/// An agent's name is usually a filename, and the header row has to hold three
-/// controls beside it. Left to the width alone, a long name pushed right up
-/// against `+` with no gap; cutting by COUNT keeps a fixed, predictable stretch
-/// of chrome whatever the name and whatever the screen.
-const int _titleMaxChars = 20;
-
-/// The name as the header prints it: cut to [_titleMaxChars] with an ellipsis
-/// when it is longer.
-///
-/// ⚠️ Counts runes, not code units. `String.length` counts UTF-16 units, so an
-/// emoji or a decomposed Vietnamese vowel costs two and a name cuts early —
-/// short of the 20 the design asks for, and at a different point per name.
-///
-/// ⚠️ The header's own width ellipsis stays as well. This one bounds the
-/// string; that one still catches a 20-character name on a narrow screen, and
-/// neither makes the other redundant.
-///
-/// ⚠️ **Nothing calls it** — [TerminalHeader] ellipses the name on width alone,
-/// beside the machine. Kept because a count cut may be wanted there again, and
-/// this is the rune-correct one it would want.
-// ignore: unused_element
-String _clipTitle(String name) {
-  final runes = name.runes.toList();
-  if (runes.length <= _titleMaxChars) return name;
-  // Trailing space before the ellipsis reads as a typo, so it goes.
-  return '${String.fromCharCodes(runes.take(_titleMaxChars)).trimRight()}…';
-}
-
-/// One of the header's trailing controls, padded so the three sit evenly.
-///
-/// ⚠️ The padding is what makes the row look right, and the reason is that
-/// [AppIconButton] is a fixed 24px box for every glyph size. A 22px glyph fills
-/// that box to its edges while a 20px one floats inside it, so equal gaps
-/// BETWEEN the boxes read as unequal gaps between the marks. Giving every
-/// action the same glyph size and the same padding puts the marks on an even
-/// pitch.
-///
-/// ⚠️ It does NOT widen the tap target. [AppIconButton] takes its tap on a
-/// 24px `GestureDetector` with no `HitTestBehavior.opaque`, so the padding is
-/// dead space either side and the three stay 24px each — under the 44 iOS asks
-/// for. Fixing that belongs in the shared button, where every screen's header
-/// would get it, not in a wrapper one page defines.
 
 /// tmux's copy-mode position — `[42/1380]` on tmux's yellow, top right — while the reader is up in
 /// the history: 42 lines above the end, of 1380. The view holds still as output arrives, and the
