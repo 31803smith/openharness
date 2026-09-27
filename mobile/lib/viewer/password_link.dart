@@ -85,11 +85,13 @@ Future<PasswordLinkResult> linkWithPassword({
     label,
   );
   try {
-    await channel.ready;
-    return await run.drive().timeout(
-      timeout,
-      onTimeout: () => const PasswordLinkFailed('TIMEOUT'),
-    );
+    // ⚠️ The dial is inside the timeout, not in front of it: a socket dialled into a network
+    // that swallows packets waits out the OS's own TCP timeout — over a minute on iOS — and the
+    // form said "connecting" for all of it.
+    return await () async {
+      await channel.ready;
+      return run.drive();
+    }().timeout(timeout, onTimeout: () => const PasswordLinkFailed('TIMEOUT'));
   } catch (_) {
     return const PasswordLinkFailed('CONNECTION_ERROR');
   } finally {
@@ -261,11 +263,12 @@ class _PasswordLinkRun {
 
   /// The fingerprint is computed here rather than taken from the frame, unlike the CLI: round 5
   /// crosses the relay in the clear, and the pinned key is the thing it must describe.
+  ///
+  /// A refusal here carries its `retryAt` as one at the intent does: the machine judges its
+  /// lockout again at round 2 (manager.ts `onPwPake`), and says until when on round 5.
   PasswordLinkResult _finish(Map<String, dynamic> payload) {
     final machinePub = _machinePub;
-    if (payload['ok'] != true || machinePub == null) {
-      return PasswordLinkFailed(_codeOr(payload['error'], 'PAIR_FAILED'));
-    }
+    if (payload['ok'] != true || machinePub == null) return _refused(payload);
     return PasswordLinked(machinePub, fingerprint(machinePub));
   }
 
