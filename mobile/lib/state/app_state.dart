@@ -155,13 +155,6 @@ class LocalManualFixture {
   });
 }
 
-@visibleForTesting
-Map<String, dynamic> eventWithClearPayload(
-  Map<String, dynamic> frame,
-  String type,
-  Map<String, dynamic> payload,
-) => {...frame, 'type': type, 'payload': payload};
-
 class MachineState {
   Machine machine;
   ConnectionStatus connectionStatus = ConnectionStatus.disconnected;
@@ -541,7 +534,7 @@ class AppNotifier extends ChangeNotifier {
   Timer? _environmentRecheckTimer;
 
   /// Whether a stuck step is being auto-polled right now — drives the "Checking automatically…"
-  /// caption on [EnvironmentSetupScreen] alongside its Recheck button.
+  /// caption on the desktop's `EnvironmentSetupScreen` alongside its Recheck button.
   bool get environmentRecheckPending => _environmentRecheckTimer != null;
 
   /// Whether a provisioning run (initial or a per-step recheck) is in flight — lets the setup
@@ -1921,8 +1914,8 @@ class AppNotifier extends ChangeNotifier {
           config = _store.config;
         }
         // Forced, not read from persisted config: staging is a dev-only
-        // escape hatch with no UI to reach it anymore (see login_screen.dart
-        // history) — a stale `stag` value saved before that removal must
+        // escape hatch with no UI to reach it anymore (see the desktop's
+        // login_screen.dart history) — a stale `stag` value saved before that removal must
         // never silently resurrect it.
         _autonomousEnv = 'prod';
         api = _newApiClient();
@@ -2573,7 +2566,7 @@ class AppNotifier extends ChangeNotifier {
   static const _signedOutMessage =
       'You were signed out on this computer. Sign in again to reconnect.';
 
-  /// The session went away while the app was already running — send the user to [LoginScreen] with a
+  /// The session went away while the app was already running — send the user to the signed-out screen with a
   /// reason, and stop the background work that can only fail from here.
   ///
   /// Cold start already handles this: [bootstrap] asks the CLI whether it is signed in. The hole this
@@ -6091,8 +6084,8 @@ class AppNotifier extends ChangeNotifier {
   /// read-only stream and a "Take control" band in front of every agent a desktop had open,
   /// including the one the app opens on.
   ///
-  /// The displaced app is told who took it and has the same one press back; the phone's own band
-  /// is for exactly that case, a terminal taken back off this device — see `phoneReclaimAction`.
+  /// The displaced app is told who took it and has the same one press back; on the phone that
+  /// press is a tap or a scroll on the terminal taken back off it.
   ///
   /// The one open that stays polite is [warmAgentPane]'s guess about the next swipe, which is
   /// nobody arriving anywhere. See [_attachSession].
@@ -6223,7 +6216,7 @@ class AppNotifier extends ChangeNotifier {
   /// take over the whole content area would blank three working terminals
   /// belonging to two other machines. The one exception is a machine that
   /// already needs linking: that state now surfaces as a blocking popup
-  /// (HomeScreen._maybeShowLinkDialog / showLinkMachineScreenDialog) rather
+  /// (the desktop's `HomeScreen._maybeShowLinkDialog`) rather
   /// than a tile, so opening one here too would just be a redundant "not
   /// linked" pane sitting behind it. Selecting is still worth doing — it's
   /// what makes the popup's gate notice this machine — the tile is not.

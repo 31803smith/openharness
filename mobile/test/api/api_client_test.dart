@@ -152,7 +152,13 @@ void main() {
       final error = await client(tokens)
           .me()
           .then<Object?>((_) => null, onError: (Object e) => e);
-      expect(isUnauthorizedError(error!), isTrue);
+      // A 401 that survived the one retry reaches the caller as one.
+      expect(
+        (error is ApiException && error.status == 401) ||
+            (error is DioException && error.response?.statusCode == 401),
+        isTrue,
+        reason: '$error',
+      );
       expect(backend.requests, hasLength(1));
     });
 
@@ -385,20 +391,6 @@ void main() {
         ),
         isNot(contains('within')),
       );
-    });
-
-    test('only a 401 is unauthorized', () {
-      expect(isUnauthorizedError(ApiException('x', status: 401)), isTrue);
-      expect(isUnauthorizedError(ApiException('x', status: 403)), isFalse);
-      expect(
-        isUnauthorizedError(dio(DioExceptionType.badResponse, status: 401)),
-        isTrue,
-      );
-      expect(
-        isUnauthorizedError(dio(DioExceptionType.badResponse, status: 500)),
-        isFalse,
-      );
-      expect(isUnauthorizedError(StateError('401')), isFalse);
     });
   });
 }

@@ -274,56 +274,6 @@ enum PanePreset {
     return _legacyIds[id];
   }
 
-  /// At most six useful shapes. Balanced grids that resolve to the same
-  /// rectangles at a particular count are offered only once.
-  static List<PanePreset> forCount(int count) {
-    if (count < 2) return const [];
-    return _choices.putIfAbsent(count, () {
-      final seen = <String>{};
-      return List.unmodifiable([
-        for (final preset in _candidates(count))
-          if (seen.add(_shapeKey(preset.tilesFor(count)))) preset,
-      ]);
-    });
-  }
-
-  static final _choices = <int, List<PanePreset>>{};
-
-  static List<PanePreset> _candidates(int count) => switch (count) {
-    < 2 => const [],
-    2 => const [PanePreset.columns, PanePreset.rows],
-    3 => const [
-      PanePreset.twoOverOne,
-      PanePreset.oneOverTwo,
-      PanePreset.mainLeft,
-      PanePreset.mainRight,
-      PanePreset.cols3,
-      PanePreset.rows,
-    ],
-    4 => const [
-      PanePreset.quad,
-      PanePreset.mainAndStack,
-      PanePreset.mainOverGrid,
-      PanePreset.cols4,
-      PanePreset.rows,
-    ],
-    5 => const [
-      PanePreset.balanced3,
-      PanePreset.twoOverThree,
-      PanePreset.middleMain,
-      PanePreset.mainAndGrid,
-      PanePreset.mainOverGrid,
-      PanePreset.cols5,
-    ],
-    _ => [
-      PanePreset.balanced2,
-      PanePreset.balanced3,
-      PanePreset.balanced4,
-      PanePreset.balanced5,
-      if (count <= 9) ...[PanePreset.mainAndGrid, PanePreset.mainOverGrid],
-    ],
-  };
-
   /// Saved automatic/regular grids remain valid even though the picker now
   /// offers explicit, filled arrangements. Do not silently discard their IDs.
   bool supportsCount(int count) => switch (this) {
@@ -346,29 +296,6 @@ enum PanePreset {
     PanePreset.mainAndGrid => count >= 5,
     PanePreset.mainOverGrid => count >= 4,
   };
-
-  /// Match the visible geometry rather than the old preset's name or tile
-  /// order. This highlights Columns/Rows for saved automatic two-pane splits.
-  static PanePreset? matchingChoice(int count, List<Rect> tiles) {
-    final key = _shapeKey(tiles);
-    for (final choice in forCount(count)) {
-      if (_shapeKey(choice.tilesFor(count)) == key) return choice;
-    }
-    return null;
-  }
-
-  static String _shapeKey(List<Rect> tiles) {
-    final parts = [
-      for (final tile in tiles)
-        [
-          tile.left,
-          tile.top,
-          tile.right,
-          tile.bottom,
-        ].map((edge) => (edge * 1e8).round()).join(','),
-    ]..sort();
-    return parts.join(';');
-  }
 
   /// What a grid of this size looks like when nobody has chosen.
   static PanePreset? defaultFor(int count) {

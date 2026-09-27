@@ -60,7 +60,7 @@ class CliLogin implements SignInClient {
     return CliAuthStatus.fromJson(jsonDecode(line) as Map<String, dynamic>);
   }
 
-  /// Runs `harness login --force --json`. This is only ever reached from [LoginScreen], i.e. the app
+  /// Runs `harness login --force --json`. This is only ever reached from the desktop's `LoginScreen`, i.e. the app
   /// has already decided this computer is signed out — so a stale-but-present session file on disk
   /// must not short-circuit into a silent refresh attempt (`loginCommand`'s `readAuthSession() &&
   /// !force` branch), which just re-reports the same failure forever instead of opening a fresh SSO

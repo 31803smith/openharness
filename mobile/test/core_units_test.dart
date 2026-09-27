@@ -528,10 +528,6 @@ void main() {
       expect(stats.hashCode, isA<int>());
       expect(wireCount(-1), isNull);
       expect(wireCount(1.5), isNull);
-      expect(formatCount(980), '980');
-      expect(formatCount(12300), '12.3k');
-      expect(formatCount(4500000), '4.5M');
-      expect(formatCount(2000000000), '2.0B');
     });
 
     test('a project folder request says what the machine should make', () {

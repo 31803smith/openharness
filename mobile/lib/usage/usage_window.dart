@@ -118,8 +118,8 @@ class ProviderUsage {
   /// When these figures were read. Null until the first answer lands.
   final DateTime? fetchedAt;
 
-  /// Which account these figures belong to — `usageAccountKey`, never the id
-  /// itself — or null when the machine that read them could not say.
+  /// Which account these figures belong to — a key the machine that read them derives from the
+  /// id, never the id itself — or null when that machine could not say.
   ///
   /// It is what lets the strip show one figure per ACCOUNT rather than one per
   /// machine: a remote machine signed in to this same subscription is this

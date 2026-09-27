@@ -22,10 +22,10 @@ import 'voice_mic_mode.dart';
 ///    the take away, and the face turns to a `×` to say so. No long-press:
 ///    that gesture is what records.
 ///
-/// ⚠️ **It is the right end of the voice capsule, and draws nothing past its
-/// circle.** What it is doing — the waveform, the words, the `×` — is in the
-/// capsule body behind it (`voice_status_pill.dart`), so the button's own box
-/// never grows and nothing around it moves.
+/// ⚠️ **It draws nothing past its circle.** What it is doing beyond its face —
+/// the halo, and the words when something went wrong — is drawn around it
+/// (`voice_bar_line.dart`), so the button's own box never grows and nothing
+/// around it moves.
 class VoiceMicButton extends StatefulWidget {
   const VoiceMicButton({
     super.key,
@@ -34,7 +34,6 @@ class VoiceMicButton extends StatefulWidget {
     this.onLongPress,
     this.onHoldStart,
     this.onHoldFinish,
-    this.onSlipChanged,
     this.working = false,
     this.level,
     this.onSwipeDown,
@@ -70,14 +69,6 @@ class VoiceMicButton extends StatefulWidget {
   /// first, which throws the take away instead of sending it.
   final void Function({required bool cancelled})? onHoldFinish;
 
-  /// The thumb crossed in or out of the button mid-hold, so the row beside it
-  /// can say what letting go will now do.
-  ///
-  /// The button's own face already turns to a `×`, but the thumb is ON the
-  /// button and covering most of it — the words to the left are what somebody
-  /// can actually read at that moment.
-  final ValueChanged<bool>? onSlipChanged;
-
   /// The space this button asks of its parent's layout.
   ///
   /// ⚠️ **It no longer sets any row's height.** The mic floats over the terminal
@@ -97,13 +88,6 @@ class VoiceMicButton extends StatefulWidget {
   /// The hit circle: the disc and a little more, never the 96pt it was — a tap on the agent's
   /// prompt beside the mic must reach the terminal, not start a recording.
   static const double touchExtent = 80;
-
-  /// How far the hit area spills past its slot on each side.
-  ///
-  /// What anything placed beside or above this button has to clear: the
-  /// overhang is painted over its neighbour and would swallow the neighbour's
-  /// presses. See the gap above the mic in `voice_mic_fab.dart`.
-  static const double touchOverhang = (touchExtent - extent) / 2;
 
   /// How far past [touchExtent] the thumb may stray and still count as "on" the
   /// button.
@@ -241,22 +225,14 @@ class _VoiceMicButtonState extends State<VoiceMicButton> {
   void dispose() {
     if (_holdPointer != null) {
       final finish = widget.onHoldFinish;
-      final slipChanged = _slippedOff ? widget.onSlipChanged : null;
-      scheduleMicrotask(() {
-        slipChanged?.call(false);
-        finish?.call(cancelled: true);
-      });
+      scheduleMicrotask(() => finish?.call(cancelled: true));
     }
     super.dispose();
   }
 
-  /// ⚠️ Tells the row BEFORE rebuilding itself. The listener sits in an ancestor
-  /// that rebuilds this button, so calling it inside `setState` would report the
-  /// change from the middle of a build.
   void _setSlipped(bool value) {
     if (value == _slippedOff) return;
     _slippedOff = value;
-    widget.onSlipChanged?.call(value);
     if (mounted) setState(() {});
   }
 

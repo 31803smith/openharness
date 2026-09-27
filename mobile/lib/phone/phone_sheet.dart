@@ -100,19 +100,12 @@ class PhoneSheetSection {
 /// [actions] is the first card, with no caption. Each of [sections] is a card after it — under its
 /// caption, or a gap below the card before when it has none. An empty section is left out.
 ///
-/// [titleLeading] is drawn left of the title — the engine mark, on an agent's sheet — and
-/// [titleDetail] under [titleParts]: machine, folder and branch.
-///
 /// The page behind stands on the app's sheet veil, dimmed and blurred — see [_PhoneSheetRoute].
 Future<void> showPhoneSheet(
   BuildContext context, {
   required String title,
   List<PhoneSheetAction> actions = const [],
   List<PhoneSheetSection> sections = const [],
-  PhoneSheetAction? titleAction,
-  List<String>? titleParts,
-  Widget? titleDetail,
-  Widget? titleLeading,
   String? titleBranch,
 }) {
   assert(debugCheckHasMediaQuery(context));

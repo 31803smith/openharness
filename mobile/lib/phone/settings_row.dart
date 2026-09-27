@@ -73,32 +73,6 @@ class SettingsCaption extends StatelessWidget {
   }
 }
 
-/// A quiet sentence under a run, explaining something the rows cannot say themselves.
-class SettingsNote extends StatelessWidget {
-  const SettingsNote(this.text, {super.key});
-
-  final String text;
-
-  @override
-  Widget build(BuildContext context) {
-    AppTheme.watch(context);
-    return Padding(
-      // 10 rather than 8, and the extra 2 is doing work: the caption above a group sits at 8, so a
-      // note at the same gap reads as another caption for whatever follows rather than as a remark
-      // on the group it belongs to.
-      padding: const EdgeInsets.fromLTRB(4, 10, 4, 0),
-      child: Text(
-        text,
-        style: TextStyle(
-          color: AppPalette.textFaint,
-          fontSize: 12.5,
-          height: 1.45,
-        ),
-      ),
-    );
-  }
-}
-
 /// One run of rows, drawn as a single card with hairlines between them.
 class SettingsGroup extends StatelessWidget {
   const SettingsGroup({super.key, required this.children});

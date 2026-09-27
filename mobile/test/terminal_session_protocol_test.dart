@@ -1356,13 +1356,11 @@ void main() {
 
       s.sendScrollCommand(true, 3);
       s.scroll(1, 10, 0);
-      s.find(TerminalFindAction.next);
       expect(s.focusInput(), isTrue);
       await Future<void>.delayed(const Duration(milliseconds: 40));
 
       expect(wire.of('terminal_scroll'), isEmpty);
       expect(viewport.scrolls, [(1, 10, 0)]);
-      expect(viewport.finds, [TerminalFindAction.next]);
     });
 
     test('the cursor blinks locally, never into the stream', () async {
@@ -1492,15 +1490,11 @@ class _Wire {
 
 class _Viewport implements TerminalViewport {
   final scrolls = <(int, int, int)>[];
-  final finds = <TerminalFindAction>[];
   var cleared = 0;
 
   @override
   void scroll(int phase, int dy, int velocity) =>
       scrolls.add((phase, dy, velocity));
-
-  @override
-  void find(TerminalFindAction action) => finds.add(action);
 
   @override
   bool focusInput() => true;

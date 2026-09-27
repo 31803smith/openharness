@@ -81,8 +81,8 @@ installs nothing.
 ## Keeping in step with `../desktop`
 
 The shared half of `lib/` was **vendored** from `desktop/lib/`, not rewritten, and outside
-`lib/phone/` and `lib/p2p/` the two trees are byte-identical apart from the package name and six
-files. So a fix that belongs on both sides can be carried across with `diff`:
+`lib/phone/` and `lib/p2p/` the two trees are byte-identical apart from the package name and the
+files below. So a fix that belongs on both sides can be carried across with `diff`:
 
 ```bash
 # What has drifted, ignoring the package rename
@@ -93,13 +93,15 @@ cd mobile/lib && for f in $(find . -name '*.dart' | sed 's|^\./||'); do
 done
 ```
 
-The six that are expected to differ, and why:
+The files expected to differ, and why:
 
 | File | Why |
 |---|---|
 | `main.dart` | mounts `PhoneShell` and the p2p transport, not `SwarmScreen` |
-| `app_shell.dart` | no managed window: `window_manager` ships for macOS/Windows/Linux only |
-| `widgets/update_notice.dart` | same — it was wrapped in a window drag area |
-| `screens/login_screen.dart`, `widgets/bootstrapping_screen.dart`, `widgets/engine_identity.dart` | assets are this package's own, so they no longer name a `package:` to load from |
+| `app_shell.dart` | no managed window: `window_manager` ships for macOS/Windows/Linux only; and no application menu, update band, provisioning screens or desktop sign-in |
+| `widgets/engine_identity.dart` | assets are this package's own, so it no longer names a `package:` to load from |
 
-`lib/core/desktop_window.dart` and `lib/widgets/window_chrome.dart` have no copy here at all.
+`lib/core/desktop_window.dart` and `lib/widgets/window_chrome.dart` have no copy here at all, and
+neither have the desktop screens a phone can never reach: the sign-in and boot screens (the phone
+has `PhoneWelcome` and `PhoneBoot`), first-run provisioning, the update notice, the firmware
+flasher, the layout palette and the shortcuts sheet.
