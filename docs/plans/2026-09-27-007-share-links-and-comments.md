@@ -20,6 +20,10 @@ Open **Share** on an agent in desktop or web. Choose **Private** or **Public**, 
 
 Public readers need no account. Private readers sign in with an invited email; another account gets an access message and can switch accounts. Commenting requires sign-in. Threads appear beside live output on wide screens and as a separate view on narrow screens. Readers can select/copy text, delete their own comments, and retry a failed submission without losing the draft or posting it twice. The owner can remove any comment. Changing a public link to private removes uninvited viewers; **Stop sharing** disables the link and revokes the agent's invitations.
 
+![Private share control, using fixture data](../../desktop/design/images/share-link-private.png)
+
+<img src="../../desktop/design/images/share-link-comments-phone.png" alt="Private shared agent with comments in a 390-pixel browser" width="300">
+
 The daemon persists authority and comments in `harness-collaboration.json` with atomic writes and private file permissions. Backend `HarnessLink` records contain admission metadata only. Comment payloads travel inside the existing encrypted observer channel and are excluded from frame logs. The daemon checks access for every observer request and output. Guest clients cannot supply their own account identity or send terminal input, resize commands, unrelated agent IDs, or generic owner RPCs.
 
 Limits: 4,000 characters per comment, 200 comments / 1 MiB encoded per thread, and 10 posts per minute per account on a machine. Authors can remove comments to make room. This release is live collaboration: the owner daemon must be online. It does not publish offline snapshots, send emails, or grant terminal control.
