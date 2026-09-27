@@ -39,6 +39,12 @@ class AnalyticsIdentityStore {
 
   _StoredIdentity? _state;
 
+  /// `last_active_ms` as the file holds it — what [_persistEvery] is measured
+  /// from. Not the in-memory clock: that moves on every event, so events closer
+  /// together than a minute would each find the last one "too recent" and the
+  /// file would never be brought forward at all.
+  int _savedActive = 0;
+
   /// How stale the on-disk `last_active_ms` is allowed to get. A write per event
   /// would be an fsync per click; the cost of lagging is that a restart after a
   /// long quiet spell may start a new visit up to a minute early, which is
@@ -79,7 +85,7 @@ class AnalyticsIdentityStore {
       optedOut: state.optedOut,
     );
     _state = next;
-    if (expired || at - state.lastActive >= _persistEvery.inMilliseconds) {
+    if (expired || at - _savedActive >= _persistEvery.inMilliseconds) {
       _persist(next);
     }
     return (pseudoId: next.pseudoId, sessionId: next.sessionId);
@@ -105,6 +111,7 @@ class AnalyticsIdentityStore {
       optedOut: json['enabled'] == false,
     );
     _state = state;
+    _savedActive = state.lastActive;
     return state;
   }
 
@@ -130,6 +137,9 @@ class AnalyticsIdentityStore {
 
   /// Writes the ids back, `enabled` included so a user's opt-out survives.
   void _persist(_StoredIdentity state) {
+    // Moved on the attempt, not only on success: a home that cannot be written
+    // is tried again a minute later, not on every event in between.
+    _savedActive = state.lastActive;
     try {
       _file.parent.createSync(recursive: true);
       _file.writeAsStringSync(
