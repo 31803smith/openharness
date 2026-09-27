@@ -21,7 +21,6 @@ import '../core/config.dart';
 import '../core/agent_preference.dart';
 import '../core/engine_availability.dart';
 import '../core/device_name.dart';
-import '../core/local_hostname.dart';
 import '../core/permission_modes.dart';
 import '../core/local_git_projects.dart';
 import '../core/last_opened_agent.dart';
@@ -3937,24 +3936,6 @@ class AppNotifier extends ChangeNotifier {
       for (final machine in remotes) _readMachineUsage(machine),
     ]);
     return [for (final answer in answers) ?answer];
-  }
-
-  /// What to call THIS computer wherever a usage figure has to say whose it is.
-  ///
-  /// The same `displayName` the sidebar prints and `_readMachineUsage` labels
-  /// every remote machine with, so a panel listing one local and one remote
-  /// account names them in one vocabulary rather than setting a hostname
-  /// beside the words "this computer".
-  ///
-  /// Falls back to the OS hostname when the local machine has not been fetched
-  /// yet — the rail can open before `refreshMachines` lands — and to null when
-  /// even that is empty, which the caller renders by dropping the caption
-  /// rather than printing a blank one.
-  String? get thisMachineName {
-    for (final state in machineStates.values) {
-      if (state.isLocalMachine) return state.machine.displayName;
-    }
-    return localHostnameOrNull();
   }
 
   Future<MachineUsage?> _readMachineUsage(MachineState machine) async {
