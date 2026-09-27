@@ -115,13 +115,24 @@ class SetUpComputerPage extends StatefulWidget {
   const SetUpComputerPage({
     super.key,
     required this.onScan,
-    required this.onBack,
+    this.onBack,
+    this.status,
+    this.trailing = const [],
     this.loadDownloads,
   });
 
-  /// Back to the first screen's other answer, once the app is on the computer.
+  /// Back to the first screen's other answer, once the app is on the computer — or, signed in,
+  /// the scan that pairs this phone with the computer just set up.
   final VoidCallback onScan;
-  final VoidCallback onBack;
+
+  /// Null draws no back button: the page is a home screen, not a pushed one.
+  final VoidCallback? onBack;
+
+  /// A line under the title about what is going on — signed in, the watch for the computer.
+  final Widget? status;
+
+  /// Rows after everything else — signed in, the sample to try while waiting.
+  final List<Widget> trailing;
 
   /// Stands in for the manifest in tests. Null reads [kDesktopManifestUrl].
   final DesktopDownloadsLoader? loadDownloads;
@@ -179,10 +190,13 @@ class _SetUpComputerPageState extends State<SetUpComputerPage> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Align(
-          alignment: Alignment.centerLeft,
-          child: TtyBackButton(onPressed: widget.onBack),
-        ),
+        if (widget.onBack case final onBack?)
+          Align(
+            alignment: Alignment.centerLeft,
+            child: TtyBackButton(onPressed: onBack),
+          )
+        else
+          const SizedBox(height: 44),
         Expanded(
           child: ListView(
             padding: const EdgeInsets.fromLTRB(Tty.origin, 8, Tty.origin, 24),
@@ -193,6 +207,10 @@ class _SetUpComputerPageState extends State<SetUpComputerPage> {
                     .style(size: TtySize.display, weight: FontWeight.w600)
                     .copyWith(height: 34 / 28, letterSpacing: -0.6),
               ),
+              if (widget.status case final status?) ...[
+                const SizedBox(height: 18),
+                status,
+              ],
               const SizedBox(height: 28),
               Text('Send it to your computer:', style: faint),
               const SizedBox(height: 8),
@@ -276,6 +294,7 @@ class _SetUpComputerPageState extends State<SetUpComputerPage> {
                   ),
                 ),
               ),
+              ...widget.trailing,
             ],
           ),
         ),

@@ -4,6 +4,7 @@ import 'package:mobile_scanner/mobile_scanner.dart';
 
 import 'package:harness_mobile/shared/theme/app_theme.dart';
 
+import '../phone_navigation.dart' show phoneRoute;
 import '../tty.dart';
 import '../tty_controls.dart';
 import 'connect_code.dart';
@@ -144,4 +145,35 @@ class _ScanToConnectPageState extends State<ScanToConnectPage> {
       ],
     );
   }
+}
+
+/// The camera over the current page, and the code it read — null when the person went back or
+/// took the other way ([fallbackLabel]). For a phone that is already signed in and wants a
+/// computer: unlocking one, or pairing with one just set up.
+Future<ConnectCode?> scanForCode(
+  BuildContext context, {
+  required String fallbackLabel,
+  Widget? camera,
+}) async {
+  ConnectCode? scanned;
+  await Navigator.of(context).push(
+    phoneRoute(
+      (page) => Scaffold(
+        backgroundColor: Tty.of(page).ground,
+        body: SafeArea(
+          child: ScanToConnectPage(
+            camera: camera,
+            fallbackLabel: fallbackLabel,
+            onCode: (code) {
+              scanned = code;
+              Navigator.of(page).pop();
+            },
+            onUseEmail: () => Navigator.of(page).pop(),
+            onBack: () => Navigator.of(page).pop(),
+          ),
+        ),
+      ),
+    ),
+  );
+  return scanned;
 }

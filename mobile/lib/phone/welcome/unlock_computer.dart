@@ -6,10 +6,8 @@ import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import 'package:harness_mobile/state/app_state.dart';
 
-import '../phone_navigation.dart' show phoneRoute;
 import '../tty.dart';
 import '../tty_controls.dart';
-import 'connect_code.dart';
 import 'scan_to_connect.dart';
 
 /// Unlocking a computer from this phone — the page behind a locked computer's row. The way the
@@ -121,27 +119,11 @@ class _UnlockComputerState extends State<UnlockComputer> {
   /// first one was added — its one-time code, armed by its Add Phone dialog, and no password.
   Future<void> _scan() async {
     if (_busy || _pairing) return;
-    ConnectCode? scanned;
-    await Navigator.of(context).push(
-      phoneRoute(
-        (page) => Scaffold(
-          backgroundColor: Tty.of(page).ground,
-          body: SafeArea(
-            child: ScanToConnectPage(
-              camera: widget.scanCamera,
-              fallbackLabel: 'Use its password instead',
-              onCode: (code) {
-                scanned = code;
-                Navigator.of(page).pop();
-              },
-              onUseEmail: () => Navigator.of(page).pop(),
-              onBack: () => Navigator.of(page).pop(),
-            ),
-          ),
-        ),
-      ),
+    final code = await scanForCode(
+      context,
+      fallbackLabel: 'Use its password instead',
+      camera: widget.scanCamera,
     );
-    final code = scanned;
     if (!mounted || code == null) return;
     final machine = widget.machineState.machine;
     final pairCode = code.pairCode;
