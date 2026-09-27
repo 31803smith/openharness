@@ -5,6 +5,7 @@ import 'package:harness_mobile/core/models.dart';
 import 'package:harness_mobile/phone/agent_swipe.dart';
 import 'package:harness_mobile/phone/new_agent_draft.dart';
 import 'package:harness_mobile/phone/new_agent_page.dart';
+import 'package:harness_mobile/phone/tty_controls.dart' show TtyFieldMic;
 import 'package:harness_mobile/state/app_state.dart';
 
 import 'edge_fixture.dart';
@@ -329,6 +330,77 @@ void main() {
     await close(tester, app);
   });
 
+  testWidgets('said into the task: added to what was typed', (tester) async {
+    setPhone(tester, largePhone);
+    final app = edgeApp();
+    final voice = edgeVoice();
+    voice.stt.replies.add(' then deploy it ');
+    await tester.pumpWidget(
+      phoneApp(NewAgentPage(notifier: app, machineId: 'm', voice: voice.voice)),
+    );
+    await frames(tester);
+    await tester.enterText(find.byType(TextField), 'fix the tests');
+    await tester.tap(find.byType(TtyFieldMic));
+    await frames(tester);
+    await tester.tap(find.byType(TtyFieldMic));
+    await frames(tester);
+    expect(find.text('fix the tests then deploy it'), findsOneWidget);
+    await close(tester, app);
+  });
+
+  testWidgets('Open Folder: the computer\'s folders, and back out', (
+    tester,
+  ) async {
+    final (:app, conn: _) = await openNew(tester);
+    await choose(tester, 'project', '+ Open Folder');
+    expect(find.text('Cancel'), findsWidgets);
+    await tester.tap(find.text('Cancel').last);
+    await frames(tester);
+    expect(find.text('studio:web', findRichText: true), findsWidgets);
+    await close(tester, app);
+  });
+
+  testWidgets('a draft with no agent chosen: Start asks for one', (
+    tester,
+  ) async {
+    newAgentDraft = const NewAgentDraft(
+      machineId: 'm',
+      engine: null,
+      permissionMode: 'auto',
+      folder: '/code/web/',
+      task: 'pick up where I left off',
+    );
+    final (:app, :conn) = await openNew(tester);
+    expect(find.text('Choose an agent', findRichText: true), findsWidgets);
+    await tapInView(tester, find.text('Choose an agent').last);
+    await frames(tester);
+    expect(find.text('Agent'), findsOneWidget);
+    expect(conn.payloads['agent_create'], isNull);
+    await close(tester, app);
+  });
+
+  testWidgets('a repository the computer could not read says so', (
+    tester,
+  ) async {
+    setPhone(tester, largePhone);
+    final app = edgeApp(
+      conn: EdgeConn(const {
+        'git_project_info': {'error': 'E2EE_REQUIRED'},
+      }),
+    );
+    await tester.pumpWidget(
+      phoneApp(NewAgentPage(notifier: app, machineId: 'm')),
+    );
+    await frames(tester);
+    await tester.tap(find.text('options'));
+    await frames(tester);
+    expect(
+      find.text('No answer from the computer', findRichText: true),
+      findsOneWidget,
+    );
+    await close(tester, app);
+  });
+
   testWidgets('the task\'s mic, with the page\'s own voice when none is given', (
     tester,
   ) async {
@@ -349,7 +421,7 @@ void main() {
       phoneApp(NewAgentPage(notifier: app, machineId: 'm')),
     );
     await frames(tester);
-    await tester.tap(find.bySemanticsLabel('Say it'));
+    await tester.tap(find.byType(TtyFieldMic));
     await frames(tester);
     expect(tester.takeException(), isNull);
     await close(tester, app);
