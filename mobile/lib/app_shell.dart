@@ -195,9 +195,8 @@ class _GridTokenScope extends StatelessWidget {
 /// ⚠️ **What a desktop window also had here, and why it is gone.** The macOS application menu
 /// (`harness/app_menu`: check for updates, flash firmware, layouts, shortcuts, terminal font
 /// size), the update band, and the two first-run provisioning screens. No iOS or Android runner
-/// registers that channel, and a viewer build never provisions or self-updates:
-/// `AppNotifier.bootstrap` skips both whenever it has a [ViewerServices], which it always does on
-/// a phone (`kViewerMode`).
+/// registers that channel, and a viewer build never provisions or self-updates — an app the store
+/// updates installs nothing — so neither the provisioner nor the updater is in this package.
 class RootShell extends ConsumerWidget {
   const RootShell({
     super.key,
@@ -221,21 +220,10 @@ class RootShell extends ConsumerWidget {
         // signed-out screen, which carries the wait as a state of its own
         // button; swapping the window for a separate screen there was a
         // hard cut in the middle of a flow, and it is why that button's
-        // spinner was almost never seen.
-        //
-        // ⚠️ Keyed on `signingIn`, NOT on `pendingAuthorizeUrl`. The URL
-        // only exists for the middle stretch of the flow — the CLI has to
-        // start before it can print one, and it is cleared again while
-        // the post-login restore is still running — so keying on it blew
-        // the user's own screen away twice per sign-in: once on the click
-        // and again on success.
+        // spinner was almost never seen. Keyed on `signingIn`, which spans
+        // the whole of it — see [AppNotifier.signingIn].
         AppStatus.bootstrapping =>
           app.signingIn ? signedOutScreen(app) : bootScreen(app),
-        // Provisioning a computer for the harness CLI — a state only a desktop build enters (see
-        // above). Named so the switch stays exhaustive, and drawn as the boot screen should it
-        // ever be reached.
-        AppStatus.checkingEnvironment ||
-        AppStatus.preparingEnvironment => bootScreen(app),
         AppStatus.unauthenticated => signedOutScreen(app),
         AppStatus.authenticated => authenticatedScreen(app),
       },

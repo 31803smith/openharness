@@ -209,7 +209,6 @@ class FakeSignIn implements SignInClient {
 
   /// Held open until the test completes it.
   Completer<void>? statusGate;
-  int cancels = 0;
   int logouts = 0;
 
   @override
@@ -218,14 +217,6 @@ class FakeSignIn implements SignInClient {
     if (statusFailure case final failure?) throw failure;
     return CliAuthStatus(loggedIn: signedIn);
   }
-
-  @override
-  Future<void> login({
-    required void Function(String url) onAuthorizeUrl,
-  }) async {}
-
-  @override
-  void cancel() => cancels++;
 
   @override
   Future<void> logout() async => logouts++;
@@ -452,7 +443,6 @@ ViewerRig viewerApp({
     authSession: session,
     configStore: null,
     cliLogin: signIn,
-    cliLink: CliLink(),
     peerLinks: links,
     viewer: viewer,
     paneLayoutStore: storage == null ? null : PaneLayoutStore(storage: storage),

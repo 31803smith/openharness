@@ -1,14 +1,11 @@
 import 'dart:async';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:harness_mobile/auth/auth_session.dart';
-import 'package:harness_mobile/core/config.dart';
 import 'package:harness_mobile/core/models.dart';
 import 'package:harness_mobile/state/app_state.dart';
 import 'package:harness_mobile/ws/ws_conn.dart';
 
 import 'viewer_app_fixture.dart';
-import 'voice_fakes.dart' show MemoryKeyValueStore;
 
 /// Signing a phone in and out: the viewer build's half of `AppNotifier` —
 /// bootstrap with no CLI beside it, the emailed code and the scanned QR, and
@@ -26,7 +23,7 @@ void main() {
       expect(rig.app.currentUser, isNull);
     });
 
-    test('signed in: machines and profile, with no environment step', () async {
+    test('signed in: machines and profile, with no step between', () async {
       final rig = viewerApp();
       addTearDown(rig.app.dispose);
       rig.api.onMachines = () async => [remoteMachine('m')];
@@ -37,9 +34,8 @@ void main() {
       await settle();
 
       expect(rig.app.status, AppStatus.authenticated);
-      // A viewer installs nothing: provisioning is never shown.
-      expect(seen, isNot(contains(AppStatus.checkingEnvironment)));
-      expect(seen, isNot(contains(AppStatus.preparingEnvironment)));
+      // A viewer installs nothing: the boot spinner, then the app.
+      expect(seen.toSet(), {AppStatus.bootstrapping, AppStatus.authenticated});
       expect(rig.app.machines.map((m) => m.machineId), ['m']);
       expect(rig.app.stateOf('m'), isNotNull);
       expect(rig.app.machinesLoading, isFalse);
@@ -109,7 +105,6 @@ void main() {
       final rig = viewerApp(signedIn: false);
       addTearDown(rig.app.dispose);
       rig.api.onMachines = () async => [remoteMachine('m')];
-      expect(rig.app.signsInWithEmailCode, isTrue);
 
       await rig.app.sendLoginCode('pat@example.com');
       await rig.app.signInWithCode(email: 'pat@example.com', code: '1234');
@@ -370,18 +365,5 @@ void main() {
         expect(await rig.app.session.accessToken(), 'hna_old');
       },
     );
-
-    test('only a viewer or the dev fixture dials with a token', () async {
-      final app = AppNotifier(
-        config: AppConfig.dev,
-        authSession: AuthSession(storage: MemoryKeyValueStore()),
-        configStore: null,
-        cliLogin: FakeSignIn(),
-      );
-      addTearDown(app.dispose);
-      if (app.viewer != null) return; // a viewer host: nothing to check
-
-      await expectLater(app.socketTokenForTest(), throwsStateError);
-    });
   });
 }

@@ -757,7 +757,7 @@ class _TerminalPanelState extends State<TerminalPanel>
   /// app share the exact same OS clipboard. The wire-based `pasteImage` (chunked
   /// upload, daemon writes the far side's OS clipboard, daemon replays Ctrl+V) is
   /// reserved for a genuinely REMOTE pane, whose engine reads a DIFFERENT
-  /// clipboard than this one — see `MachineState.isLocalMachine`.
+  /// clipboard than this one — which, on a phone, is every pane.
   /// An image handed over by the software keyboard's own clipboard.
   ///
   /// This is the phone's ONLY way to get an image into a pane: Flutter's
@@ -794,9 +794,7 @@ class _TerminalPanelState extends State<TerminalPanel>
       return;
     }
     final machine = widget.notifier.stateOf(widget.session.machineId);
-    if (machine != null &&
-        !machine.isLocalMachine &&
-        machine.terminalImagePasteAvailable) {
+    if (machine != null && machine.terminalImagePasteAvailable) {
       final imageBytes = await NativeClipboard.readImagePng();
       if (imageBytes != null &&
           imageBytes.isNotEmpty &&
@@ -1036,8 +1034,8 @@ class _TerminalPanelState extends State<TerminalPanel>
     try {
       final message = await _linkOpener.open(
         target,
-        isLocalMachine:
-            notifier.stateOf(session.machineId)?.isLocalMachine == true,
+        // The agent runs on another machine: a file it names is there, not here.
+        isLocalMachine: false,
         isCancelled: () =>
             cancellation.isCancelled ||
             !mounted ||

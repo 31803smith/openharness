@@ -339,7 +339,6 @@ void main() {
       expect(bare.displayName, 'q@x.co');
       expect(bare.initials, 'Q');
       expect(const CurrentUserProfile(email: '  ').initials, '?');
-      expect(const CurrentUserProfile.local().isLocalSession, isTrue);
     });
 
     test('a machine with no name is called by its id', () {

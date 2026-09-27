@@ -1168,7 +1168,7 @@ class TerminalSession extends ChangeNotifier {
   /// write it to disk on its own (REMOTE) machine and paste that path as text. Only meaningful for
   /// a genuinely remote pane: a LOCAL file already has a valid path on this same machine, so
   /// callers should paste that path directly via [pasteText] instead and never reach this method
-  /// at all — see [MachineState.isLocalMachine].
+  /// at all. A phone has no local pane.
   ///
   /// The caller must check [MachineState.terminalPasteFileAvailable] first, same reason
   /// [pasteImage] checks `terminalImagePasteAvailable`: an older CLI does not know this binary kind

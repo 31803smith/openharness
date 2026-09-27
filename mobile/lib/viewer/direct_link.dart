@@ -99,8 +99,8 @@ class DirectLink implements PeerLinkClient {
     }
   }
 
-  // ⚠️ **Both links answer with a result, never an exception** — the same contract `CliLink`
-  // keeps. Their callers await them with nothing around them: the password form with its button
+  // ⚠️ **Both links answer with a result, never an exception** — the same contract the desktop's
+  // CLI-backed link keeps. Their callers await them with nothing around them: the password form with its button
   // disabled until an answer comes, the QR's pairing screen under "Pairing…". A state file that
   // was locked or full threw straight through here, and left each of them waiting for good.
 

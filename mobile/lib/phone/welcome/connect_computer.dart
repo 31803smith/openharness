@@ -112,10 +112,22 @@ class _ConnectComputerPageState extends State<ConnectComputerPage> {
     _say('Pairing…');
     if (!widget.notifier.machineStates.containsKey(machineId)) {
       // Bounded: a slow network is a reason to say so, not to leave "Pairing…" up for good.
-      await widget.notifier.refreshMachines().timeout(
-        const Duration(seconds: 5),
-        onTimeout: () {},
-      );
+      try {
+        await widget.notifier.refreshMachines().timeout(
+          const Duration(seconds: 5),
+          onTimeout: () {},
+        );
+      } catch (_) {
+        // ⚠️ A list that could not be read says nothing about whether the computer is on the
+        // account, so it is not "isn't on your account" — and thrown on from here, it left
+        // "Pairing…" up for good.
+        if (!mounted) return;
+        _say(
+          "Couldn't reach your account. Check your connection and scan again.",
+          failed: true,
+        );
+        return;
+      }
     }
     if (!mounted) return;
     if (!widget.notifier.machineStates.containsKey(machineId)) {
