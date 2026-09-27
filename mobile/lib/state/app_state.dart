@@ -5990,8 +5990,8 @@ class AppNotifier extends ChangeNotifier {
   /// read-only stream and a "Take control" band in front of every agent a desktop had open,
   /// including the one the app opens on.
   ///
-  /// The displaced app is told who took it and has the same one press back; the phone's own band
-  /// is for exactly that case, a terminal taken back off this device — see `phoneReclaimAction`.
+  /// The displaced app is told who took it and has the same one press back; on the phone that
+  /// press is a tap or a scroll on the terminal taken back off it.
   ///
   /// The one open that stays polite is [warmAgentPane]'s guess about the next swipe, which is
   /// nobody arriving anywhere. See [_attachSession].

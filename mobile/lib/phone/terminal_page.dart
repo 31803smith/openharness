@@ -194,7 +194,6 @@ typedef _PageFacts = ({
   AgentLoadStatus? agentLoadStatus,
   bool machinePresent,
   PhoneMachineStatus? machineStatus,
-  bool redialling,
   bool imagePaste,
   String? machineName,
 });
@@ -640,14 +639,6 @@ class _TerminalPageState extends State<TerminalPage>
       agentLoadStatus: machine?.agentLoadStatus,
       machinePresent: machine != null,
       machineStatus: machine == null ? null : phoneMachineStatusOf(machine),
-      // Only while the stream is dead — the one state it changes how the
-      // header reads. A live page has no reason to rebuild each time the agent
-      // list refreshes underneath it.
-      redialling:
-          machine != null &&
-          (session?.status == TerminalSessionStatus.error ||
-              session?.status == TerminalSessionStatus.closed) &&
-          phoneMachineRedialling(machine),
       imagePaste: machine?.terminalImagePasteAvailable ?? false,
       machineName: machine?.machine.displayName,
     );
