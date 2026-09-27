@@ -46,8 +46,10 @@ final class PasswordLinkFailed extends PasswordLinkResult {
   final DateTime? retryAt;
 }
 
-typedef RelaySocketFactory =
-    WebSocketChannel Function(Uri uri, Iterable<String> protocols);
+typedef RelaySocketFactory = WebSocketChannel Function(
+  Uri uri,
+  Iterable<String> protocols,
+);
 
 WebSocketChannel defaultRelaySocket(Uri uri, Iterable<String> protocols) =>
     WebSocketChannel.connect(uri, protocols: protocols);
@@ -70,17 +72,24 @@ Future<PasswordLinkResult> linkWithPassword({
   Duration timeout = const Duration(seconds: 30),
 }) async {
   onProgress?.call(PasswordLinkStage.connecting);
-  final uri = Uri.parse('$wsBaseUrl/api/web-ws').replace(
-    queryParameters: {'autonomousEnv': autonomousEnv},
-  );
+  final uri = Uri.parse('$wsBaseUrl/api/web-ws')
+      .replace(queryParameters: {'autonomousEnv': autonomousEnv});
   final channel = socket(uri, [accessToken]);
-  final run = _PasswordLinkRun(machineId, password, identity, channel, onProgress);
+  final run = _PasswordLinkRun(
+    machineId,
+    password,
+    identity,
+    channel,
+    onProgress,
+  );
   try {
-    await channel.ready;
-    return await run.drive().timeout(
-      timeout,
-      onTimeout: () => const PasswordLinkFailed('TIMEOUT'),
-    );
+    // ⚠️ The dial is inside the timeout, not in front of it: a socket dialled into a network
+    // that swallows packets waits out the OS's own TCP timeout — over a minute on iOS — and the
+    // form said "connecting" for all of it.
+    return await () async {
+      await channel.ready;
+      return run.drive();
+    }().timeout(timeout, onTimeout: () => const PasswordLinkFailed('TIMEOUT'));
   } catch (_) {
     return const PasswordLinkFailed('CONNECTION_ERROR');
   } finally {
@@ -186,7 +195,12 @@ class _PasswordLinkRun {
       theirs,
       ours.share,
     );
-    final transcript = _transcript = transcriptHash(_sid, _ci, theirs, ours.share);
+    final transcript = _transcript = transcriptHash(
+      _sid,
+      _ci,
+      theirs,
+      ours.share,
+    );
     onProgress?.call(PasswordLinkStage.verifying);
     _send('e2e_pw_pake', {
       'sid': _sidB64,
@@ -199,7 +213,9 @@ class _PasswordLinkRun {
 
   /// Round 3 in, round 4 out: the machine proves the password too and hands over its identity,
   /// bound to this transcript; ours goes back the same way.
-  Future<PasswordLinkResult?> _answerIdentity(Map<String, dynamic> payload) async {
+  Future<PasswordLinkResult?> _answerIdentity(
+    Map<String, dynamic> payload,
+  ) async {
     final isk = _isk, transcript = _transcript;
     if (isk == null || transcript == null) {
       return const PasswordLinkFailed('PROTOCOL_ERROR');
@@ -209,7 +225,12 @@ class _PasswordLinkRun {
       return _wrongPassword;
     }
     final key = pairKey(isk, _ci);
-    final opened = aeadOpen(key, 3, utf8Bytes('e2e-id'), b64d(payload['enc'] as String));
+    final opened = aeadOpen(
+      key,
+      3,
+      utf8Bytes('e2e-id'),
+      b64d(payload['enc'] as String),
+    );
     final claim = opened == null ? null : jsonObjectOf(opened);
     final id = claim?['id'], sig = claim?['sig'];
     if (id is! String || sig is! String) return _wrongPassword;
@@ -232,11 +253,12 @@ class _PasswordLinkRun {
 
   /// The fingerprint is computed here rather than taken from the frame, unlike the CLI: round 5
   /// crosses the relay in the clear, and the pinned key is the thing it must describe.
+  ///
+  /// A refusal here carries its `retryAt` as one at the intent does: the machine judges its
+  /// lockout again at round 2 (manager.ts `onPwPake`), and says until when on round 5.
   PasswordLinkResult _finish(Map<String, dynamic> payload) {
     final machinePub = _machinePub;
-    if (payload['ok'] != true || machinePub == null) {
-      return PasswordLinkFailed(_codeOr(payload['error'], 'PAIR_FAILED'));
-    }
+    if (payload['ok'] != true || machinePub == null) return _refused(payload);
     return PasswordLinked(machinePub, fingerprint(machinePub));
   }
 
@@ -244,7 +266,9 @@ class _PasswordLinkRun {
     final retryAt = payload['retryAt'];
     return PasswordLinkFailed(
       _codeOr(payload['error'], 'PAIR_FAILED'),
-      retryAt: retryAt is int ? DateTime.fromMillisecondsSinceEpoch(retryAt) : null,
+      retryAt: retryAt is int
+          ? DateTime.fromMillisecondsSinceEpoch(retryAt)
+          : null,
     );
   }
 
