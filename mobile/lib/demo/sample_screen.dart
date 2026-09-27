@@ -100,7 +100,13 @@ class SampleAsk {
   /// The rows, in order — `1.` is the first.
   final List<String> options;
 
+  /// The dialog's own line, drawn in the pane.
   String get question => 'Do you want to proceed?';
+
+  /// What the daemon announces for it (`permissionTitle` in the CLI's askQuestion.ts): the header
+  /// and the command, `Approve Bash command: psql -f …`. It is what Find quotes under a harness that
+  /// needs you — the pane's stock "Do you want to proceed?" said nothing about what.
+  String get announced => 'Approve $title: $command';
 }
 
 enum LiveMode { idle, working, asking }

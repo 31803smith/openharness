@@ -127,7 +127,7 @@ void main() {
     }
     expect(
       notifier.questionFor(_studio, 'sample-refactor-db')?.prompt,
-      'Do you want to proceed?',
+      startsWith('Approve Bash command: '),
     );
     await closeDown(tester);
   });
