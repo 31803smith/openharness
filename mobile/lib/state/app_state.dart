@@ -5566,19 +5566,38 @@ class AppNotifier extends ChangeNotifier {
     const unconfirmed = RestartAgentResult(
       error: 'The machine has not confirmed the resume yet. Tap the harness again to check.',
     );
-    final Map<String, dynamic> result;
+    Future<Map<String, dynamic>> resume() => _conn(machine.machine.machineId)
+        .request(
+          'agent_resume',
+          payload: {'creationId': receipt, 'agentId': stopped.id},
+        );
+    // Whether the request whose answer is being read is `agent_resume` itself —
+    // its refusals are final — rather than a status check.
+    var resuming = checking == null;
+    Map<String, dynamic> result;
     try {
-      result = await _conn(machine.machine.machineId).request(
-        checking == null ? 'agent_resume' : 'agent_create_status',
-        payload: {
-          'creationId': receipt,
-          if (checking == null) 'agentId': stopped.id,
-        },
-      );
+      result = resuming
+          ? await resume()
+          : await _conn(
+              machine.machine.machineId,
+            ).request('agent_create_status', payload: {'creationId': receipt});
+      // ⚠️ **`missing` is the machine never having heard of it — the desktop's
+      // rule.** The first send can fail before it leaves the phone (a socket
+      // mid-redial is the usual way), and then every check after it answers
+      // `missing`, for ever: the agent could not be resumed from this phone
+      // again until the app restarted. So the SAME intent is sent again. The
+      // daemon reserves a receipt before it launches anything, so a delayed
+      // original and this replay cannot both open a terminal.
+      if (!resuming &&
+          result['creationId'] == receipt &&
+          result['state'] == 'missing') {
+        resuming = true;
+        result = await resume();
+      }
     } on WsRequestFailure catch (failure) {
-      // A refusal to a first send happened before anything launched; anything else — a timeout,
+      // A refusal to a resume happened before anything launched; anything else — a timeout,
       // INTERNAL, a status check the machine cannot answer — leaves the outcome unknown.
-      if (checking != null || failure.code == 'INTERNAL') return unconfirmed;
+      if (!resuming || failure.code == 'INTERNAL') return unconfirmed;
       return settle(_resumeFailure(failure.code, failure.detail));
     } catch (_) {
       return unconfirmed;

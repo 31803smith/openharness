@@ -743,6 +743,66 @@ void main() {
       });
     }
 
+    test('a resume the machine never received is sent again, under the same receipt', () async {
+      final rig = await withStopped();
+      addTearDown(rig.app.dispose);
+      // The socket was down: the request never left the phone.
+      rig.conn('m').answers['agent_resume'] = (_) =>
+          throw StateError('WS disconnected');
+      expect((await rig.app.resumeAgent('m', 'a')).error, isNotNull);
+      final receipt = rig
+          .conn('m')
+          .payloadsOf('agent_resume')
+          .single['creationId'];
+
+      // So the machine has no record of it — and never will.
+      rig.conn('m').answers['agent_create_status'] = (p) => {
+        'creationId': p['creationId'],
+        'state': 'missing',
+      };
+      rig.conn('m').answers['agent_resume'] = (p) => {
+        'creationId': p['creationId'],
+        'state': 'created',
+        'agent': agentJson('a', sessionId: 's-a'),
+      };
+
+      final retried = await rig.app.resumeAgent('m', 'a');
+
+      expect(retried.error, isNull);
+      final resumes = rig.conn('m').payloadsOf('agent_resume');
+      expect(resumes, hasLength(2));
+      expect(resumes.last, {'creationId': receipt, 'agentId': 'a'});
+      expect(rig.app.stateOf('m')!.agents.single.terminalAvailable, isTrue);
+    });
+
+    test(
+      'a replayed resume that is still lost is checked again next time',
+      () async {
+        final rig = await withStopped();
+        addTearDown(rig.app.dispose);
+        rig.conn('m').answers['agent_resume'] = (_) =>
+            throw StateError('WS disconnected');
+        await rig.app.resumeAgent('m', 'a');
+        rig.conn('m').answers['agent_create_status'] = (p) => {
+          'creationId': p['creationId'],
+          'state': 'missing',
+        };
+
+        expect((await rig.app.resumeAgent('m', 'a')).error, isNotNull);
+        await rig.app.resumeAgent('m', 'a');
+
+        expect(rig.conn('m').payloadsOf('agent_create_status'), hasLength(2));
+        expect(
+          {
+            for (final p in rig.conn('m').payloadsOf('agent_resume'))
+              p['creationId'],
+          },
+          hasLength(1),
+          reason: 'one intent, however many times it is sent',
+        );
+      },
+    );
+
     test('an INTERNAL answer leaves it to be checked', () async {
       final rig = await withStopped();
       addTearDown(rig.app.dispose);
