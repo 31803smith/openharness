@@ -326,20 +326,27 @@ void main() {
     await shoot(tester, key, '0-welcome');
   });
 
-  testWidgets('welcome, email then code', skip: skip, (tester) async {
-    final key = await pumpScreen(
-      tester,
-      PhoneWelcome(
-        notifier: notifier,
-        onTrySample: (_) async => null,
-        sendCode: (_) async {},
-        signIn: (_, _) async {},
-        scanCamera: const SizedBox(),
-      ),
-    );
+  PhoneWelcome welcome() => PhoneWelcome(
+    notifier: notifier,
+    onTrySample: (_) async => null,
+    sendCode: (_) async {},
+    signIn: (_, _) async {},
+    scanCamera: const SizedBox(),
+    loadDownloads: () async => const {},
+  );
+
+  testWidgets('welcome, scan', skip: skip, (tester) async {
+    final key = await pumpScreen(tester, welcome());
     await tester.tap(find.text('Yes — scan to connect'));
     await tester.pump(const Duration(milliseconds: 300));
+    // [shoot] takes the screen down after it: one capture per test.
     await shoot(tester, key, '0a-welcome-scan');
+  });
+
+  testWidgets('welcome, email', skip: skip, (tester) async {
+    final key = await pumpScreen(tester, welcome());
+    await tester.tap(find.text('Yes — scan to connect'));
+    await tester.pump(const Duration(milliseconds: 300));
     await tester.tap(find.text('Use email instead'));
     await tester.pump(const Duration(milliseconds: 300));
     await tester.enterText(
@@ -348,7 +355,6 @@ void main() {
     );
     await tester.pump();
     await shoot(tester, key, '0b-welcome-email');
-    await tester.pumpWidget(const SizedBox());
   });
 
   testWidgets('welcome, code', skip: skip, (tester) async {
@@ -364,7 +370,7 @@ void main() {
     );
     await tester.tap(find.text('Yes — scan to connect'));
     await tester.pump(const Duration(milliseconds: 300));
-    await tester.tap(find.text('Use email instead'));
+    await tester.tap(find.text('Use email instead', findRichText: true));
     await tester.pump(const Duration(milliseconds: 300));
     await tester.enterText(find.byType(TextField), 'ada@example.com');
     await tester.tap(find.text('Send code'));
@@ -540,7 +546,8 @@ void main() {
 
   testWidgets('focus, actions', skip: skip, (tester) async {
     final key = await pumpScreen(tester, focus());
-    await tester.tap(find.text('…'));
+    // The title opens the harness's actions — rename, restart, paste…
+    await tester.tap(find.text('hn', findRichText: true).first);
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 500));
     await shoot(tester, key, '1d-focus-actions');
