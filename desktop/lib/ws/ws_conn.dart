@@ -592,6 +592,12 @@ class WsConn {
 
   static bool _worthLogging(String type) =>
       !_unlogged.contains(type) &&
+      !type.startsWith('phone_pair') &&
+      !type.startsWith('viewer_surface') &&
+      !type.startsWith('api_connections') &&
+      !type.startsWith('orchestrator') &&
+      !type.startsWith('command_bar') &&
+      !type.startsWith('route_') &&
       !type.startsWith('harness_share_') &&
       !type.startsWith('observer_');
 

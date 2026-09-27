@@ -178,7 +178,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
   bool _commandBarOpen = false;
   bool _commandActionInFlight = false;
   FocusNode? _commandReturnFocus;
-  bool get _hasCommandBar => widget.commandBarEnabled && app.viewer == null;
+  bool get _hasCommandBar => widget.commandBarEnabled;
   late final _commandBar = CommandBarController(
     catalog: () => buildCommandBarCatalog(
       app,
@@ -191,7 +191,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
     resolve:
         widget.commandResolver ??
         (request, cancel) =>
-            app.api.resolveCommandBar(request, cancelToken: cancel),
+            app.resolveCommandBar(request, cancelToken: cancel),
   )..addListener(_commandChanged);
   final _canvasFocus = FocusNode(
     debugLabel: 'Swarm canvas',
@@ -1721,8 +1721,14 @@ class _SwarmScreenState extends State<SwarmScreen> {
 
   /// Harness ▸ Add Phone… and `> add phone`: the QR a phone scans to sign in
   /// and pair with this computer. See `widgets/add_phone_dialog.dart`.
-  Future<void> _addPhone() =>
-      _dialog(() => showAddPhoneDialog(context, app, keymap: _keymap));
+  Future<void> _addPhone() => _dialog(
+    () => showAddPhoneDialog(
+      context,
+      app,
+      keymap: _keymap,
+      onConnectMachine: () => unawaited(_openMachines()),
+    ),
+  );
 
   /// Settings, by section, as rows of the box: `> usage` goes straight to
   /// Settings ▸ Usage. A palette that finds a setting by name is how an editor
@@ -3755,11 +3761,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
           !machine.machine.isShared &&
           !isTerminalEngine(pane!.session!.engineId);
     }
-    if (id == 'keyboard.quick_start' ||
-        id == 'keyboard.practice' ||
-        id == 'app.onboarding_review' ||
-        // A viewer has no daemon of its own to pair a phone with.
-        id == 'app.add_phone') {
+    if (id == 'app.onboarding_review') {
       return app.viewer == null;
     }
     if (id == 'agent.rename' ||
@@ -4105,7 +4107,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
                         WorkspacePaneContext.focused(app),
                         menuOnly: true,
                       ),
-                    if (_learning.active && app.viewer == null)
+                    if (_learning.active)
                       WorkspaceQuickStart(
                         learning: _learning,
                         onCommand: _runShortcut,
@@ -4277,15 +4279,11 @@ class _SwarmScreenState extends State<SwarmScreen> {
                                                         onCommands:
                                                             _showSearchCommands,
                                                         onQuickStart:
-                                                            _learning.offer &&
-                                                                app.viewer ==
-                                                                    null
+                                                            _learning.offer
                                                             ? _startQuickStart
                                                             : null,
                                                         onPractice:
-                                                            app.viewer == null
-                                                            ? _practiceKeyboard
-                                                            : null,
+                                                            _practiceKeyboard,
                                                         onNew: () => _newAgent(
                                                           placement:
                                                               HarnessPlacement

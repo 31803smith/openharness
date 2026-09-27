@@ -12,11 +12,13 @@ import '../api/api_client.dart';
 import '../shared/theme/app_theme.dart' as grid;
 import '../shortcuts/app_keymap.dart';
 import '../state/app_state.dart';
+import '../ws/ws_conn.dart' show WsRequestFailure, WsRequestTimeout;
 import '../terminal/terminal_text.dart';
 import '../terminal/terminal_theme.dart';
 import '../terminal/terminal_theme_store.dart';
 import 'box_chrome.dart';
 import 'terminal_prompt.dart';
+import 'terminal_text_action.dart';
 
 /// Harness ▸ Add Phone… — a QR the phone scans to sign in to this account AND
 /// pair with this computer, end to end encrypted, with no password typed.
@@ -45,13 +47,15 @@ Future<void> showAddPhoneDialog(
   AppKeymap? keymap,
   PhonePairCall? pair,
   PhoneSignInCodeCall? signInCode,
+  VoidCallback? onConnectMachine,
 }) => showTerminalPrompt<void>(
   context,
   keymap: keymap,
   builder: (_) => AddPhoneDialog(
     app: app,
-    pair: pair ?? phonePairOverDaemon(app.api),
+    pair: pair,
     signInCode: signInCode ?? app.api.phoneSignInCode,
+    onConnectMachine: onConnectMachine,
   ),
 );
 
@@ -189,6 +193,41 @@ PhonePairCall phonePairOverDaemon(ApiClient api) => (code, cancel) async {
   }
 };
 
+/// The browser already holds the machine's trusted identity. Arm that machine over its encrypted
+/// connection; the account service never receives the QR's pairing secret.
+PhonePairCall phonePairOverRelay(AppNotifier app, String machineId) =>
+    (code, cancel) async {
+      if (cancel.isCancelled) return const PhonePairAnswer.failed('CANCELLED');
+      try {
+        final answer = await Future.any([
+          app.pairPhone(machineId, code),
+          cancel.whenCancel.then(
+            (_) => <String, dynamic>{'error': 'CANCELLED'},
+          ),
+        ]);
+        if (answer['ok'] == true) {
+          final label = answer['label'];
+          return PhonePairAnswer.paired(
+            label is String && label.trim().isNotEmpty ? label.trim() : 'phone',
+          );
+        }
+        final error = answer['error'];
+        return PhonePairAnswer.failed(
+          error == 'UNSUPPORTED' ? PhonePairAnswer.unavailable : '$error',
+        );
+      } on WsRequestTimeout {
+        return const PhonePairAnswer.failed(PhonePairAnswer.unavailable);
+      } on WsRequestFailure catch (failure) {
+        return PhonePairAnswer.failed(
+          failure.code == 'UNSUPPORTED'
+              ? PhonePairAnswer.unavailable
+              : failure.code,
+        );
+      } catch (_) {
+        return const PhonePairAnswer.failed('BACKEND_DOWN');
+      }
+    };
+
 /// A fresh one-time sign-in code for the QR and how long it stays good, or
 /// null when there is none to be had (see [ApiClient.phoneSignInCode]).
 typedef PhoneSignInCodeCall = Future<({String code, Duration ttl})?> Function();
@@ -197,13 +236,15 @@ class AddPhoneDialog extends StatefulWidget {
   const AddPhoneDialog({
     super.key,
     required this.app,
-    required this.pair,
+    this.pair,
     required this.signInCode,
+    this.onConnectMachine,
   });
 
   final AppNotifier app;
-  final PhonePairCall pair;
+  final PhonePairCall? pair;
   final PhoneSignInCodeCall signInCode;
+  final VoidCallback? onConnectMachine;
 
   @override
   State<AddPhoneDialog> createState() => _AddPhoneDialogState();
@@ -229,6 +270,17 @@ class _AddPhoneDialogState extends State<AddPhoneDialog> {
   static const _signInRenew = Duration(seconds: 60);
 
   AppNotifier get app => widget.app;
+
+  // Freeze the destination while a QR is visible, even if focus or inventory changes.
+  late final String? _remoteMachineId = app.viewer == null
+      ? null
+      : app.ownedActionMachine?.machine.machineId;
+
+  late final PhonePairCall _pair =
+      widget.pair ??
+      (_remoteMachineId != null
+          ? phonePairOverRelay(app, _remoteMachineId)
+          : phonePairOverDaemon(app.api));
 
   /// A fresh code each time the dialog opens, and a fresh one again after a
   /// scan that did not match — see [_loop].
@@ -298,7 +350,9 @@ class _AddPhoneDialogState extends State<AddPhoneDialog> {
   ({String email, String machineId})? get _target {
     if (app.isGuest) return null;
     final email = app.currentUser?.email.trim();
-    final machineId = app.localMachineState?.machine.machineId;
+    final machineId = app.viewer == null
+        ? app.localMachineState?.machine.machineId
+        : _remoteMachineId;
     // `CurrentUserProfile.local()` says "local terminal": not an address.
     if (email == null || !email.contains('@')) return null;
     if (machineId == null || machineId.isEmpty) return null;
@@ -321,7 +375,7 @@ class _AddPhoneDialogState extends State<AddPhoneDialog> {
       final code = _code;
       PhonePairAnswer answer;
       try {
-        answer = await widget.pair(code, _cancel);
+        answer = await _pair(code, _cancel);
       } catch (error) {
         answer = PhonePairAnswer.failed('$error');
       }
@@ -355,7 +409,11 @@ class _AddPhoneDialogState extends State<AddPhoneDialog> {
           _say('Too many tries. Wait a minute.');
           wait = _rateLimited;
         case 'BACKEND_DOWN':
-          _say("This ${_thisComputer()} can't reach Harness right now.");
+          _say(
+            app.viewer == null
+                ? "This ${_thisComputer()} can't reach Harness right now."
+                : 'The computer is offline. Reconnect it to add your phone.',
+          );
           wait = _poll;
         // The phone started and went quiet, or said no. The QR is still
         // good: scanning it again starts over.
@@ -366,7 +424,11 @@ class _AddPhoneDialogState extends State<AddPhoneDialog> {
           _say('Cancelled on your phone. Scan again.', sticky: true);
           wait = _poll;
         case PhonePairAnswer.unavailable:
-          _say('Update Harness on this ${_thisComputer()} to add a phone.');
+          _say(
+            app.viewer == null
+                ? 'Update Harness on this ${_thisComputer()} to add a phone.'
+                : 'Update Harness on the computer to add a phone.',
+          );
           setState(() => _stopped = true);
           return;
         case final other:
@@ -504,6 +566,21 @@ class _AddPhoneDialogState extends State<AddPhoneDialog> {
     }
     final target = _target;
     if (target == null) {
+      if (app.viewer != null && app.currentUser?.email.contains('@') == true) {
+        return [
+          Text('Connect a computer to add your phone.', style: _ink()),
+          if (widget.onConnectMachine case final connect?) ...[
+            SizedBox(height: row),
+            TerminalTextAction(
+              label: 'Connect a machine',
+              onPressed: () {
+                Navigator.of(context).pop();
+                connect();
+              },
+            ),
+          ],
+        ];
+      }
       return [
         Text(
           app.currentUser?.email.contains('@') == true
@@ -531,6 +608,14 @@ class _AddPhoneDialogState extends State<AddPhoneDialog> {
         ),
       ),
       SizedBox(height: row),
+      if (_remoteMachineId case final machineId?) ...[
+        Text(
+          app.stateOf(machineId)?.machine.displayName ?? 'Computer',
+          textAlign: TextAlign.center,
+          style: _ink(_faint),
+        ),
+        SizedBox(height: row),
+      ],
       // One line, and it is the status too: what to do, then that it worked.
       // The phone's own screen says the rest (Yes — scan to connect).
       _status(),

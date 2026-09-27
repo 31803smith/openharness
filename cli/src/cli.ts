@@ -1867,6 +1867,7 @@ async function runForeground(session: AuthSession | null): Promise<void> {
     onUrl: (agentId, url) => {
       dshFrameFor(agentId).viewerUrl = url
       backendRef?.viewerForwarder.refresh(agentId)
+      backendRef?.interactiveViewers.refresh(agentId)
       syncCompanion(agentId)
     },
     log: (line) => console.log(line),
@@ -4246,7 +4247,7 @@ async function runForeground(session: AuthSession | null): Promise<void> {
     // first fifteen they can SEE. An earlier cut put open tiles first, on the theory that working on
     // something is a statement about relevance; it is, but it also made the fifteen unpredictable from
     // the screen, and predictable beat clever here (owner's call).
-    onRouteTask: async (text) => {
+    onRouteTask: backend.ownerCommands.onRouteTask = async (text) => {
       const host = cableHostRef
       if (!host) return { agentId: '', machineId: '', name: '', confidence: 0, reason: 'no agent list yet', candidates: [], weighed: 0, machines: 0, via: '' }
       // Whatever the daemon knows right now. This also kicks a refresh of the remote machines, so a list
@@ -4364,7 +4365,7 @@ async function runForeground(session: AuthSession | null): Promise<void> {
     // one the dial has been using for every voice turn.
     // A window that connects after the dial did has missed the `dial_status` that announced it.
     dialStatus: () => cableHostRef?.currentDialStatus() ?? { attached: false },
-    onRouteSend: (agentId, text) => {
+    onRouteSend: backend.ownerCommands.onRouteSend = (agentId, text) => {
       const sent = cableHostRef?.sendTurn(agentId, text) ?? { ok: false as const, machine: '', reason: 'no agent list yet' }
       console.log(`[route] ⌘K → ${sid(agentId)} · bytes=${Buffer.byteLength(text, 'utf8')}`
         + (sent.ok ? '' : ` · REFUSED: ${sent.reason}${sent.machine ? ` (${sent.machine})` : ''}`))
