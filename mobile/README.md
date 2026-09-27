@@ -74,9 +74,10 @@ all.
 No harness CLI runs beside this app and no agent is ever hosted here. It holds its own SSO session and
 terminates the E2EE to each machine itself (`lib/viewer/`, `lib/e2ee/`) — where the desktop hands both
 to the CLI on its own computer. `kViewerMode` (`lib/core/viewer_mode.dart`) is true on iOS and Android
-unconditionally, and that one flag is what gates the paths a phone cannot take: first-run provisioning
-and the self-updater are both skipped in `AppNotifier.bootstrap`, because an app the store updates
-installs nothing.
+unconditionally, so `AppNotifier` always has its `ViewerServices`, and the desktop's side of every
+branch on that is gone from this package rather than skipped: first-run provisioning, the self-updater
+(an app the store updates installs nothing), finding and supervising a local harness CLI, signing in
+through it or a browser, and the grid's presets, splits and keyboard rail.
 
 ## Keeping in step with `../desktop`
 
@@ -105,3 +106,9 @@ The files expected to differ, and why:
 neither have the desktop screens a phone can never reach: the sign-in and boot screens (the phone
 has `PhoneWelcome` and `PhoneBoot`), first-run provisioning, the update notice, the firmware
 flasher, the layout palette and the shortcuts sheet.
+
+Nor has the code only those screens and a local CLI reached: the provisioner, the updater, local CLI
+discovery and its runner, the CLI and browser sign-in, pane presets and arrangements. So
+`state/app_state.dart`, `state/swarm.dart`, `state/terminal_pane.dart`, `state/pane_layout_store.dart`
+and `auth/` differ from the desktop's by that cut as well — a fix carried across from there lands in
+what is left.
