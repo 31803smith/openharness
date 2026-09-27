@@ -12,6 +12,8 @@ import 'edge_fixture.dart';
 /// Focus — one agent's terminal, full screen — laid out at every phone, scale and brightness the
 /// phone meets, with the names that break layouts. None may report an overflow.
 void main() {
+  setUpAll(loadRealFontsIfAsked);
+
   Future<void> pumpFocus(
     WidgetTester tester,
     AppNotifier app,
@@ -110,10 +112,10 @@ void main() {
       await pumpFocus(tester, app, scale, brightness);
       await tester.tap(find.byType(TerminalView));
       await tester.pump();
-      tester.view.viewInsets = const FakeViewPadding(bottom: 336 * 3);
+      raiseKeyboard(tester);
       await frames(tester);
       expect(find.byKey(const ValueKey('terminal-key-esc')), findsOneWidget);
-      tester.view.viewInsets = FakeViewPadding.zero;
+      lowerKeyboard(tester);
       await frames(tester);
     });
   });

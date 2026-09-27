@@ -1,6 +1,8 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:harness_mobile/auth/auth_session.dart';
 import 'package:harness_mobile/core/config.dart';
@@ -21,13 +23,37 @@ import '../voice_fakes.dart';
 /// Everything here is a fake — no daemon, no network, no disk outside memory. See the rules in
 /// `mobile/README.md` and the incident they came from.
 
-/// iPhone SE (2nd/3rd gen), in logical pixels.
-const smallPhone = Size(375, 667);
+/// A phone as a layout meets it, in logical pixels: the screen, the status bar over its top, the
+/// home indicator under its foot, and how tall its keyboard stands (with the suggestion strip).
+typedef Phone = ({Size size, double top, double bottom, double keyboard});
 
-/// iPhone 15 Pro Max, in logical pixels.
-const largePhone = Size(430, 932);
+/// iPhone SE (2nd/3rd gen): a 20pt status bar, a home button rather than an indicator.
+const Phone smallPhone = (
+  size: Size(375, 667),
+  top: 20,
+  bottom: 0,
+  keyboard: 260,
+);
+
+/// iPhone 15 Pro Max.
+const Phone largePhone = (
+  size: Size(430, 932),
+  top: 59,
+  bottom: 34,
+  keyboard: 346,
+);
 
 const phones = {'SE': smallPhone, 'Pro Max': largePhone};
+
+/// The phone [setPhone] last set — what [raiseKeyboard] raises.
+Phone _current = largePhone;
+
+/// The software keyboard up, at the current phone's height.
+void raiseKeyboard(WidgetTester tester) =>
+    tester.view.viewInsets = FakeViewPadding(bottom: _current.keyboard * 3);
+
+void lowerKeyboard(WidgetTester tester) =>
+    tester.view.viewInsets = FakeViewPadding.zero;
 
 /// The scales the brief asks for, and the largest the app itself can reach: `HarnessApp` pins the
 /// text scale to Settings ▸ Text size, 11–19pt over a 14pt default.
@@ -75,7 +101,7 @@ class FakeSample implements SampleSession {
 
 /// A machine the fake conn answers every request for, and accepts every frame.
 class EdgeConn extends WsConn {
-  EdgeConn()
+  EdgeConn([this.answers = const {}])
     : super(
         wsBaseUrl: 'ws://fixture.invalid',
         autonomousEnv: 'test',
@@ -85,6 +111,9 @@ class EdgeConn extends WsConn {
         onEvent: (_) {},
         onStatus: (_) {},
       );
+
+  /// What the machine answers, by request type; anything else is answered with nothing.
+  final Map<String, Map<String, dynamic>> answers;
 
   final List<(String, Map<String, dynamic>)> frames = [];
   final List<String> requests = [];
@@ -105,7 +134,7 @@ class EdgeConn extends WsConn {
     Duration timeout = const Duration(seconds: 20),
   }) async {
     requests.add(type);
-    return {};
+    return answers[type] ?? {};
   }
 }
 
@@ -210,13 +239,16 @@ edgeVoice() {
   return (voice: voice, recorder: recorder, stt: stt);
 }
 
-/// Sizes the test's window as [size] logical pixels on a 3x phone, with an iPhone's status bar and
-/// home indicator — reset when the test ends.
-void setPhone(WidgetTester tester, Size size) {
-  tester.view.physicalSize = size * 3;
+/// Sizes the test's window as [phone] on a 3x screen, with its status bar and home indicator and
+/// no keyboard — reset when the test ends.
+void setPhone(WidgetTester tester, Phone phone) {
+  _current = phone;
+  final insets = FakeViewPadding(top: phone.top * 3, bottom: phone.bottom * 3);
+  tester.view.physicalSize = phone.size * 3;
   tester.view.devicePixelRatio = 3;
-  tester.view.padding = const FakeViewPadding(top: 47 * 3, bottom: 34 * 3);
-  tester.view.viewPadding = const FakeViewPadding(top: 47 * 3, bottom: 34 * 3);
+  tester.view.padding = insets;
+  tester.view.viewPadding = insets;
+  tester.view.viewInsets = FakeViewPadding.zero;
   addTearDown(tester.view.reset);
 }
 
@@ -270,22 +302,22 @@ Future<List<String>> collectErrors(Future<void> Function() body) async {
 Future<void> expectNoLayoutErrors(
   WidgetTester tester,
   Future<void> Function(double scale, Brightness brightness) pump, {
-  Map<String, Size> sizes = phones,
+  Map<String, Phone> sizes = phones,
   List<double> scales = textScales,
   List<Brightness> brightnesses = const [Brightness.dark, Brightness.light],
 }) async {
   final failures = <String>[];
-  for (final MapEntry(key: phone, value: size) in sizes.entries) {
+  for (final MapEntry(key: name, value: phone) in sizes.entries) {
     for (final scale in scales) {
       for (final brightness in brightnesses) {
-        setPhone(tester, size);
+        setPhone(tester, phone);
         final before = grid.AppTheme.brightness.value;
         grid.AppTheme.brightness.value = brightness;
         try {
           final errors = await collectErrors(() => pump(scale, brightness));
           for (final error in errors.toSet()) {
             failures.add(
-              '$phone ×${scale.toStringAsFixed(2)} ${brightness.name}: $error',
+              '$name ×${scale.toStringAsFixed(2)} ${brightness.name}: $error',
             );
           }
         } finally {
@@ -297,6 +329,37 @@ Future<void> expectNoLayoutErrors(
     }
   }
   expect(failures, isEmpty, reason: failures.join('\n'));
+}
+
+/// Lays the screens out in the phone's own faces rather than the test font, when
+/// `PHONE_EDGE_REAL_FONTS=1` asks for it — macOS only, from the SF Mono and SF Pro files the render
+/// test reads (`test/render/phone_screens_render_test.dart`).
+///
+/// ⚠️ **Off by default, and the tests are written to pass either way.** The test font draws every
+/// glyph a full em wide — about two thirds wider than SF Mono — so text wraps sooner than on a
+/// phone and a layout that holds here holds there. The real faces are for telling a layout that
+/// is truly short of room from one only the test font crowds.
+Future<void> loadRealFontsIfAsked() async {
+  if (Platform.environment['PHONE_EDGE_REAL_FONTS'] != '1' ||
+      !Platform.isMacOS) {
+    return;
+  }
+  Future<void> load(String family, List<String> files) async {
+    final loader = FontLoader(family);
+    for (final file in files) {
+      final bytes = await File('/Library/Fonts/$file').readAsBytes();
+      loader.addFont(Future.value(ByteData.view(bytes.buffer)));
+    }
+    await loader.load();
+  }
+
+  const weights = ['Regular', 'Medium', 'Semibold', 'Bold'];
+  for (final family in ['.AppleSystemUIFontMonospaced', 'SF Mono']) {
+    await load(family, [for (final w in weights) 'SF-Mono-$w.otf']);
+  }
+  for (final family in ['.AppleSystemUIFont', 'SF Pro Text', 'Roboto']) {
+    await load(family, [for (final w in weights) 'SF-Pro-Text-$w.otf']);
+  }
 }
 
 /// Takes the screen down and runs its clocks out, so no timer outlives the test.
