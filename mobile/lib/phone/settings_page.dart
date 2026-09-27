@@ -150,9 +150,15 @@ class _Body extends StatelessWidget {
     ),
     children: [
       SettingsCaption(_sample(context) == null ? 'Account' : 'Sample'),
+      // Who you are, what you have used, the computers you reach and what they call this phone —
+      // one group, so no row stands alone under a heading that only repeats it.
       SettingsGroup(
         children: [
           _accountRow(context),
+          // ⚠️ Usage sits right under the account, above everything that is set once and left
+          // alone, and that is deliberate: it is the only row here anybody opens twice.
+          // No Stats row: counters this app keeps about itself are nobody's daily question.
+          buildUsageSettingsRow(context, notifier),
           // The computers this phone reaches — here rather than a menu of their own: linking one is
           // a once-a-while errand, and Find already reaches every agent on them.
           SettingsRow(
@@ -161,33 +167,17 @@ class _Body extends StatelessWidget {
               phoneRoute((_) => MachinesTab(notifier: notifier, large: false)),
             ),
           ),
-        ],
-      ),
-      // ⚠️ Usage sits SECOND, right under the account and above the appearance settings, and that
-      // is deliberate: it is the only run here anybody opens twice. Everything below it is set once
-      // and left alone, so burying a figure people check daily under four preferences would be
-      // ordering the list by how permanent each row is rather than by how often it is read.
-      // No caption: its one row says Usage, and a heading saying it again over it said nothing.
-      const SizedBox(height: 22),
-      SettingsGroup(
-        children: [
-          // No Stats row: counters this app keeps about itself are nobody's daily question.
-          buildUsageSettingsRow(context, notifier),
+          // The name those computers show when this phone takes a harness over — which makes it a
+          // fact about the account's computers, not about how the terminal looks.
+          _PhoneNameRow(notifier: notifier),
         ],
       ),
       const SettingsCaption('Terminal'),
       SettingsGroup(
-        children: [
-          _FontPreview(),
-          _PhoneNameRow(notifier: notifier),
-          _FontRow(),
-          _SizeRow(),
-          _TerminalThemeRow(),
-        ],
+        children: [_FontPreview(), _FontRow(), _SizeRow(), _TerminalThemeRow()],
       ),
       // ⚠️ **Its own section, not a row under Terminal.** The rows above answer
-      // what the pane LOOKS like — face, size, colours, the name this phone
-      // signs its takeovers with. This one answers what the mic HEARS, which is
+      // what the pane LOOKS like — face, size, colours. This one answers what the mic HEARS, which is
       // the other half of the terminal and the one people go looking for when
       // the transcript comes back in the wrong language. Under a Terminal
       // caption it read as another thing about the type.

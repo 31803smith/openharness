@@ -155,9 +155,8 @@ void main() {
     await choose(tester, 'agent', 'Codex');
     expect(find.text('Codex', findRichText: true), findsWidgets);
 
-    // Options unfold: the approvals and the Codex profile.
-    await tapInView(tester, find.text('options'));
-    await frames(tester);
+    // The approvals and the Codex profile are on the page, not folded away.
+    expect(find.text('options'), findsNothing);
     await choose(tester, 'profile', 'work');
     await tapInView(tester, find.text('approvals'));
     await frames(tester);
@@ -198,8 +197,6 @@ void main() {
   testWidgets('the branch: this folder, a new worktree, another branch, a '
       'new name', (tester) async {
     final (:app, :conn) = await openNew(tester);
-    await tapInView(tester, find.text('options'));
-    await frames(tester);
     expect(find.text('branch'), findsOneWidget);
 
     await choose(tester, 'branch', 'New Worktree');
@@ -388,8 +385,6 @@ void main() {
     await tester.pumpWidget(
       phoneApp(NewAgentPage(notifier: app, machineId: 'm')),
     );
-    await frames(tester);
-    await tester.tap(find.text('options'));
     await frames(tester);
     expect(
       find.text('No answer from the computer', findRichText: true),

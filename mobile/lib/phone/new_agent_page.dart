@@ -656,9 +656,6 @@ class _NewAgentPageState extends State<NewAgentPage> {
     });
   }
 
-  /// Options unfolded: branch, approvals and profile shown rather than left on their defaults.
-  bool _optionsOpen = false;
-
   /// The last Start did not take: the button says Try Again, and every value stays.
   bool _failed = false;
 
@@ -816,19 +813,11 @@ class _NewAgentPageState extends State<NewAgentPage> {
                                       ? null
                                       : () => unawaited(_chooseProject()),
                                 ),
-                                // Options, folded as the desktop folds them: branch, approvals and profile
-                                // sit on their defaults until asked for.
-                                TtyFormRow(
-                                  label: 'options',
-                                  // Left as it is nearly every time: folded to `[+]`.
-                                  value: _optionsOpen ? '[−]' : '[+]',
-                                  chevron: false,
-                                  onTap: () => setState(
-                                    () => _optionsOpen = !_optionsOpen,
-                                  ),
-                                ),
-                                if (_optionsOpen &&
-                                    (info != null || _gitLoading || _gitFailed))
+                                // ⚠️ **Open, not folded behind `[+]` as the desktop folds them.** On a
+                                // phone the rows below sit over an empty half-screen, and they are the
+                                // two things worth seeing before a harness starts from a couch: which
+                                // branch it writes to, and what it may do without asking.
+                                if (info != null || _gitLoading || _gitFailed)
                                   TtyFormRow(
                                     label: 'branch',
                                     valueColor: info == null && !_gitLoading
@@ -850,7 +839,7 @@ class _NewAgentPageState extends State<NewAgentPage> {
                                         ? null
                                         : () => unawaited(_chooseBranch(info)),
                                   ),
-                                if (_optionsOpen && _permissionModes.isNotEmpty)
+                                if (_permissionModes.isNotEmpty)
                                   TtyFormRow(
                                     label: 'approvals',
                                     value: mode?.label ?? 'Auto-approve',
@@ -862,7 +851,7 @@ class _NewAgentPageState extends State<NewAgentPage> {
                                         ? null
                                         : () => unawaited(_chooseApprovals()),
                                   ),
-                                if (_optionsOpen && _showsCodexProfile)
+                                if (_showsCodexProfile)
                                   TtyFormRow(
                                     label: 'profile',
                                     value: _codexProfile?.label ?? 'Default',

@@ -127,10 +127,6 @@ void main() {
     // New.
     await swipeLeft();
     await shot('new');
-    if (await tapIf(find.text('options'))) {
-      await wait(600);
-      await shot('new-options');
-    }
     if (await tapIf(find.text('project'))) {
       await wait(900);
       await shot('chooser-project');

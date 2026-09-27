@@ -44,7 +44,7 @@ final _outDir = Platform.environment['PHONE_RENDER_DIR'];
 
 /// Claude Code, mid-turn, the way its TUI draws on a phone-width terminal.
 const _claudeOutput = [
-  '\x1b[1m⏺\x1b[0m I\'ll look at how Find ranks agents first.\r\n',
+  '\x1b[1m⏺\x1b[0m I\'ll look at how Find ranks them first.\r\n',
   '\r\n',
   '\x1b[32m⏺\x1b[0m \x1b[1mRead\x1b[0m(lib/phone/phone_search_rank.dart)\r\n',
   '  ⎿  Read \x1b[1m262\x1b[0m lines\r\n',

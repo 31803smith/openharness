@@ -2446,7 +2446,7 @@ class _TerminalPageState extends State<TerminalPage>
   /// share the route.
   PhoneSheetAction _stopAction(Agent agent) => PhoneSheetAction(
     icon: LucideIcons.trash2300,
-    // The least used thing here: small and faint at the foot, not a red row (it still confirms).
+    // The least used thing here: small at the foot, not a full red row (it still confirms).
     label: 'Stop this harness…',
     destructive: true,
     quiet: true,

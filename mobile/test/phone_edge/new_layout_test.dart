@@ -53,7 +53,7 @@ void main() {
     });
   });
 
-  testWidgets('long names everywhere, 200 agents, options open', (
+  testWidgets('long names everywhere, 200 agents, every option shown', (
     tester,
   ) async {
     await expectNoLayoutErrors(tester, (scale, brightness) async {
@@ -67,8 +67,6 @@ void main() {
       );
       addTearDown(app.dispose);
       await pumpNew(tester, app, scale, brightness);
-      await tester.tap(find.text('options'));
-      await frames(tester);
     });
   });
 

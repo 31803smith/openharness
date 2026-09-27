@@ -261,35 +261,49 @@ class TtyFormRow extends StatelessWidget {
         padding: const EdgeInsets.fromLTRB(Tty.origin, 10, Tty.origin, 10),
         child: Row(
           children: [
-            SizedBox(
-              width: labelWidth,
-              child: TtyText(label, color: tty.faint, size: TtySize.meta),
-            ),
+            // The label on the value's FIRST line: centred on a value with a note under it, it
+            // sat beside the note and read as that note's label.
             Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.baseline,
+                textBaseline: TextBaseline.alphabetic,
                 children: [
-                  Text(
-                    value,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: tty.style(
-                      color: valueColor ?? tty.text,
-                      size: TtySize.row,
-                      weight: FontWeight.w600,
+                  SizedBox(
+                    width: labelWidth,
+                    child: TtyText(label, color: tty.faint, size: TtySize.meta),
+                  ),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          value,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: tty.style(
+                            color: valueColor ?? tty.text,
+                            size: TtySize.row,
+                            weight: FontWeight.w600,
+                          ),
+                        ),
+                        if (detail case final detail?
+                            when detail.isNotEmpty) ...[
+                          const SizedBox(height: 2),
+                          // Two lines, then an ellipsis: a note like approvals' meaning is a sentence.
+                          Text(
+                            detail,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: tty.style(
+                              color: tty.faint,
+                              size: TtySize.meta,
+                            ),
+                          ),
+                        ],
+                      ],
                     ),
                   ),
-                  if (detail case final detail? when detail.isNotEmpty) ...[
-                    const SizedBox(height: 2),
-                    // Two lines, then an ellipsis: a note like approvals' meaning is a sentence.
-                    Text(
-                      detail,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: tty.style(color: tty.faint, size: TtySize.meta),
-                    ),
-                  ],
                 ],
               ),
             ),
