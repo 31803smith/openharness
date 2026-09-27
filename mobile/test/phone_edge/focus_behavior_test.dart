@@ -790,6 +790,137 @@ void main() {
     });
   });
 
+  group('more of what a thumb does', () {
+    testWidgets('a restart the machine refuses says why', (tester) async {
+      final focus = await _Focus.open(
+        tester,
+        answers: const {
+          'agent_restart': {
+            'error': 'TERMINAL_GONE',
+            'detail': 'That harness has already exited.',
+          },
+        },
+      );
+      await tester.tap(find.byKey(const ValueKey('terminal-title')));
+      await frames(tester);
+      await tester.tap(find.text('Restart'));
+      await frames(tester);
+      expect(find.text('That harness has already exited.'), findsOneWidget);
+      await focus.close();
+    });
+
+    testWidgets('a tap on the prompt mid-take types what was heard, and the '
+        'keyboard picks up from there', (tester) async {
+      final focus = await _Focus.open(tester);
+      focus.fill();
+      await frames(tester);
+      focus.stt.replies.add('run the tests');
+      await tester.tap(find.byType(VoiceMicCore));
+      await frames(tester);
+      expect(focus.voice.status, VoiceInputStatus.listening);
+      await focus.tapPrompt();
+      await frames(tester);
+      expect(focus.typed.join(), contains('run the tests'));
+      expect(focus.voice.status, VoiceInputStatus.idle);
+      await focus.close();
+    });
+
+    testWidgets('a voice answer to a multi-select question is not sent', (
+      tester,
+    ) async {
+      final focus = await _Focus.open(tester);
+      focus.session.terminal.write(
+        '\r\n ─────────────────────────────\r\n'
+        ' Which checks should run?\r\n'
+        ' ❯ 1. [ ] Lint\r\n'
+        '   2. [ ] Tests\r\n'
+        '\r\n'
+        ' Enter to select · Esc to cancel',
+      );
+      await frames(tester);
+      // The keyboard came up for the dialog; down again, the mic is back.
+      await tester.tap(
+        find.byKey(const ValueKey('terminal-key-Hide keyboard')),
+      );
+      await frames(tester);
+      focus.stt.replies.add('lint');
+      await tester.tap(find.byType(VoiceMicCore));
+      await frames(tester);
+      await tester.tap(find.byType(VoiceMicCore));
+      await frames(tester, count: 2);
+      expect(find.text('✗ answer on screen'), findsOneWidget);
+      expect(focus.typed, isNot(contains('1')));
+      // Two seconds on, the take's own line takes over.
+      await tester.pump(const Duration(seconds: 2));
+      await frames(tester);
+      expect(find.text('✗ answer on screen'), findsNothing);
+      await focus.close();
+    });
+
+    testWidgets('a scroll on a terminal another app holds takes it back', (
+      tester,
+    ) async {
+      final focus = await _Focus.open(tester);
+      focus.fill();
+      await frames(tester);
+      await focus.session.handleFrame('terminal_closed', {
+        'streamId': focus.session.streamId,
+        'code': 'TERMINAL_TAKEN_OVER',
+        'reason': 'another client connected',
+        'takenBy': {'machineId': 'm', 'label': 'MacBook'},
+      });
+      await frames(tester);
+      expect(focus.session.status, TerminalSessionStatus.takenOver);
+      final before = focus.opens;
+      await tester.drag(
+        find.byType(TerminalPage),
+        const Offset(0, 300),
+        warnIfMissed: false,
+      );
+      await frames(tester);
+      expect(focus.opens, greaterThan(before));
+      await focus.close();
+    });
+
+    testWidgets('a drag toward Find that is cancelled lets Find go', (
+      tester,
+    ) async {
+      final focus = await _Focus.open(tester);
+      final centre = tester.getCenter(find.byType(TerminalPage));
+      final gesture = await tester.startGesture(centre - const Offset(120, 0));
+      await gesture.moveBy(const Offset(40, 0));
+      await gesture.moveBy(const Offset(60, 0));
+      await tester.pump();
+      expect(find.byType(TerminalSearchOverlay), findsOneWidget);
+      await gesture.cancel();
+      await frames(tester);
+      expect(find.byType(TerminalSearchOverlay), findsNothing);
+      await focus.close();
+    });
+
+    testWidgets('closed twice in a row, Find goes down once', (tester) async {
+      final focus = await _Focus.open(tester);
+      await tester.tap(find.byKey(const ValueKey('terminal-title')));
+      await frames(tester);
+      await tester.binding.handlePopRoute();
+      await frames(tester);
+      final centre = tester.getCenter(find.byType(TerminalPage));
+      await tester.dragFrom(
+        centre - const Offset(120, 0),
+        const Offset(300, 0),
+      );
+      await frames(tester);
+      expect(find.byType(TerminalSearchOverlay), findsOneWidget);
+      // Back, and a tap on the dimming while the first close is still running.
+      await tester.binding.handlePopRoute();
+      await tester.pump(const Duration(milliseconds: 50));
+      await tester.binding.handlePopRoute();
+      await frames(tester);
+      expect(find.byType(TerminalSearchOverlay), findsNothing);
+      await focus.close();
+    });
+  });
+
   group('reading back', () {
     testWidgets('the copy-mode position, and one tap back to the end', (
       tester,
@@ -909,9 +1040,13 @@ class _Focus {
   /// Every frame the session sent — a reopen among them.
   final List<(String, Map<String, dynamic>)> sent;
 
-  static Future<_Focus> open(WidgetTester tester, {List<Agent>? agents}) async {
+  static Future<_Focus> open(
+    WidgetTester tester, {
+    List<Agent>? agents,
+    Map<String, Map<String, dynamic>> answers = const {},
+  }) async {
     setPhone(tester, largePhone);
-    final conn = EdgeConn();
+    final conn = EdgeConn(answers);
     final app = edgeApp(conn: conn, agents: agents ?? [edgeAgent('a')]);
     final sent = <(String, Map<String, dynamic>)>[];
     final session = await liveTerminal(app, 'a', sent: sent);
