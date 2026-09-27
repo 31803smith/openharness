@@ -1282,6 +1282,7 @@ class AppNotifier extends ChangeNotifier {
     ViewerServices? viewer,
     PaneLayoutStore? paneLayoutStore,
     SystemNotices? systemNotices,
+    MachineCache? machineCache,
     this.turnActivityTimeout = const Duration(seconds: 12),
   }) : _paneLayout = paneLayoutStore,
        // On the same terms as the stores below: no layout store means a test,
@@ -1303,8 +1304,10 @@ class AppNotifier extends ChangeNotifier {
        searchHistory = PhoneSearchHistory(paneLayoutStore?.storage),
        // On the same terms as the stores above: a layout store means this is a
        // real app with a real Harness home to cache into, and its absence means
-       // a test, which must not read or write one.
-       _machineCache = paneLayoutStore == null ? null : MachineCache(),
+       // a test, which must not read or write one — unless it hands over a
+       // cache of its own, kept in memory.
+       _machineCache =
+           machineCache ?? (paneLayoutStore == null ? null : MachineCache()),
        session = authSession,
        _store = configStore,
        cliLink = cliLink ?? CliLink(),
@@ -2579,6 +2582,8 @@ class AppNotifier extends ChangeNotifier {
     currentUser = null;
     signingIn = false;
     pendingAuthorizeUrl = null;
+    // The code was scanned into the session that just ended — see [logout].
+    pendingPairing = null;
     _awaitingFirstMessage = null;
     _desk.reset();
     analyticsAccount.clear();
@@ -2905,6 +2910,12 @@ class AppNotifier extends ChangeNotifier {
     cliLogin.cancel();
     signingIn = false;
     pendingAuthorizeUrl = null;
+    // A scanned code belongs to the session it was scanned into. Held past this,
+    // the next sign-in — perhaps another account's — would spend it on the first
+    // locked machine of that id and show a pairing error where its password form
+    // belongs. Not in [_invalidateAuthWork]: signing IN starts there too, and the
+    // code is set before that sign-in on purpose (`phone_welcome.dart`).
+    pendingPairing = null;
     _closedHistory.clear();
     // Best-effort and fire-and-forget: local state is cleared below regardless of whether the CLI
     // process could be reached, but a real `harness logout` clears its saved session so the NEXT
@@ -3024,6 +3035,11 @@ class AppNotifier extends ChangeNotifier {
     if (nextStatus == ConnectionStatus.connected) {
       machine.needsLink = false;
       _stopLinkRetry(machineId);
+      // A relay socket reports `connected` only after the machine's welcome
+      // proved the link (`WsConn._markReady`), so a code held to pair this
+      // machine has nothing left to do. Kept, it would be spent the next time
+      // the machine locks — an unlink, say — in place of its password form.
+      if (pendingPairing?.machineId == machineId) pendingPairing = null;
       // A daemon that just came up — first connect, or a reconnect after it
       // restarted — has never been told what is on the grid. Without this
       // the dial goes back to beeping about tiles in plain sight until the
@@ -3149,6 +3165,12 @@ class AppNotifier extends ChangeNotifier {
         .where((machine) => machine.authMode == MachineAuthMode.remote)
         .toList();
     final visible = machines.map((machine) => machine.machineId).toSet();
+    // A code scanned for a machine this account does not have can never be
+    // spent: the pairing screen waits for that machine to show up locked.
+    if (pendingPairing case final pending?
+        when !visible.contains(pending.machineId)) {
+      pendingPairing = null;
+    }
     for (final entry in machineStates.entries) {
       if (!visible.contains(entry.key)) {
         _clearMachineActivity(entry.value);
@@ -3681,7 +3703,7 @@ class AppNotifier extends ChangeNotifier {
       // connection as a side effect of being asked about one — for a machine
       // `_connectMachine` had just declined to dial, that would be this method
       // quietly undoing its own decision.
-      if (_pool?[machine.machineId]?.isReady == true) {
+      if (_connectionReady(machine.machineId)) {
         unawaited(_loadMachineData(state));
       }
     }
@@ -3822,6 +3844,16 @@ class AppNotifier extends ChangeNotifier {
           );
     _wireConnectionHooks(connection, machineId);
     return connection;
+  }
+
+  /// Whether [machineId]'s socket has finished its handshake — asked of the
+  /// connection the app already HOLDS, never of one built for the asking (see
+  /// [_autoConnectAndLoadMachines] for why that matters). A test's
+  /// [connectionForTest] stands in for the pool here, as it does in [_conn].
+  bool _connectionReady(String machineId) {
+    final testConnection = connectionForTest;
+    if (testConnection != null) return testConnection(machineId).isReady;
+    return _pool?[machineId]?.isReady == true;
   }
 
   // Every machine — this computer's own, or a relayed one — now speaks the same plaintext local wire
@@ -5295,10 +5327,10 @@ class AppNotifier extends ChangeNotifier {
     // Created HERE, so it joins the tab this phone is in — the way an agent
     // created in a window joins that window's tab. See [PhoneDesk.adopt] for
     // what happens when the phone is in no tab.
-    _desk.adopt(
-      (machineId: machineId, agentId: agent.id),
-      name: agent.displayName,
-    );
+    _desk.adopt((
+      machineId: machineId,
+      agentId: agent.id,
+    ), name: agent.displayName);
     await assignAgentToPane(
       null,
       machineId,
@@ -5803,7 +5835,7 @@ class AppNotifier extends ChangeNotifier {
       final pending = machine.pendingOfflineAgentId;
       if (pending != null) {
         unawaited(_recoverPendingAgent(machine, pending));
-      } else if (_pool?[machineId]?.isReady == true &&
+      } else if (_connectionReady(machineId) &&
           (wasOnline == false || panesFor(machineId).any(_paneNeedsAttach))) {
         // ⚠️ **A machine that was OFF and is back owes a fresh list, whether or
         // not anything here was waiting on it.** This arrives as a `node_status`
@@ -5862,7 +5894,7 @@ class AppNotifier extends ChangeNotifier {
         // budget waiting for the handshake and then report the machine offline —
         // on the very path that exists to recover a machine coming back. The
         // delay at the foot of this loop is the poll; this just skips the turn.
-        if (_pool?[machineId]?.isReady != true) {
+        if (!_connectionReady(machineId)) {
           await Future<void>.delayed(const Duration(milliseconds: 250));
           continue;
         }
@@ -7036,10 +7068,7 @@ class AppNotifier extends ChangeNotifier {
     if (!_canAttachPane(pane)) return;
     final session = pane.session;
     if (session == null) {
-      await _attachSession(
-        pane,
-        takeControl: intent == AttachIntent.person,
-      );
+      await _attachSession(pane, takeControl: intent == AttachIntent.person);
     } else {
       if (intent == AttachIntent.person) session.takeover = true;
       await session.reopen();
@@ -7547,6 +7576,11 @@ class AppNotifier extends ChangeNotifier {
   @visibleForTesting
   void localFailureForTest(String machineId, int code, String reason) =>
       _onLocalFailure(machineId, code, reason);
+
+  /// What a socket finding the session gone for good does to the model — the
+  /// `WsPool.onAuthFailure` path ([WsCredentialRevoked]), without a socket.
+  @visibleForTesting
+  void authFailureForTest(String message) => _signedOutAtRuntime(message);
 
   @override
   void dispose() {
