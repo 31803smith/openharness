@@ -313,13 +313,16 @@ Future<void> expectNoLayoutErrors(
         setPhone(tester, phone);
         final before = grid.AppTheme.brightness.value;
         grid.AppTheme.brightness.value = brightness;
+        final where = '$name ×${scale.toStringAsFixed(2)} ${brightness.name}';
         try {
           final errors = await collectErrors(() => pump(scale, brightness));
           for (final error in errors.toSet()) {
-            failures.add(
-              '$name ×${scale.toStringAsFixed(2)} ${brightness.name}: $error',
-            );
+            failures.add('$where: $error');
           }
+        } on Object catch (error) {
+          // A step of the test that could not be taken — a control the layout pushed out of
+          // reach — says which phone it was on.
+          fail('$where: $error');
         } finally {
           grid.AppTheme.brightness.value = before;
         }
@@ -363,6 +366,22 @@ Future<void> loadRealFontsIfAsked() async {
   for (final family in ['.AppleSystemUIFont', 'SF Pro Text', 'Roboto']) {
     await load(family, [for (final w in weights) 'SF-Pro-Text-$w.otf']);
   }
+}
+
+/// Taps [finder] once it is scrolled into view — on a small phone at a large text size, most of
+/// a screen is below the fold.
+Future<void> tapInView(WidgetTester tester, Finder finder) async {
+  // Not even built yet: a list builds only a screen's worth past what it shows.
+  if (finder.evaluate().isEmpty) {
+    await tester.scrollUntilVisible(
+      finder,
+      200,
+      scrollable: find.byType(Scrollable).first,
+    );
+  }
+  await tester.ensureVisible(finder);
+  await tester.pump();
+  await tester.tap(finder);
 }
 
 /// Takes the screen down and runs its clocks out, so no timer outlives the test.
