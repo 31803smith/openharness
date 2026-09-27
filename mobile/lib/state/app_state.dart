@@ -16,7 +16,6 @@ import '../auth/peer_link_client.dart';
 import '../auth/sign_in_client.dart';
 import '../auth/cli_link.dart';
 import '../auth/cli_login.dart';
-import '../core/viewer_mode.dart';
 import '../core/config.dart';
 import '../core/agent_preference.dart';
 import '../core/engine_availability.dart';
@@ -284,13 +283,14 @@ class AppNotifier extends ChangeNotifier {
   late final SignInClient cliLogin;
   final CliLink cliLink;
 
-  /// Links to other machines by remote password: [cliLink] in a desktop build, the app itself in a
-  /// viewer. THIS machine's own remote password stays on [cliLink] — a viewer is not a machine, and
-  /// has no password for anyone to link to.
+  /// Links to other machines by remote password — the app itself, through [ViewerServices.links].
+  /// THIS machine's own remote password stays on [cliLink] — a viewer is not a machine, and has no
+  /// password for anyone to link to.
   late final PeerLinkClient peerLinks;
 
-  /// A viewer build's stand-ins for the harness CLI (`lib/viewer/`); null on a desktop build.
-  final ViewerServices? viewer;
+  /// This app's stand-ins for the harness CLI (`lib/viewer/`). It is always a viewer: no CLI runs
+  /// beside it, on a phone or anywhere else this package is built.
+  final ViewerServices viewer;
   final ConfigStore? _store;
 
   /// Spoken tasks waiting for a palette. Broadcast because the screen subscribes and unsubscribes with
@@ -373,10 +373,6 @@ class AppNotifier extends ChangeNotifier {
   ({DateTime at, String from})? _awaitingFirstMessage;
 
   final Map<String, Timer> _offlineRetryTimers = {};
-  // Periodic retry for a machine the relay reported NO_PEER_LINK for — a `harness link connect` run
-  // in a terminal (or another app instance) has no way to notify this one, so this is what makes the
-  // app pick up a fresh link within a few seconds instead of only on the next manual click/restart.
-  final Map<String, Timer> _linkRetryTimers = {};
   // Safety-net reconciliation for a connected machine's agent list, on top of the push events
   // (agent_synced/agent_created/agent_renamed/agent_deleted) that normally keep it live — catches the
   // rare case a push event was dropped. Runs silently: see _syncAgentsIfChanged.
@@ -620,7 +616,6 @@ class AppNotifier extends ChangeNotifier {
     final pane = focusedPane;
     selectedMachineId = pane?.machineId;
     _persistLayout();
-    _announceAppFocus();
     if (attachPending) {
       for (final machine in machineStates.values) {
         // A tab the person switched to.
@@ -695,7 +690,6 @@ class AppNotifier extends ChangeNotifier {
     selectedMachineId = machineId;
     _paneFocusRequest++;
     _persistLayout();
-    _announceAppFocus();
     notifyListeners();
     return true;
   }
@@ -771,7 +765,6 @@ class AppNotifier extends ChangeNotifier {
     _persistLayout();
     notifyListeners();
     selectedMachineId = focusedPane?.machineId;
-    _announceAppFocus();
     for (final machine in machineStates.values) {
       // A tab closed here; the tiles behind it are theirs.
       _attachPendingPanes(machine, intent: AttachIntent.person);
@@ -1018,21 +1011,19 @@ class AppNotifier extends ChangeNotifier {
        config = configStore?.config ?? config,
        viewer =
            viewer ??
-           (kViewerMode
-               ? ViewerServices(
-                   config: configStore?.config ?? config,
-                   session: authSession,
-                 )
-               : null) {
-    this.cliLogin = cliLogin ?? this.viewer?.login ?? CliLogin();
-    this.peerLinks = peerLinks ?? this.viewer?.links ?? this.cliLink;
+           ViewerServices(
+             config: configStore?.config ?? config,
+             session: authSession,
+           ) {
+    this.cliLogin = cliLogin ?? this.viewer.login;
+    this.peerLinks = peerLinks ?? this.viewer.links;
     _autonomousEnv = this.config.autonomousEnv;
     api = _newApiClient();
   }
 
-  /// Through the local CLI in a desktop build; straight to the backend, signed, in a viewer.
+  /// Straight to the backend, signed with this app's own session.
   ApiClient _newApiClient() =>
-      ApiClient(config: config, session: session, auth: viewer?.auth);
+      ApiClient(config: config, session: session, auth: viewer.auth);
 
   /// Where the harnesses this notifier sees are counted — the app's own [harnessStats], kept on
   /// disk. Sample mode (`lib/demo/`) counts into one of its own: its harnesses are not the
@@ -1136,123 +1127,20 @@ class AppNotifier extends ChangeNotifier {
     if (!panes.any((pane) => pane.id == paneId)) return;
     final moved = focusedPaneId != paneId;
     // Remembered only on a REAL move. Re-focusing the tile you are already on
-    // happens constantly — see the note below about why it is announced anyway
-    // — and recording it would make ⌘; a key that returns you to where you
-    // already are, which is the same as a key that does nothing.
+    // happens constantly, and recording it would make ⌘; a key that returns you
+    // to where you already are, which is the same as a key that does nothing.
     if (moved) _previousPaneId = focusedPaneId;
     focusedPaneId = paneId;
     selectedMachineId = focusedPane?.machineId;
     if (reveal) _paneFocusRequest++;
     if (zoomedPaneId != null) zoomedPaneId = paneId;
-    // Announced even when this tile was ALREADY focused.
-    //
-    // The dial can be turned by hand, and then the two disagree with nobody
-    // knowing. Choosing this agent — from the rail or by clicking its tile — is
-    // how someone says "no, look at THIS one", so it has to be able to say it.
-    //
-    // The old guard here made that impossible in exactly the case that needed
-    // it. An agent that is NOT open yet gets a fresh stream, and the daemon
-    // follows `terminal_open` as a side effect; one that IS open opens nothing,
-    // so `app_focus` is the only thing that can move the dial — and this
-    // returned before sending it. That is why a single pane always worked
-    // (every switch re-attached) and a second pane broke it.
-    //
-    // Re-sending the same agent is safe: the daemon drops it against the dial's
-    // real position (`agentId === this.dialFocus` in cableSession), which is the
-    // only side that can judge, because only it knows where the dial is.
-    _announceAppFocus();
+    // ⚠️ **Nothing is told which agent is on screen.** The desktop sends `app_focus` and
+    // `app_panes` here for the dial beside it; only the CLI's loopback server reads them
+    // (`localWsServer.ts`), and a phone's socket is the relay, where nothing does — and the types
+    // are not in `encryptedDownTypes`, so every swipe sent the agent id past the backend in the
+    // clear for no one to read.
     if (moved) _persistLayout();
     if (moved || reveal) notifyListeners();
-  }
-
-  String? _announcedFocusMachineId;
-  String? _deviceFocusRevision;
-
-  @visibleForTesting
-  Future<bool> Function(String machineId, String? agentId)?
-  focusFrameSenderForTest;
-
-  /// Publish the selected pane to the existing local CLI connection. The CLI
-  /// shares this focus with paired devices and the dial; terminal attachments
-  /// and operating-system window activation do not define the selected agent.
-  ///
-  /// ⚠️ **Never from a viewer.** Only the CLI's loopback server reads these (`localWsServer.ts`); a
-  /// viewer's socket is the relay, where nothing does — and the type is not in `encryptedDownTypes`,
-  /// so every swipe sent the agent id past the backend in the clear for no one to read.
-  void _announceAppFocus() {
-    if (viewer != null) return;
-    final pane = focusedPane;
-    final machineId = pane?.agentId == null ? null : pane?.machineId;
-    final previousMachineId = _announcedFocusMachineId;
-    _announcedFocusMachineId = machineId;
-    if (previousMachineId != null && previousMachineId != machineId) {
-      _sendAppFocus(previousMachineId, null);
-    }
-    if (machineId != null) _sendAppFocus(machineId, pane!.agentId);
-  }
-
-  void _sendAppFocus(String machineId, String? agentId) {
-    // Never create a socket just to move focus, and never queue stale focus
-    // across a reconnect. The connected callback reasserts the current pane.
-    final send = focusFrameSenderForTest;
-    final pending = send != null
-        ? send(machineId, agentId)
-        : _pool?[machineId]?.sendTerminalFrame('app_focus', {
-            'agentId': agentId,
-            if (_deviceFocusRevision != null)
-              'focusRevision': _deviceFocusRevision,
-          });
-    if (pending != null) unawaited(pending.catchError((_) => false));
-  }
-
-  /// Tell the daemon which agents have a tile on the grid, so the dial can stay
-  /// quiet about a turn that finished in front of the person.
-  ///
-  /// An OPEN tile counts as seen. Not a focused one: with four tiles all four
-  /// are on screen, and the window has no honest way to say which the eye is
-  /// on. Nor is the window's own focus consulted — a decision, not an
-  /// oversight: it means a turn that lands while the app is behind a browser
-  /// stays silent, and the alternative is a dial that beeps about tiles you are
-  /// looking straight at.
-  ///
-  /// Sent to EVERY connected daemon, with the full list across all machines.
-  /// The dial belongs to whichever daemon owns the cable, and only a complete
-  /// roster lets that one judge; the others store a list they never use, which
-  /// costs nothing and saves the window from having to know which is which.
-  ///
-  /// Never from a viewer, for [_announceAppFocus]'s reasons — and these carry swarm names too.
-  void _announceOpenPanesToDial() {
-    final pool = _pool;
-    if (pool == null || viewer != null) return;
-    final agentIds = <String>[for (final pane in panes) ?pane.agentId];
-    // The swarms travel with the tiles: the dial names the one on screen above the agent and offers
-    // the others, and a pick there comes back as `dial_swarm`. Names and member ids only — the layout
-    // inside a swarm is this window's business.
-    final swarmRows = [
-      for (final swarm in swarms)
-        {
-          'id': swarm.id,
-          'name': swarm.name,
-          'agentIds': [for (final pane in swarm.panes) ?pane.agentId],
-        },
-    ];
-    for (final machineId in machineStates.keys) {
-      final connection = pool[machineId];
-      if (connection == null) continue;
-      unawaited(
-        connection
-            .sendTerminalFrame('app_panes', {'agentIds': agentIds})
-            .catchError((_) => false),
-      );
-      unawaited(
-        connection
-            .sendTerminalFrame('app_swarms', {
-              'active': activeSwarmId,
-              'swarms': swarmRows,
-            })
-            .catchError((_) => false),
-      );
-    }
   }
 
   /// Machines whose link prompt the user has waved away.
@@ -1437,24 +1325,15 @@ class AppNotifier extends ChangeNotifier {
     }
   }
 
-  /// Both `bootstrap()` (already signed in) and `login()` (just finished signing in) land here once
-  /// the CLI confirms a session exists — ensure the local daemon is actually up first (it does not
-  /// start on its own, and every call below is a local-CLI-proxied request that needs it), then fetch
-  /// the profile and machine list independently over it.
+  /// Both `bootstrap()` (already signed in) and a sign-in that just finished land here once a
+  /// session exists — fetch the profile and machine list, and restore the tiles meanwhile.
   Future<void> _finishBootstrapSignedIn() async {
     final revision = _authRevision;
     if (!_authWorkCurrent(revision)) return;
-    // Stays on the pre-navigation `bootstrapping` screen (main.dart) until the daemon is
-    // confirmed reachable — flipping to `authenticated` any earlier is what let the home UI
-    // race `harness start`'s own backend handshake and surface a bogus 30s "Could not load
-    // machines" timeout. A daemon that never comes up still gets a home screen below, with
-    // the failure shown there as before, since that's where the retry affordance lives.
-    // A viewer has no local service to start — `ensureCliDaemonReady` returns
-    // immediately below — so saying so was a sentence about somebody else's
-    // computer shown while this one read its own disk.
-    _bootStatusMessage = viewer == null
-        ? 'Starting local service…'
-        : 'Getting your machines…';
+    // Stays on the pre-navigation `bootstrapping` screen (main.dart) until the local state is
+    // restored. A phone has no local service to start — the desktop's "Starting local service…"
+    // was a sentence about somebody else's computer shown while this one read its own disk.
+    _bootStatusMessage = 'Getting your machines…';
     notifyListeners();
     // Which agent to reopen is the first thing the phone's home screen asks for
     // and the last thing it can draw without, so the read starts here rather
@@ -1467,14 +1346,9 @@ class AppNotifier extends ChangeNotifier {
     // for as long as the slowest one takes, and would hand the first-run
     // auto-pick a window in which the grid still looks empty.
     //
-    // ⚠️ Together, not one after the other. Both read the same state file, and
-    // the store serializes them anyway — but serialized on ITS queue they cost
-    // one lock each back to back, whereas awaited separately here they also cost
-    // a scheduler hop each, and neither has ever depended on the other.
-    //
-    // `dial` is not asked about at all in a viewer: it describes a USB device
-    // plugged into a desktop, which a phone has no port for, so the read could
-    // only ever return the default it already holds.
+    // `dial` is not restored beside them: it describes a USB device plugged
+    // into a desktop, which a phone has no port for, so the read could only
+    // ever return the default it already holds.
     //
     // ⚠️ **The machine list is asked for HERE, not after the disk work, and that
     // ordering is the point.** A viewer reaches every machine over the network,
@@ -1495,58 +1369,41 @@ class AppNotifier extends ChangeNotifier {
     // the zone's error handler and be reported as a crash. It is re-raised at
     // that await, where the existing handler words it for the user and offers
     // the retry.
-    Future<Object?>? machineRefresh;
-    if (viewer != null) {
-      _ensurePool();
-      machineRefresh = StartupTrace.time<Object?>(
-        'boot.refreshMachines',
-        () async {
-          try {
-            await refreshMachines();
-            return null;
-          } catch (error) {
-            return error;
-          }
-        },
-      );
-      // Dial last run's machines WHILE that fetch is in the air. The socket,
-      // the relay and the E2EE handshake are the slowest part of the launch by
-      // far, and none of them needed the fetch to have finished — only a
-      // machine id, which the last run already wrote down.
-      unawaited(_warmStartMachines());
-    }
+    _ensurePool();
+    final machineRefresh = StartupTrace.time<Object?>(
+      'boot.refreshMachines',
+      () async {
+        try {
+          await refreshMachines();
+          return null;
+        } catch (error) {
+          return error;
+        }
+      },
+    );
+    // Dial last run's machines WHILE that fetch is in the air. The socket,
+    // the relay and the E2EE handshake are the slowest part of the launch by
+    // far, and none of them needed the fetch to have finished — only a
+    // machine id, which the last run already wrote down.
+    unawaited(_warmStartMachines());
     // Not awaited before the fetch above starts: the screen still wants to
     // appear as soon as the local state is restored, and these two now overlap.
-    await StartupTrace.time(
-      'boot.restoreLocalState',
-      () => Future.wait([
-        _restorePaneLayout(),
-        if (viewer == null) dial.restore(),
-      ]),
-    );
+    await StartupTrace.time('boot.restoreLocalState', _restorePaneLayout);
     if (!_authWorkCurrent(revision)) return;
-    _ensurePool();
     _bootStatusMessage = null;
     status = AppStatus.authenticated;
     notifyListeners();
-    // The CLI has confirmed sign-in and daemon readiness. Display-name/avatar
-    // metadata is independent of machine discovery and must not delay work.
+    // Signed in. Display-name/avatar metadata is independent of machine
+    // discovery and must not delay work.
     unawaited(_loadProfile());
     // The desk too: its tabs are what a swipe stays inside, and they are read
     // over REST rather than from any machine — so they can land before the
     // first machine has finished dialling.
     _desk.ensure();
     try {
-      // The request a viewer already has in flight (above), or a fresh one where
-      // there is none — a desktop, whose machine list is served by a daemon that
-      // was not confirmed up until `ensureCliDaemonReady` returned, so asking any
-      // earlier there would race the very handshake that gate exists to wait out.
-      if (machineRefresh == null) {
-        await refreshMachines();
-      } else {
-        final failure = await machineRefresh;
-        if (failure != null) throw failure;
-      }
+      // The request already in flight (above).
+      final failure = await machineRefresh;
+      if (failure != null) throw failure;
     } catch (error) {
       if (!_authWorkCurrent(revision)) return;
       _lastError = 'Could not load machines: ${describeApiError(error)}';
@@ -1555,10 +1412,10 @@ class AppNotifier extends ChangeNotifier {
     if (_authWorkCurrent(revision)) notifyListeners();
   }
 
-  /// Who is signed in, from the daemon. Shared by the boot path and by the
-  /// retry path, because a boot that found the daemon still connecting now
-  /// finishes THROUGH the retry path — and a session that never learns its
-  /// own account has an empty footer and unattributed analytics.
+  /// Who is signed in, from the account. Shared by the boot path and by the
+  /// retry path, because a profile the boot could not read is asked for again
+  /// there — and a session that never learns its own account has an empty
+  /// footer and unattributed analytics.
   Future<void> _loadProfile() {
     final pending = _profileInFlight;
     if (pending != null) return pending;
@@ -1596,9 +1453,9 @@ class AppNotifier extends ChangeNotifier {
   /// The session went away while the app was already running — send the user to the signed-out screen with a
   /// reason, and stop the background work that can only fail from here.
   ///
-  /// Cold start already handles this: [bootstrap] asks the CLI whether it is signed in. The hole this
-  /// fills is the app that was ALREADY authenticated when the session disappeared underneath it,
-  /// where nothing re-checked and the daemon supervisor simply respawned `harness start` forever.
+  /// Cold start already handles this: [bootstrap] asks whether a session is kept. The hole this
+  /// fills is the app that was ALREADY authenticated when the session disappeared underneath it —
+  /// a relay socket finding it gone for good ([WsCredentialRevoked]).
   void _signedOutAtRuntime(String message) {
     if (status == AppStatus.unauthenticated) {
       return; // idempotent: several sources can race here
@@ -1693,17 +1550,10 @@ class AppNotifier extends ChangeNotifier {
     _armFirstMessage('sign_in');
   }
 
-  /// Whether this build signs in with an emailed code rather than the browser
-  /// — a phone. See `viewer/email_code_api.dart`.
-  bool get signsInWithEmailCode => viewer != null;
-
   /// The phone's sign-in, first step: email [email] a one-time code. Throws the
-  /// service's own reason ("Email is invalid") for the form to show.
-  Future<void> sendLoginCode(String email) {
-    final login = viewer?.emailLogin;
-    if (login == null) throw StateError('This build signs in with a browser.');
-    return login.sendCode(email);
-  }
+  /// service's own reason ("Email is invalid") for the form to show. See
+  /// `viewer/email_code_api.dart`.
+  Future<void> sendLoginCode(String email) => viewer.emailLogin.sendCode(email);
 
   /// The phone's sign-in, second step: trade the emailed [code] for a session
   /// and go in.
@@ -1717,8 +1567,8 @@ class AppNotifier extends ChangeNotifier {
     required String email,
     required String code,
   }) async {
-    final login = viewer?.emailLogin;
-    if (_disposed || signingIn || login == null) return;
+    final login = viewer.emailLogin;
+    if (_disposed || signingIn) return;
     final revision = _invalidateAuthWork();
     _closedHistory.clear();
     _lastError = null;
@@ -1748,8 +1598,8 @@ class AppNotifier extends ChangeNotifier {
   /// carries — no email, no digits — and go in. Thrown and kept like
   /// [signInWithCode]: the welcome screen falls back to an emailed code.
   Future<void> signInWithScan(String code) async {
-    final login = viewer?.emailLogin;
-    if (_disposed || signingIn || login == null) return;
+    final login = viewer.emailLogin;
+    if (_disposed || signingIn) return;
     final revision = _invalidateAuthWork();
     _closedHistory.clear();
     _lastError = null;
@@ -1856,7 +1706,6 @@ class AppNotifier extends ChangeNotifier {
     // launch doesn't silently sign back in without ever showing the login screen.
     unawaited(cliLogin.logout());
     _stopAllOfflineRetries();
-    _stopAllLinkRetries();
     _stopAllAgentSyncTimers();
     // Tiles go, the saved layout stays: signing out and back in is the same
     // person at the same desk, and the file is only read once machines exist.
@@ -1897,10 +1746,9 @@ class AppNotifier extends ChangeNotifier {
   void _onLocalFailure(String machineId, int code, String reason) {
     final machine = machineStates[machineId];
     if (machine == null || code != 4404) return;
-    // The local CLI's relay found no linked trust for this machine — it now owns E2EE entirely.
-    // A `harness link connect` run in a terminal (or another app instance) has no way to notify
-    // this one directly, so poll every few seconds until it's picked up instead of waiting for
-    // the user to click back into this machine.
+    // The relay found no linked trust for this machine: it waits for this phone's password form (or
+    // a scanned code), which reconnects when it lands. Nothing is polled — the desktop retries every
+    // few seconds for a `harness link connect` run elsewhere, which a phone's links never come from.
     machine.needsLink = true;
     machine.agentLoadStatus = AgentLoadStatus.needsLink;
     // A 4404 can also arrive MID-SESSION ("peer revoked trust" in the CLI's
@@ -1915,28 +1763,18 @@ class AppNotifier extends ChangeNotifier {
       'This machine is no longer linked. Link it again to reconnect.',
     );
     notifyListeners();
-    // ⚠️ Not a viewer's. Its links change only through its own password form, which reconnects
-    // when it lands — polling cannot fix what only that form can, and each round redrew the app.
-    if (viewer == null) _startLinkRetry(machineId);
   }
 
   /// The token a viewer's relay socket dials with.
-  Future<String> _socketToken(bool force, String? failedToken) async {
-    final directAuth = viewer?.auth;
-    if (directAuth != null) {
+  Future<String> _socketToken(bool force, String? failedToken) =>
       // Only a session that is gone for good may sign the person out — see
       // [WsCredentialRevoked]. An outage fails the refresh too, and is retried.
-      return directAuth
+      viewer.auth
           .accessToken(force: force, failedToken: failedToken)
           .onError<DirectAuthException>(
             (error, _) => throw WsCredentialRevoked(error.message),
             test: (error) => error.signedOut,
           );
-    }
-    throw StateError(
-      'unreachable: only a viewer build uses a token-bearing WS transport',
-    );
-  }
 
   /// [_socketToken], for a test: the pool that asks for it dials for real.
   @visibleForTesting
@@ -1950,11 +1788,9 @@ class AppNotifier extends ChangeNotifier {
     _pool = WsPool(
       wsBaseUrl: config.wsBaseUrl,
       autonomousEnv: _autonomousEnv,
-      // Every real desktop WsConn dials the local CLI's loopback WS (transportKind.localPlaintext, see
-      // _conn()), which never calls this — only a viewer's relay socket dials with a token.
       accessTokenProvider: _socketToken,
-      relayCodecs: viewer?.relayCodecs,
-      transportPlugins: viewer?.transportPlugins,
+      relayCodecs: viewer.relayCodecs,
+      transportPlugins: viewer.transportPlugins,
       onAuthFailure: _signedOutAtRuntime,
       onLocalFailure: _onLocalFailure,
       onEvent: _handleEvent,
@@ -1969,23 +1805,11 @@ class AppNotifier extends ChangeNotifier {
     machine.connectionStatus = nextStatus;
     if (nextStatus == ConnectionStatus.connected) {
       machine.needsLink = false;
-      _stopLinkRetry(machineId);
       // A relay socket reports `connected` only after the machine's welcome
       // proved the link (`WsConn._markReady`), so a code held to pair this
       // machine has nothing left to do. Kept, it would be spent the next time
       // the machine locks — an unlink, say — in place of its password form.
       if (pendingPairing?.machineId == machineId) pendingPairing = null;
-      // A daemon that just came up — first connect, or a reconnect after it
-      // restarted — has never been told what is on the grid. Without this
-      // the dial goes back to beeping about tiles in plain sight until the
-      // next time a pane happens to change.
-      _announceOpenPanesToDial();
-      // ...nor which tile this window is looking at. The daemon repeats that to the dial after every
-      // list push, which is what keeps the two screens from drifting apart — but it can only repeat
-      // something it has been told, and until now the first telling waited for the focus to CHANGE.
-      // A daemon restarted mid-session therefore had nothing to say, and a dial that re-anchored onto
-      // the wrong tile stayed there.
-      _announceAppFocus();
       // Route through _applyNodeStatus (not just `machine.nodeOnline = true`) for every machine,
       // not only the local one — a successful select IS the machine being reachable again, and
       // this is what lets a pending agent (captured below on disconnect) reattach automatically
@@ -2002,26 +1826,19 @@ class AppNotifier extends ChangeNotifier {
       // used to be local-only, which is why a remote machine's terminal never came back on its own
       // after `harness start` on that machine, even though the guide screen promised it would.
       //
-      // NOT while the machine is unlinked. NO_PEER_LINK is the local CLI failing a lookup in its
-      // own peer table (remoteRelay.ts `dial`) before anything is dialled, so neither that close
-      // nor the one `_startLinkRetry`'s `closeMachine` fires every few seconds says anything about
-      // whether the OTHER computer is up — our socket never reaches it. Forcing nodeOnline false
-      // here overwrote the REST `/api/machines` status, the one signal that does, and painted
-      // every unlinked machine as off. Keyed on the sticky flag rather than the 4404 close on
-      // purpose: the retry loop's own close() lands as a plain `disconnected` too. needsLink is
-      // set by onLocalFailure, which runs before this branch for 4404 (see WsConn._onDone).
+      // NOT while the machine is unlinked. NO_PEER_LINK is a lookup failing in a peer table
+      // before anything is dialled, so that close says nothing about whether the OTHER computer is
+      // up — our socket never reaches it. needsLink is set by onLocalFailure, which runs before
+      // this branch for 4404 (see WsConn._onDone).
       //
-      // ⚠️ Nor from a viewer. Its socket is the phone's own line to the relay — backgrounding the
-      // app drops it, and so does a tunnel — and losing it says nothing about the machine at the
-      // other end, which `node_status`, `/api/machines` and a timed-out request still report. Read
-      // as offline, every return to the app flashed "Offline" and threw the pager away. The
-      // streams on it are dead all the same: told so, and put back once the socket is.
+      // ⚠️ And the machine is not marked offline. The socket is the phone's own line to the
+      // relay — backgrounding the app drops it, and so does a tunnel — and losing it says nothing
+      // about the machine at the other end, which `node_status`, `/api/machines` and a timed-out
+      // request still report. Read as offline, every return to the app flashed "Offline" and
+      // threw the pager away. The streams on it are dead all the same: told so, and put back once
+      // the socket is.
       if (!machine.needsLink) {
-        if (viewer == null) {
-          unawaited(_applyNodeStatus(machine, false));
-        } else {
-          _markSessionsUnreachable(machine, 'Connection lost. Reconnecting…');
-        }
+        _markSessionsUnreachable(machine, 'Connection lost. Reconnecting…');
       }
     }
     notifyListeners();
@@ -2086,7 +1903,6 @@ class AppNotifier extends ChangeNotifier {
       if (!visible.contains(entry.key)) {
         _clearMachineActivity(entry.value);
         _stopOfflineRetry(entry.key);
-        _stopLinkRetry(entry.key);
         _stopAgentSyncTimer(entry.key);
         // ⚠️ The SOCKET goes too, not just the bookkeeping above. Dropping the
         // state alone left the pool holding a live connection to a machine
@@ -2160,30 +1976,6 @@ class AppNotifier extends ChangeNotifier {
 
   void _stopOfflineRetry(String machineId) {
     _offlineRetryTimers.remove(machineId)?.cancel();
-  }
-
-  void _startLinkRetry(String machineId) {
-    if (_linkRetryTimers.containsKey(machineId)) return;
-    _linkRetryTimers[machineId] = Timer.periodic(offlineRetryInterval, (_) {
-      final state = machineStates[machineId];
-      if (state == null || !state.needsLink) {
-        _stopLinkRetry(machineId);
-        return;
-      }
-      unawaited(_pool?.closeMachine(machineId));
-      _connectMachine(state);
-    });
-  }
-
-  void _stopLinkRetry(String machineId) {
-    _linkRetryTimers.remove(machineId)?.cancel();
-  }
-
-  void _stopAllLinkRetries() {
-    for (final timer in _linkRetryTimers.values) {
-      timer.cancel();
-    }
-    _linkRetryTimers.clear();
   }
 
   void _stopAllOfflineRetries() {
@@ -2615,8 +2407,8 @@ class AppNotifier extends ChangeNotifier {
       return;
     }
     if (currentUser == null) unawaited(_loadProfile());
-    // A boot that found the daemon still connecting finishes THROUGH here, so
-    // the desk is joined here as well — [PhoneDesk.ensure] makes that once.
+    // The desk is joined here as well, should the boot not have got that far —
+    // [PhoneDesk.ensure] makes that once.
     _desk.ensure();
     try {
       await refreshMachines();
@@ -3392,7 +3184,6 @@ class AppNotifier extends ChangeNotifier {
       }
     }
     _persistLayout();
-    _announceAppFocus();
   }
 
   String? _eventAgentId(
@@ -4787,20 +4578,9 @@ class AppNotifier extends ChangeNotifier {
         focusRevision.isEmpty) {
       return;
     }
-    if (focusedPane?.agentId != null) {
-      _announceAppFocus();
-      return;
-    }
-    // Tag only the synchronous fallback announcement, never a later user click.
-    late Future<void> selection;
-    _deviceFocusRevision = focusRevision;
-    try {
-      // The WiFi device asked, not a hand on this phone — see [AttachIntent].
-      selection = _showAgentFromDevice(machineId, agentId);
-    } finally {
-      _deviceFocusRevision = null;
-    }
-    await selection;
+    if (focusedPane?.agentId != null) return;
+    // The WiFi device asked, not a hand on this phone — see [AttachIntent].
+    await _showAgentFromDevice(machineId, agentId);
   }
 
   /// The dial turned to an agent. Ordinary selection, the same path a click on the rail takes.
@@ -5087,20 +4867,6 @@ class AppNotifier extends ChangeNotifier {
     _dismissedLinkPrompts.remove(machineId);
     machine.activeAgentId = agentId;
     _persistLayout();
-    // SAID OUTRIGHT, like every other move.
-    //
-    // This path — a rail click on an agent with no tile — was the one that never said it. It relied on
-    // the daemon inferring the move from the `terminal_open` that follows, which is the old
-    // one-terminal-per-window equivalence [see _announceAppFocus]. Two things wrong with that: the
-    // roster below changes the dial's carousel, so the focus and the roster are one transaction and the
-    // inference arrives after it by luck; and every early return under here (machine offline, terminal
-    // capability missing, a session already attached) opens no stream at all, so nothing was ever sent
-    // and the dial stayed on the old agent with the window on the new one.
-    //
-    // After _persistLayout, so the daemon has the new tile roster before it is told to move onto it. A
-    // duplicate with the inferred one is free: the daemon drops the second against where the dial
-    // already is.
-    if (target == activeSwarm) _announceAppFocus();
 
     if (machine.nodeOnline == false) {
       machine.pendingOfflineAgentId = agentId;
@@ -5430,14 +5196,10 @@ class AppNotifier extends ChangeNotifier {
         ),
       );
     }
-    // Only a close that moves the focus is worth telling the daemon about: a
-    // background tile going away changes nothing the dial can see.
-    final wasFocused = focusedPaneId == paneId;
     activeSwarm.remove(pane);
     _settlePins();
     if (persist) _persistLayout();
     selectedMachineId = focusedPane?.machineId;
-    if (wasFocused) _announceAppFocus();
     notifyListeners();
     if (!allPanes.contains(pane)) await _detachSession(pane, sendClose: true);
   }
@@ -5457,7 +5219,6 @@ class AppNotifier extends ChangeNotifier {
       swarm.focusedPaneId = null;
       swarm.zoomedPaneId = null;
     }
-    _announceAppFocus();
     for (final pane in open) {
       await _detachSession(pane, sendClose: true);
     }
@@ -5477,7 +5238,6 @@ class AppNotifier extends ChangeNotifier {
           swarm.name != Swarm.defaultName;
     });
     _layoutRevision++;
-    _announceOpenPanesToDial();
     final saved = swarms.where((swarm) => !isDraftSwarm(swarm.id)).toList();
     if (saved.isEmpty) return;
     final savedActive = isDraftSwarm(activeSwarmId)
@@ -6201,7 +5961,6 @@ class AppNotifier extends ChangeNotifier {
     if (signingIn) cliLogin.cancel();
     _closedHistory.clear();
     _stopAllOfflineRetries();
-    _stopAllLinkRetries();
     _stopAllAgentSyncTimers();
     _clearAllTurnActivity();
     for (final pane in allPanes) {
