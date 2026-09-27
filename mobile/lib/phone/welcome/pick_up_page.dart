@@ -119,7 +119,6 @@ class _PickUpPageState extends State<PickUpPage> {
                 child: PhoneSearchResults(
                   notifier: widget.notifier,
                   controller: _search,
-                  fzf: true,
                   onNewHarness: _newHarness,
                 ),
               ),

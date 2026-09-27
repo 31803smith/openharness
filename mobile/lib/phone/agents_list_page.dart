@@ -114,7 +114,6 @@ class _AgentsListPageState extends State<AgentsListPage> {
                 PhoneSearchField(
                   controller: _controller,
                   focus: _focus,
-                  autofocus: false,
                   // This field filters the list below it; it is not the door to
                   // the modes, which Find carries.
                   hintText: 'Search harnesses',

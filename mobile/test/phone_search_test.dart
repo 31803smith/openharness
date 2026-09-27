@@ -1313,11 +1313,7 @@ void main() {
       await tester.pumpWidget(
         MaterialApp(
           home: Scaffold(
-            body: PhoneSearchResults(
-              notifier: app,
-              controller: search,
-              fzf: true,
-            ),
+            body: PhoneSearchResults(notifier: app, controller: search),
           ),
         ),
       );
@@ -1351,11 +1347,7 @@ void main() {
       await tester.pumpWidget(
         MaterialApp(
           home: Scaffold(
-            body: PhoneSearchResults(
-              notifier: app,
-              controller: search,
-              fzf: true,
-            ),
+            body: PhoneSearchResults(notifier: app, controller: search),
           ),
         ),
       );
@@ -1404,11 +1396,7 @@ void main() {
       await tester.pumpWidget(
         MaterialApp(
           home: Scaffold(
-            body: PhoneSearchResults(
-              notifier: app,
-              controller: search,
-              fzf: true,
-            ),
+            body: PhoneSearchResults(notifier: app, controller: search),
           ),
         ),
       );
