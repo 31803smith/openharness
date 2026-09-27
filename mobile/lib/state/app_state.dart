@@ -399,8 +399,8 @@ class AppNotifier extends ChangeNotifier {
   // finished (an agent's launch), where the only honest control is to
   // dismiss it.
   bool _lastErrorRetryable = true;
-  // Shown on the pre-navigation `bootstrapping` screen while [_finishBootstrapSignedIn] waits on the
-  // local daemon — null the rest of the time, including once [status] flips to `authenticated`.
+  // Shown on the pre-navigation `bootstrapping` screen while [_finishBootstrapSignedIn] restores the
+  // local state — null the rest of the time, including once [status] flips to `authenticated`.
   String? _bootStatusMessage;
 
   AppStatus status = AppStatus.bootstrapping;
@@ -1256,8 +1256,8 @@ class AppNotifier extends ChangeNotifier {
 
   /// `app_opened`, once, with the answer bootstrap actually reached. Sent from
   /// here rather than from the first frame because `signed_in` is not known
-  /// until the CLI has been asked, and a first-frame event would report every
-  /// launch as signed out.
+  /// until the session has been read, and a first-frame event would report
+  /// every launch as signed out.
   void _trackAppOpened() {
     if (_appOpenedTracked) return;
     _appOpenedTracked = true;
@@ -1991,10 +1991,10 @@ class AppNotifier extends ChangeNotifier {
   Future<void> retryOfflineMachine(String machineId) =>
       _pollOfflineMachine(machineId);
 
-  /// Runs `harness link connect <machineId> --stdin --json` (via [CliLink]) for a machine the
-  /// relay reported `NO_PEER_LINK` for, then reconnects it. Returns null on success, or an error
-  /// message to show inline. The app never sees the password's cryptographic use — this just
-  /// pipes it to the CLI on stdin, the same as typing it at a terminal prompt would.
+  /// Links [machineId] by its remote password — the exchange `harness link connect` runs on a
+  /// desktop, run here by [peerLinks] (`viewer/password_link.dart`) — for a machine the relay
+  /// reported `NO_PEER_LINK` for, then reconnects it. Returns null on success, or an error
+  /// message to show inline.
   Future<String?> connectWithPassword(
     String machineId,
     String password, {
@@ -2328,9 +2328,9 @@ class AppNotifier extends ChangeNotifier {
     return _pool?[machineId]?.isReady == true;
   }
 
-  // Every machine — this computer's own, or a relayed one — now speaks the same plaintext local wire
-  // protocol to the CLI (which terminates E2EE itself for relayed machines; see remoteRelay.ts in the
-  // harness CLI repo). There is no per-machine branching left here at all.
+  // Every machine hands over the same loopback (HTRL) frames: the relay codec has opened the E2EE
+  // envelope before a frame gets here (see `ws/relay_codec.dart`), so there is no per-machine
+  // branching left here at all.
   void _wireConnectionHooks(WsConn connection, String machineId) {
     connection.onBinaryFrame = (frame) =>
         _handleTerminalBinary(machineId, frame);

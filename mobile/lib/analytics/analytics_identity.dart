@@ -46,9 +46,9 @@ class AnalyticsIdentityStore {
   static const Duration _persistEvery = Duration(minutes: 1);
 
   /// `~/.harness/computer-id` — the machine identity this app already shares
-  /// with the CLI (`LocalCliDiscovery.defaultComputerIdPath`). Resolved the same
-  /// way rather than imported, so an analytics detail cannot drag the WS layer
-  /// into every test that builds this store.
+  /// with the CLI (the desktop's `LocalCliDiscovery.defaultComputerIdPath`).
+  /// Resolved the same way rather than imported, so an analytics detail cannot
+  /// drag the WS layer into every test that builds this store.
   static String _defaultComputerIdPath() =>
       '${Directory(HarnessFileStore.defaultDirectoryPath()).parent.path}'
       '/computer-id';
