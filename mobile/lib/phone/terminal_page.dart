@@ -12,6 +12,7 @@ import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:flutter/scheduler.dart';
+import 'package:flutter/semantics.dart' show CustomSemanticsAction;
 import 'package:xterm/xterm.dart' show Terminal, TerminalKey, TerminalStyle;
 
 import 'package:harness_mobile/logging/app_log.dart';
@@ -1160,6 +1161,19 @@ class _TerminalPageState extends State<TerminalPage>
     _closeSearch();
   }
 
+  /// What VoiceOver reads for the terminal: its last few lines with anything on them, oldest first
+  /// — where the agent says what it did and what it wants. Empty before the first frame lands.
+  static String _lastLinesForVoiceOver(Terminal? terminal, {int count = 6}) {
+    if (terminal == null) return '';
+    final buffer = terminal.buffer;
+    final lines = <String>[];
+    for (var y = buffer.height - 1; y >= 0 && lines.length < count; y--) {
+      final text = buffer.lines[y].getText().trim();
+      if (text.isNotEmpty) lines.add(text);
+    }
+    return lines.reversed.join('\n');
+  }
+
   /// A new agent, on the machine of the one on screen — the form slides in from the right, the way
   /// a swipe left asks for.
   ///
@@ -1780,6 +1794,27 @@ class _TerminalPageState extends State<TerminalPage>
           // and takes no hits; it only stops the Stack from inheriting a height
           // that belongs to something being deliberately held still.
           const SizedBox.expand(),
+          // ⚠️ **VoiceOver's way in, and the only one.** xterm draws the terminal without a
+          // single semantics node, and VoiceOver keeps one-finger swipes for itself — so without
+          // this, a VoiceOver user could neither hear what the agent last said nor reach Find or a
+          // new harness, which the sideways swipes are the only way to. One node under everything,
+          // painting nothing and taking no touches: the agent's name, the last lines on its screen,
+          // and the two swipes as actions (VoiceOver's rotor, "Actions").
+          Positioned.fill(
+            child: Semantics(
+              container: true,
+              label: '${agent?.displayName ?? widget.agentId}, terminal',
+              value: _lastLinesForVoiceOver(session?.terminal),
+              customSemanticsActions: widget.sideSwipes
+                  ? {
+                      const CustomSemanticsAction(label: 'Find'): _openSearch,
+                      const CustomSemanticsAction(label: 'New harness'): () =>
+                          unawaited(_newAgentHere()),
+                    }
+                  : null,
+              child: const SizedBox.expand(),
+            ),
+          ),
           MediaQuery.removePadding(
             context: context,
             removeBottom: true,
