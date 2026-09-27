@@ -1360,7 +1360,7 @@ class _SearchRowContentState extends State<_SearchRowContent> {
                   '${modelAction == null ? '' : ', $modelAction'}'
                   '${widget.unavailableReason == null ? '' : ', ${widget.unavailableReason}'}'
                   '${row.shortcut == null ? '' : ', Shortcut ${row.shortcut}'}'
-                  '${widget.activityAge == null ? '' : ', Last active ${widget.activityAge} ago'}',
+                  '${widget.activityAge == null ? '' : ', Last used ${widget.activityAge} ago'}',
         excludeSemantics: true,
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,

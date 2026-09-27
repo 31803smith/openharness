@@ -339,6 +339,10 @@ class SwarmDestination {
   /// and machine before paths and branches, which are more likely to truncate.
   final String? terminalDetail;
   final PromptContext? promptContext;
+
+  /// When the harness's conversation last moved ([Agent.lastActivityAt]) — the
+  /// true time, not when someone last opened it. What Open Harness sorts by,
+  /// and the age it prints beside the row.
   final DateTime? lastActivityAt;
   final String? swarmId, machineId, agentId, engine;
   final String? modelId;
@@ -770,9 +774,10 @@ class SwarmLocationCatalog {
   }
 }
 
-/// Open Harness uses the same activity timestamp it shows beside each session,
-/// within each [SwarmMatchStrength]: typing "hn" puts the harness named hn
-/// first, however many newer ones live in a folder whose path spells h…n.
+/// Open Harness sorts by last use — activity, or a person opening the harness
+/// in any client, whichever is later — the same time it shows beside each
+/// session, within each [SwarmMatchStrength]: typing "hn" puts the harness named
+/// hn first, however many newer ones live in a folder whose path spells h…n.
 /// Undated rows come last; ties retain visit recency and search relevance.
 List<SwarmDestination> rankSwarmDestinationsByActivity(
   List<SwarmDestination> all,
@@ -794,7 +799,7 @@ List<SwarmDestination> rankSwarmDestinationsByActivity(
     final strength = a.strength.index.compareTo(b.strength.index);
     if (strength != 0) return strength;
     // What was said is ranked by the index, which weighs how well it matched
-    // against how long ago; activity decides between equal answers.
+    // against how long ago; last use decides between equal answers.
     if (a.strength == SwarmMatchStrength.said ||
         a.strength == SwarmMatchStrength.content) {
       final said = b.said.compareTo(a.said);
