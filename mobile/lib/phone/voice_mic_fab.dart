@@ -23,8 +23,9 @@ import 'voice_mic_mode.dart';
 /// terminal's newest output is the line being read, and it runs left to right:
 /// the right end of the last few lines is the least of it.
 ///
-/// ⚠️ **The `×` is NOT here.** It is in the capsule body behind the mic, at the
-/// far end from it — see `voice_status_pill.dart`.
+/// ⚠️ **No `×` and no status body.** The mic says what it is doing with its own
+/// face and the halo behind it, and words appear above it only when something
+/// went wrong — see `voice_bar_line.dart`.
 class VoiceMicFab extends StatefulWidget {
   const VoiceMicFab({
     super.key,

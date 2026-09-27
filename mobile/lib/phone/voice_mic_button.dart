@@ -22,10 +22,10 @@ import 'voice_mic_mode.dart';
 ///    the take away, and the face turns to a `×` to say so. No long-press:
 ///    that gesture is what records.
 ///
-/// ⚠️ **It is the right end of the voice capsule, and draws nothing past its
-/// circle.** What it is doing — the waveform, the words, the `×` — is in the
-/// capsule body behind it (`voice_status_pill.dart`), so the button's own box
-/// never grows and nothing around it moves.
+/// ⚠️ **It draws nothing past its circle.** What it is doing beyond its face —
+/// the halo, and the words when something went wrong — is drawn around it
+/// (`voice_bar_line.dart`), so the button's own box never grows and nothing
+/// around it moves.
 class VoiceMicButton extends StatefulWidget {
   const VoiceMicButton({
     super.key,

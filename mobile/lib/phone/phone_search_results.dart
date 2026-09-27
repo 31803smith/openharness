@@ -30,11 +30,12 @@ import 'tty_controls.dart';
 
 /// What the query reaches, drawn.
 ///
-/// ⚠️ Public because two screens draw it: [PhoneSearchPage], and the terminal's
-/// own in-place search (see `terminal_search.dart`), which fades up over the
-/// terminal rather than pushing a route. Both hand it one
-/// [PhoneSearchController], so the two cannot return different rows — or walk a
-/// different pager — for the same words.
+/// ⚠️ Public because two screens draw it: Find, the terminal's own in-place
+/// search (see `terminal_search.dart`), which slides over the terminal rather
+/// than pushing a route, and the first screen after pairing
+/// (`welcome/pick_up_page.dart`). Both hand it one [PhoneSearchController], so
+/// the two cannot return different rows — or walk a different pager — for the
+/// same words.
 ///
 /// ⚠️ **One flat ranked list, no folder headers.** The desktop has none either,
 /// and grouping fought the ranking it sat on: a folder whose best row was third
@@ -73,7 +74,7 @@ class PhoneSearchResults extends StatefulWidget {
   /// ⚠️ For the in-place search, which is not a route and so is not popped by
   /// opening something. Its field still holds the keyboard, and the terminal it
   /// is covering is about to be replaced underneath it — this is what puts the
-  /// search away first. Null on [PhoneSearchPage], where the pop does it.
+  /// search away first. Null on the pick-up page, which is a route of its own.
   final VoidCallback? onOpen;
 
   /// Draws the rows as one inset group of [SheetSearchRow]s — the terminal

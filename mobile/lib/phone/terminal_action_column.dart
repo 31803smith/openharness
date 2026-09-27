@@ -26,12 +26,6 @@ import 'voice_mic_fab.dart';
 /// corner under it, and the mic rides above. The two share one column so they
 /// read as one set of controls rather than two strays.
 ///
-/// ⚠️ **The mic and what it is doing are one capsule.** The status body is
-/// stacked UNDER the mic and reaches out to its left, with the mic's circle
-/// closing its right end — see `voice_status_pill.dart`. The mic never moves:
-/// the body grows away from it, and the row keeps the mic's height however
-/// many lines a notice wraps to.
-///
 /// ⚠️ **The gaps are set by the mic's hit area, not by the look.** The mic's
 /// target spills [VoiceMicButton.touchOverhang] past its slot on every side and
 /// is generous on purpose — a button under it that sat any closer would lose

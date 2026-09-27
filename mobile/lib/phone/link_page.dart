@@ -8,7 +8,7 @@ import 'tty.dart';
 import 'tty_controls.dart';
 import 'welcome/unlock_computer.dart';
 
-/// A machine's password form, as a phone page — the same [LinkMachineScreen] the desktop pops
+/// A machine's password form, as a phone page — the form the desktop's `LinkMachineScreen` pops
 /// up, since the exchange behind it is the same.
 ///
 /// It leaves by itself either way — once the link lands, and when the form's own Close is pressed —
