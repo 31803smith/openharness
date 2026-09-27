@@ -246,6 +246,37 @@ void main() {
     });
   });
 
+  group('the recorder', () {
+    test('a release build records nothing, and hands out no ids', () {
+      const log = NoopAnalyticsLog();
+      expect(log.queued('app_opened', const {}, DateTime(2026)), 0);
+      log.attempted(0, const {});
+      log.settled(0, AnalyticsEventStatus.sent);
+    });
+
+    test(
+      'the ring keeps the newest rows; a row pushed out settles nothing',
+      () {
+        final log = AnalyticsLogStream(maxEntries: 2);
+        final first = log.queued('first_event', const {}, DateTime(2026));
+        log.queued('second_event', const {}, DateTime(2026));
+        log.queued('third_event', const {}, DateTime(2026));
+
+        expect(log.entries.map((e) => e.name), ['third_event', 'second_event']);
+        log.attempted(first, const {});
+        log.settled(first, AnalyticsEventStatus.sent);
+        expect(log.entries.every((e) => e.attempts == 0), isTrue);
+      },
+    );
+
+    test('a body that will not re-indent is shown as it is', () {
+      final log = AnalyticsLogStream();
+      final id = log.queued('app_opened', const {}, DateTime(2026));
+      log.attempted(id, {'value': _Unencodable()});
+      expect(log.entries.single.payload, '{value: unencodable}');
+    });
+  });
+
   group('the sink', () {
     tearDown(() {
       setAnalyticsForTest(null);
