@@ -892,7 +892,6 @@ class PerfSuite {
               notifier: fixture.notifier,
               session: _terminalA.session,
               focused: false,
-              showHeader: false,
             ),
           ),
         ),

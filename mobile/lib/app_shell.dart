@@ -156,11 +156,10 @@ class HarnessApp extends StatelessWidget {
       // is applied exactly once. Ship one without the other and a 19px setting
       // gives 19px-tall buttons wrapped around 13pt labels.
       //
-      // ⚠️ The terminal is fenced out of this at five seams — see
-      // `terminal_panel.dart`, `terminal_composer.dart`, `engine_identity.dart`
-      // and `terminal_section.dart`, and the regression test in
-      // `test/terminal_ui_scale_isolation_test.dart`. The terminal keeps its own
-      // font settings because its type is a grid a remote program draws into.
+      // ⚠️ The terminal is fenced out of this — see `terminal_panel.dart`
+      // (`textScaler: TextScaler.noScaling`) and `engine_identity.dart`. The
+      // terminal keeps its own font settings because its type is a grid a remote
+      // program draws into.
       //
       // Outermost inside `builder`, with `_GridTokenScope` inside it: the clamp
       // has to be an ancestor of everything that lays out text, while the scope

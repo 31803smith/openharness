@@ -1858,7 +1858,6 @@ class _TerminalPageState extends State<TerminalPage>
                                                               ),
                                                             ),
                                                       onLineTap: _onLineTap,
-                                                      showHeader: false,
                                                       // tmux's copy-mode position while
                                                       // reading back — see [_CopyModePosition].
                                                       scrollback: _scrollback,

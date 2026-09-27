@@ -1389,8 +1389,6 @@ class TerminalSession extends ChangeNotifier {
     _viewport?.scroll(phase, dy, velocity);
   }
 
-  void find(TerminalFindAction action) => _viewport?.find(action);
-
   bool focusInput() => _viewport?.focusInput() ?? false;
 
   /// Coalescing windows for the two things the user drives directly.
