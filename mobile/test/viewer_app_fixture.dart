@@ -9,9 +9,13 @@ import 'package:harness_mobile/auth/cli_login.dart';
 import 'package:harness_mobile/auth/peer_link_client.dart';
 import 'package:harness_mobile/auth/sign_in_client.dart';
 import 'package:harness_mobile/core/config.dart';
+import 'package:harness_mobile/core/local_key_value_store.dart';
 import 'package:harness_mobile/core/machine_cache.dart';
 import 'package:harness_mobile/core/models.dart';
+import 'package:harness_mobile/core/snapshot_store.dart';
+import 'package:harness_mobile/notify/system_notices.dart';
 import 'package:harness_mobile/state/app_state.dart';
+import 'package:harness_mobile/state/pane_layout_store.dart';
 import 'package:harness_mobile/terminal/terminal_binary.dart';
 import 'package:harness_mobile/terminal/terminal_session.dart';
 import 'package:harness_mobile/viewer/direct_auth.dart';
@@ -390,9 +394,15 @@ class ViewerRig {
 
 /// A phone app — a VIEWER, with no CLI beside it — signed out, on an account
 /// whose machines [FakeApi.onMachines] lists.
+///
+/// [storage] is what the app keeps across launches — the layout, the last
+/// agent open — held in memory. Given one, the app also keeps its machine
+/// cache (in memory unless [machineCache] says otherwise) and would reach the
+/// OS notification centre, which is silenced here.
 ViewerRig viewerApp({
   bool signedIn = true,
   MachineCache? machineCache,
+  LocalKeyValueStore? storage,
   Duration turnActivityTimeout = const Duration(seconds: 12),
 }) {
   final session = AuthSession(storage: MemoryKeyValueStore());
@@ -408,7 +418,11 @@ ViewerRig viewerApp({
     cliLink: CliLink(),
     peerLinks: links,
     viewer: viewer,
-    machineCache: machineCache,
+    paneLayoutStore: storage == null ? null : PaneLayoutStore(storage: storage),
+    systemNotices: SilentSystemNotices(),
+    machineCache:
+        machineCache ??
+        (storage == null ? null : MachineCache(store: MemorySnapshotStore())),
     turnActivityTimeout: turnActivityTimeout,
     connectionForTest: (machineId) =>
         conns.putIfAbsent(machineId, ScriptedConn.new),
@@ -437,9 +451,13 @@ Future<void> settle() async {
 Future<ViewerRig> signedInWith(
   Map<String, List<String>> agents, {
   bool noTakeover = true,
+  LocalKeyValueStore? storage,
   Duration turnActivityTimeout = const Duration(seconds: 12),
 }) async {
-  final rig = viewerApp(turnActivityTimeout: turnActivityTimeout);
+  final rig = viewerApp(
+    storage: storage,
+    turnActivityTimeout: turnActivityTimeout,
+  );
   rig.api.onMachines = () async => [
     for (final id in agents.keys) remoteMachine(id),
   ];

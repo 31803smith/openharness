@@ -6153,7 +6153,10 @@ class AppNotifier extends ChangeNotifier {
       // recovery every tile shares (`_attachPendingPanes`) to decide, never
       // for a guess about the next swipe.
       if (existing.warm && _paneNeedsAttach(existing)) {
-        await _reattachPane(existing);
+        // ⚠️ Automatic, spelled out: [_reattachPane] defaults to a PERSON,
+        // which raises the session's takeover — and a guess reopened that way
+        // took the terminal off the desktop with nobody on the page.
+        await _reattachPane(existing, intent: AttachIntent.automatic);
       }
       return;
     }
