@@ -346,7 +346,11 @@ class WsConn {
         },
       });
     } on WsCredentialRevoked catch (error) {
-      _signOut(error.message);
+      // ⚠️ Not for a connection somebody already closed. Signing out closes every connection, and
+      // one still waiting on its credential then learns the session is gone — which is the
+      // sign-out in progress, not news. Reported, it re-entered the app's sign-out halfway through
+      // that one, which then stopped early.
+      if (!_closing) _signOut(error.message);
     } catch (error) {
       // Swallowed for control flow — a failed dial is retried, not surfaced —
       // but not silently: this branch covers the credential, the codec, the
@@ -915,14 +919,26 @@ class WsConn {
     try {
       await accessTokenProvider(true, _tokenUsed);
     } on WsCredentialRevoked {
-      _signOut('Your SSO session expired. Please sign in again.');
+      // As in [connect]: a closed connection has nobody left to sign out.
+      if (!_closing) _signOut('Your SSO session expired. Please sign in again.');
       return;
     } catch (_) {
       // The token is still stale, so the next dial refreshes again on its own.
       _scheduleReconnect();
       return;
     }
-    if (!_closing) await connect();
+    if (_closing) return;
+    // ⚠️ **Straight back only the first time.** An expired token is renewed and redialled at once
+    // — the ordinary case, and nobody should wait for it. But a relay that refuses every token (the
+    // backend and the account API disagreeing about a session, say) was asked again the moment
+    // each refresh landed: a refresh and a dial per round trip, with no backoff at all, for as
+    // long as the app stayed open. A second 4401 before the session came up waits its turn.
+    if (_attempt == 0) {
+      _attempt++;
+      await connect();
+    } else {
+      _scheduleReconnect();
+    }
   }
 
   void _scheduleReconnect() {
