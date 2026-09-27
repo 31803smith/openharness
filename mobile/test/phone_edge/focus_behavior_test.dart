@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:harness_mobile/core/models.dart';
+import 'package:harness_mobile/demo/sample_mode.dart';
 import 'package:harness_mobile/phone/phone_search_catalog.dart'
     show phoneAgentId;
 import 'package:harness_mobile/phone/phone_shell_scope.dart';
@@ -14,6 +15,7 @@ import 'package:harness_mobile/phone/voice_mic_button.dart';
 import 'package:harness_mobile/phone/voice_mic_face.dart';
 import 'package:harness_mobile/state/app_state.dart';
 import 'package:harness_mobile/state/pending_question.dart';
+import 'package:harness_mobile/terminal/terminal_font_store.dart';
 import 'package:harness_mobile/terminal/terminal_session.dart';
 import 'package:xterm/xterm.dart';
 
@@ -404,14 +406,388 @@ void main() {
 
     testWidgets('a tap on an answer\'s own line presses it', (tester) async {
       final focus = await asked(tester);
-      final line = find.textContaining("don't ask again", findRichText: true);
-      if (line.evaluate().isNotEmpty) {
-        await tester.tap(line.first);
-      }
+      await focus.tapRow("don't ask again");
       await frames(tester);
-      expect(tester.takeException(), isNull);
+      expect(focus.typed, contains('2'));
       await focus.close();
     });
+
+    testWidgets('a question with no words to spare: a voice that matches '
+        'nothing is not sent', (tester) async {
+      final focus = await _Focus.open(tester);
+      focus.session.terminal.write(
+        '\r\n ─────────────────────────────\r\n'
+        ' Which database?\r\n'
+        ' ❯ 1. Postgres\r\n'
+        '   2. SQLite\r\n'
+        '\r\n'
+        ' Enter to select · Esc to cancel',
+      );
+      await frames(tester);
+      focus.stt.replies.add('the fast one');
+      await tester.tap(find.byType(VoiceMicCore));
+      await frames(tester);
+      await tester.tap(find.byType(VoiceMicCore));
+      await frames(tester, count: 2);
+      expect(find.text('✗ no match — tap an answer'), findsOneWidget);
+      expect(focus.typed, isNot(contains('1')));
+      // The words are kept: once the question has been answered on screen, a tap on the mic
+      // sends them to the agent.
+      expect(focus.voice.transcript, 'the fast one');
+      await focus.close();
+    });
+
+    testWidgets('multi-select: answered on screen, with the keyboard\'s keys', (
+      tester,
+    ) async {
+      final focus = await _Focus.open(tester);
+      focus.session.terminal.write(
+        '\r\n ─────────────────────────────\r\n'
+        ' Which checks should run?\r\n'
+        ' ❯ 1. [ ] Lint\r\n'
+        '   2. [ ] Tests\r\n'
+        '   3. [ ] Build\r\n'
+        '\r\n'
+        ' Enter to select · Esc to cancel',
+      );
+      await frames(tester);
+      // No keys beside the mic for a dialog that takes several answers; the keyboard comes up for
+      // it instead, with Enter on its strip.
+      expect(find.bySemanticsLabel(RegExp('^Answer ')), findsNothing);
+      expect(find.byKey(const ValueKey('terminal-key-Enter')), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('terminal-key-Enter')));
+      await frames(tester);
+      expect(focus.typed, contains('\r'));
+      await focus.close();
+    });
+  });
+
+  group('the app going away and coming back', () {
+    testWidgets('the keyboard it left with is the keyboard it comes back to', (
+      tester,
+    ) async {
+      final focus = await _Focus.open(tester);
+      focus.fill();
+      await frames(tester);
+      await focus.tapPrompt();
+      await tester.pump();
+      raiseKeyboard(tester);
+      await frames(tester);
+      expect(find.byKey(const ValueKey('terminal-key-esc')), findsOneWidget);
+
+      final binding = tester.binding;
+      binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+      binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+      binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+      // Android takes the keyboard on the way out.
+      lowerKeyboard(tester);
+      await frames(tester);
+      binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+      binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+      binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      await frames(tester);
+
+      expect(
+        find.byKey(const ValueKey('terminal-key-esc')),
+        findsOneWidget,
+        reason: 'asked for again on the way back',
+      );
+      await focus.close();
+    });
+  });
+
+  group('a picture', () {
+    testWidgets('where the computer takes one: the library, cancelled, '
+        'and a camera the phone refused', (tester) async {
+      final calls = <String>[];
+      Object? answer;
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(
+            const MethodChannel('plugins.flutter.io/image_picker'),
+            (call) async {
+              calls.add('${call.method} ${call.arguments['source']}');
+              if (answer case final PlatformException error) throw error;
+              return answer;
+            },
+          );
+      addTearDown(
+        () => TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(
+              const MethodChannel('plugins.flutter.io/image_picker'),
+              null,
+            ),
+      );
+      final focus = await _Focus.open(tester);
+      focus.app.stateOf('m')!.terminalImagePasteAvailable = true;
+      focus.fill();
+      await frames(tester);
+      await focus.tapPrompt();
+      await tester.pump();
+      raiseKeyboard(tester);
+      await frames(tester);
+
+      // Cancelled: nothing said about it.
+      await tester.tap(find.byKey(const ValueKey('terminal-key-Send image')));
+      await frames(tester);
+      await tester.tap(find.text('Choose from library'));
+      await frames(tester);
+      expect(calls, hasLength(1));
+      expect(find.byType(SnackBar), findsNothing);
+
+      // The camera refused: the one failure somebody can do something about.
+      answer = PlatformException(code: 'camera_access_denied');
+      await tester.tap(find.byKey(const ValueKey('terminal-key-Send image')));
+      await frames(tester);
+      await tester.tap(find.text('Take a photo'));
+      await frames(tester);
+      expect(
+        find.text('Allow camera access in Settings to send a photo.'),
+        findsOneWidget,
+      );
+      await focus.close();
+    });
+  });
+
+  group('the sample', () {
+    testWidgets('its end card: set up a computer, or keep playing', (
+      tester,
+    ) async {
+      setPhone(tester, largePhone);
+      final app = edgeApp(agents: [edgeAgent('sample-new-1')]);
+      await liveTerminal(app, 'sample-new-1');
+      final sample = FakeSample(app);
+      await tester.pumpWidget(
+        phoneApp(
+          SampleMode(
+            session: sample,
+            child: TerminalPage(
+              notifier: app,
+              machineId: 'm',
+              agentId: 'sample-new-1',
+              voice: edgeVoice().voice,
+            ),
+          ),
+        ),
+      );
+      await frames(tester);
+      expect(find.text('✓ yours is running'), findsOneWidget);
+      await tester.pump(const Duration(seconds: 9));
+      await frames(tester);
+      await tester.tap(find.text('Set up my computer'));
+      expect(sample.left, ['set-up']);
+      await tester.tap(find.text('Keep playing'));
+      await frames(tester);
+      expect(find.text('That’s Harness.'), findsNothing);
+
+      // And its menu has the way out.
+      await tester.tap(find.byKey(const ValueKey('terminal-title')));
+      await frames(tester);
+      await tester.tap(find.text('Leave the sample'));
+      expect(sample.left, ['set-up', null]);
+      await tester.pumpWidget(const SizedBox());
+      await tester.pump(const Duration(seconds: 3));
+      app.dispose();
+      await tester.pump(const Duration(seconds: 30));
+    });
+
+    testWidgets('its guide line steps along with what has been done', (
+      tester,
+    ) async {
+      setPhone(tester, largePhone);
+      final app = edgeApp(
+        agents: [
+          edgeAgent('a'),
+          edgeAgent('b', name: 'b'),
+        ],
+      );
+      await liveTerminal(app, 'a');
+      final sample = FakeSample(app);
+      await tester.pumpWidget(
+        phoneApp(
+          SampleMode(
+            session: sample,
+            child: TerminalPage(
+              notifier: app,
+              machineId: 'm',
+              agentId: 'a',
+              voice: edgeVoice().voice,
+            ),
+          ),
+        ),
+      );
+      await frames(tester);
+      expect(find.text('← start one of your own'), findsOneWidget);
+      await app.handleMachineEventForTest('m', {
+        'type': 'commander_question',
+        'payload': {
+          'agentId': 'b',
+          'requestId': 'q',
+          'questions': [
+            {
+              'q': 'Go?',
+              'options': ['Yes', 'No'],
+            },
+          ],
+        },
+      });
+      await frames(tester);
+      expect(find.text('b needs you →'), findsOneWidget);
+      await tester.pumpWidget(const SizedBox());
+      await tester.pump(const Duration(seconds: 3));
+      app.dispose();
+      await tester.pump(const Duration(seconds: 30));
+    });
+  });
+
+  group('the agent going away', () {
+    testWidgets('gone from the list it opened from: the way to another', (
+      tester,
+    ) async {
+      setPhone(tester, largePhone);
+      final app = edgeApp(agents: [edgeAgent('a', name: 'fix-login')]);
+      app.stateOf('m')!.agentsFromCache = true;
+      final pushed = <Route<dynamic>>[];
+      await tester.pumpWidget(
+        phoneApp(
+          Builder(
+            builder: (context) => TextButton(
+              onPressed: () => Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (_) => TerminalPage(
+                    notifier: app,
+                    machineId: 'm',
+                    agentId: 'a',
+                    voice: edgeVoice().voice,
+                  ),
+                ),
+              ),
+              child: const Text('home'),
+            ),
+          ),
+          observers: [_Pushes(pushed)],
+        ),
+      );
+      await tester.tap(find.text('home'));
+      await frames(tester);
+      // The machine's own list lands, without it.
+      app.stateOf('m')!
+        ..agentsFromCache = false
+        ..agents = [edgeAgent('other')];
+      await app.syncAgentsForTest('m');
+      await frames(tester);
+      expect(find.text('fix-login is gone'), findsOneWidget);
+
+      await tester.tap(find.text('Open another harness'));
+      await frames(tester, count: 10);
+      expect(find.byType(TerminalPage), findsNothing);
+      expect(find.text('home'), findsOneWidget);
+      await tester.pumpWidget(const SizedBox());
+      await tester.pump(const Duration(seconds: 3));
+      app.dispose();
+      await tester.pump(const Duration(seconds: 30));
+    });
+
+    testWidgets('its pane closed while it is read: the page leaves', (
+      tester,
+    ) async {
+      setPhone(tester, largePhone);
+      final app = edgeApp();
+      await liveTerminal(app, 'a');
+      await tester.pumpWidget(
+        phoneApp(
+          Builder(
+            builder: (context) => TextButton(
+              onPressed: () => Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (_) => TerminalPage(
+                    notifier: app,
+                    machineId: 'm',
+                    agentId: 'a',
+                    voice: edgeVoice().voice,
+                  ),
+                ),
+              ),
+              child: const Text('home'),
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.text('home'));
+      await frames(tester);
+      expect(find.byType(TerminalPage), findsOneWidget);
+
+      await app.closePane(app.panes.single.id);
+      await frames(tester, count: 10);
+      expect(find.byType(TerminalPage), findsNothing);
+      await tester.pumpWidget(const SizedBox());
+      await tester.pump(const Duration(seconds: 3));
+      app.dispose();
+      await tester.pump(const Duration(seconds: 30));
+    });
+  });
+
+  group('attaching', () {
+    testWidgets('with animations off, the skeleton is drawn still', (
+      tester,
+    ) async {
+      setPhone(tester, largePhone);
+      final app = edgeApp();
+      await tester.pumpWidget(
+        phoneApp(
+          MediaQuery(
+            data: const MediaQueryData(disableAnimations: true),
+            child: TerminalPage(
+              notifier: app,
+              machineId: 'm',
+              agentId: 'a',
+              voice: edgeVoice().voice,
+            ),
+          ),
+        ),
+      );
+      await frames(tester);
+      expect(find.bySemanticsLabel('Attaching to the harness'), findsOneWidget);
+      // Nothing moves, so the tree settles — which a breathing skeleton never lets it do.
+      await tester.pumpAndSettle();
+      await tester.pumpWidget(const SizedBox());
+      await tester.pump(const Duration(seconds: 3));
+      app.dispose();
+      await tester.pump(const Duration(seconds: 30));
+    });
+  });
+
+  group('reading back', () {
+    testWidgets('the copy-mode position, and one tap back to the end', (
+      tester,
+    ) async {
+      final focus = await _Focus.open(tester);
+      focus.fill();
+      await frames(tester);
+      await tester.drag(
+        find.byType(TerminalPage),
+        const Offset(0, 500),
+        warnIfMissed: false,
+      );
+      await frames(tester);
+      final position = find.bySemanticsLabel(RegExp('lines above the end'));
+      expect(position, findsOneWidget);
+      await tester.tap(position);
+      await frames(tester);
+      expect(
+        find.bySemanticsLabel(RegExp('lines above the end')),
+        findsNothing,
+      );
+      await focus.close();
+    });
+  });
+
+  group('a question, answered by voice', () {
+    Future<_Focus> asked(WidgetTester tester) async {
+      final focus = await _Focus.open(tester);
+      focus.session.terminal.write(permissionDialog);
+      await frames(tester);
+      return focus;
+    }
 
     testWidgets('"yes" said to the mic answers it', (tester) async {
       final focus = await asked(tester);
@@ -563,6 +939,22 @@ class _Focus {
         _widgetTester.view.devicePixelRatio;
     final bottom = terminal.bottom < screen ? terminal.bottom : screen - 40;
     await _widgetTester.tapAt(Offset(terminal.left + 30, bottom - 8));
+  }
+
+  /// A tap on the terminal row that reads [text], at its left edge.
+  Future<void> tapRow(String text) async {
+    final lines = session.terminal.buffer.lines;
+    var row = -1;
+    for (var i = 0; i < lines.length; i++) {
+      if (lines[i].getText().contains(text)) row = i;
+    }
+    expect(row, isNot(-1), reason: '"$text" is on the screen');
+    final view = _widgetTester.getRect(find.byType(TerminalView));
+    final style = terminalFontStore.value;
+    final cell = style.fontSize * style.height;
+    final scrolled = lines.length - session.terminal.viewHeight;
+    final y = view.top + (row - (scrolled < 0 ? 0 : scrolled) + 0.5) * cell;
+    await _widgetTester.tapAt(Offset(view.left + 40, y));
   }
 
   /// [agentId] stops to ask something, as its machine announces it.

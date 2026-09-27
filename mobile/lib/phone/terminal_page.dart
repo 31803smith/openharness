@@ -963,19 +963,24 @@ class _TerminalPageState extends State<TerminalPage>
   double get _clearAboveMic =>
       _questionWatcher?.view != null ? _statusBottom + 22 : _windowBottomInset;
 
-  /// The line above the mic, highest first: what a take is doing, a two-second message (`✓ 1
-  /// yes`, or an error in red), a question with no keys to offer, the sample's next step. Null
-  /// when there is nothing to say.
+  /// The line above the mic, highest first: a two-second message (`✓ 1 yes`, or an error in red),
+  /// what a take is doing, a question with no keys to offer, the sample's next step. Null when
+  /// there is nothing to say.
+  ///
+  /// ⚠️ **The two-second message outranks the take.** The take's line was first, and a take the
+  /// question refused — `✗ no match — tap an answer` — never showed its reason: the refusal also
+  /// leaves the take's generic "Not sent — this terminal isn't taking input" standing, which
+  /// covered the one line that said what to do, and blamed the terminal instead.
   Widget? _statusLine() {
     final tty = Tty.of(context);
-    if (voiceStatus(widget.voice, tty) case final said?) {
-      return _StatusLine(text: said.text, color: said.color);
-    }
     if (_barMessage.value case final message?) {
       return _StatusLine(
         text: message.text,
         color: message.error ? tty.red : tty.green,
       );
+    }
+    if (voiceStatus(widget.voice, tty) case final said?) {
+      return _StatusLine(text: said.text, color: said.color);
     }
     final view = _questionWatcher?.view;
     if (view != null && _answerKeys(view) == null) {
