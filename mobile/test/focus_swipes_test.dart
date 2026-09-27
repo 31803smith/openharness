@@ -172,7 +172,7 @@ void main() {
         CustomSemanticsAction.getAction,
       );
       expect(find_.map((a) => a!.label), containsAll(['Find', 'New harness']));
-      tester.binding.pipelineOwner.semanticsOwner!.performAction(
+      node.owner!.performAction(
         node.id,
         SemanticsAction.customAction,
         CustomSemanticsAction.getIdentifier(
@@ -190,8 +190,9 @@ void main() {
     ) async {
       final handle = tester.ensureSemantics();
       final pushed = await pumpFocus(tester);
-      tester.binding.pipelineOwner.semanticsOwner!.performAction(
-        terminalNode(tester).id,
+      final node = terminalNode(tester);
+      node.owner!.performAction(
+        node.id,
         SemanticsAction.customAction,
         CustomSemanticsAction.getIdentifier(
           const CustomSemanticsAction(label: 'New harness'),

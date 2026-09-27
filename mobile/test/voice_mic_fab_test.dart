@@ -162,14 +162,14 @@ void main() {
       final node = tester.getSemantics(find.byType(VoiceMicButton));
       // One word while the mic is open: a read-out sentence would land in the take.
       expect(node.label, 'Send');
-      tester.binding.pipelineOwner.semanticsOwner!.performAction(
+      node.owner!.performAction(
         node.id,
         SemanticsAction.customAction,
         CustomSemanticsAction.getIdentifier(
           const CustomSemanticsAction(label: 'Cancel'),
         ),
       );
-      tester.binding.pipelineOwner.semanticsOwner!.performAction(
+      node.owner!.performAction(
         node.id,
         SemanticsAction.dismiss,
       );

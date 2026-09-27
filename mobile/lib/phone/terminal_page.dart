@@ -198,6 +198,7 @@ typedef _PageFacts = ({
   PhoneMachineStatus? machineStatus,
   bool imagePaste,
   String? machineName,
+  String? asking,
 });
 
 class _TerminalPageState extends State<TerminalPage>
@@ -660,6 +661,11 @@ class _TerminalPageState extends State<TerminalPage>
       machineStatus: machine == null ? null : phoneMachineStatusOf(machine),
       imagePaste: machine?.terminalImagePasteAvailable ?? false,
       machineName: machine?.machine.displayName,
+      // ⚠️ The title's `api-fix asking` is drawn from here too. Left out, a harness elsewhere
+      // that stopped to ask moved no fact this page compared, so the word never appeared — the
+      // one signal the title carries about the rest of the fleet, missing until something
+      // unrelated happened to rebuild the page.
+      asking: _askingElsewhere(),
     );
   }
 
@@ -892,19 +898,24 @@ class _TerminalPageState extends State<TerminalPage>
   double get _clearAboveMic =>
       _questionWatcher?.view != null ? _statusBottom + 22 : _windowBottomInset;
 
-  /// The line above the mic, highest first: what a take is doing, a two-second message (`✓ 1
-  /// yes`, or an error in red), a question with no keys to offer, the sample's next step. Null
-  /// when there is nothing to say.
+  /// The line above the mic, highest first: a two-second message (`✓ 1 yes`, or an error in red),
+  /// what a take is doing, a question with no keys to offer, the sample's next step. Null when
+  /// there is nothing to say.
+  ///
+  /// ⚠️ **The two-second message outranks the take.** The take's line was first, and a take the
+  /// question refused — `✗ no match — tap an answer` — never showed its reason: the refusal also
+  /// leaves the take's generic "Not sent — this terminal isn't taking input" standing, which
+  /// covered the one line that said what to do, and blamed the terminal instead.
   Widget? _statusLine() {
     final tty = Tty.of(context);
-    if (voiceStatus(widget.voice, tty) case final said?) {
-      return _StatusLine(text: said.text, color: said.color);
-    }
     if (_barMessage.value case final message?) {
       return _StatusLine(
         text: message.text,
         color: message.error ? tty.red : tty.green,
       );
+    }
+    if (voiceStatus(widget.voice, tty) case final said?) {
+      return _StatusLine(text: said.text, color: said.color);
     }
     final view = _questionWatcher?.view;
     if (view != null && _answerKeys(view) == null) {
@@ -1027,8 +1038,14 @@ class _TerminalPageState extends State<TerminalPage>
       false;
 
   /// A window name the way tmux shortens one: the first dozen characters.
-  static String _windowName(String name) =>
-      name.length <= 12 ? name : name.substring(0, 12);
+  ///
+  /// ⚠️ Characters as a person counts them, not UTF-16 units: cut by `substring`, a name with an
+  /// emoji near the twelfth unit kept half a surrogate pair, and the text engine throws on a string
+  /// like that — the title, and the page under it, went with it.
+  static String _windowName(String name) {
+    final characters = name.characters;
+    return characters.length <= 12 ? name : characters.take(12).toString();
+  }
 
   /// Where the reader is while scrolled up in the history, or null at the end — what holds the
   /// terminal still under a reader ([_AnchoredTerminal.reading]).
@@ -1900,7 +1917,21 @@ class _TerminalPageState extends State<TerminalPage>
                                                       // keyboard: raising one over a read-only
                                                       // pane offers a prompt that silently
                                                       // swallows every letter.
-                                                      onInputTap: blocked
+                                                      //
+                                                      // ⚠️ **A stream that died is one of those
+                                                      // panes.** Held to [blocked] alone, a tap on
+                                                      // a closed or failed stream raised the
+                                                      // keyboard over it — keys dimmed, letters
+                                                      // dropped — and nothing on the page offered
+                                                      // the reconnect instead. The take reopens it.
+                                                      onInputTap:
+                                                          blocked ||
+                                                              session.status ==
+                                                                  TerminalSessionStatus
+                                                                      .closed ||
+                                                              session.status ==
+                                                                  TerminalSessionStatus
+                                                                      .error
                                                           ? () => unawaited(
                                                               _takeControl(),
                                                             )
@@ -2623,7 +2654,12 @@ class _AttachingState extends State<_Attaching> with TickerProviderStateMixin {
   /// Whether the sweep and the breath are running. False with the page parked
   /// beside the one on screen, or with animations turned off — see
   /// [didChangeDependencies] for what is drawn then.
-  bool _animating = false;
+  ///
+  /// ⚠️ **Null until the first [didChangeDependencies], not false.** Starting
+  /// on false, a skeleton BUILT still — Reduce Motion on, or a page built parked
+  /// — found nothing changed, skipped the jump to the sweep's end, and drew bare
+  /// ground for the whole wait.
+  bool? _animating;
 
   @override
   void didChangeDependencies() {
@@ -3563,33 +3599,52 @@ class _SampleEndCard extends StatelessWidget {
       child: SafeArea(
         child: Padding(
           padding: const EdgeInsets.fromLTRB(24, 24, 24, 24),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              const Spacer(),
-              TtyText('That’s Harness.', size: 26, weight: FontWeight.w600),
-              const SizedBox(height: 20),
-              tick('watched a harness work'),
-              tick('answered its question'),
-              tick('started $started'),
-              const SizedBox(height: 6),
-              TtyText('3 passed', size: TtySize.meta, color: tty.green),
-              const SizedBox(height: 24),
-              Text(
-                'Now do it on your own code. The real ones run on your '
-                'computer; this phone is the remote.',
-                style: tty.style(size: TtySize.row),
-              ),
-              const Spacer(),
-              TtyPrimaryButton(label: 'Set up my computer', onPressed: onSetUp),
-              const SizedBox(height: 4),
-              Center(
-                child: TtyTextButton(
-                  label: 'Keep playing',
-                  onPressed: onKeepPlaying,
+          // ⚠️ **Scrolls when it does not fit.** Centred by its spacers on a screen with room, but
+          // a small phone at a large text size has less room than the card has words — as a
+          // fixed column it overflowed, and the one button that leads anywhere went off the foot.
+          child: LayoutBuilder(
+            builder: (context, box) => SingleChildScrollView(
+              child: ConstrainedBox(
+                constraints: BoxConstraints(minHeight: box.maxHeight),
+                child: IntrinsicHeight(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      const Spacer(),
+                      TtyText(
+                        'That’s Harness.',
+                        size: 26,
+                        weight: FontWeight.w600,
+                      ),
+                      const SizedBox(height: 20),
+                      tick('watched a harness work'),
+                      tick('answered its question'),
+                      tick('started $started'),
+                      const SizedBox(height: 6),
+                      TtyText('3 passed', size: TtySize.meta, color: tty.green),
+                      const SizedBox(height: 24),
+                      Text(
+                        'Now do it on your own code. The real ones run on your '
+                        'computer; this phone is the remote.',
+                        style: tty.style(size: TtySize.row),
+                      ),
+                      const Spacer(),
+                      TtyPrimaryButton(
+                        label: 'Set up my computer',
+                        onPressed: onSetUp,
+                      ),
+                      const SizedBox(height: 4),
+                      Center(
+                        child: TtyTextButton(
+                          label: 'Keep playing',
+                          onPressed: onKeepPlaying,
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               ),
-            ],
+            ),
           ),
         ),
       ),

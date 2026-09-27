@@ -333,45 +333,57 @@ class _Hello extends StatelessWidget {
         .copyWith(height: 34 / 28, letterSpacing: -0.6);
     return Padding(
       padding: const EdgeInsets.fromLTRB(Tty.origin, 24, Tty.origin, 24),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          GestureDetector(
-            key: const ValueKey('welcome-wordmark'),
-            behavior: HitTestBehavior.opaque,
-            onLongPress: onSample,
-            child: Row(
-              children: [
-                TtyText(
-                  'harness',
-                  size: TtySize.title,
-                  weight: FontWeight.w600,
-                ),
-                Container(
-                  width: 9,
-                  height: 18,
-                  margin: const EdgeInsets.only(left: 2),
-                  color: tty.green,
-                ),
-              ],
+      // ⚠️ **Scrolls when it does not fit.** The spacer holds the question at the foot where there
+      // is room; on a small phone at a large text size the headline alone outgrew the screen, and
+      // the column overflowed with both answers — the only ways on — pushed off its foot.
+      child: LayoutBuilder(
+        builder: (context, box) => SingleChildScrollView(
+          child: ConstrainedBox(
+            constraints: BoxConstraints(minHeight: box.maxHeight),
+            child: IntrinsicHeight(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  GestureDetector(
+                    key: const ValueKey('welcome-wordmark'),
+                    behavior: HitTestBehavior.opaque,
+                    onLongPress: onSample,
+                    child: Row(
+                      children: [
+                        TtyText(
+                          'harness',
+                          size: TtySize.title,
+                          weight: FontWeight.w600,
+                        ),
+                        Container(
+                          width: 9,
+                          height: 18,
+                          margin: const EdgeInsets.only(left: 2),
+                          color: tty.green,
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 48),
+                  Text(
+                    'Claude Code and Codex\nrun on your computer.\nDrive them from here.',
+                    style: hero,
+                  ),
+                  const Spacer(),
+                  TtyText(
+                    'Is Harness on your computer?',
+                    color: tty.faint,
+                    size: TtySize.row,
+                  ),
+                  const SizedBox(height: 12),
+                  _Answer(label: 'Yes — scan to connect', onTap: onScan),
+                  const SizedBox(height: 10),
+                  _Answer(label: 'Not yet — set it up', onTap: onSetUp),
+                ],
+              ),
             ),
           ),
-          const SizedBox(height: 48),
-          Text(
-            'Claude Code and Codex\nrun on your computer.\nDrive them from here.',
-            style: hero,
-          ),
-          const Spacer(),
-          TtyText(
-            'Is Harness on your computer?',
-            color: tty.faint,
-            size: TtySize.row,
-          ),
-          const SizedBox(height: 12),
-          _Answer(label: 'Yes — scan to connect', onTap: onScan),
-          const SizedBox(height: 10),
-          _Answer(label: 'Not yet — set it up', onTap: onSetUp),
-        ],
+        ),
       ),
     );
   }
