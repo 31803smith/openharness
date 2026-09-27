@@ -509,6 +509,10 @@ class WsConn {
         }
         return;
       case 'e2e_welcome':
+        // One per session (see `RelaySessionCrypto.handleWelcome`): another once this one is up
+        // is the relay repeating itself — not the machine failing to prove who it is, which is
+        // what refusing the peer below would take it for.
+        if (_ready) return;
         // The verify and key agreement behind this are pure-Dart Ed25519/X25519
         // on the UI isolate, so this span is CPU on the very thread drawing the
         // spinner — worth its own line to tell it apart from time spent waiting
