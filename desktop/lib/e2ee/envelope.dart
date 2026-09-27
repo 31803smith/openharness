@@ -16,6 +16,10 @@ const Set<String> encryptedDownTypes = {
   'harness_share_list',
   'harness_share_invite',
   'harness_share_remove',
+  'harness_share_link',
+  'harness_share_comments',
+  'harness_share_comment_post',
+  'harness_share_comment_remove',
   // Harness's application RPC extensions (CLI e2ee/applicationFrames.ts).
   'grid_fleet_capabilities',
   'grid_fleet_run',

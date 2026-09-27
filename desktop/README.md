@@ -71,9 +71,14 @@ For a local production build, run `bash scripts/build-web-release.sh X.Y.Z`.
 
 - Authenticated access to existing machines uses the shared viewer services and
   encrypted relay. Link a machine from the browser before controlling it.
-- Existing account-bound sharing invitations open read-only through the observer
-  relay, with the owner's identity verified. Public, anonymous session URLs and
-  published snapshots are the next product layer; they are not implemented here.
+- **Share** on an agent creates one browser link. Private links require sign-in
+  with an invited email; public links open without an account. Viewers receive
+  only that agent's read-only output through the encrypted observer relay, with
+  the owner's identity pinned in the link. Sign-in returns to the same link.
+  Comments travel through that channel and persist on the owner's machine;
+  posting requires sign-in. Authors can remove their comments and owners can
+  moderate the thread. **Stop sharing** removes link and invitation access.
+  The owner's machine must be online; published snapshots are not included.
 - Login, linked machines, preferences, and cached workspace metadata persist in
   this origin's local storage across tabs and browser restarts. Only the pending
   OAuth transaction is tab-local. Browser locks serialize token refresh and
