@@ -1,4 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:harness_mobile/phone/voice_mic_face.dart';
+import 'package:harness_mobile/phone/voice_mic_button.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:harness_mobile/phone/voice_input_controller.dart';
 import 'package:harness_mobile/phone/voice_mic_fab.dart';
@@ -137,4 +140,41 @@ void main() {
     expect(recorder.starts, 0);
     expect(frames, isEmpty);
   });
+
+  testWidgets(
+    'VoiceOver can cancel a take — the swipe down is VoiceOver\'s own',
+    (tester) async {
+      final handle = tester.ensureSemantics();
+      var cancelled = 0;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: Center(
+              child: VoiceMicButton(
+                face: VoiceMicFace.listening,
+                onPressed: () {},
+                onSwipeDown: () => cancelled++,
+              ),
+            ),
+          ),
+        ),
+      );
+      final node = tester.getSemantics(find.byType(VoiceMicButton));
+      // One word while the mic is open: a read-out sentence would land in the take.
+      expect(node.label, 'Send');
+      tester.binding.pipelineOwner.semanticsOwner!.performAction(
+        node.id,
+        SemanticsAction.customAction,
+        CustomSemanticsAction.getIdentifier(
+          const CustomSemanticsAction(label: 'Cancel'),
+        ),
+      );
+      tester.binding.pipelineOwner.semanticsOwner!.performAction(
+        node.id,
+        SemanticsAction.dismiss,
+      );
+      expect(cancelled, 2);
+      handle.dispose();
+    },
+  );
 }

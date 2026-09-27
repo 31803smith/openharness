@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart' show ValueListenable;
 import 'package:flutter/material.dart';
+import 'package:flutter/semantics.dart' show CustomSemanticsAction;
 import 'package:flutter/services.dart';
 
 import 'package:harness_mobile/shared/theme/app_theme.dart';
@@ -144,10 +145,9 @@ class _VoiceMicButtonState extends State<VoiceMicButton> {
     VoiceMicFace.talk || VoiceMicFace.sent =>
       micHoldsToTalk ? 'Hold to talk to the harness' : 'Talk to the harness',
     VoiceMicFace.starting => 'Cancel',
-    VoiceMicFace.listening =>
-      micHoldsToTalk
-          ? 'Release to send'
-          : 'Listening. Tap to send, swipe down to cancel',
+    // ⚠️ One word while the mic is open: VoiceOver reads the label aloud, and a sentence read
+    // into an open microphone lands in the take. Cancel is an action (below), not an instruction.
+    VoiceMicFace.listening => micHoldsToTalk ? 'Release to send' : 'Send',
     VoiceMicFace.cancelling => 'Release to cancel',
     VoiceMicFace.busy || VoiceMicFace.sending => 'Working',
     VoiceMicFace.retry => 'Send again',
@@ -264,11 +264,18 @@ class _VoiceMicButtonState extends State<VoiceMicButton> {
   @override
   Widget build(BuildContext context) {
     AppTheme.watch(context);
+    // VoiceOver keeps one-finger swipes for itself, so the swipe down that throws a take away
+    // never reached the mic: it is a Cancel action here, and the two-finger scrub (onDismiss).
+    final cancel = _face == VoiceMicFace.listening ? widget.onSwipeDown : null;
     return Semantics(
       button: true,
       enabled: _live,
       label: _semanticLabel,
       onLongPressHint: widget.onLongPress == null ? null : 'Choose language',
+      onDismiss: cancel,
+      customSemanticsActions: cancel == null
+          ? null
+          : {const CustomSemanticsAction(label: 'Cancel'): cancel},
       // ⚠️ **The slot is [VoiceMicButton.extent]; the hit area inside it is the
       // larger [VoiceMicButton.touchExtent], spilling out on every side.** The
       // [OverflowBox] is what allows a child bigger than its parent without the

@@ -12,7 +12,8 @@ import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:flutter/scheduler.dart';
-import 'package:flutter/semantics.dart' show CustomSemanticsAction;
+import 'package:flutter/semantics.dart'
+    show CustomSemanticsAction, SemanticsService;
 import 'package:xterm/xterm.dart' show Terminal, TerminalKey, TerminalStyle;
 
 import 'package:harness_mobile/logging/app_log.dart';
@@ -518,6 +519,20 @@ class _TerminalPageState extends State<TerminalPage>
     if (!mounted) return;
     final view = _questionWatcher?.view;
     final open = view != null && view.answerable;
+    // VoiceOver hears it too, once per question: the keys appearing beside the mic and the
+    // terminal repainting say nothing to someone who cannot see them.
+    if (open && view.question != _questionAnnounced) {
+      _questionAnnounced = view.question;
+      unawaited(
+        SemanticsService.sendAnnouncement(
+          View.of(context),
+          'Asking: ${view.question}',
+          Directionality.of(context),
+        ),
+      );
+    } else if (!open) {
+      _questionAnnounced = null;
+    }
     setState(() {
       // Cleared as the dialog goes, so the NEXT question raises the keyboard
       // again even if it words itself identically.
@@ -526,6 +541,9 @@ class _TerminalPageState extends State<TerminalPage>
     if (_questionWatcher?.queued == null) _queueRaisedFor = null;
     _raiseForQuestion();
   }
+
+  /// The question VoiceOver was last told about, so a repaint of the same dialog is not said twice.
+  String? _questionAnnounced;
 
   /// Raise the keyboard for the question on the pane, if it has not had its
   /// one raise yet — see [_questionRaisedFor] and [_queueRaisedFor].
@@ -3434,69 +3452,73 @@ class _StatusLineState extends State<_StatusLine>
       decoration: BoxDecoration(color: tty.green, shape: BoxShape.circle),
     );
     // A band the width of the screen, the output fading out above it as it does under the title —
-    // a pill only as wide as its words cut the rows behind it in half.
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
-          colors: [tty.ground.withValues(alpha: 0), tty.ground, tty.ground],
-          stops: const [0, 0.4, 1],
+    // a pill only as wide as its words cut the rows behind it in half. A live region: what it says
+    // (a take not sent, a question to answer on screen) is read out as it changes.
+    return Semantics(
+      liveRegion: true,
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [tty.ground.withValues(alpha: 0), tty.ground, tty.ground],
+            stops: const [0, 0.4, 1],
+          ),
         ),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(
-          Tty.origin,
-          14,
-          Tty.origin,
-          _StatusLine.below,
-        ),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            if (widget.dot) ...[
-              SizedBox(
-                width: 30,
-                height: 6,
-                child: AnimatedBuilder(
-                  animation: _clock,
-                  builder: (context, child) {
-                    // A glide over the first 60% of each beat, easing in and out, then a rest.
-                    final t = Curves.easeInOut.transform(
-                      (_clock.value / 0.6).clamp(0.0, 1.0),
-                    );
-                    final from = widget.glide < 0 ? 24.0 : 0.0;
-                    final x = widget.glide == 0
-                        ? 12.0
-                        : from + widget.glide * 24 * t;
-                    final fade = widget.glide == 0 ? 1.0 : 1 - (t * t);
-                    return Stack(
-                      children: [
-                        Positioned(
-                          left: x,
-                          top: 0,
-                          child: Opacity(opacity: fade, child: child),
-                        ),
-                      ],
-                    );
-                  },
-                  child: dot,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(
+            Tty.origin,
+            14,
+            Tty.origin,
+            _StatusLine.below,
+          ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              if (widget.dot) ...[
+                SizedBox(
+                  width: 30,
+                  height: 6,
+                  child: AnimatedBuilder(
+                    animation: _clock,
+                    builder: (context, child) {
+                      // A glide over the first 60% of each beat, easing in and out, then a rest.
+                      final t = Curves.easeInOut.transform(
+                        (_clock.value / 0.6).clamp(0.0, 1.0),
+                      );
+                      final from = widget.glide < 0 ? 24.0 : 0.0;
+                      final x = widget.glide == 0
+                          ? 12.0
+                          : from + widget.glide * 24 * t;
+                      final fade = widget.glide == 0 ? 1.0 : 1 - (t * t);
+                      return Stack(
+                        children: [
+                          Positioned(
+                            left: x,
+                            top: 0,
+                            child: Opacity(opacity: fade, child: child),
+                          ),
+                        ],
+                      );
+                    },
+                    child: dot,
+                  ),
+                ),
+                const SizedBox(width: 8),
+              ],
+              Flexible(
+                child: Text(
+                  widget.text,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: tty.style(
+                    size: TtySize.meta,
+                    color: widget.color ?? tty.faint,
+                  ),
                 ),
               ),
-              const SizedBox(width: 8),
             ],
-            Flexible(
-              child: Text(
-                widget.text,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: tty.style(
-                  size: TtySize.meta,
-                  color: widget.color ?? tty.faint,
-                ),
-              ),
-            ),
-          ],
+          ),
         ),
       ),
     );

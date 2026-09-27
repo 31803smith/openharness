@@ -210,24 +210,31 @@ void main() {
       },
     );
 
-    test('silence after the open redials, resends, then gives up', () async {
-      var redials = 0;
-      final s = session(
-        onOpenStalled: () async {
-          redials++;
-          return true;
-        },
-        resync: const Duration(milliseconds: 20),
-      );
+    // On the fake clock, like the test below: on the real one a 20ms resync and a 120ms wait
+    // raced a loaded machine, and the resend landed after the check in one full run of several.
+    test('silence after the open redials, resends, then gives up', () {
+      fakeAsync((async) {
+        var redials = 0;
+        final s = session(
+          disposeAtEnd: false,
+          onOpenStalled: () async {
+            redials++;
+            return true;
+          },
+          resync: const Duration(milliseconds: 20),
+        );
 
-      await s.open();
-      await Future<void>.delayed(const Duration(milliseconds: 120));
+        s.open();
+        async.flushMicrotasks();
+        async.elapse(const Duration(milliseconds: 120));
 
-      expect(redials, 1, reason: 'one forced redial per open');
-      expect(wire.of('terminal_open').length, greaterThanOrEqualTo(2));
-      expect(s.status, TerminalSessionStatus.error);
-      expect(s.errorCode, 'TERMINAL_RESYNC_TIMEOUT');
-      expect(s.errorMessage, contains('did not respond'));
+        expect(redials, 1, reason: 'one forced redial per open');
+        expect(wire.of('terminal_open').length, greaterThanOrEqualTo(2));
+        expect(s.status, TerminalSessionStatus.error);
+        expect(s.errorCode, 'TERMINAL_RESYNC_TIMEOUT');
+        expect(s.errorMessage, contains('did not respond'));
+        s.dispose();
+      });
     });
 
     test('a resend that cannot be sent either gives up at once', () {
