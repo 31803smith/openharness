@@ -277,41 +277,33 @@ void main() {
     });
   });
 
-  testWidgets('set up your computer: the steps by email, copied, the Mac '
-      'app, and help', (tester) async {
-    setPhone(tester, largePhone);
-    final app = edgeApp(noMachines: true);
-    var samples = 0;
-    await tester.pumpWidget(
-      phoneApp(
-        ConnectComputerPage(
-          notifier: app,
-          signedIn: false,
-          onTrySample: (_) async => samples++,
+  // The old page (email the steps, a Terminal/Mac tab, four commands) is the set-up page now,
+  // plus a sample to try while waiting — see connect_computer_test.dart for the signed-in half.
+  testWidgets(
+    'set up your computer: the download menu, and the sample while you wait',
+    (tester) async {
+      setPhone(tester, largePhone);
+      final app = edgeApp(noMachines: true);
+      var samples = 0;
+      await tester.pumpWidget(
+        phoneApp(
+          ConnectComputerPage(
+            notifier: app,
+            signedIn: false,
+            onTrySample: (_) async => samples++,
+            loadDownloads: () async => const {},
+          ),
         ),
-      ),
-    );
-    await frames(tester);
-    await tester.tap(find.text('Email me the setup link'));
-    await frames(tester);
-    expect(
-      platformCalls.where((call) => call.contains('url_launcher')),
-      isNotEmpty,
-    );
-    // Mail would not open: the steps are copied instead, and it says so.
-    await tapInView(tester, find.text('Mac app'));
-    await frames(tester);
-    await tapInView(tester, find.text('Copy').first);
-    await tester.pump();
-    await tester.pump(const Duration(seconds: 3));
-    await tapInView(tester, find.text('Try the sample'));
-    await frames(tester);
-    expect(samples, 1);
-    await tapInView(tester, find.text('How Harness works'));
-    await frames(tester, count: 6);
-    expect(find.byType(HowItWorksPage), findsOneWidget);
-    await close(tester, app);
-  });
+      );
+      await frames(tester);
+      expect(find.text('Apple Silicon'), findsOneWidget);
+      expect(find.text('Email me the setup link'), findsNothing);
+      await tapInView(tester, find.text('Try the sample while you wait'));
+      await frames(tester);
+      expect(samples, 1);
+      await close(tester, app);
+    },
+  );
 
   testWidgets('the set-up page: send the app, copy the CLI, see how it works', (
     tester,
@@ -459,7 +451,7 @@ void main() {
         ),
       );
       await frames(tester);
-      expect(find.text('3 sessions on studio'), findsOneWidget);
+      expect(find.text('3 harnesses on studio'), findsOneWidget);
 
       // A session is what the page is for: a tap opens it as the home screen.
       await tester.tap(find.text('agent-0', findRichText: true).first);
@@ -490,7 +482,7 @@ void main() {
         ..agents = [edgeAgent('x')];
       await tester.pumpWidget(phoneApp(PickUpPage(notifier: app)));
       await frames(tester);
-      expect(find.text('2 sessions on 2 computers'), findsOneWidget);
+      expect(find.text('2 harnesses on 2 computers'), findsOneWidget);
       await close(tester, app);
     });
   });

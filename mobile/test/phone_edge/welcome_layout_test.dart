@@ -135,12 +135,11 @@ void main() {
           notifier: app,
           onBack: () {},
           onTrySample: (_) async => null,
+          loadDownloads: () async => const {},
         ),
         scale,
         brightness,
       );
-      await tapInView(tester, find.text('Mac app'));
-      await frames(tester, count: 1);
       await tester.drag(find.byType(ListView), const Offset(0, -2000));
       await frames(tester, count: 1);
     });
