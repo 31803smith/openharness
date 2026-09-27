@@ -673,8 +673,13 @@ void main() {
       s.seedScreen(first.terminal);
       expect(s.showingKeptScreen, isTrue);
       expect(s.hasScreen, isTrue);
-      await s.open();
+      final opening = s.open(waitForViewportSize: true);
+      expect(_screen(s), contains('last time'), reason: 'through the open');
+      s.reportViewport(100, 30);
+      await opening;
+      expect(_screen(s), contains('last time'));
       final streamId = await ready(s);
+      expect(_screen(s), contains('last time'), reason: 'until a screen lands');
       await s.handleBinary(_keyframe(streamId, text: 'now'));
 
       expect(s.showingKeptScreen, isFalse);

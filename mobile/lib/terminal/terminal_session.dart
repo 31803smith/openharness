@@ -439,7 +439,13 @@ class TerminalSession extends ChangeNotifier {
     }
     cols = _clampCols(initialCols);
     rows = _clampRows(initialRows);
-    if (!preserveTerminal) terminal = _newTerminal()..resize(cols, rows);
+    // ⚠️ A kept screen ([seedScreen]) is kept through the open, which is the
+    // whole of its job: it is seeded just before the first open, and a fresh
+    // terminal here threw it away in the same breath — the page then drew a
+    // blank terminal where the reader's last screen should have been, with
+    // [hasScreen] telling it not to show the skeleton either.
+    final keep = preserveTerminal || _showingKeptScreen;
+    if (!keep) terminal = _newTerminal()..resize(cols, rows);
     status = TerminalSessionStatus.opening;
     _openRequestId =
         'term_${DateTime.now().microsecondsSinceEpoch}_${Random.secure().nextInt(1 << 31)}';
@@ -456,7 +462,7 @@ class TerminalSession extends ChangeNotifier {
         }
         cols = _clampCols(measured.cols);
         rows = _clampRows(measured.rows);
-        if (!preserveTerminal) terminal.resize(cols, rows);
+        if (!keep) terminal.resize(cols, rows);
         notifyListeners();
       } on TimeoutException {
         // Keep the conservative fallback when the terminal viewport cannot be

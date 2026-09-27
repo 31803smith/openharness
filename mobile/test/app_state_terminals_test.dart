@@ -17,6 +17,14 @@ void main() {
       if (open['agentId'] == agentId) open,
   ];
 
+  /// Everything on [session]'s screen, as text.
+  String screenOf(TerminalSession session) {
+    final lines = session.terminal.buffer.lines;
+    return [
+      for (var i = 0; i < lines.length; i++) lines[i].toString().trimRight(),
+    ].join('\n');
+  }
+
   /// The pager warming [agentId] on `m`, its parked page measuring itself.
   Future<void> warm(ViewerRig rig, String agentId) async {
     final warming = rig.app.warmAgentPane('m', agentId);
@@ -316,6 +324,9 @@ void main() {
         });
         addTearDown(rig.app.dispose);
         final session = await openAgent(rig, 'm', 'a');
+        await session.close();
+        await session.reopen();
+        await answerOpen(rig, session, screen: 'last words here');
         final streamId = session.streamId;
 
         await rig.app.closePane(rig.app.paneOfAgent('m', 'a')!.id);
@@ -336,10 +347,17 @@ void main() {
         final again = rig.app.paneOfAgent('m', 'a')!.session!;
         expect(again.showingKeptScreen, isTrue);
         expect(again.hasScreen, isTrue);
+        expect(
+          screenOf(again),
+          contains('last words here'),
+          reason: 'the stand-in is what the reader last saw, not a blank page',
+        );
         again.reportViewport(80, 24);
         await reopening;
-        await answerOpen(rig, again);
+        expect(screenOf(again), contains('last words here'));
+        await answerOpen(rig, again, screen: 'fresh');
         expect(again.showingKeptScreen, isFalse);
+        expect(screenOf(again), contains('fresh'));
       },
     );
 
