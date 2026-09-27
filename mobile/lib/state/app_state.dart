@@ -5171,8 +5171,17 @@ class AppNotifier extends ChangeNotifier {
         'SESSION_IN_HARNESS' ||
         'SESSION_NOT_FOUND' ||
         'SESSION_FOLDER_GONE' ||
+        'SESSION_BUSY_IN_TERMINAL' ||
+        'SESSION_STOP_FAILED' ||
         'INVALID_SESSION' =>
           detail ?? 'Could not open that conversation on $machine.',
+        // Not the machine's own sentence: it ends "Moving it here quits it
+        // there", written for the desktop's take-over button. A phone sends no
+        // `takeOver` and has no such button, so what it can offer is the way
+        // that works from here.
+        'SESSION_OPEN_IN_TERMINAL' =>
+          'It is open in a terminal on $machine. Close it there, then open '
+              'it here.',
         _ => 'Create harness failed: ${detail ?? code}',
       };
 
@@ -5251,6 +5260,14 @@ class AppNotifier extends ChangeNotifier {
         'SESSION_NOT_FOUND',
         'SESSION_FOLDER_GONE',
         'INVALID_SESSION',
+        // Open in a terminal on that machine (`adoptableSession` in the CLI's
+        // cli.ts): refused because this phone did not say how to take it
+        // over, so nothing started. Missing here, the most common case of all
+        // — a conversation somebody left running in `claude` — read as a lost
+        // reply, "has not confirmed the new harness yet".
+        'SESSION_OPEN_IN_TERMINAL',
+        'SESSION_BUSY_IN_TERMINAL',
+        'SESSION_STOP_FAILED',
       };
       if (refusedBeforeLaunch.contains(failure.code)) {
         return creation._complete(
