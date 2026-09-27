@@ -26,7 +26,7 @@ void main() {
       expect(rig.app.currentUser, isNull);
     });
 
-    test('signed in: machines and profile, with no environment step', () async {
+    test('signed in: machines and profile, with no step between', () async {
       final rig = viewerApp();
       addTearDown(rig.app.dispose);
       rig.api.onMachines = () async => [remoteMachine('m')];
@@ -37,9 +37,8 @@ void main() {
       await settle();
 
       expect(rig.app.status, AppStatus.authenticated);
-      // A viewer installs nothing: provisioning is never shown.
-      expect(seen, isNot(contains(AppStatus.checkingEnvironment)));
-      expect(seen, isNot(contains(AppStatus.preparingEnvironment)));
+      // A viewer installs nothing: the boot spinner, then the app.
+      expect(seen.toSet(), {AppStatus.bootstrapping, AppStatus.authenticated});
       expect(rig.app.machines.map((m) => m.machineId), ['m']);
       expect(rig.app.stateOf('m'), isNotNull);
       expect(rig.app.machinesLoading, isFalse);

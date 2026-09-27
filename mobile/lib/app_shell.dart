@@ -231,11 +231,6 @@ class RootShell extends ConsumerWidget {
         // and again on success.
         AppStatus.bootstrapping =>
           app.signingIn ? signedOutScreen(app) : bootScreen(app),
-        // Provisioning a computer for the harness CLI — a state only a desktop build enters (see
-        // above). Named so the switch stays exhaustive, and drawn as the boot screen should it
-        // ever be reached.
-        AppStatus.checkingEnvironment ||
-        AppStatus.preparingEnvironment => bootScreen(app),
         AppStatus.unauthenticated => signedOutScreen(app),
         AppStatus.authenticated => authenticatedScreen(app),
       },

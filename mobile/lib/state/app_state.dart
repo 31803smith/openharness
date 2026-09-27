@@ -17,7 +17,6 @@ import '../auth/peer_link_client.dart';
 import '../auth/sign_in_client.dart';
 import '../auth/cli_link.dart';
 import '../auth/cli_login.dart';
-import '../bootstrap/environment_provisioner.dart';
 import '../core/viewer_mode.dart';
 import '../core/config.dart';
 import '../core/agent_preference.dart';
@@ -65,13 +64,7 @@ import '../usage/remote_usage.dart';
 import '../usage/usage_accounts.dart';
 import '../phone/phone_name_store.dart';
 
-enum AppStatus {
-  bootstrapping,
-  checkingEnvironment,
-  preparingEnvironment,
-  unauthenticated,
-  authenticated,
-}
+enum AppStatus { bootstrapping, unauthenticated, authenticated }
 
 enum AgentLoadStatus { idle, needsLink, loading, loaded, error }
 
@@ -349,7 +342,6 @@ class AppNotifier extends ChangeNotifier {
   /// default. Touch it earlier and it freezes the wrong `localCliBaseUrl`.
   late final LocalCliDiscovery _discovery =
       localCliDiscovery ?? LocalCliDiscovery(config: config);
-  final EnvironmentProvisioner? environmentProvisioner;
   final DesktopUpdater? desktopUpdater;
   @visibleForTesting
   final WsConn Function(String machineId)? connectionForTest;
@@ -478,23 +470,6 @@ class AppNotifier extends ChangeNotifier {
   // Shown on the pre-navigation `bootstrapping` screen while [_finishBootstrapSignedIn] waits on the
   // local daemon — null the rest of the time, including once [status] flips to `authenticated`.
   String? _bootStatusMessage;
-  EnvironmentReadiness environmentReadiness = EnvironmentReadiness.initial();
-  bool _environmentSetupInFlight = false;
-  // Polls a step stuck in needsTerminal/failed every 5s (see `_scheduleEnvironmentRecheck`) so a user
-  // who fixes it by hand in their own terminal doesn't have to remember to click Recheck. A one-shot
-  // Timer that reschedules itself rather than `Timer.periodic`, so a slow recheck can't overlap with
-  // the next tick.
-  Timer? _environmentRecheckTimer;
-
-  /// Whether a stuck step is being auto-polled right now — drives the "Checking automatically…"
-  /// caption on the desktop's `EnvironmentSetupScreen` alongside its Recheck button.
-  bool get environmentRecheckPending => _environmentRecheckTimer != null;
-
-  /// Whether a provisioning run (initial or a per-step recheck) is in flight — lets the setup
-  /// screen disable its Recheck/Start over buttons and show a spinner instead of a second click
-  /// racing the first.
-  bool get environmentSetupInFlight => _environmentSetupInFlight;
-
   // The daemon's own advertised local-ws endpoint — the dial target for EVERY machine's data plane
   // now, not just this computer's own one (see src/lib/remoteRelay.ts in the harness CLI repo: a
   // foreign machineId is relayed to backend transparently, so the app never dials backend directly).
@@ -1069,7 +1044,6 @@ class AppNotifier extends ChangeNotifier {
     required AuthSession authSession,
     ConfigStore? configStore,
     this.localCliDiscovery,
-    this.environmentProvisioner,
     this.desktopUpdater,
     this.connectionForTest,
     SignInClient? cliLogin,
@@ -1468,25 +1442,20 @@ class AppNotifier extends ChangeNotifier {
         api = _newApiClient();
         _skippedDesktopUpdateVersion = _store.skippedDesktopUpdateVersion;
       }
-      // A viewer installs nothing and is updated by its store: provisioning and the updater both
-      // serve a computer that runs the harness CLI. The updater is not merely useless there — it
-      // throws on an architecture it has no channel for (`ios_arm64`), from inside bootstrap.
-      if (viewer == null) {
-        _startUpdateChecking();
-        final environmentReady = await _prepareEnvironment();
-        if (!environmentReady) return;
-      }
-      await _continueAfterEnvironmentReady();
+      // A viewer is updated by its store: the updater serves a computer that runs the harness CLI.
+      // It is not merely useless there — it throws on an architecture it has no channel for
+      // (`ios_arm64`), from inside bootstrap.
+      if (viewer == null) _startUpdateChecking();
+      await _checkSignIn();
     } catch (error, stack) {
       debugPrint('bootstrap: fallback to login after error: $error\n$stack');
       currentUser = null;
       status = AppStatus.unauthenticated;
       notifyListeners();
     } finally {
-      // A `finally` rather than a call per exit path: bootstrap resolves four
-      // ways (environment not ready, signed out, signed in, thrown) and the
-      // launch happened in all four. `retryEnvironmentSetup` re-enters here,
-      // which is why the event itself is once-per-launch.
+      // A `finally` rather than a call per exit path: bootstrap resolves three
+      // ways (signed out, signed in, thrown) and the launch happened in all
+      // three.
       _trackAppOpened();
     }
   }
@@ -1507,99 +1476,13 @@ class AppNotifier extends ChangeNotifier {
     if (signedIn) _armFirstMessage('launch');
   }
 
-  /// Runs before we invoke a single Harness subcommand. A fresh mac used to
-  /// fail here with a generic Sign in error because `harness` and its Node
-  /// runtime were absent; provisioning now makes that a visible, recoverable
-  /// first-run phase instead.
-  Future<bool> _prepareEnvironment() async {
-    // A viewer has nothing to provision. The provisioner looks for a shell, the
-    // POSIX tools, tmux and a managed Node runtime under `~/.harness` — all of
-    // which exist to host the local `harness` CLI, which a viewer build does
-    // not have and does not want. Running it on a phone reported every step
-    // missing and parked the app on a setup screen whose two actions, Retry
-    // and Switch to Manual, could not succeed either. Treated as ready so
-    // bootstrap goes on to ask about sign-in, which a viewer can answer.
-    if (viewer != null) return true;
-    if (_environmentSetupInFlight) return false;
-    _environmentSetupInFlight = true;
-    status = AppStatus.checkingEnvironment;
-    environmentReadiness = EnvironmentReadiness.initial();
-    notifyListeners();
-    try {
-      // Always read-only here. Installation starts only after explicit confirmation in the wizard.
-      final result = await _runProvisioner(install: false);
-      if (!result.isReady) {
-        status = AppStatus.preparingEnvironment;
-        notifyListeners();
-        return false;
-      }
-      _cancelEnvironmentRecheckTimer();
-      return true;
-    } finally {
-      _environmentSetupInFlight = false;
-    }
-  }
-
-  /// Shared with [_prepareEnvironment]: runs the provisioner, updates
-  /// [environmentReadiness] as it streams progress, and reports the outcome.
-  Future<EnvironmentReadiness> _runProvisioner({
-    EnvironmentReadiness? resumeFrom,
-    bool install = false,
-    EnvironmentSetupMode? mode,
-    bool quiet = false,
-  }) async {
-    final provisioner = environmentProvisioner ?? EnvironmentProvisioner();
-    final result = await provisioner.ensureReady(
-      onProgress: (value) {
-        if (quiet &&
-            value.phase != EnvironmentSetupPhase.ready &&
-            value.phase != EnvironmentSetupPhase.failed) {
-          // A 5-second Terminal poll must not repaint the wizard through
-          // preflight -> review -> waiting. Keep the stable handoff surface
-          // and only stream its diagnostics until there is a real terminal
-          // outcome or installation can continue.
-          environmentReadiness = environmentReadiness.copyWith(
-            output: value.output,
-            terminalLogPath: value.terminalLogPath,
-            terminalResultPath: value.terminalResultPath,
-            terminalSetup: value.terminalSetup,
-            systemReady: value.systemReady,
-          );
-        } else {
-          environmentReadiness = value;
-        }
-        // A successful probe belongs to the quiet pre-flight surface, never
-        // the installation wizard. This also prevents the setup screen from
-        // flashing its own ready phase for one frame after an install/recheck.
-        if (value.isReady) status = AppStatus.checkingEnvironment;
-        notifyListeners();
-      },
-      resumeFrom: resumeFrom,
-      install: install,
-      mode: mode,
-    );
-    environmentReadiness = result;
-    if (!quiet ||
-        result.isReady ||
-        result.phase == EnvironmentSetupPhase.failed) {
-      analytics.environmentPrepared(ready: result.isReady);
-    }
-    return result;
-  }
-
-  /// What `bootstrap()` does right after the environment is confirmed ready — pulled out so
-  /// [recheckEnvironmentStep] can reach the same destination without repeating `bootstrap()`'s config
-  /// load and update-check startup, which already ran on the launch that got stuck here.
-  Future<void> _continueAfterEnvironmentReady() async {
+  /// Whether this device is signed in, and everything behind the login screen when it is — what
+  /// `bootstrap()` does once its config is loaded.
+  Future<void> _checkSignIn() async {
     final revision = _authRevision;
     if (!_authWorkCurrent(revision)) return;
-    _cancelEnvironmentRecheckTimer();
-    // A viewer skipped the preflight (see [_prepareEnvironment]), so there is no
-    // preflight screen to hold while the sign-in is checked — it stays on the
-    // boot spinner instead.
-    status = viewer == null
-        ? AppStatus.checkingEnvironment
-        : AppStatus.bootstrapping;
+    // The boot spinner holds while the sign-in is checked.
+    status = AppStatus.bootstrapping;
     notifyListeners();
     // Auth now lives entirely with the local `harness` CLI — it owns the SSO session on disk and
     // refreshes it itself. This app never reads, stores, or refreshes a token of its own; it just
@@ -1616,188 +1499,14 @@ class AppNotifier extends ChangeNotifier {
         notifyListeners();
         return;
       }
-      status = AppStatus.bootstrapping;
-      notifyListeners();
       await _finishBootstrapSignedIn();
     } catch (error, stack) {
       if (!_authWorkCurrent(revision)) return;
-      debugPrint(
-        'continueAfterEnvironmentReady: fallback to login after error: '
-        '$error\n$stack',
-      );
+      debugPrint('checkSignIn: fallback to login after error: $error\n$stack');
       currentUser = null;
       status = AppStatus.unauthenticated;
       notifyListeners();
     }
-  }
-
-  void showEnvironmentReview() {
-    environmentReadiness = environmentReadiness.copyWith(
-      phase: EnvironmentSetupPhase.review,
-    );
-    notifyListeners();
-  }
-
-  void showEnvironmentMethodChoice() {
-    environmentReadiness = environmentReadiness.copyWith(
-      phase: EnvironmentSetupPhase.chooseMethod,
-    );
-    notifyListeners();
-  }
-
-  void selectEnvironmentSetupMode(EnvironmentSetupMode mode) {
-    environmentReadiness = environmentReadiness.copyWith(mode: mode);
-    notifyListeners();
-  }
-
-  Future<void> startEnvironmentSetup() async {
-    if (_environmentSetupInFlight) return;
-    _cancelEnvironmentRecheckTimer();
-    final mode = environmentReadiness.mode ?? EnvironmentSetupMode.automatic;
-    if (mode == EnvironmentSetupMode.manual) {
-      notifyListeners();
-      return;
-    }
-    _environmentSetupInFlight = true;
-    notifyListeners();
-    try {
-      final result = await _runProvisioner(
-        resumeFrom: environmentReadiness,
-        install: true,
-        mode: mode,
-      );
-      if (!result.isReady) {
-        _scheduleEnvironmentRecheck();
-        return;
-      }
-      await _continueAfterEnvironmentReady();
-    } finally {
-      _environmentSetupInFlight = false;
-      notifyListeners();
-    }
-  }
-
-  Future<void> continueAfterEnvironmentSetup() async {
-    if (!environmentReadiness.isReady) return;
-    await _continueAfterEnvironmentReady();
-  }
-
-  /// A manual repair always returns to a read-only probe.
-  Future<void> retryEnvironmentSetup() async {
-    if (_environmentSetupInFlight) return;
-    _environmentSetupInFlight = true;
-    notifyListeners();
-    try {
-      final result = await _runProvisioner(
-        install: false,
-        mode: environmentReadiness.mode,
-      );
-      if (result.isReady) await _continueAfterEnvironmentReady();
-    } finally {
-      _environmentSetupInFlight = false;
-      notifyListeners();
-    }
-  }
-
-  /// Rechecks a single stuck step (`failed`/`needsTerminal`) without re-running steps already
-  /// `ready` — the user fixed it by hand (see `environment_step_guidance.dart`'s command) and this
-  /// confirms it, then falls through to whatever step comes next, exactly like a fresh `bootstrap()`
-  /// would have. [step] identifies which row's Recheck button was pressed; the provisioner itself
-  /// decides what to (re-)attempt from the current [environmentReadiness], so an already-resolved
-  /// step is never disturbed regardless of which row triggered this.
-  Future<void> recheckEnvironmentStep(EnvironmentStep step) async {
-    if (_environmentSetupInFlight) return;
-    _cancelEnvironmentRecheckTimer();
-    _environmentSetupInFlight = true;
-    notifyListeners();
-    try {
-      final visibleBeforeProbe = environmentReadiness;
-      final mode = environmentReadiness.mode;
-      var result = await _runProvisioner(
-        resumeFrom: environmentReadiness,
-        install: false,
-        mode: mode,
-        quiet:
-            mode == EnvironmentSetupMode.automatic &&
-            environmentReadiness.phase ==
-                EnvironmentSetupPhase.waitingForTerminal,
-      );
-      if (!result.isReady &&
-          mode == EnvironmentSetupMode.automatic &&
-          result.phase != EnvironmentSetupPhase.waitingForTerminal &&
-          result.systemReady &&
-          result.steps[EnvironmentStep.tmux] == EnvironmentStepStatus.ready &&
-          (result.steps[EnvironmentStep.clipboard] ==
-                  EnvironmentStepStatus.ready ||
-              result.steps[EnvironmentStep.clipboard] ==
-                  EnvironmentStepStatus.notApplicable)) {
-        result = await _runProvisioner(
-          resumeFrom: result,
-          install: true,
-          mode: mode,
-        );
-      }
-      if (!result.isReady) {
-        if (mode == EnvironmentSetupMode.automatic &&
-            result.phase != EnvironmentSetupPhase.failed) {
-          environmentReadiness = visibleBeforeProbe.copyWith(
-            phase: EnvironmentSetupPhase.waitingForTerminal,
-            output: result.output,
-            terminalLogPath: result.terminalLogPath,
-            terminalResultPath: result.terminalResultPath,
-            terminalSetup: result.terminalSetup,
-            systemReady: result.systemReady,
-          );
-        }
-        _scheduleEnvironmentRecheck();
-        return;
-      }
-      await _continueAfterEnvironmentReady();
-    } catch (error, stack) {
-      debugPrint(
-        'recheckEnvironmentStep: fallback to login after error: $error\n$stack',
-      );
-      currentUser = null;
-      status = AppStatus.unauthenticated;
-    } finally {
-      _environmentSetupInFlight = false;
-      notifyListeners();
-      _trackAppOpened();
-    }
-  }
-
-  /// Polls the currently-stuck required step every 5s (see `_environmentRecheckTimer`'s doc) so
-  /// fixing it in another window and forgetting to click Recheck still moves the app forward.
-  /// A no-op unless automatic setup is waiting on the real Terminal window.
-  void _scheduleEnvironmentRecheck() {
-    _environmentRecheckTimer?.cancel();
-    if (environmentReadiness.phase !=
-            EnvironmentSetupPhase.waitingForTerminal ||
-        environmentReadiness.mode != EnvironmentSetupMode.automatic) {
-      return;
-    }
-    EnvironmentStep? stuck;
-    for (final entry in environmentReadiness.steps.entries) {
-      if (!entry.key.isRequired) continue;
-      if (entry.value == EnvironmentStepStatus.needsTerminal ||
-          entry.value == EnvironmentStepStatus.failed) {
-        stuck = entry.key;
-        break;
-      }
-    }
-    if (stuck == null && environmentReadiness.terminalSetup == null) return;
-    // Base system setup has no EnvironmentStep row of its own. The callback
-    // argument is only a UI trigger; the provisioner rechecks the complete
-    // environment and uses terminalSetup to attribute any failure.
-    final step = stuck ?? EnvironmentStep.tmux;
-    _environmentRecheckTimer = Timer(const Duration(seconds: 5), () {
-      unawaited(recheckEnvironmentStep(step));
-    });
-  }
-
-  void _cancelEnvironmentRecheckTimer() {
-    _environmentRecheckTimer?.cancel();
-    _environmentRecheckTimer = null;
   }
 
   /// Both `bootstrap()` (already signed in) and `login()` (just finished signing in) land here once
@@ -6931,7 +6640,6 @@ class AppNotifier extends ChangeNotifier {
     _closedHistory.clear();
     _daemonSupervisionTimer?.cancel();
     _updateCheckTimer?.cancel();
-    _environmentRecheckTimer?.cancel();
     _stopAllOfflineRetries();
     _stopAllLinkRetries();
     _stopAllAgentSyncTimers();
