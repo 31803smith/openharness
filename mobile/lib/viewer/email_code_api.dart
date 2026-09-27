@@ -89,10 +89,18 @@ class EmailCodeApi {
     } on DioException {
       throw const DirectAuthException(_unreachable);
     }
-    if ((res.statusCode ?? 500) >= 500) {
+    // Neither is being told to slow down or to come back later (429, 408): that says nothing
+    // about the token. It is exactly what a phone hammering a refresh after a wake gets told.
+    final status = res.statusCode ?? 500;
+    if (status >= 500 || status == 429 || status == 408) {
       throw const DirectAuthException(_unreachable);
     }
-    final body = res.data is Map ? res.data as Map : const {};
+    // Nor is a page that is not this API's envelope at all: a gateway's error page, a captive
+    // portal's login. Only the service itself can say the token is no good.
+    final body = res.data;
+    if (body is! Map || !body.containsKey('status')) {
+      throw const DirectAuthException(_unreachable);
+    }
     final tokens = body['status'] == 1 ? _tokens(body['data']) : null;
     return tokens ??
         (throw const DirectAuthException(
