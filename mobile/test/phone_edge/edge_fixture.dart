@@ -105,7 +105,7 @@ class FakeSample implements SampleSession {
 
 /// A machine the fake conn answers every request for, and accepts every frame.
 class EdgeConn extends WsConn {
-  EdgeConn([this.answers = const {}])
+  EdgeConn([this.answers = const {}, this.respond])
     : super(
         wsBaseUrl: 'ws://fixture.invalid',
         autonomousEnv: 'test',
@@ -119,8 +119,19 @@ class EdgeConn extends WsConn {
   /// What the machine answers, by request type; anything else is answered with nothing.
   final Map<String, Map<String, dynamic>> answers;
 
+  /// An answer worked out from the request — one that has to echo what it was sent, as a
+  /// creation's receipt does. Null falls through to [answers].
+  final Map<String, dynamic>? Function(
+    String type,
+    Map<String, dynamic> payload,
+  )?
+  respond;
+
   final List<(String, Map<String, dynamic>)> frames = [];
   final List<String> requests = [];
+
+  /// Every request's payload, by type, in order.
+  final Map<String, List<Map<String, dynamic>>> payloads = {};
 
   /// How many times a terminal was asked to open.
   int get opens => frames.where((frame) => frame.$1 == 'terminal_open').length;
@@ -141,8 +152,36 @@ class EdgeConn extends WsConn {
     Duration timeout = const Duration(seconds: 20),
   }) async {
     requests.add(type);
-    return answers[type] ?? {};
+    (payloads[type] ??= []).add(payload);
+    return respond?.call(type, payload) ??
+        answers[type] ??
+        (type == 'terminal_capabilities' ? capabilities : {});
   }
+
+  /// What the machine's terminal can do, as `terminal_capabilities` reports it — a current CLI on
+  /// tmux, making projects. Answered with nothing, a machine reads as having no terminal at all.
+  Map<String, dynamic> capabilities = {
+    'protocolVersion': TerminalSession.protocolVersion,
+    'backend': 'tmux',
+    'available': true,
+    'features': {'projectFolder': true, 'pasteRaw': true},
+  };
+}
+
+/// A machine that starts every agent it is asked for, as `new-<n>`, and echoes the receipt the
+/// notifier checks — anything less reads as unconfirmed.
+Map<String, dynamic>? startsAgents(String type, Map<String, dynamic> payload) {
+  if (type != 'agent_create') return null;
+  return {
+    'creationId': payload['creationId'],
+    'state': 'created',
+    'agent': {
+      'id': 'new-agent',
+      'name': 'new-agent',
+      'engine': payload['engine'],
+      'terminal': {'available': true},
+    },
+  };
 }
 
 Agent edgeAgent(
