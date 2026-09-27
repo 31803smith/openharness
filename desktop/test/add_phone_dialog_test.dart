@@ -5,6 +5,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:harness/api/api_client.dart';
 import 'package:harness/core/models.dart';
 import 'package:harness/shared/theme/app_theme.dart' as grid;
 import 'package:harness/state/app_state.dart';
@@ -65,6 +66,8 @@ Future<void> _open(
   AppNotifier app,
   PhonePairCall pair, {
   PhoneSignInCodeCall? signInCode,
+  PairedDevicesCall? listDevices,
+  RemovePairedDeviceCall? removeDevice,
 }) async {
   tester.view.devicePixelRatio = 1;
   tester.view.physicalSize = const Size(1280, 800);
@@ -82,6 +85,8 @@ Future<void> _open(
       app,
       pair: pair,
       signInCode: signInCode ?? _FakeSignIn().call,
+      listDevices: listDevices ?? () async => null,
+      removeDevice: removeDevice ?? (_) async => false,
     ),
   );
   await tester.pump();
@@ -219,6 +224,132 @@ void main() {
       await tester.sendKeyEvent(LogicalKeyboardKey.escape);
       await tester.pump();
       await tester.pump(const Duration(seconds: 10));
+    });
+  });
+
+  group('the devices already paired', () {
+    PairedDevice device(String id, String label, {bool online = false}) =>
+        PairedDevice(
+          fingerprint: id,
+          label: label,
+          pairedAt: DateTime.now().subtract(const Duration(days: 2)),
+          online: online,
+        );
+
+    testWidgets('are listed under the QR, and one click takes one away', (
+      tester,
+    ) async {
+      final app = _signedInApp();
+      addTearDown(app.dispose);
+      final removed = <String>[];
+      await _open(
+        tester,
+        app,
+        _FakeDaemon(List.filled(20, _failed('NO_INTENT'))).call,
+        listDevices: () async => [
+          device('AAAA', "Dee's iPhone", online: true),
+          device('BBBB', 'harness link'),
+          device('CCCC', 'Old phone'),
+          device('DDDD', 'Older phone'),
+          device('EEEE', 'Oldest phone'),
+        ],
+        removeDevice: (id) async {
+          removed.add(id);
+          return true;
+        },
+      );
+      await tester.pump();
+      expect(find.byKey(const ValueKey('add-phone-devices')), findsOneWidget);
+      expect(find.text("Dee's iPhone"), findsOneWidget);
+      expect(find.text('online'), findsOneWidget);
+      // A pairing that never said who it is says so in plain words.
+      expect(find.text('Linked device'), findsOneWidget);
+      expect(find.text('2d'), findsNWidgets(2));
+      // Three, then the rest on request: the list must not outweigh the QR.
+      expect(find.text('Older phone'), findsNothing);
+      await tester.tap(find.text('[ + 2 more ]'));
+      await tester.pump();
+      expect(find.text('Oldest phone'), findsOneWidget);
+
+      await tester.tap(
+        find.descendant(
+          of: find.byKey(const ValueKey('add-phone-device-BBBB')),
+          matching: find.text('[ remove ]'),
+        ),
+      );
+      await tester.pump();
+      await tester.pump();
+      expect(removed, ['BBBB']);
+      expect(find.text('Linked device'), findsNothing);
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.pump();
+      await tester.pump(const Duration(seconds: 10));
+    });
+
+    testWidgets('a removal the daemon refuses keeps the row and says so', (
+      tester,
+    ) async {
+      final app = _signedInApp();
+      addTearDown(app.dispose);
+      await _open(
+        tester,
+        app,
+        _FakeDaemon(List.filled(20, _failed('NO_INTENT'))).call,
+        listDevices: () async => [device('AAAA', "Dee's iPhone")],
+        removeDevice: (_) async => false,
+      );
+      await tester.pump();
+      await tester.tap(find.text('[ remove ]'));
+      await tester.pump();
+      await tester.pump();
+      expect(find.text("Dee's iPhone"), findsOneWidget);
+      expect(_status(tester), "Couldn't remove Dee's iPhone. Try again.");
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.pump();
+      await tester.pump(const Duration(seconds: 10));
+    });
+
+    testWidgets('no list when nothing is paired, or the daemon cannot say', (
+      tester,
+    ) async {
+      final app = _signedInApp();
+      addTearDown(app.dispose);
+      await _open(
+        tester,
+        app,
+        _FakeDaemon(List.filled(20, _failed('NO_INTENT'))).call,
+        listDevices: () async => const [],
+      );
+      await tester.pump();
+      expect(find.byKey(const ValueKey('add-phone-devices')), findsNothing);
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.pump();
+      await tester.pump(const Duration(seconds: 10));
+    });
+
+    test('reads the daemon\'s list: web pairings only, named plainly', () {
+      final phone = PairedDevice.fromJson({
+        'fingerprint': 'AB12',
+        'label': "Dee's iPhone",
+        'pairedAt': 1790523878148,
+        'online': true,
+        'role': 'web',
+        'current': false,
+      })!;
+      expect(phone.name, "Dee's iPhone");
+      expect(phone.online, isTrue);
+      expect(
+        PairedDevice.fromJson({'fingerprint': 'X', 'role': 'device'}),
+        isNull,
+        reason: 'the dial is managed in Settings',
+      );
+      expect(PairedDevice.fromJson({'label': 'no id'}), isNull);
+      expect(
+        PairedDevice.fromJson({'fingerprint': 'X', 'label': 'harness link'})!
+            .name,
+        'Linked device',
+      );
     });
   });
 
