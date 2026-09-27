@@ -11,6 +11,8 @@ import 'package:harness_mobile/phone/welcome/scan_to_connect.dart';
 import 'package:harness_mobile/phone/welcome/set_up_computer.dart';
 import 'package:harness_mobile/state/app_state.dart';
 
+import 'viewer_app_fixture.dart' show FakeApi;
+
 class _Links implements PeerLinkClient {
   final codes = <(String, String)>[];
 
@@ -57,6 +59,9 @@ void main() {
       configStore: null,
       peerLinks: links,
     );
+    // The account's REST API, answered in memory: its machines are asked for again before a
+    // scanned computer is looked for, and none is on it unless a test says so.
+    app.api = FakeApi();
     backs = [];
   });
   tearDown(() => app.dispose());

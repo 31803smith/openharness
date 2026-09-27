@@ -22,11 +22,9 @@ import '../core/agent_preference.dart';
 import '../core/engine_availability.dart';
 import '../core/device_name.dart';
 import '../core/permission_modes.dart';
-import '../core/local_git_projects.dart';
 import '../core/last_opened_agent.dart';
 import '../core/phone_search_history.dart';
 import '../core/machine_cache.dart';
-import '../core/test_run.dart';
 import '../core/models.dart';
 import '../core/project_folder.dart';
 import '../core/project_history.dart';
@@ -51,7 +49,6 @@ import 'phone_desk.dart';
 import 'swarm.dart';
 import '../terminal/terminal_binary.dart';
 import '../ws/ws_conn.dart';
-import '../ws/local_cli_discovery.dart';
 import '../ws/ws_pool.dart';
 import 'pending_question.dart';
 import 'search_when.dart';
@@ -63,8 +60,6 @@ import '../phone/phone_name_store.dart';
 enum AppStatus { bootstrapping, unauthenticated, authenticated }
 
 enum AgentLoadStatus { idle, needsLink, loading, loaded, error }
-
-enum MachineTransportMode { cloudE2ee, localPlaintext, localOffline }
 
 /// Result of [AppNotifier.restartAgent]. [error] null means the RPC succeeded; [resumed] then says
 /// whether the daemon reattached the agent's prior session or fell back to a fresh one (e.g. the
@@ -116,22 +111,9 @@ class AgentCreationAttempt {
   }
 }
 
-String? _normalizeComputerId(String? raw) {
-  if (raw == null) return null;
-  final value = raw.trim().toLowerCase().replaceAll('-', '');
-  return RegExp(r'^[a-f0-9]{16,64}$').hasMatch(value) ? value : null;
-}
-
 class MachineState {
   Machine machine;
   ConnectionStatus connectionStatus = ConnectionStatus.disconnected;
-  MachineTransportMode transportMode = MachineTransportMode.cloudE2ee;
-
-  /// Set when this machine is bound to the local CLI's stable computer id. A
-  /// local machine never falls back to cloud E2EE while that identity exists.
-  bool localOnly = false;
-  LocalCliEndpoint? localEndpoint;
-  Map<String, AgentProject> localProjects = const {};
   // Set when the local CLI's relay reports NO_PEER_LINK for this (non-local) machine — it needs
   // `harness link connect <machineId>` (the other machine's remote password) before it can
   // connect. The CLI owns E2EE entirely now; this is just "is trust established yet", not a
@@ -232,13 +214,6 @@ class MachineState {
   MachineState(this.machine);
 
   bool get isRemote => machine.authMode == MachineAuthMode.remote;
-  bool get isLocalMachine => localOnly || localEndpoint != null;
-  bool get usesLocalTransport => localEndpoint != null;
-
-  AgentProject? projectOf(Agent agent) =>
-      agent.project ??
-      localProjects[agent.id] ??
-      localEndpoint?.agentProjects[agent.id];
 
   Agent? get activeAgent {
     for (final agent in agents) {
@@ -327,17 +302,6 @@ class AppNotifier extends ChangeNotifier {
   /// Words from the dial, for whoever can put a palette on screen.
   Stream<SpokenTaskRequest> get spokenTasks => _spokenTasks.stream;
   final Duration turnActivityTimeout;
-  final LocalCliDiscovery? localCliDiscovery;
-
-  /// ONE discovery for the whole notifier. It used to be built fresh at each of
-  /// three call sites, which was harmless while it was stateless and is not
-  /// now that the supervisor's ready-transition callback lives on it.
-  ///
-  /// `late`, so it reads `config` on first use — which is [ensureCliDaemonReady]
-  /// during bootstrap, AFTER the persisted config has been loaded over the
-  /// default. Touch it earlier and it freezes the wrong `localCliBaseUrl`.
-  late final LocalCliDiscovery _discovery =
-      localCliDiscovery ?? LocalCliDiscovery(config: config);
   @visibleForTesting
   final WsConn Function(String machineId)? connectionForTest;
   final Map<String, Timer> _turnActivityWatchdogs = {};
@@ -417,14 +381,6 @@ class AppNotifier extends ChangeNotifier {
   // (agent_synced/agent_created/agent_renamed/agent_deleted) that normally keep it live — catches the
   // rare case a push event was dropped. Runs silently: see _syncAgentsIfChanged.
   final Map<String, Timer> _agentSyncTimers = {};
-  // Keeps the local `harness` daemon alive for the whole app run — started once after the first
-  // successful bootstrap (see `ensureCliDaemonReady`), cancelled on dispose. Cancelling only stops this
-  // Dart-side loop; the daemon itself self-daemonizes and must keep running after the app quits.
-  Timer? _daemonSupervisionTimer;
-
-  /// The last [ensureCliDaemonReady] did not reach a ready daemon — the one
-  /// error the supervisor's ready transition is allowed to retry away.
-  bool _daemonGateFailed = false;
   final Set<String> _offlinePollsInFlight = {};
   final Set<String> _offlineRecoveryInFlight = {};
   bool _disposed = false;
@@ -457,13 +413,6 @@ class AppNotifier extends ChangeNotifier {
   // Shown on the pre-navigation `bootstrapping` screen while [_finishBootstrapSignedIn] waits on the
   // local daemon — null the rest of the time, including once [status] flips to `authenticated`.
   String? _bootStatusMessage;
-  // The daemon's own advertised local-ws endpoint — the dial target for EVERY machine's data plane
-  // now, not just this computer's own one (see src/lib/remoteRelay.ts in the harness CLI repo: a
-  // foreign machineId is relayed to backend transparently, so the app never dials backend directly).
-  LocalCliEndpoint? _cliEndpoint;
-  late final _localGitProjects = LocalGitProjects(
-    onChanged: _applyLocalGitProjects,
-  );
 
   AppStatus status = AppStatus.bootstrapping;
   CurrentUserProfile? currentUser;
@@ -1030,7 +979,6 @@ class AppNotifier extends ChangeNotifier {
     required AppConfig config,
     required AuthSession authSession,
     ConfigStore? configStore,
-    this.localCliDiscovery,
     this.connectionForTest,
     SignInClient? cliLogin,
     CliLink? cliLink,
@@ -1578,22 +1526,7 @@ class AppNotifier extends ChangeNotifier {
     );
     if (!_authWorkCurrent(revision)) return;
     _ensurePool();
-    try {
-      await ensureCliDaemonReady();
-    } catch (error) {
-      if (!_authWorkCurrent(revision)) return;
-      _bootStatusMessage = null;
-      status = AppStatus.authenticated;
-      _lastError = '$error';
-      _lastErrorRetryable = true;
-      notifyListeners();
-      return;
-    }
-    if (!_authWorkCurrent(revision)) return;
     _bootStatusMessage = null;
-    // `ensureCliDaemonReady` may have signed the app out instead of succeeding (daemon absent AND
-    // the saved session gone) — that already routed to the login screen, so don't clobber it.
-    if (status == AppStatus.unauthenticated) return;
     status = AppStatus.authenticated;
     notifyListeners();
     // The CLI has confirmed sign-in and daemon readiness. Display-name/avatar
@@ -1622,10 +1555,6 @@ class AppNotifier extends ChangeNotifier {
     if (_authWorkCurrent(revision)) notifyListeners();
   }
 
-  /// The local daemon (`harness start`) must be up before any local REST/WS call can work — unlike
-  /// `harness login`, it does not start on its own. Sets [_cliEndpoint], the dial target every
-  /// machine's WsConn now uses. Public (like [refreshMachines]) so a test subclass can stub it
-  /// without shelling out to a real `harness` binary.
   /// Who is signed in, from the daemon. Shared by the boot path and by the
   /// retry path, because a boot that found the daemon still connecting now
   /// finishes THROUGH the retry path — and a session that never learns its
@@ -1664,118 +1593,6 @@ class AppNotifier extends ChangeNotifier {
     }
   }
 
-  Future<void> ensureCliDaemonReady() async {
-    // A viewer has no daemon to start: it reaches every machine through the relay.
-    if (viewer != null) return;
-    final revision = _authRevision;
-    final discovery = _discovery;
-    final probe = await discovery.ensureRunning();
-    if (!_authWorkCurrent(revision)) return;
-    switch (probe.state) {
-      case LocalCliProbeState.ready:
-        _cliEndpoint = probe.endpoint;
-        _daemonGateFailed = false;
-      case LocalCliProbeState.notReady:
-        _daemonGateFailed = true;
-        // Running, not ready — most often a daemon fresh from a self-update still shaking hands
-        // with the backend. Not "did not start": that sentence sends people to run `harness start`
-        // against a daemon that is up, and the CLI's own lock will just tell them so. It keeps
-        // retrying by itself; the supervisor below picks the app up the moment it gets there.
-        _startDaemonSupervision(discovery);
-        throw StateError(
-          'Harness is running${probe.version == null ? '' : ' (v${probe.version})'} but has not '
-          'connected to the backend yet — ${probe.reason}. It usually finishes on its own; '
-          'retry in a moment.',
-        );
-      case LocalCliProbeState.down:
-        _daemonGateFailed = true;
-        // Before blaming the environment, check whether the daemon is missing because it signed itself
-        // out. "Try running `harness start` yourself" is advice that cannot work in that case — the
-        // session file is gone, so every start exits again — and it is the advice this branch used to
-        // give unconditionally.
-        final authStatus = await cliLogin.checkStatus();
-        if (!_authWorkCurrent(revision)) return;
-        if (!authStatus.loggedIn) {
-          _signedOutAtRuntime(_signedOutMessage);
-          return;
-        }
-        throw StateError(
-          'The local Harness daemon did not start. Try running `harness start` yourself, then reopen the app.',
-        );
-    }
-    _startDaemonSupervision(discovery);
-  }
-
-  /// Supervision starts once the daemon is at least ANSWERING — ready or still connecting. It used to
-  /// wait for ready, out of fear of a concurrent `harness start` from both places; the supervisor
-  /// no longer spawns while anything answers on the port, so that race is gone, and starting it on
-  /// a not-ready daemon is what lets a boot that landed mid-update recover without a click.
-  void _startDaemonSupervision(LocalCliDiscovery discovery) {
-    _daemonSupervisionTimer ??= discovery.startSupervising(
-      stillSignedIn: () async => (await cliLogin.checkStatus()).loggedIn,
-      onSignedOut: () => _signedOutAtRuntime(_signedOutMessage),
-      onSnapshot: _updateLocalProjectSnapshot,
-      onReady: (endpoint) {
-        // Back (or here for the first time). If the app is sitting on the error strip from a boot
-        // or reload that found the daemon not ready, this is the moment it was waiting for.
-        //
-        // Gated on OUR failure, not on `_lastError`: that strip is shared with errors this cannot
-        // fix (an agent that failed to launch, say), and the supervisor's first tick after every
-        // boot would otherwise clear one of those five seconds after it appeared.
-        if (_cliEndpoint == null || _daemonGateFailed) {
-          _cliEndpoint ??= endpoint;
-          unawaited(retryMachines());
-        }
-      },
-    );
-  }
-
-  void _updateLocalProjectSnapshot(LocalCliEndpoint endpoint) {
-    if (_disposed) return;
-    var changed = false;
-    for (final machine in machineStates.values) {
-      final previous = machine.localEndpoint;
-      if (previous == null || previous.computerId != endpoint.computerId) {
-        continue;
-      }
-      if (!mapEquals(previous.agentProjects, endpoint.agentProjects)) {
-        machine.localEndpoint = endpoint;
-        changed = true;
-      }
-      if (!kUnderTest) {
-        for (final project in endpoint.agentProjects.values) {
-          unawaited(_localGitProjects.read(project.cwd));
-        }
-      }
-    }
-    _applyLocalGitProjects();
-    if (changed) notifyListeners();
-  }
-
-  void _applyLocalGitProjects() {
-    if (_disposed) return;
-    var changed = false;
-    for (final machine in machineStates.values) {
-      final projects = <String, AgentProject>{
-        for (final entry
-            in (machine.localEndpoint?.agentProjects ??
-                    const <String, AgentProject>{})
-                .entries)
-          entry.key: ?_localGitProjects.cached(entry.value.cwd),
-      };
-      if (mapEquals(machine.localProjects, projects)) continue;
-      machine.localProjects = Map.unmodifiable(projects);
-      changed = true;
-    }
-    if (changed) notifyListeners();
-  }
-
-  /// Deliberately says nothing about WHY. The daemon clears its session identically whether the
-  /// machine was deleted from another machine or the SSO token simply expired, and guessing between
-  /// them in the copy would sometimes be wrong. Signing in again is the answer to both.
-  static const _signedOutMessage =
-      'You were signed out on this computer. Sign in again to reconnect.';
-
   /// The session went away while the app was already running — send the user to the signed-out screen with a
   /// reason, and stop the background work that can only fail from here.
   ///
@@ -1795,9 +1612,6 @@ class AppNotifier extends ChangeNotifier {
     _awaitingFirstMessage = null;
     _desk.reset();
     analyticsAccount.clear();
-    _daemonSupervisionTimer?.cancel();
-    _daemonSupervisionTimer = null;
-    _cliEndpoint = null;
     unawaited(_pool?.closeAll());
     _pool = null;
     _lastError = message;
@@ -2052,12 +1866,6 @@ class AppNotifier extends ChangeNotifier {
     await _pool?.closeAll();
     if (!_authWorkCurrent(revision)) return;
     _pool = null;
-    _cliEndpoint = null;
-    // Nothing to supervise for a signed-out app — and a daemon started by hand
-    // on the login screen must not have its ready transition retry the machines.
-    _daemonSupervisionTimer?.cancel();
-    _daemonSupervisionTimer = null;
-    _daemonGateFailed = false;
     _clearAllTurnActivity();
     // The desk belongs to the account, not to the phone: its tabs go with the
     // session, writes this phone never managed to send included.
@@ -2178,14 +1986,6 @@ class AppNotifier extends ChangeNotifier {
       // A daemon restarted mid-session therefore had nothing to say, and a dial that re-anchored onto
       // the wrong tile stayed there.
       _announceAppFocus();
-      // The local CLI never hands back `connected` until it has terminated E2EE (or confirmed
-      // none is needed, for its own machine) — every machine's data is ready to load right away,
-      // with no separate app-side readiness gate to wait on anymore.
-      if (machine.isLocalMachine) {
-        machine.transportMode = MachineTransportMode.localPlaintext;
-      } else {
-        machine.transportMode = MachineTransportMode.cloudE2ee;
-      }
       // Route through _applyNodeStatus (not just `machine.nodeOnline = true`) for every machine,
       // not only the local one — a successful select IS the machine being reachable again, and
       // this is what lets a pending agent (captured below on disconnect) reattach automatically
@@ -2197,9 +1997,6 @@ class AppNotifier extends ChangeNotifier {
         nextStatus == ConnectionStatus.disconnected) {
       _stopAgentSyncTimer(machineId);
       _clearMachineActivity(machine);
-      if (machine.isLocalMachine) {
-        machine.transportMode = MachineTransportMode.localOffline;
-      }
       // Same reasoning as above, mirrored: capture pendingOfflineAgentId from the currently-open
       // terminal (if any) so the connected branch above can reattach it, for every machine — this
       // used to be local-only, which is why a remote machine's terminal never came back on its own
@@ -2273,16 +2070,7 @@ class AppNotifier extends ChangeNotifier {
   Future<void> _refreshMachines(int revision) async {
     // No machine is "this computer" to a viewer, which has no local CLI: every one — even the one
     // it runs on — is reached through the relay.
-    final discovery = viewer == null ? _discovery : null;
-    // The CLI computer id is the local identity source of truth. The loopback
-    // status endpoint is trusted only when it advertises that same identity.
-    final localComputerId = await discovery?.computerId();
-    if (!_authWorkCurrent(revision)) return;
-    final localFuture =
-        discovery?.discover(expectedComputerId: localComputerId) ??
-        Future<LocalCliEndpoint?>.value();
     final list = await _fetchMachines();
-    final localEndpoint = await localFuture;
     if (!_authWorkCurrent(revision)) return;
     machines = list
         .where((machine) => machine.authMode == MachineAuthMode.remote)
@@ -2320,35 +2108,12 @@ class AppNotifier extends ChangeNotifier {
         (state) => state..machine = machine,
         ifAbsent: () => MachineState(machine),
       );
-      state.localOnly =
-          localComputerId != null &&
-          _normalizeComputerId(machine.computerId) == localComputerId;
-      if (state.localOnly && localEndpoint?.computerId == localComputerId) {
-        state.localEndpoint = localEndpoint;
-        if (state.connectionStatus == ConnectionStatus.connected) {
-          state.transportMode = MachineTransportMode.localPlaintext;
-        } else {
-          state.transportMode = MachineTransportMode.localOffline;
-        }
-      } else if (state.localOnly) {
-        // The token still identifies this as local, but the CLI is offline or
-        // failed its identity/capability check. Never fall back to cloud E2EE.
-        state.localEndpoint = null;
-        state.transportMode = MachineTransportMode.localOffline;
-        state.nodeOnline = false;
-        _startOfflineRetry(state);
-      } else {
-        state.localEndpoint = null;
-        state.transportMode = MachineTransportMode.cloudE2ee;
-      }
       final reportedOnline = _nodeOnlineFromStatus(machine.status);
-      if (!state.isLocalMachine &&
-          reportedOnline != null &&
+      if (reportedOnline != null &&
           (state.nodeOnline == null || state.nodeOnline != reportedOnline)) {
         unawaited(_applyNodeStatus(state, reportedOnline));
       }
     }
-    if (localEndpoint != null) _updateLocalProjectSnapshot(localEndpoint);
     _autoConnectAndLoadMachines();
     // The list that just landed is what the NEXT launch starts from. Never
     // awaited: it is a hint for a future run and must not add a disk write to
@@ -2382,8 +2147,7 @@ class AppNotifier extends ChangeNotifier {
 
   void _startOfflineRetry(MachineState machine) {
     final machineId = machine.machine.machineId;
-    if (machine.nodeOnline != false ||
-        (!machine.isLocalMachine && machine.pendingOfflineAgentId == null)) {
+    if (machine.nodeOnline != false || machine.pendingOfflineAgentId == null) {
       _stopOfflineRetry(machineId);
       return;
     }
@@ -2719,34 +2483,12 @@ class AppNotifier extends ChangeNotifier {
     final machine = machineStates[machineId];
     if (machine == null ||
         machine.nodeOnline != false ||
-        (!machine.isLocalMachine && machine.pendingOfflineAgentId == null) ||
+        machine.pendingOfflineAgentId == null ||
         _offlinePollsInFlight.contains(machineId)) {
       return;
     }
     _offlinePollsInFlight.add(machineId);
     try {
-      if (machine.isLocalMachine) {
-        final discovery = _discovery;
-        final localComputerId = await discovery.computerId();
-        if (localComputerId == null ||
-            _normalizeComputerId(machine.machine.computerId) !=
-                localComputerId) {
-          return;
-        }
-        final endpoint = await discovery.discover(
-          expectedComputerId: localComputerId,
-        );
-        if (endpoint == null || endpoint.computerId != localComputerId) return;
-        machine.localEndpoint = endpoint;
-        machine.localOnly = true;
-        machine.transportMode = MachineTransportMode.localPlaintext;
-        machine.nodeOnline = true;
-        _connectMachine(machine);
-        await _loadMachineData(machine, force: true);
-        final pending = machine.pendingOfflineAgentId;
-        if (pending != null) unawaited(_recoverPendingAgent(machine, pending));
-        return;
-      }
       final latest = (await _fetchMachines()).where(
         (item) => item.machineId == machineId,
       );
@@ -2774,16 +2516,7 @@ class AppNotifier extends ChangeNotifier {
       return;
     }
     if (!visible.contains(selectedMachineId)) {
-      // This computer, when it is one of them. The backend's order is its own
-      // business and the local machine is not reliably first in it — landing on
-      // someone else's box is a poor default when the user's own is right there.
-      selectedMachineId = machines
-          .firstWhere(
-            (machine) =>
-                machineStates[machine.machineId]?.isLocalMachine == true,
-            orElse: () => machines.first,
-          )
-          .machineId;
+      selectedMachineId = machines.first.machineId;
     }
     for (final machine in machines) {
       final state = machineStates[machine.machineId]!;
@@ -2819,8 +2552,7 @@ class AppNotifier extends ChangeNotifier {
       // caller sets through an unawaited `_applyNodeStatus`: that happens to
       // assign synchronously today, so both agree, but this loop should not be
       // the thing that breaks if it ever gains an await before the assignment.
-      if (!state.isLocalMachine &&
-          _nodeOnlineFromStatus(machine.status) == false) {
+      if (_nodeOnlineFromStatus(machine.status) == false) {
         StartupTrace.mark('skipped offline machine ${machine.machineId}');
         continue;
       }
@@ -2879,18 +2611,6 @@ class AppNotifier extends ChangeNotifier {
 
   Future<void> _performRetryMachines() async {
     final revision = _authRevision;
-    if (!_authWorkCurrent(revision)) return;
-    // Re-verify the daemon first: a retry that skips straight to `refreshMachines()` can hit
-    // the exact same "daemon not connected yet" timeout the button was pressed to escape.
-    try {
-      await ensureCliDaemonReady();
-    } catch (error) {
-      if (!_authWorkCurrent(revision)) return;
-      _lastError = '$error';
-      _lastErrorRetryable = true;
-      notifyListeners();
-      return;
-    }
     if (!_authWorkCurrent(revision) || status == AppStatus.unauthenticated) {
       return;
     }
@@ -2957,27 +2677,17 @@ class AppNotifier extends ChangeNotifier {
     // overwrite an already-connected socket when the user collapses and
     // re-expands the machine row; doing so leaves the UI permanently yellow
     // and disables every agent even though the transport is still ready.
-    if (_pool != null &&
-        (!machine.isLocalMachine || machine.usesLocalTransport)) {
-      _conn(machine.machine.machineId);
-    }
+    if (_pool != null) _conn(machine.machine.machineId);
   }
 
   WsConn _conn(String machineId) {
     final testConnection = connectionForTest;
     if (testConnection != null) return testConnection(machineId);
-    // A viewer dials the relay itself. On a desktop every machine goes through the local CLI daemon
-    // regardless of whether it's this computer's own machine or a relayed one: the CLI proxies
-    // foreign machines to backend transparently (see `remoteRelay.ts` in the harness CLI repo).
-    final connection = viewer != null
-        ? _pool!.connFor(machineId, transportKind: WsTransportKind.cloudE2ee)
-        : _pool!.connFor(
-            machineId,
-            transportKind: WsTransportKind.localPlaintext,
-            localWsUri: _cliEndpoint?.wsUri,
-            localProtocolVersion:
-                _cliEndpoint?.protocolVersion ?? localWsProtocolVersion,
-          );
+    // Every machine is dialled through the relay: there is no local CLI to proxy for it.
+    final connection = _pool!.connFor(
+      machineId,
+      transportKind: WsTransportKind.cloudE2ee,
+    );
     _wireConnectionHooks(connection, machineId);
     return connection;
   }
@@ -3084,7 +2794,6 @@ class AppNotifier extends ChangeNotifier {
         machine.machineId,
         () => MachineState(machine),
       );
-      state.transportMode = MachineTransportMode.cloudE2ee;
       // ⚠️ **The agents go in as PROVISIONAL, and the flag below is what keeps
       // them honest.** With them the phone draws its terminal — the right
       // agent's name on it, from the record it already had — while the real list
@@ -3179,17 +2888,6 @@ class AppNotifier extends ChangeNotifier {
   }) async {
     if (!_machineWorkCurrent(machine, _authRevision)) return;
     if (machine.agentLoadStatus == AgentLoadStatus.loaded && !force) return;
-    if (machine.isLocalMachine && !machine.usesLocalTransport) {
-      machine.transportMode = MachineTransportMode.localOffline;
-      machine.nodeOnline = false;
-      machine.agentsRefreshing = false;
-      machine.agentsLoadError = 'Harness is offline — run harness login';
-      machine.agentLoadStatus = machine.agents.isEmpty
-          ? AgentLoadStatus.error
-          : AgentLoadStatus.loaded;
-      notifyListeners();
-      return;
-    }
     final inFlight = machine.agentsLoadInFlight;
     if (inFlight != null) return inFlight;
     late final Future<void> load;
@@ -3323,9 +3021,8 @@ class AppNotifier extends ChangeNotifier {
       if (!_machineWorkCurrent(machine, revision)) return;
       machine.agentsRefreshing = false;
       if (error is WsRequestTimeout) {
-        machine.agentsLoadError = machine.isLocalMachine
-            ? 'Harness is offline — run harness login'
-            : 'Harness is offline — run harness start on that machine';
+        machine.agentsLoadError =
+            'Harness is offline — run harness start on that machine';
         _recoverStaleSession(machine, connection);
       } else if (connection.isClosed || machine.nodeOnline == false) {
         machine.agentsLoadError = 'Could not load harnesses: $error';
@@ -3385,7 +3082,6 @@ class AppNotifier extends ChangeNotifier {
     if (machine.nodeOnline != false) {
       unawaited(_applyNodeStatus(machine, false));
     }
-    if (machine.isLocalMachine) return;
     unawaited(connection.forceReconnect());
   }
 
@@ -3910,14 +3606,12 @@ class AppNotifier extends ChangeNotifier {
     ]);
   }
 
-  /// What every connected REMOTE machine's agent accounts have spent, asked in
+  /// What every connected machine's agent accounts have spent, asked in
   /// parallel and read there with that machine's own credentials (`usage_read`).
   ///
-  /// This computer's own accounts are not asked here — the app reads those
-  /// directly, the Keychain included. A remote machine may be signed in to a
-  /// different subscription, and a rate limit belongs to an account rather than
-  /// a computer, so the only honest way to show that one is to ask the machine
-  /// that holds it.
+  /// A machine may be signed in to a different subscription, and a rate limit
+  /// belongs to an account rather than a computer, so the only honest way to
+  /// show that one is to ask the machine that holds it.
   ///
   /// ⚠️ **A machine whose CLI predates `usage_read` does not refuse it — it goes
   /// silent.** The frame reaches it as an E2EE envelope it does not know to
@@ -3928,9 +3622,7 @@ class AppNotifier extends ChangeNotifier {
   Future<List<MachineUsage>> readRemoteUsage() async {
     final remotes = [
       for (final machine in machineStates.values)
-        if (!machine.isLocalMachine &&
-            machine.connectionStatus == ConnectionStatus.connected)
-          machine,
+        if (machine.connectionStatus == ConnectionStatus.connected) machine,
     ];
     final answers = await Future.wait([
       for (final machine in remotes) _readMachineUsage(machine),
@@ -4947,9 +4639,7 @@ class AppNotifier extends ChangeNotifier {
     if (!online) {
       _markSessionsUnreachable(
         machine,
-        machine.isLocalMachine
-            ? 'Harness is offline. Run harness login to reconnect.'
-            : 'Harness is offline. Run harness start on that machine to reconnect.',
+        'Harness is offline. Run harness start on that machine to reconnect.',
       );
       _startOfflineRetry(machine);
     } else {
@@ -5292,7 +4982,7 @@ class AppNotifier extends ChangeNotifier {
     if (machine == null) return;
     _dismissedLinkPrompts.remove(machineId);
     selectedMachineId = machineId;
-    if (machine.isRemote && !machine.isLocalMachine && machine.needsLink) {
+    if (machine.isRemote && machine.needsLink) {
       notifyListeners();
       return;
     }
@@ -6005,8 +5695,7 @@ class AppNotifier extends ChangeNotifier {
     return machine != null &&
         machine.nodeOnline != false &&
         machine.terminalCapabilityAvailable &&
-        !(machine.isRemote && !machine.isLocalMachine && machine.needsLink) &&
-        (!machine.isLocalMachine || machine.usesLocalTransport) &&
+        !(machine.isRemote && machine.needsLink) &&
         machine.agents.any((a) => a.id == agentId && a.terminalAvailable);
   }
 
@@ -6508,11 +6197,9 @@ class AppNotifier extends ChangeNotifier {
 
   @override
   void dispose() {
-    _localGitProjects.dispose();
     _disposed = true;
     if (signingIn) cliLogin.cancel();
     _closedHistory.clear();
-    _daemonSupervisionTimer?.cancel();
     _stopAllOfflineRetries();
     _stopAllLinkRetries();
     _stopAllAgentSyncTimers();
