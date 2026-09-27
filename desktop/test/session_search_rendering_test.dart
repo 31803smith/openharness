@@ -98,6 +98,7 @@ void main() {
 
   testWidgets(
     'a session previews its latest turns from the bottom up, and pages up for older ones',
+    variant: TargetPlatformVariant.only(TargetPlatform.macOS),
     (tester) async {
       final tails = <int?>[];
       Map<String, dynamic> row(int turn) => {
@@ -158,6 +159,9 @@ void main() {
                   name: 'Agent 7',
                   engine: 'codex',
                   terminalAvailable: true,
+                  lastActivityAt: DateTime.now().subtract(
+                    const Duration(seconds: 20),
+                  ),
                 )
               : agent,
       ];
@@ -199,6 +203,9 @@ void main() {
       await tester.pump(const Duration(seconds: 10));
       expect(tails, [null], reason: 'nothing refreshes while Cmd-P is open');
       expect(find.text('Working'), findsOneWidget);
+      // Under a minute old reads "now", not "0m".
+      expect(find.text('now'), findsOneWidget);
+      expect(find.text('0m'), findsNothing);
 
       final list = find.byKey(const ValueKey('session-tail:m:s7'));
       expect(list, findsOneWidget);
@@ -240,6 +247,20 @@ void main() {
         return true;
       });
       expect(bold, ['retention']);
+
+      // One scrollbar, on the turns alone: macOS gives every list its own,
+      // and none may wrap the whole preview besides.
+      expect(
+        find.descendant(
+          of: find.ancestor(of: list, matching: find.byType(Semantics)).first,
+          matching: find.byType(Scrollbar),
+        ),
+        findsOneWidget,
+      );
+      expect(
+        find.ancestor(of: list, matching: find.byType(Scrollbar)),
+        findsNothing,
+      );
 
       // The latest ask is in view, so nothing is pinned above the turns.
       expect(find.byKey(const ValueKey('preview-last-ask')), findsNothing);
