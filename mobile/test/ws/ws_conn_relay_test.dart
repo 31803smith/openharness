@@ -392,6 +392,18 @@ void main() {
     });
   });
 
+  test('what a failure prints is its sentence', () {
+    expect('${const WsCredentialRevoked('Sign in again.')}', 'Sign in again.');
+    expect(
+      '${const WsRequestFailure(responseType: 'agent_delete_result', code: 'AGENT_BUSY')}',
+      'agent_delete_result: AGENT_BUSY',
+    );
+    expect(
+      '${const WsRequestFailure(responseType: 'x', code: 'C', detail: '')}',
+      'x: C',
+    );
+  });
+
   group('the session ending', () {
     test('the socket dropping rejects what was pending and redials', () async {
       final (conn, link) = await connected();
@@ -598,8 +610,9 @@ void main() {
             return forced == 0 ? 'token' : 'renewed';
           },
         );
-        final next = relay.nextSession();
+        final next = relay.nextLink();
         await link.close(4401, 'auth expired');
+        // Inside the first backoff step (a second): the redial can only be the immediate one.
         final second = await next.timeout(const Duration(milliseconds: 900));
         expect(failed, 'token');
         expect(second.protocol, 'renewed');
