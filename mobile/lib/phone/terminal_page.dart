@@ -2774,7 +2774,12 @@ class _AttachingState extends State<_Attaching> with TickerProviderStateMixin {
   /// Whether the sweep and the breath are running. False with the page parked
   /// beside the one on screen, or with animations turned off — see
   /// [didChangeDependencies] for what is drawn then.
-  bool _animating = false;
+  ///
+  /// ⚠️ **Null until the first [didChangeDependencies], not false.** Starting
+  /// on false, a skeleton BUILT still — Reduce Motion on, or a page built parked
+  /// — found nothing changed, skipped the jump to the sweep's end, and drew bare
+  /// ground for the whole wait.
+  bool? _animating;
 
   @override
   void didChangeDependencies() {

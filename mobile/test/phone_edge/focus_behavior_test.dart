@@ -749,6 +749,40 @@ void main() {
       expect(find.bySemanticsLabel('Attaching to the harness'), findsOneWidget);
       // Nothing moves, so the tree settles — which a breathing skeleton never lets it do.
       await tester.pumpAndSettle();
+      // ⚠️ And it is THERE: jumped to where the sweep would end. Before, a skeleton built with
+      // animations already off never ran its sweep and never jumped it either — the reveal sat at
+      // zero and the page waited on bare ground, which is the one thing the skeleton is for.
+      expect(_skeletonReveal(tester), greaterThan(0.5));
+      await tester.pumpWidget(const SizedBox());
+      await tester.pump(const Duration(seconds: 3));
+      app.dispose();
+      await tester.pump(const Duration(seconds: 30));
+    });
+
+    testWidgets('parked beside the page on screen, then brought back', (
+      tester,
+    ) async {
+      setPhone(tester, largePhone);
+      final app = edgeApp();
+      final voice = edgeVoice().voice;
+      Widget page({required bool ticking}) => phoneApp(
+        TickerMode(
+          enabled: ticking,
+          child: TerminalPage(
+            notifier: app,
+            machineId: 'm',
+            agentId: 'a',
+            voice: voice,
+          ),
+        ),
+      );
+      await tester.pumpWidget(page(ticking: true));
+      await tester.pump(const Duration(milliseconds: 300));
+      await tester.pumpWidget(page(ticking: false));
+      await tester.pump();
+      expect(_skeletonReveal(tester), greaterThan(0.5));
+      await tester.pumpWidget(page(ticking: true));
+      await tester.pump(const Duration(milliseconds: 300));
       await tester.pumpWidget(const SizedBox());
       await tester.pump(const Duration(seconds: 3));
       app.dispose();
@@ -821,6 +855,21 @@ void main() {
 
 /// The clipboard's contents as `Clipboard.getData` reports them.
 Map<String, dynamic>? _clipboard;
+
+/// How far the attaching skeleton's sweep has come, 0 (nothing drawn) to its stop short of 1 —
+/// read off its painter, which is private to the page.
+double _skeletonReveal(WidgetTester tester) {
+  final painters = [
+    for (final paint in tester.widgetList<CustomPaint>(
+      find.byType(CustomPaint),
+    ))
+      if (paint.painter.runtimeType.toString() == '_SkeletonPainter')
+        paint.painter,
+  ];
+  expect(painters, hasLength(1));
+  final dynamic painter = painters.single;
+  return (painter.reveal as Animation<double>).value;
+}
 
 /// Whether the mic can be pressed.
 bool _micLive(WidgetTester tester) =>
