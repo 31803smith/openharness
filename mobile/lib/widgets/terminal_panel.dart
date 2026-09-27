@@ -9,8 +9,6 @@ import 'package:xterm/xterm.dart';
 import '../clipboard/native_clipboard.dart';
 import '../state/app_state.dart';
 
-import '../shortcuts/app_keymap.dart';
-import '../shortcuts/keymap.dart';
 import '../terminal/terminal_snapshot.dart';
 import '../terminal/terminal_binary.dart';
 import '../terminal/terminal_font_store.dart';
@@ -1068,144 +1066,138 @@ class _TerminalPanelState extends State<TerminalPanel>
     grid.AppTheme.watch(context);
     final session = widget.session;
     _syncTerminal(session.terminal);
-    return KeymapRegion(
-      contextKind: KeymapContext.terminal,
-      composing: () =>
-          _focusNode.hasFocus &&
-          _terminalViewKey.currentState?.isComposing == true,
-      child: ColoredBox(
-        color: grid.AppPalette.windowBg,
-        child: Column(
-          children: [
-            Expanded(
-              child: Stack(
-                children: [
-                  Positioned.fill(
-                    child: MouseRegion(
-                      onEnter: (event) => _hoverLink(event.position),
-                      onHover: (event) => _hoverLink(event.position),
-                      onExit: (_) => _hoverLink(null),
-                      child: _LinkTooltip(
-                        link: _hoveredLink,
-                        modifierDown: _linkModifierDown,
-                        child: TerminalView(
-                          session.terminal,
-                          key: _terminalViewKey,
-                          controller: _controller,
-                          autoResize: _live,
-                          resizeBuffer: false,
-                          scrollController: _scrollController,
-                          focusNode: _focusNode,
-                          autofocus: widget.focused,
-                          readOnly: !session.acceptsInput,
-                          // iOS answers Backspace over an empty native buffer
-                          // with nothing at all (`deleteBackward` in
-                          // FlutterTextInputPlugin.mm), so a line the keyboard
-                          // did not type — text typed on the desktop, a voice
-                          // transcript, a recalled command — could not be
-                          // rubbed out. xterm keeps a padding for Backspace to
-                          // eat instead — see test/terminal_ime_input_test.dart.
-                          //
-                          // Unconditional: this package builds for iOS and
-                          // Android only. ⚠️ Lost once already in a merge
-                          // (cb47ba35 → TestFlight build 11), which is why
-                          // test/terminal_panel_backspace_test.dart pins it.
-                          deleteDetection: true,
-                          theme: terminalThemeFor(
-                            grid.AppTheme.palette.value,
-                            terminalThemeStore.value,
-                          ),
-                          // ⚠️ **Nothing top or bottom, and that is the whole
-                          // point of writing it out rather than `all(10)`.**
-                          // This padding is laid OUTSIDE the scroll view (see
-                          // xterm's `TerminalView.build`: a `Container` wraps
-                          // the `Scrollable`), so a vertical inset is a strip
-                          // the terminal can never draw into — scrolled to
-                          // either end, the last line stopped 10px short of the
-                          // edge and the gap travelled with the content rather
-                          // than staying put like a margin. The sides are
-                          // margins beside chrome, not under it, and stay.
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: Tty.origin,
-                          ),
-                          textStyle: terminalFontStore.value,
-                          // ⚠️ The terminal is NOT app chrome, and the user said so:
-                          // it carries its own font settings (Settings ▸ Terminal,
-                          // [terminalFontStore]) precisely because its type is a grid
-                          // a remote program is drawing into, not a label.
-                          //
-                          // Without this, `TerminalView` falls back to
-                          // `MediaQuery.textScalerOf(context)` (xterm's
-                          // terminal_view.dart:257), so the app-wide UI size would
-                          // change the cell size — and a changed cell size is not
-                          // cosmetic here: it re-derives `rows`, which fires
-                          // `Terminal.resize` → `session.resize` → a `terminal_resize`
-                          // frame on the wire and a real SIGWINCH at the far end.
-                          //
-                          // Read in `createRenderObject`, not only on update, so this
-                          // holds from the very first frame — no scaled first paint
-                          // and no startup resize.
-                          textScaler: TextScaler.noScaling,
-                          // ⚠️ PNG alone, and not because other types are rare.
-                          // The daemon writes what it receives to a file it names
-                          // `<uuid>.png` outright (`cli/src/lib/pasteDropFiles.ts`),
-                          // so a JPEG would arrive on the far machine under a name
-                          // that lies about it. Widening this means teaching the
-                          // CLI the real type first — and an older CLI, which
-                          // `terminalImagePasteAvailable` already gates on, would
-                          // still not know it.
-                          allowedMimeTypes: const ['image/png'],
-                          onContentInserted: _onContentInserted,
-                          onKeyEvent: _onTerminalKey,
-                          onTapDown: _onTerminalTapDown,
-                          onTapUp: _onTerminalTapUp,
-                          // Constant on purpose. The click cursor is applied by
-                          // [_LinkTooltip]'s own MouseRegion, which repaints
-                          // without rebuilding this view.
-                          mouseCursor: SystemMouseCursors.text,
-                          onSecondaryTapDown: (_, _) => _copyOrPaste(),
-
-                          onAltBufferScroll: session.scrollViaTmuxCopyMode
-                              ? (up) => session.sendScrollCommand(up, 1)
-                              : null,
+    return ColoredBox(
+      color: grid.AppPalette.windowBg,
+      child: Column(
+        children: [
+          Expanded(
+            child: Stack(
+              children: [
+                Positioned.fill(
+                  child: MouseRegion(
+                    onEnter: (event) => _hoverLink(event.position),
+                    onHover: (event) => _hoverLink(event.position),
+                    onExit: (_) => _hoverLink(null),
+                    child: _LinkTooltip(
+                      link: _hoveredLink,
+                      modifierDown: _linkModifierDown,
+                      child: TerminalView(
+                        session.terminal,
+                        key: _terminalViewKey,
+                        controller: _controller,
+                        autoResize: _live,
+                        resizeBuffer: false,
+                        scrollController: _scrollController,
+                        focusNode: _focusNode,
+                        autofocus: widget.focused,
+                        readOnly: !session.acceptsInput,
+                        // iOS answers Backspace over an empty native buffer
+                        // with nothing at all (`deleteBackward` in
+                        // FlutterTextInputPlugin.mm), so a line the keyboard
+                        // did not type — text typed on the desktop, a voice
+                        // transcript, a recalled command — could not be
+                        // rubbed out. xterm keeps a padding for Backspace to
+                        // eat instead — see test/terminal_ime_input_test.dart.
+                        //
+                        // Unconditional: this package builds for iOS and
+                        // Android only. ⚠️ Lost once already in a merge
+                        // (cb47ba35 → TestFlight build 11), which is why
+                        // test/terminal_panel_backspace_test.dart pins it.
+                        deleteDetection: true,
+                        theme: terminalThemeFor(
+                          grid.AppTheme.palette.value,
+                          terminalThemeStore.value,
                         ),
+                        // ⚠️ **Nothing top or bottom, and that is the whole
+                        // point of writing it out rather than `all(10)`.**
+                        // This padding is laid OUTSIDE the scroll view (see
+                        // xterm's `TerminalView.build`: a `Container` wraps
+                        // the `Scrollable`), so a vertical inset is a strip
+                        // the terminal can never draw into — scrolled to
+                        // either end, the last line stopped 10px short of the
+                        // edge and the gap travelled with the content rather
+                        // than staying put like a margin. The sides are
+                        // margins beside chrome, not under it, and stay.
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: Tty.origin,
+                        ),
+                        textStyle: terminalFontStore.value,
+                        // ⚠️ The terminal is NOT app chrome, and the user said so:
+                        // it carries its own font settings (Settings ▸ Terminal,
+                        // [terminalFontStore]) precisely because its type is a grid
+                        // a remote program is drawing into, not a label.
+                        //
+                        // Without this, `TerminalView` falls back to
+                        // `MediaQuery.textScalerOf(context)` (xterm's
+                        // terminal_view.dart:257), so the app-wide UI size would
+                        // change the cell size — and a changed cell size is not
+                        // cosmetic here: it re-derives `rows`, which fires
+                        // `Terminal.resize` → `session.resize` → a `terminal_resize`
+                        // frame on the wire and a real SIGWINCH at the far end.
+                        //
+                        // Read in `createRenderObject`, not only on update, so this
+                        // holds from the very first frame — no scaled first paint
+                        // and no startup resize.
+                        textScaler: TextScaler.noScaling,
+                        // ⚠️ PNG alone, and not because other types are rare.
+                        // The daemon writes what it receives to a file it names
+                        // `<uuid>.png` outright (`cli/src/lib/pasteDropFiles.ts`),
+                        // so a JPEG would arrive on the far machine under a name
+                        // that lies about it. Widening this means teaching the
+                        // CLI the real type first — and an older CLI, which
+                        // `terminalImagePasteAvailable` already gates on, would
+                        // still not know it.
+                        allowedMimeTypes: const ['image/png'],
+                        onContentInserted: _onContentInserted,
+                        onKeyEvent: _onTerminalKey,
+                        onTapDown: _onTerminalTapDown,
+                        onTapUp: _onTerminalTapUp,
+                        // Constant on purpose. The click cursor is applied by
+                        // [_LinkTooltip]'s own MouseRegion, which repaints
+                        // without rebuilding this view.
+                        mouseCursor: SystemMouseCursors.text,
+                        onSecondaryTapDown: (_, _) => _copyOrPaste(),
+
+                        onAltBufferScroll: session.scrollViaTmuxCopyMode
+                            ? (up) => session.sendScrollCommand(up, 1)
+                            : null,
                       ),
                     ),
                   ),
-                  // Both bars tick once per transferred chunk. Listening here
-                  // keeps that traffic off the pane's own element, so a paste
-                  // or a preview download cannot stutter the live terminal.
-                  Positioned(
-                    left: 14,
-                    right: 14,
-                    bottom: 12,
-                    child: _TransferOverlay(
-                      session: session,
-                      preview: _previewProgress,
-                      onCancelPreview: () => _previewCancellation?.cancel(),
-                    ),
+                ),
+                // Both bars tick once per transferred chunk. Listening here
+                // keeps that traffic off the pane's own element, so a paste
+                // or a preview download cannot stutter the live terminal.
+                Positioned(
+                  left: 14,
+                  right: 14,
+                  bottom: 12,
+                  child: _TransferOverlay(
+                    session: session,
+                    preview: _previewProgress,
+                    onCancelPreview: () => _previewCancellation?.cancel(),
                   ),
-                  // A long press selects on a phone, and nothing else offered to copy what it
-                  // selected: `Copy` rides the selection, top right, until used or cleared.
-                  // Under the phone's title (three rows, laid over the pane's top), not behind it.
-                  Positioned(
-                    top: 60,
-                    right: 8,
-                    child: ListenableBuilder(
-                      listenable: _controller,
-                      builder: (context, _) => _controller.selection == null
-                          ? const SizedBox.shrink()
-                          : _SelectionActions(
-                              onCopy: () => unawaited(_copySelection()),
-                              onClear: _controller.clearSelection,
-                            ),
-                    ),
+                ),
+                // A long press selects on a phone, and nothing else offered to copy what it
+                // selected: `Copy` rides the selection, top right, until used or cleared.
+                // Under the phone's title (three rows, laid over the pane's top), not behind it.
+                Positioned(
+                  top: 60,
+                  right: 8,
+                  child: ListenableBuilder(
+                    listenable: _controller,
+                    builder: (context, _) => _controller.selection == null
+                        ? const SizedBox.shrink()
+                        : _SelectionActions(
+                            onCopy: () => unawaited(_copySelection()),
+                            onClear: _controller.clearSelection,
+                          ),
                   ),
-                ],
-              ),
+                ),
+              ],
             ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }

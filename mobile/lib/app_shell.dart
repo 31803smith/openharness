@@ -12,14 +12,12 @@ import 'core/startup.dart';
 import 'logging/app_log.dart';
 import 'logging/install.dart';
 import 'logging/startup_trace.dart';
-import 'shortcuts/app_keymap.dart';
 
 /// A screen the app puts up for one of its states — signed in, signed out, starting.
 typedef AuthenticatedScreenBuilder = Widget Function(AppNotifier app);
 
-/// Everything both entry points do before their first frame: file logs, the
-/// crash log, the keyboard config, the saved appearance, and the native window
-/// where there is one.
+/// Everything the app does before its first frame: file logs, the crash log and
+/// the saved appearance.
 ///
 /// Lives here rather than in either `main.dart` so the two cannot drift — the
 /// mobile app is a separate package (`../mobile`) that depends on this one, and
@@ -49,22 +47,14 @@ Future<void> startHarness({
   // is an offset into THIS launch. Touched before any awaited work so the origin
   // is the entrypoint rather than whatever step happens to mark itself first.
   StartupTrace.mark('startHarness');
-  final keymap = AppKeymap(store: AppKeymap.fileStore());
-  // Keyboard configuration has its own file and watchers. It can load beside
-  // the appearance, but both must be ready before the window becomes usable.
-  //
-  // Timed apart rather than as one `Future.wait`: they finish together by
-  // construction, so a single number around the pair would only ever report the
-  // slower one and never say WHICH. On a phone that distinction is the whole
-  // question — the keymap reads a file nobody on a touchscreen can have edited.
-  await Future.wait([
-    StartupTrace.time('settings.load', loadPersistedSettings),
-    StartupTrace.time('keymap.start', keymap.start),
-  ]);
+  // ⚠️ **No keymap.** The desktop loads its keyboard configuration here, a file
+  // and its watchers, beside the appearance. Nothing on the phone reads a keymap
+  // — no key is ever matched against one — so the file a touchscreen could not
+  // have edited is not read either.
+  await StartupTrace.time('settings.load', loadPersistedSettings);
   runApp(
     ProviderScope(
       child: HarnessApp(
-        keymap: keymap,
         authenticatedScreen: authenticatedScreen,
         signedOutScreen: signedOutScreen,
         bootScreen: bootScreen,
@@ -84,12 +74,10 @@ Future<void> startHarness({
 class HarnessApp extends StatelessWidget {
   const HarnessApp({
     super.key,
-    this.keymap,
     required this.authenticatedScreen,
     required this.signedOutScreen,
     required this.bootScreen,
   });
-  final AppKeymap? keymap;
   final AuthenticatedScreenBuilder authenticatedScreen;
   final AuthenticatedScreenBuilder signedOutScreen;
   final AuthenticatedScreenBuilder bootScreen;
@@ -167,14 +155,7 @@ class HarnessApp extends StatelessWidget {
       builder: (context, child) => MediaQuery.withClampedTextScaling(
         minScaleFactor: scale,
         maxScaleFactor: scale,
-        child: _GridTokenScope(
-          child: keymap == null
-              ? child ?? const SizedBox.shrink()
-              : KeymapProvider(
-                  keymap: keymap!,
-                  child: child ?? const SizedBox.shrink(),
-                ),
-        ),
+        child: _GridTokenScope(child: child ?? const SizedBox.shrink()),
       ),
       home: AnalyticsLifecycle(
         child: RootShell(
