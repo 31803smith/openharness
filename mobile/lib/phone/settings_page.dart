@@ -277,7 +277,12 @@ class _Avatar extends StatelessWidget {
     final source = (user?.name?.trim().isNotEmpty ?? false)
         ? user!.name!.trim()
         : (user?.email ?? '');
-    final initial = source.isEmpty ? '?' : source.substring(0, 1).toUpperCase();
+    // ⚠️ The first CHARACTER, not the first code unit: a name that opens with an emoji starts on
+    // half of a surrogate pair, and a lone half is a string the text engine refuses — it threw,
+    // and took the whole Settings page down with it.
+    final initial = source.isEmpty
+        ? '?'
+        : source.characters.first.toUpperCase();
     return Container(
       // 34, matching the stepper beside it two rows down: both are the tallest thing in their row,
       // and at 38 this one alone pushed its row past [kSettingsRowHeight] while the others sat on

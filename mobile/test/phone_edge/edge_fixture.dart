@@ -328,6 +328,9 @@ Future<void> expectNoLayoutErrors(
       }
     }
   }
+  // What the screens started — a machine being re-reached, a request's timeout — runs out here,
+  // before the test's end checks for timers left behind.
+  await tester.pump(const Duration(seconds: 30));
   expect(failures, isEmpty, reason: failures.join('\n'));
 }
 

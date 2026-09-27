@@ -1089,8 +1089,14 @@ class _TerminalPageState extends State<TerminalPage>
       false;
 
   /// A window name the way tmux shortens one: the first dozen characters.
-  static String _windowName(String name) =>
-      name.length <= 12 ? name : name.substring(0, 12);
+  ///
+  /// ⚠️ Characters as a person counts them, not UTF-16 units: cut by `substring`, a name with an
+  /// emoji near the twelfth unit kept half a surrogate pair, and the text engine throws on a string
+  /// like that — the title, and the page under it, went with it.
+  static String _windowName(String name) {
+    final characters = name.characters;
+    return characters.length <= 12 ? name : characters.take(12).toString();
+  }
 
   /// Where the reader is while scrolled up in the history — see [_CopyModePosition].
   final _scrollback = ValueNotifier<({int above, int total})?>(null);

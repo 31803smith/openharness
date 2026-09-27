@@ -56,9 +56,15 @@ class TerminalTitle extends StatelessWidget {
 
   /// A long branch shortened in the middle — `fix/login-refresh-token` → `fix/logi…sh-token` — where
   /// both ends say which one it is.
-  static String _short(String branch) => branch.length <= 30
-      ? branch
-      : '${branch.substring(0, 14)}…${branch.substring(branch.length - 14)}';
+  ///
+  /// Cut by characters, not UTF-16 units, for the reason `_windowName` in `terminal_page.dart`
+  /// gives: half an emoji is a string the text engine throws on.
+  static String _short(String branch) {
+    final characters = branch.characters;
+    return characters.length <= 30
+        ? branch
+        : '${characters.take(14)}…${characters.skip(characters.length - 14)}';
+  }
 
   @override
   Widget build(BuildContext context) {
