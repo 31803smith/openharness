@@ -67,7 +67,18 @@ class WsPool {
       );
       unawaited(current.close());
     }
-    final conn = WsConn(
+    // ⚠️ Once another connection holds this machine, this one speaks for nothing. A connection's
+    // last word — the `disconnected` from its socket closing — can land after its successor has
+    // come up, and it marked that working connection's machine as lost ("Connection lost.
+    // Reconnecting…"). The desktop's pool shuts a replaced connection up the same way. One that
+    // was only closed, with nothing in its place yet, still reports its end: the app reads it.
+    late final WsConn conn;
+    bool replaced() {
+      final owner = _conns[machineId];
+      return owner != null && !identical(owner, conn);
+    }
+
+    conn = WsConn(
       wsBaseUrl: wsBaseUrl,
       autonomousEnv: autonomousEnv,
       relayCodecs: transportKind == WsTransportKind.cloudE2ee
@@ -78,12 +89,20 @@ class WsPool {
           : null,
       machineId: machineId,
       accessTokenProvider: accessTokenProvider,
-      onAuthFailure: onAuthFailure,
+      onAuthFailure: (message) {
+        if (!replaced()) onAuthFailure(message);
+      },
       onLocalFailure: onLocalFailure == null
           ? null
-          : (code, reason) => onLocalFailure!(machineId, code, reason),
-      onEvent: (event) => onEvent(machineId, event),
-      onStatus: (status) => onStatus(machineId, status),
+          : (code, reason) {
+              if (!replaced()) onLocalFailure!(machineId, code, reason);
+            },
+      onEvent: (event) {
+        if (!replaced()) return onEvent(machineId, event);
+      },
+      onStatus: (status) {
+        if (!replaced()) onStatus(machineId, status);
+      },
       transportKind: transportKind,
       localWsUri: localWsUri,
       localApiKey: localApiKey,
