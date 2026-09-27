@@ -167,6 +167,7 @@ class CliLink implements PeerLinkClient {
     String password, {
     void Function(String stage)? onProgress,
     String? displayName,
+    String? label,
   }) async {
     final invocation = await _runStdinNdjson(
       [

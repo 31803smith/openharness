@@ -30,6 +30,7 @@ class DirectLink implements PeerLinkClient {
     String password, {
     void Function(String stage)? onProgress,
     String? displayName,
+    String? label,
   }) async {
     final String token;
     try {
@@ -45,6 +46,7 @@ class DirectLink implements PeerLinkClient {
       wsBaseUrl: config.wsBaseUrl,
       autonomousEnv: config.autonomousEnv,
       onProgress: (stage) => onProgress?.call(stage.wireName),
+      label: label,
       socket: socket,
     );
     switch (result) {

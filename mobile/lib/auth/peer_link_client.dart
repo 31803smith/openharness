@@ -12,6 +12,8 @@ abstract interface class PeerLinkClient {
     String password, {
     void Function(String stage)? onProgress,
     String? displayName,
+    // What this device calls itself, for the computer's list of paired devices ("Dee's iPhone").
+    String? label,
   });
 
   /// Pairing by the one-time code a desktop app's "Add phone" QR carries (`viewer/code_link.dart`)

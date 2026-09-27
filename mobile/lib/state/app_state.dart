@@ -3443,6 +3443,7 @@ class AppNotifier extends ChangeNotifier {
       password,
       onProgress: onProgress,
       displayName: machineStates[machineId]?.machine.displayName,
+      label: phoneClientDescriptor().name,
     );
     if (result.error != null) return result.error;
     final targetId = result.linkedMachineId ?? machineId;
