@@ -751,8 +751,11 @@ class _NewAgentPageState extends State<NewAgentPage> {
                       Tty.origin,
                       4,
                     ),
+                    // Where "harness" is taught: the moment somebody makes their first one. The agent
+                    // is Claude Code or Codex; a harness is one session of it — the owner: "you have
+                    // 1 agent codex but you have multiple harnesses (sessions) with it."
                     child: TtyText(
-                      'Nothing running yet. Start your first harness.',
+                      'A harness is one session of an agent. Start your first.',
                       color: tty.faint,
                       size: TtySize.meta,
                     ),
@@ -864,8 +867,11 @@ class _NewAgentPageState extends State<NewAgentPage> {
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
                       // A first harness has nothing to go on: three first tasks to tap, the kind
-                      // that shows what an agent does in a minute.
-                      if (_task.text.trim().isEmpty && !_creating)
+                      // that shows what an agent does in a minute. Only then — once something is
+                      // running, somebody knows what to ask, and the chips were filler over it.
+                      if (nothingRunning &&
+                          _task.text.trim().isEmpty &&
+                          !_creating)
                         Padding(
                           padding: const EdgeInsets.only(bottom: 8),
                           child: Wrap(
