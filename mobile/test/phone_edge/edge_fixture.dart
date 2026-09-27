@@ -7,6 +7,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:harness_mobile/api/api_client.dart';
 import 'package:harness_mobile/auth/auth_session.dart';
 import 'package:harness_mobile/auth/cli_link.dart';
+import 'package:harness_mobile/auth/cli_login.dart';
 import 'package:harness_mobile/auth/peer_link_client.dart';
 import 'package:harness_mobile/core/config.dart';
 import 'package:harness_mobile/core/harness_cli_runner.dart';
@@ -226,6 +227,7 @@ AppNotifier edgeApp({
     connectionForTest: (_) => conn ?? EdgeConn(),
     peerLinks: links ?? EdgeLinks(),
     cliLink: CliLink(runner: _noCli()),
+    cliLogin: CliLogin(runner: _noCli()),
   );
   app.api = EdgeApi(app, session);
   if (noMachines) return app;
