@@ -69,13 +69,20 @@ class HarnessFileStore implements BatchLocalKeyValueStore {
        // and neither may assume it is the only writer.
        _cacheable = cacheableForTest || (isMobileHost && directory == null);
 
+  /// The home every default path resolves under instead of the real one — set
+  /// once for the whole test suite by `test/flutter_test_config.dart`, so that no
+  /// test, however it builds the app, can read or write a developer's own
+  /// `~/.harness`. A test that passes its own `environment` still gets its own.
+  @visibleForTesting
+  static String? homeForTest;
+
   /// [name] names the sibling under `~/.harness`; it defaults to this store's own.
   static String defaultDirectoryPath({
     Map<String, String>? environment,
     String? name,
   }) {
     final env = environment ?? Platform.environment;
-    var home = env['HOME'];
+    var home = environment == null ? homeForTest ?? env['HOME'] : env['HOME'];
     if ((home == null || home.isEmpty) && Platform.isWindows) {
       home = env['USERPROFILE'];
       if (home == null || home.isEmpty) {
