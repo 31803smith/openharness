@@ -107,7 +107,6 @@ class Swarm {
           PaneLayoutEntry(
             machineId: p.machineId,
             agentId: p.agentId!,
-            composerVisible: p.composerVisible,
             pinnedSlot: pinnedSlots[p.id],
           ).toJson(),
       ],
@@ -134,7 +133,6 @@ class ClosedAgent extends ClosedWork {
        index = swarm.panes.indexOf(pane),
        machineId = pane.machineId,
        agentId = pane.agentId!,
-       composerVisible = pane.composerVisible,
        pinnedSlot = swarm.pinnedSlots[pane.id],
        manualLayout = swarm.manualLayout,
        remainingAgents = List.unmodifiable([
@@ -146,7 +144,7 @@ class ClosedAgent extends ClosedWork {
   final String swarmId, swarmName, machineId, machineName, agentId, name;
   final String? engine;
   final int index;
-  final bool composerVisible, zoomed;
+  final bool zoomed;
   final int? pinnedSlot;
   final PaneArrangement? manualLayout;
   final List<(String, String?)> remainingAgents;
@@ -176,7 +174,6 @@ class ClosedSwarm extends ClosedWork {
            (
              machineId: pane.machineId,
              agentId: pane.agentId,
-             composerVisible: pane.composerVisible,
              pinnedSlot: swarm.pinnedSlots[pane.id],
            ),
        ]),
@@ -192,10 +189,7 @@ class ClosedSwarm extends ClosedWork {
   final int zoom;
   final Map<int, PanePreset> presets;
   final Map<String, PaneArrangement> paneSizes;
-  final List<
-    ({String machineId, String? agentId, bool composerVisible, int? pinnedSlot})
-  >
-  panes;
+  final List<({String machineId, String? agentId, int? pinnedSlot})> panes;
   final String? replacementId;
 
   bool replacesUntouchedWelcome(Swarm swarm) =>

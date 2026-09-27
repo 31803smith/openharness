@@ -912,7 +912,7 @@ class AppNotifier extends ChangeNotifier {
               id: _nextPaneId++,
               machineId: entry.machineId,
               agentId: entry.agentId,
-            )..composerVisible = entry.composerVisible,
+            ),
           ),
         );
       }
@@ -939,7 +939,7 @@ class AppNotifier extends ChangeNotifier {
           id: _nextPaneId++,
           machineId: entry.machineId,
           agentId: entry.agentId,
-        )..composerVisible = entry.composerVisible,
+        ),
       );
       restored.panes.add(pane);
       if (entry.pinnedSlot != null) {
@@ -983,11 +983,11 @@ class AppNotifier extends ChangeNotifier {
                   p.machineId == agent.machineId && p.agentId == agent.agentId,
             )
             .firstOrNull ??
-        (TerminalPane(
+        TerminalPane(
           id: _nextPaneId++,
           machineId: agent.machineId,
           agentId: agent.agentId,
-        )..composerVisible = agent.composerVisible);
+        );
     if (!target.panes.contains(pane)) {
       final restoreManual =
           agent.manualLayout != null &&
@@ -1379,17 +1379,6 @@ class AppNotifier extends ChangeNotifier {
 
   bool isAgentInPane(String machineId, String agentId) =>
       paneOfAgent(machineId, agentId) != null;
-
-  /// Show or hide one tile's composer textbox, and remember the choice.
-  void toggleComposer(int paneId) {
-    for (final pane in panes) {
-      if (pane.id != paneId) continue;
-      pane.composerVisible = !pane.composerVisible;
-      _persistLayout();
-      notifyListeners();
-      return;
-    }
-  }
 
   void focusPane(int paneId, {bool reveal = false}) {
     if (!panes.any((pane) => pane.id == paneId)) return;
@@ -6589,14 +6578,11 @@ class AppNotifier extends ChangeNotifier {
           final key = '${entry.machineId}\u0000${entry.agentId}';
           final pane = pool.putIfAbsent(
             key,
-            () =>
-                TerminalPane(
-                    id: _nextPaneId++,
-                    machineId: entry.machineId,
-                    agentId: entry.agentId,
-                  )
-                  ..composerVisible = entry.composerVisible
-                  ..pinnedSlot = entry.pinnedSlot,
+            () => TerminalPane(
+              id: _nextPaneId++,
+              machineId: entry.machineId,
+              agentId: entry.agentId,
+            )..pinnedSlot = entry.pinnedSlot,
           );
           if (!swarm.panes.contains(pane)) {
             swarm.panes.add(pane);
@@ -6679,12 +6665,10 @@ class AppNotifier extends ChangeNotifier {
     for (final entry in entries) {
       panes.add(
         TerminalPane(
-            id: _nextPaneId++,
-            machineId: entry.machineId,
-            agentId: entry.agentId,
-          )
-          ..composerVisible = entry.composerVisible
-          ..pinnedSlot = entry.pinnedSlot,
+          id: _nextPaneId++,
+          machineId: entry.machineId,
+          agentId: entry.agentId,
+        )..pinnedSlot = entry.pinnedSlot,
       );
     }
     // The saved order already puts everything where it was left, so this is
