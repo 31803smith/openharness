@@ -3,6 +3,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 import 'package:xterm/xterm.dart';
 
@@ -324,6 +325,24 @@ class _TerminalPanelState extends State<TerminalPanel>
 
   void _onSessionChanged() {
     if (!mounted) return;
+    // ⚠️ **A keyframe replaces the emulator itself, and nothing above this pane rebuilds for it.**
+    // The daemon answers every resize with one — so every keyboard the phone raises or lowers ends
+    // in one — and the page redraws only for what IT shows (the status, the first frame, the
+    // agent), all of which read the same after the swap. The view then stayed on the OLD
+    // [Terminal], frozen at its pre-resize screen, while every byte after went into the new one.
+    // [build] is what moves the view across ([_syncTerminal]); this is what asks for a build.
+    //
+    // After the frame when the swap lands mid-frame, as [setState] may not be called then.
+    if (!identical(widget.session.terminal, _viewTerminal)) {
+      if (SchedulerBinding.instance.schedulerPhase ==
+          SchedulerPhase.persistentCallbacks) {
+        SchedulerBinding.instance.addPostFrameCallback((_) {
+          if (mounted) setState(() {});
+        });
+      } else {
+        setState(() {});
+      }
+    }
     _syncCursorBlink();
     // A pane can open BEFORE its screen exists: over the relay it mounts empty
     // and the retained scrollback is replayed a moment later, so the jump in
