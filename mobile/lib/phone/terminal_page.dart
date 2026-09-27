@@ -3771,33 +3771,52 @@ class _SampleEndCard extends StatelessWidget {
       child: SafeArea(
         child: Padding(
           padding: const EdgeInsets.fromLTRB(24, 24, 24, 24),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              const Spacer(),
-              TtyText('That’s Harness.', size: 26, weight: FontWeight.w600),
-              const SizedBox(height: 20),
-              tick('watched a harness work'),
-              tick('answered its question'),
-              tick('started $started'),
-              const SizedBox(height: 6),
-              TtyText('3 passed', size: TtySize.meta, color: tty.green),
-              const SizedBox(height: 24),
-              Text(
-                'Now do it on your own code. The real ones run on your '
-                'computer; this phone is the remote.',
-                style: tty.style(size: TtySize.row),
-              ),
-              const Spacer(),
-              TtyPrimaryButton(label: 'Set up my computer', onPressed: onSetUp),
-              const SizedBox(height: 4),
-              Center(
-                child: TtyTextButton(
-                  label: 'Keep playing',
-                  onPressed: onKeepPlaying,
+          // ⚠️ **Scrolls when it does not fit.** Centred by its spacers on a screen with room, but
+          // a small phone at a large text size has less room than the card has words — as a
+          // fixed column it overflowed, and the one button that leads anywhere went off the foot.
+          child: LayoutBuilder(
+            builder: (context, box) => SingleChildScrollView(
+              child: ConstrainedBox(
+                constraints: BoxConstraints(minHeight: box.maxHeight),
+                child: IntrinsicHeight(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      const Spacer(),
+                      TtyText(
+                        'That’s Harness.',
+                        size: 26,
+                        weight: FontWeight.w600,
+                      ),
+                      const SizedBox(height: 20),
+                      tick('watched a harness work'),
+                      tick('answered its question'),
+                      tick('started $started'),
+                      const SizedBox(height: 6),
+                      TtyText('3 passed', size: TtySize.meta, color: tty.green),
+                      const SizedBox(height: 24),
+                      Text(
+                        'Now do it on your own code. The real ones run on your '
+                        'computer; this phone is the remote.',
+                        style: tty.style(size: TtySize.row),
+                      ),
+                      const Spacer(),
+                      TtyPrimaryButton(
+                        label: 'Set up my computer',
+                        onPressed: onSetUp,
+                      ),
+                      const SizedBox(height: 4),
+                      Center(
+                        child: TtyTextButton(
+                          label: 'Keep playing',
+                          onPressed: onKeepPlaying,
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               ),
-            ],
+            ),
           ),
         ),
       ),

@@ -84,8 +84,11 @@ class TerminalTitle extends StatelessWidget {
         child: DecoratedBox(
           // No rule under it: the output fades out beneath instead — see the gradient below.
           decoration: BoxDecoration(color: tty.ground),
-          child: SizedBox(
-            height: height,
+          // ⚠️ **At least four rows, not exactly four.** The rows are the terminal's, which the
+          // text scale does not touch, and the three lines are the app's type, which it does: at
+          // Settings ▸ Text size's largest the lines outgrew a fixed box and overflowed it.
+          child: ConstrainedBox(
+            constraints: BoxConstraints(minHeight: height),
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: Tty.origin),
               child: Row(
