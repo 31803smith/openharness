@@ -316,6 +316,9 @@ class FakeLinks implements PeerLinkClient {
   final List<(String, String)> passwords = [];
   final List<(String, String, String)> codes = [];
   final List<String> unlinked = [];
+
+  /// What each password pairing named this phone ("Dee's iPhone").
+  final List<String?> labels = [];
   int lists = 0;
 
   @override
@@ -324,8 +327,10 @@ class FakeLinks implements PeerLinkClient {
     String password, {
     void Function(String stage)? onProgress,
     String? displayName,
+    String? label,
   }) async {
     passwords.add((machineId, password));
+    labels.add(label);
     onProgress?.call('connecting');
     return connectResult;
   }

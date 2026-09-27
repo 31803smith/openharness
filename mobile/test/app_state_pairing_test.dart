@@ -56,6 +56,8 @@ void main() {
 
       expect(error, isNull);
       expect(rig.links.passwords.single, ('m', 'hunter2'));
+      // The computer files the pairing under this phone's own name ("Dee's iPhone").
+      expect(rig.links.labels.single, rig.app.phoneClientDescriptor().name);
       expect(stages, ['connecting']);
       final machine = rig.app.stateOf('m')!;
       expect(machine.needsLink, isFalse);
