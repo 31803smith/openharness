@@ -3,7 +3,6 @@ import 'dart:io';
 import 'package:flutter/widgets.dart';
 
 import '../core/host_platform.dart';
-import 'app_shortcuts.dart';
 import 'keymap.dart';
 import 'keymap_commands.dart';
 import 'keymap_store.dart';
@@ -157,99 +156,4 @@ class KeymapRegion extends InheritedWidget {
       context.getInheritedWidgetOfExactType<KeymapRegion>();
   @override
   bool updateShouldNotify(KeymapRegion oldWidget) => false;
-}
-
-String? effectiveShortcutHint(BuildContext context, ShortcutAction action) {
-  final command = harnessCommands
-      .where((command) => command.action == action)
-      .firstOrNull;
-  final map = KeymapTheme.of(context);
-  if (command == null) return null;
-  final binding = (map?.current ?? harnessDefaultKeymap)
-      .bindingsFor(KeymapContext.workspace)
-      .where((binding) => binding.command == command.id)
-      .firstOrNull;
-  return binding == null ? null : describeKeyBinding(binding);
-}
-
-String withEffectiveShortcutHint(
-  BuildContext context,
-  String label,
-  ShortcutAction action,
-) {
-  final hint = effectiveShortcutHint(context, action);
-  return hint == null ? label : '$label  $hint';
-}
-
-String? effectiveCommandHint(
-  BuildContext context,
-  String command, {
-  KeymapContext contextKind = KeymapContext.workspace,
-}) {
-  final bindings = (KeymapTheme.of(context)?.current ?? harnessDefaultKeymap)
-      .bindingsFor(contextKind);
-  final binding = bindings
-      .where((binding) => binding.command == command)
-      .firstOrNull;
-  return binding == null ? null : describeKeyBinding(binding);
-}
-
-List<ShortcutRow> effectiveShortcutRows(
-  BuildContext context,
-  KeymapContext contextKind,
-) {
-  final map = KeymapTheme.of(context)?.current;
-  if (map == null && contextKind == KeymapContext.workspace) {
-    return shortcutRows();
-  }
-  final bindings = (map ?? harnessDefaultKeymap).bindingsFor(contextKind);
-  final defaultDigits =
-      contextKind != KeymapContext.picker &&
-      List.generate(kTabDigitCount, (i) {
-        final matches = bindings
-            .where((b) => b.command == 'swarm.select_${i + 1}')
-            .toList();
-        return matches.length == 1 &&
-            matches.single.keys.length == 1 &&
-            matches.single.keys.single == KeyStroke.parse('cmd+${i + 1}');
-      }).every((value) => value);
-  final shortcuts = appShortcuts();
-  return [
-    for (final command in harnessCommands)
-      if ((command.context == KeymapContext.workspace ||
-              command.context == contextKind) &&
-          (!defaultDigits ||
-              !RegExp(r'^swarm\.select_[1-9]$').hasMatch(command.id)))
-        if (command.action != null ||
-            bindings.any((b) => b.command == command.id))
-          ShortcutRow(
-            label:
-                shortcuts
-                    .where((s) => s.action == command.action)
-                    .firstOrNull
-                    ?.label ??
-                command.label,
-            chords: [
-              for (final binding in bindings.where(
-                (b) => b.command == command.id,
-              ))
-                binding.keys.length == 1
-                    ? describeKeyStrokeKeys(binding.keys.single)
-                    : [
-                        describeKeyBinding(binding)
-                            .replaceAll('↵', 'Return')
-                            .replaceAll('⇥', 'Tab'),
-                      ],
-            ],
-            group: command.group,
-          ),
-    if (defaultDigits)
-      const ShortcutRow(
-        label: 'Select tabs 1–9',
-        chords: [
-          ['⌘', '1 – 9'],
-        ],
-        group: ShortcutGroup.navigate,
-      ),
-  ];
 }

@@ -115,14 +115,3 @@ KeyStroke? keyStrokeFor(
           shift: shift,
         );
 }
-
-KeyStroke? keyStrokeForEvent(KeyEvent event) {
-  final keyboard = HardwareKeyboard.instance;
-  return keyStrokeFor(
-    event.logicalKey,
-    control: keyboard.isControlPressed,
-    alt: keyboard.isAltPressed,
-    command: keyboard.isMetaPressed,
-    shift: keyboard.isShiftPressed,
-  );
-}

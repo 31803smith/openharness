@@ -150,10 +150,6 @@ class ApiException implements Exception {
   String toString() => message;
 }
 
-bool isUnauthorizedError(Object error) =>
-    error is DioException && error.response?.statusCode == 401 ||
-    error is ApiException && error.status == 401;
-
 /// Unwraps the backend's `{success, data, error}` envelope, which both legs
 /// speak: the CLI's loopback server mirrors it, and the viewer's own auth calls
 /// (`viewer/direct_auth_api.dart`) read it straight from the backend.

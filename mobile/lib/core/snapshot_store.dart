@@ -82,22 +82,3 @@ class FileSnapshotStore implements SnapshotStore {
     }
   }
 }
-
-/// The same contract with no disk under it — for tests, and for a build that
-/// deliberately keeps nothing.
-class MemorySnapshotStore implements SnapshotStore {
-  MemorySnapshotStore([this.contents]);
-
-  String? contents;
-
-  bool get isEmpty => contents == null;
-
-  @override
-  Future<String?> read() async => contents;
-
-  @override
-  Future<void> write(String value) async => contents = value;
-
-  @override
-  Future<void> clear() async => contents = null;
-}

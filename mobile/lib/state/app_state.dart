@@ -155,13 +155,6 @@ class LocalManualFixture {
   });
 }
 
-@visibleForTesting
-Map<String, dynamic> eventWithClearPayload(
-  Map<String, dynamic> frame,
-  String type,
-  Map<String, dynamic> payload,
-) => {...frame, 'type': type, 'payload': payload};
-
 class MachineState {
   Machine machine;
   ConnectionStatus connectionStatus = ConnectionStatus.disconnected;

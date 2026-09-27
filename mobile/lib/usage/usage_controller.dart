@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 
 import 'package:harness_mobile/core/test_run.dart';
+
 import 'usage_accounts.dart';
 import 'usage_source.dart';
 import 'usage_window.dart';
@@ -18,13 +19,14 @@ import 'usage_window.dart';
 /// quietly went [stale].
 ///
 /// ⚠️ **Deliberately different from the desktop's controller in ONE way: this
-/// one reads no LOCAL sources.** The desktop constructs
-/// `[ClaudeUsageSource(), CodexUsageSource()]` by default, because the machine
+/// one reads no LOCAL sources.** The desktop constructs its
+/// `[ClaudeUsageSource(), CodexUsageSource()]` by default (neither has a copy
+/// here), because the machine
 /// it runs on is also the machine `claude login` and `codex login` wrote their
 /// tokens on — the macOS Keychain item `Claude Code-credentials`,
 /// `~/.claude/.credentials.json`, `~/.codex/auth.json`. **A phone has none of
 /// those**, and never will: no agent CLI ever signs in here, and the sandbox
-/// has no `~` in the sense those paths mean. `UsageCredentials` would answer
+/// has no `~` in the sense those paths mean. The desktop's `UsageCredentials` would answer
 /// null for every one of them — safely, since it only ever `existsSync`s a file
 /// and skips the Keychain off macOS — but the readings it produced would all be
 /// [UsageStatus.signedOut], which is the exact wrong sentence: it invites the
