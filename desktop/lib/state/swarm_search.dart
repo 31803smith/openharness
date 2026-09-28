@@ -211,6 +211,9 @@ class SwarmSearchController extends ChangeNotifier {
     final catalog = models;
     final entry = catalog?.entries[row.modelId];
     if (entry == null || catalog == null) return null;
+    // An API's model says what Enter does on it — Use, when this pane can run on it, else nothing.
+    // Its entry's status is only the API's name, which the row it sits under already shows.
+    if (entry.apiModel != null) return modelRowAction(row);
     final local = entry.local;
     final owner = entry.controller ?? catalog.manager;
     return local != null

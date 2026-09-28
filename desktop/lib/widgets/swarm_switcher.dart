@@ -1447,8 +1447,10 @@ class _SearchRowContentState extends State<_SearchRowContent> {
                         key: ValueKey('model-row-status:${row.id}'),
                         maxLines: 1,
                         style: terminalContentStyle(
-                          color: widget.search.modelRowLive(row) ||
-                                  status == 'Suggested'
+                          color: underApi
+                              ? theme.foreground
+                              : widget.search.modelRowLive(row) ||
+                                    status == 'Suggested'
                               ? const Color(0xFF86E6A3)
                               : muted,
                         ),
