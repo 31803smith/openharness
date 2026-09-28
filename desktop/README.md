@@ -54,26 +54,19 @@ Use `--dart-define=HARNESS_ANALYTICS_DISABLED=true` for isolated previews.
 
 ### Production release
 
-The Flutter source remains in this package. The existing website deployment in
-`autonomous-ai/autonomous-code` serves its compiled files under `/harness-web/`,
+The Flutter source remains in this package. The website that serves it lives in
+[`../website`](../website) and serves its compiled files under `/harness-web/`,
 with `/`, `/s/:id` and `/auth/callback` opening the Flutter app. It also serves the desktop
 downloads and installer redirects.
 
 From the repo root, on a tested commit already on `main`, run `make release-web`
 (`ARGS="--dry-run"` to preview). [`scripts/release-web.sh`](scripts/release-web.sh)
-does the whole release from this repo:
-
-1. Tags the commit `vX.Y.Z_web`, which runs **Release web bundle**. CI builds with
-   Flutter 3.47.2 and publishes the archive, SHA-256, and `harness-web-release.json`
-   as GitHub release assets.
-2. Opens and merges a PR on the website repo that pins
-   `apps/web/harness-web-release.json` to that release.
-3. Runs the website's own `scripts/release-web.sh`. The website build checks the
-   archive's checksum before including it in the image; ArgoCD deploys that image.
-
-It lists any other unreleased website commits that ship with it. After a failure,
-re-run with the same version (`make release-web ARGS=X.Y.Z`); completed steps are
-skipped.
+tags the commit `vX.Y.Z_web`, which runs **Release web**. That one job builds the
+bundle with Flutter 3.47.2, bakes it into the website image
+(`gcr.io/autonomous-ecm/autonomous-code-website:<tag>` and `:latest`; ArgoCD deploys
+it), and publishes the archive, SHA-256 and `harness-web-release.json` as a GitHub
+Release. The script waits for the run. After a failure, fix forward and cut the next
+version rather than moving the tag.
 
 The host configures Flutter's entrypoint, asset and CanvasKit URLs under
 `/harness-web/releases/<version>-<archive-checksum-prefix>/` and does not start
@@ -85,22 +78,13 @@ For a local production build, run `bash scripts/build-web-release.sh X.Y.Z`.
 
 ### Web image
 
-The same tag also builds the app's own image, [`deploy/web/`](deploy/web/), for the
-existing ArgoCD rollout. It is nginx serving only the app's routes (`/`, `/s/:id`,
-`/auth/callback`, `/callback`, `/harness-web/*`) on port 8080, with `/healthz`. The
-website keeps downloads, `/pair`, `/install.sh` and its redirects, so the ingress
-routes only those app paths to this image. The image job:
-
-1. Downloads the release it just published.
-2. Runs `prepare.py`, which verifies the checksum and applies the versioned asset
-   layout above.
-3. Builds the image and runs `smoke.sh` against it. The smoke test fails if `/` is
-   not this release's Flutter app.
-4. Pushes `$HARNESS_WEB_IMAGE:vX.Y.Z_web`.
-
-Push needs the repository variable `HARNESS_WEB_IMAGE` and the
-`GCP_WORKLOAD_IDENTITY_PROVIDER`/`GCP_SERVICE_ACCOUNT` secrets. Without them, the
-image is built and tested only. To build and check it locally:
+[`deploy/web/`](deploy/web/) is a standalone image of the app alone: nginx serving
+only the app's routes (`/`, `/s/:id`, `/auth/callback`, `/callback`,
+`/harness-web/*`) on port 8080, with `/healthz`. **Release web does not build or
+push it**; production serves the app from the website image above. It remains for
+checking a published release in isolation: `prepare.py` verifies the checksum and
+applies the versioned asset layout, and `smoke.sh` fails if `/` is not that
+release's Flutter app.
 
 ```bash
 gh release download vX.Y.Z_web -D rel -p 'harness-web-*.tar.gz' -p harness-web-release.json
