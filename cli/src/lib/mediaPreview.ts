@@ -31,7 +31,9 @@ function fail(code: string): never { throw new MediaPreviewError(code) }
  * relative path is a promise about the workspace and is held to it, while an absolute one may name
  * an artifact the agent dropped elsewhere. Either way the promise is measured on the real path. */
 function resolveTarget(root: string, target: string): { path: string; workspaceOnly: boolean } {
-  if (!target || target.length > 4096 || /[\x00-\x1f\x7f]/.test(target)) fail('MEDIA_INVALID_REQUEST')
+  // Typed as a string, but it arrives off the wire: a number or an object is a bad request, not a
+  // TypeError thrown from whichever string method happens to be reached first.
+  if (typeof target !== 'string' || !target || target.length > 4096 || /[\x00-\x1f\x7f]/.test(target)) fail('MEDIA_INVALID_REQUEST')
   let path = target
   if (/^file:/i.test(path)) {
     try {

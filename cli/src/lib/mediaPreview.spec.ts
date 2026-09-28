@@ -55,6 +55,11 @@ describe('remote media preview reads', () => {
     expect(Buffer.from((await readMediaPreviewChunk(root, filename, 0)).contentBase64, 'base64')).toEqual(bytes)
   })
 
+  it.each([123, {}, ['image.png'], true, null])('refuses a target that is not a string: %s', async (target) => {
+    // The payload is whatever the client sent; a bad type is a refusal, never a raw TypeError.
+    await expect(readMediaPreviewChunk(root, target as never, 0)).rejects.toThrow('MEDIA_INVALID_REQUEST')
+  })
+
   it('refuses an absolute path that lands outside every root', async () => {
     // A real media file the daemon can read, in a folder that is neither the workspace nor a temp one.
     const elsewhere = await mkdtemp(join(tmpdir(), 'harness-media-elsewhere-'))
