@@ -2393,12 +2393,22 @@ class AppNotifier extends ChangeNotifier {
   /// Held in memory, not on disk, and cleared the moment the machine is chosen
   /// again: someone who clicks that row is asking to see it.
   final Set<String> _dismissedLinkPrompts = {};
+  String? _requestedMachineLink;
+
+  /// Explicit setup navigation must remain available even when a browser has
+  /// another connected machine and suppresses its automatic startup picker.
+  String? get requestedMachineLink => _requestedMachineLink;
+
+  void acknowledgeMachineLinkRequest(String machineId) {
+    if (_requestedMachineLink == machineId) _requestedMachineLink = null;
+  }
 
   bool isLinkPromptDismissed(String machineId) =>
       _dismissedLinkPrompts.contains(machineId);
 
   void dismissLinkPrompt(String machineId) {
     if (_disposed) return;
+    acknowledgeMachineLinkRequest(machineId);
     if (_dismissedLinkPrompts.add(machineId)) notifyListeners();
   }
 
@@ -3581,6 +3591,7 @@ class AppNotifier extends ChangeNotifier {
     _draftSwarmReturns.clear();
     _localMismatchReported.clear();
     _dismissedLinkPrompts.clear();
+    _requestedMachineLink = null;
     for (final controller in _orchestratorProjects.values) {
       controller.dispose();
     }
@@ -9680,6 +9691,7 @@ class AppNotifier extends ChangeNotifier {
     _dismissedLinkPrompts.remove(machineId);
     selectedMachineId = machineId;
     if (machine.isRemote && !machine.isLocalMachine && machine.needsLink) {
+      _requestedMachineLink = machineId;
       notifyListeners();
       return;
     }
