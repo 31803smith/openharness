@@ -1095,8 +1095,6 @@ class _SwarmResourcePreviewState extends State<SwarmResourcePreview> {
           'Other account' =>
             'This account is not signed in on the harness’s machine.',
           'Not serving' => 'Not serving on ${entry.node ?? 'its host'}.',
-          'This computer only' =>
-            'Saved APIs run the harnesses on this computer only.',
           _ => reason,
         },
       if (entry.own && local == null && owner.scanning)
@@ -1136,9 +1134,11 @@ class _SwarmResourcePreviewState extends State<SwarmResourcePreview> {
         ('Via', '${api.name} · ${api.host}'),
         '',
         if (reason == null)
-          'Use runs this harness on it, with the key saved on this computer.'
-        else if (reason == 'This computer only')
-          'Saved APIs run the harnesses on this computer only.'
+          'Use runs this harness on it, with the key saved on '
+              '${widget.search.models!.manager.apis.hostLabel}.'
+        else if (reason == 'Other machine')
+          'Its key is saved on ${widget.search.models!.manager.apis.hostLabel}, '
+              'so only the harnesses there can run on it.'
         else
           reason,
       ], controls: true);

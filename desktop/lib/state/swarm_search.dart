@@ -146,7 +146,8 @@ class SwarmSearchController extends ChangeNotifier {
   }
 
   /// The API model [row] offers the focused harness, or null when it cannot run on it: only a
-  /// harness on this computer, where the API's key is kept, on an engine that can be re-pointed.
+  /// harness on the machine the APIs are saved on (this computer, in the desktop app), where the
+  /// key is kept, on an engine that can be re-pointed.
   ({ApiConnection api, ApiModel model})? selectableApiModel(
     SwarmDestination? row,
   ) {
@@ -159,7 +160,7 @@ class SwarmSearchController extends ChangeNotifier {
     }
     final machine = app.stateOf(_modelSelectionMachineId ?? '');
     if (machine == null ||
-        !machine.isLocalMachine ||
+        machine.machine.machineId != models!.manager.apis.machineId ||
         machine.connectionStatus != ConnectionStatus.connected) {
       return null;
     }
@@ -237,8 +238,9 @@ class SwarmSearchController extends ChangeNotifier {
     }
     if (entry.apiModel != null) {
       final machine = app.stateOf(_modelSelectionMachineId ?? '');
-      if (machine != null && !machine.isLocalMachine) {
-        return 'This computer only';
+      if (machine != null &&
+          machine.machine.machineId != models!.manager.apis.machineId) {
+        return 'Other machine';
       }
       return 'Not available to this harness';
     }

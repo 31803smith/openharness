@@ -547,7 +547,7 @@ void main() {
       // The same list, opened for a harness on the other computer: shown, and says why not.
       picker.setModelSelection('claude', app.inventory, machineId: 'other');
       expect(picker.canSelectModel(row), isFalse);
-      expect(picker.modelUseReason(row), 'This computer only');
+      expect(picker.modelUseReason(row), 'Other machine');
       // And an engine the daemon cannot re-point is refused here too.
       picker.setModelSelection(
         'cursor',

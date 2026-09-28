@@ -164,22 +164,40 @@ describe('agent_retarget onto an API model', () => {
     await socket.stop()
   })
 
-  it('refuses a remote client, and a frame naming an API with anything else', async () => {
+  it('refuses a session that is not the owner\'s, and a frame naming an API with anything else', async () => {
     const socket = new BackendSocket('fixture')
     const reply = vi.spyOn(socket as any, 'emitReply').mockImplementation(() => {})
     const moved = vi.fn(async () => ({ ok: true as const }))
     socket.onRetargetAgent = moved
-    // Authenticated and encrypted, and still refused: the key stays with its owner on this computer.
+    // Encrypted, but not the owner's paired session: refused, as managing these APIs would be.
     vi.spyOn((socket as any).e2ee, 'unwrapDown').mockReturnValueOnce({
       type: 'agent_retarget', payload: { requestId: 'r', agentId: 'agent-1', apiConnection: 'openrouter', apiModel: 'z-ai/glm-5' },
     })
     await (socket as any).dispatchDown({ type: 'agent_retarget', payload: { __e2e: { v: 1, k: 'p', n: 1, ct: 'fixture' } } }, 'remote')
-    expect(reply).toHaveBeenLastCalledWith('remote', 'agent_retarget', 'r', { error: 'LOCAL_ONLY', detail: 'Use saved APIs on this computer.' })
+    expect(reply).toHaveBeenLastCalledWith('remote', 'agent_retarget', 'r', { error: 'OWNER_REQUIRED' })
     await retarget(socket, { apiConnection: 'openrouter', apiModel: 'z-ai/glm-5', gridModel: 'Qwen' })
     expect(reply).toHaveBeenLastCalledWith('local:apis', 'agent_retarget', 'r', expect.objectContaining({ error: 'INVALID_GRID' }))
     await retarget(socket, { apiConnection: 'openrouter', clearGrid: true })
     expect(reply).toHaveBeenLastCalledWith('local:apis', 'agent_retarget', 'r', expect.objectContaining({ error: 'INVALID_GRID' }))
     expect(moved).not.toHaveBeenCalled()
+    await socket.stop()
+  })
+
+  it('lets the owner\'s paired session use the API, as it may manage it', async () => {
+    const socket = new BackendSocket('fixture')
+    const reply = vi.spyOn(socket as any, 'emitReply').mockImplementation(() => {})
+    const saved = store.save({ provider: 'openrouter', apiKey: secret })
+    vi.spyOn(ApiConnections.prototype, 'modelAccess').mockImplementation(() => ({ connection: saved, apiKey: secret }))
+    vi.spyOn(globalThis, 'fetch').mockImplementation(answering(listing))
+    vi.spyOn((socket as any).e2ee, 'sessionRole').mockReturnValue('web')
+    vi.spyOn((socket as any).e2ee, 'unwrapDown').mockReturnValueOnce({
+      type: 'agent_retarget', payload: { requestId: 'r', agentId: 'agent-1', apiConnection: 'openrouter', apiModel: 'z-ai/glm-5' },
+    })
+    const moved = vi.fn(async () => ({ ok: true as const }))
+    socket.onRetargetAgent = moved
+    await (socket as any).dispatchDown({ type: 'agent_retarget', payload: { __e2e: { v: 1, k: 'p', n: 1, ct: 'fixture' } } }, 'owner')
+    expect(moved).toHaveBeenCalledWith(expect.objectContaining({ grid: expect.objectContaining({ networkId: 'api:openrouter', model: 'z-ai/glm-5' }) }))
+    expect(reply).toHaveBeenLastCalledWith('owner', 'agent_retarget', 'r', { retargeted: true })
     await socket.stop()
   })
 

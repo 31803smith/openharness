@@ -4,7 +4,10 @@ import 'dart:math' show Random;
 
 import 'package:dio/dio.dart';
 
-import 'dart:ui' show Color, Rect;   // Rect: activeTileShape, the same one pane_preset.dart returns
+import 'dart:ui'
+    show
+        Color,
+        Rect; // Rect: activeTileShape, the same one pane_preset.dart returns
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart'
@@ -15,7 +18,9 @@ import '../analytics/analytics.dart';
 import '../models/model_manager_controller.dart';
 import '../api/api_client.dart';
 import '../viewer/sign_in_browser.dart';
+import '../viewer/direct_link.dart';
 import '../viewer/viewer_services.dart';
+import '../viewer/group_sync.dart' show GroupSyncOutcome;
 import '../auth/auth_session.dart';
 import '../auth/peer_link_client.dart';
 import '../auth/sign_in_client.dart';
@@ -918,13 +923,22 @@ class AppNotifier extends ChangeNotifier {
     String machineId,
     Map<String, dynamic> payload,
   ) async {
-    if (machineId != localMachineState?.machine.machineId) {
+    final machine = stateOf(machineId);
+    if (machine == null ||
+        machine.machine.isShared ||
+        machine.needsLink ||
+        machine.nodeOnline == false ||
+        machine.connectionStatus != ConnectionStatus.connected) {
       throw StateError(
-        'Orchestrator projects currently run on this computer only.',
+        'Connect this machine to start an orchestrator project.',
       );
     }
+    final connection = _conn(machineId);
+    if (!connection.isReady) {
+      throw StateError('Reconnect this machine to manage its projects.');
+    }
     try {
-      return await _conn(machineId).request(
+      return await connection.request(
         'orchestrator',
         payload: payload,
         timeout: const Duration(seconds: 35),
@@ -932,7 +946,7 @@ class AppNotifier extends ChangeNotifier {
     } on WsRequestFailure catch (e) {
       if (e.code == 'UNSUPPORTED') {
         throw StateError(
-          'Update the local Harness CLI to use the orchestrator.',
+          'Update Harness on this machine to use the orchestrator.',
         );
       }
       rethrow;
@@ -1698,10 +1712,14 @@ class AppNotifier extends ChangeNotifier {
   bool signingIn = false;
   bool _sessionExpired = false;
   bool get sessionExpired => _sessionExpired;
+
+  @visibleForTesting
+  void handleAuthFailureForTest(String message) => _signedOutAtRuntime(message);
   bool signingOut = false;
   String? signOutError;
   Future<void>? _logoutInFlight;
   Future<void>? _workspaceCleanup;
+  bool _guestDeskRestorePending = false;
 
   AppNotifier({
     required AppConfig config,
@@ -2140,6 +2158,9 @@ class AppNotifier extends ChangeNotifier {
   /// What a machine hears the moment its socket is up — first connect, or a
   /// reconnect after its daemon restarted, which has forgotten all of it.
   void _onMachineConnected(String machineId, MachineState machine) {
+    // A viewer build keeps its own trust group (a CLI build's daemon keeps one for it): any session
+    // that comes up is the moment to compare it with this machine.
+    unawaited(_syncGroup(machineId));
     _resetMachineDiscovery(machine);
     _markSessionsUnreachable(
       machine,
@@ -2414,12 +2435,22 @@ class AppNotifier extends ChangeNotifier {
   /// Held in memory, not on disk, and cleared the moment the machine is chosen
   /// again: someone who clicks that row is asking to see it.
   final Set<String> _dismissedLinkPrompts = {};
+  String? _requestedMachineLink;
+
+  /// Explicit setup navigation must remain available even when a browser has
+  /// another connected machine and suppresses its automatic startup picker.
+  String? get requestedMachineLink => _requestedMachineLink;
+
+  void acknowledgeMachineLinkRequest(String machineId) {
+    if (_requestedMachineLink == machineId) _requestedMachineLink = null;
+  }
 
   bool isLinkPromptDismissed(String machineId) =>
       _dismissedLinkPrompts.contains(machineId);
 
   void dismissLinkPrompt(String machineId) {
     if (_disposed) return;
+    acknowledgeMachineLinkRequest(machineId);
     if (_dismissedLinkPrompts.add(machineId)) notifyListeners();
   }
 
@@ -2443,6 +2474,27 @@ class AppNotifier extends ChangeNotifier {
     for (final state in machineStates.values) {
       if (state.isLocalMachine) {
         return state; // the flag is the STATE's, not the machine row's
+      }
+    }
+    return null;
+  }
+
+  /// Default host for machine-scoped tools. A dialog freezes this choice while someone edits it.
+  /// Native windows retain their local host; a browser uses the focused linked host first.
+  MachineState? get ownedActionMachine {
+    if (viewer == null) return localMachineState;
+    for (final id in [
+      focusedPane?.machineId,
+      selectedMachineId,
+      ...machineStates.keys,
+    ]) {
+      final machine = machineStates[id];
+      if (machine != null &&
+          !machine.machine.isShared &&
+          !machine.needsLink &&
+          machine.nodeOnline != false &&
+          machine.connectionStatus == ConnectionStatus.connected) {
+        return machine;
       }
     }
     return null;
@@ -2479,9 +2531,13 @@ class AppNotifier extends ChangeNotifier {
   }
 
   Future<RouteAnswer?> routeTask(String text) async {
-    final machineId = localMachineState?.machine.machineId;
-    final connection = machineId == null ? null : _pool?[machineId];
-    if (connection == null) return null;
+    final machineId = ownedActionMachine?.machine.machineId;
+    final connection = machineId == null
+        ? null
+        : viewer == null
+        ? (_pool?[machineId])
+        : _conn(machineId);
+    if (connection == null || !connection.isReady) return null;
     try {
       final reply = await connection.request(
         'route_task',
@@ -2519,13 +2575,27 @@ class AppNotifier extends ChangeNotifier {
     String agentMachineId,
     String text,
   ) async {
-    final localId = localMachineState?.machine.machineId;
-    if (localId == null) return 'No local machine is connected.';
-    final connection = _pool?[localId];
-    if (connection == null) return 'No local machine is connected.';
-    // The task goes to the LOCAL daemon whichever machine the agent is on: it owns the dispatch that
-    // knows the difference (its own registry, or the fleet link to the other computer). Sending it down
-    // the remote machine's own socket would be a second delivery path for the same thing.
+    final localId = viewer == null
+        ? localMachineState?.machine.machineId
+        : agentMachineId.isNotEmpty
+        ? agentMachineId
+        : ownedActionMachine?.machine.machineId;
+    if (localId == null) return 'Connect a machine to send a task.';
+    final targetMachine = stateOf(localId);
+    if (viewer != null &&
+        (targetMachine == null ||
+            targetMachine.machine.isShared ||
+            targetMachine.needsLink ||
+            targetMachine.nodeOnline == false ||
+            targetMachine.connectionStatus != ConnectionStatus.connected)) {
+      return 'Reconnect this machine to send the task.';
+    }
+    final connection = viewer == null ? (_pool?[localId]) : _conn(localId);
+    if (connection == null || !connection.isReady) {
+      return 'Reconnect this machine to send the task.';
+    }
+    // Desktop dispatches through its local daemon; a browser uses the agent's linked owner.
+    // Both enter the same daemon task-delivery path, including refusal acknowledgements.
     try {
       final reply = await connection.request(
         'route_send',
@@ -2548,6 +2618,47 @@ class AppNotifier extends ChangeNotifier {
     final target = agentMachineId.isNotEmpty ? agentMachineId : localId;
     await selectAgent(target, agentId);
     return null;
+  }
+
+  Future<Map<String, dynamic>> resolveCommandBar(
+    Map<String, dynamic> request, {
+    required CancelToken cancelToken,
+  }) async {
+    if (viewer == null) {
+      return api.resolveCommandBar(request, cancelToken: cancelToken);
+    }
+    if (cancelToken.isCancelled) throw cancelToken.cancelError!;
+    final machine = ownedActionMachine;
+    if (machine == null) {
+      throw ApiException('Connect a machine, or choose an action below.');
+    }
+    final connection = _conn(machine.machine.machineId);
+    if (!connection.isReady) {
+      throw ApiException('Reconnect this machine, or choose an action below.');
+    }
+    try {
+      return await Future.any([
+        connection.request(
+          'command_bar',
+          payload: {'request': request},
+          timeout: const Duration(seconds: 16),
+        ),
+        cancelToken.whenCancel.then<Map<String, dynamic>>(
+          (error) => throw error,
+        ),
+      ]);
+    } on WsRequestFailure catch (failure) {
+      throw ApiException(
+        failure.code == 'UNSUPPORTED'
+            ? 'Update Harness on this machine to use smart commands.'
+            : failure.detail ??
+                  'This machine could not answer. Choose an action below.',
+      );
+    } on WsRequestTimeout {
+      throw ApiException(
+        'This machine did not answer. Update Harness or choose an action below.',
+      );
+    }
   }
 
   MachineState? get activeMachineState {
@@ -3091,8 +3202,13 @@ class AppNotifier extends ChangeNotifier {
       }
     }
     if (from != null) {
-      await _reseatDesk(from: from, to: current, dropOthers: isGuest);
-      if (!_authWorkCurrent(revision)) return;
+      final restored = await _reseatDesk(
+        from: from,
+        to: current,
+        dropOthers: isGuest,
+        revision: revision,
+      );
+      if (!_authWorkCurrent(revision) || !restored) return;
     }
     // ONLY ONCE THE DESK REALLY NAMES THIS MACHINE.
     //
@@ -3140,41 +3256,27 @@ class AppNotifier extends ChangeNotifier {
   /// the store. Reusing the cold-start restore is what keeps this from becoming a
   /// second, subtly different way to build a grid.
   ///
-  /// [revision] is the sign-out's own, when it has one: the explicit sign-out
-  /// already invalidated the previous work, and a second invalidation here would
-  /// orphan its own wait. A session that ended underneath us passes none and
-  /// invalidates for itself — the in-flight work belongs to the account that
-  /// just left.
-  Future<void> _becomeGuest({String? banner, int? revision}) async {
-    revision ??= _invalidateAuthWork();
-    final before = localMachineState?.machine.machineId;
+  /// Both callers invalidate old account work before clearing its workspace.
+  /// Reuse that revision so the expiry explanation survives the guest restore.
+  Future<void> _becomeGuest({
+    String? banner,
+    String? previousMachineId,
+    required int revision,
+  }) async {
+    _guestDeskRestorePending = true;
     signedIn = false;
     currentUser = null;
     analyticsAccount.clear();
-    // The desk is the ACCOUNT's document (`Desk{userId}`): a guest has none, and
-    // the tabs closing here are this window leaving the account, not the person
-    // closing them — so nothing is sent.
-    _deskRetry?.cancel();
-    _deskRetry = null;
-    _desk.reset();
-    _stopAllOfflineRetries();
-    _stopAllLinkRetries();
-    _stopAllAgentSyncTimers();
-    _clearAllTurnActivity();
-    // Every connection goes: the daemon this window was talking to is being
-    // replaced by one with a different identity, and a remote lane was borrowed
-    // from the account that is changing hands.
-    await _pool?.closeAll();
+    if (banner != null) {
+      _lastError = banner;
+      _lastErrorRetryable = true;
+    }
+    // Account teardown already removed private remote content. Finish closing
+    // its transports before restoring this computer from the saved desk.
+    await _workspaceCleanup;
     if (!_authWorkCurrent(revision)) return;
-    machines = [];
-    machinesAreStale = false;
-    machineStates.clear();
-    sessionPreviews.clear();
-    sessionTails.clear();
-    gridPictures.clear();
-    _stopWakeFollowers();
-    expandedMachines.clear();
-    selectedMachineId = null;
+    final before = previousMachineId ?? await _paneLayout?.loadLocalMachineId();
+    if (!_authWorkCurrent(revision)) return;
     _ensurePool();
     notifyListeners();
     try {
@@ -3199,10 +3301,25 @@ class AppNotifier extends ChangeNotifier {
       // Remote tiles leave with the account — a guest has no machine to attach
       // them to, and a tile waiting forever reads as broken rather than as
       // signed out. This computer's follow it to the id the daemon serves now.
-      await _reseatDesk(from: before ?? after, to: after, dropOthers: true);
+      final restored = await _reseatDesk(
+        from: before ?? after,
+        to: after,
+        dropOthers: true,
+        revision: revision,
+        persistCurrent: false,
+      );
       if (!_authWorkCurrent(revision)) return;
+      if (!restored) {
+        // Keep the restore pending and the old identity intact. The unchanged
+        // saved layout may still contain private remote panes, so do not read it
+        // back into the guest workspace until the filtered write succeeds.
+        status = AppStatus.authenticated;
+        notifyListeners();
+        return;
+      }
       await _paneLayout?.saveLocalMachineId(after);
       if (!_authWorkCurrent(revision)) return;
+      _guestDeskRestorePending = false;
     }
     // A guest ends on the desk, whichever screen it started from.
     status = AppStatus.authenticated;
@@ -3221,32 +3338,77 @@ class AppNotifier extends ChangeNotifier {
   /// the file is rewritten, and the cold-start restore reads it back; tiles whose
   /// machines are already connected are attached straight away rather than
   /// waiting for a connect event that already happened.
-  Future<void> _reseatDesk({
+  ///
+  /// The tiles detaching is teardown a sign-in waits for, and a sign-in that
+  /// started meanwhile ([revision] superseded) owns the grid from there: this
+  /// leaves it empty rather than restoring the desk this re-seat was for, and
+  /// that sign-in's own bootstrap restores the file and follows the id.
+  Future<bool> _reseatDesk({
     required String from,
     required String to,
     required bool dropOthers,
+    required int revision,
+    bool persistCurrent = true,
+  }) {
+    final previous = _workspaceCleanup;
+    var restored = false;
+    return _trackWorkspaceCleanup(() async {
+      await previous;
+      if (!_authWorkCurrent(revision)) return;
+      restored = await _reseatDeskAfterCleanup(
+        from: from,
+        to: to,
+        dropOthers: dropOthers,
+        revision: revision,
+        persistCurrent: persistCurrent,
+      );
+    }()).then((_) => restored);
+  }
+
+  Future<bool> _reseatDeskAfterCleanup({
+    required String from,
+    required String to,
+    required bool dropOthers,
+    required int revision,
+    required bool persistCurrent,
   }) async {
     final store = _paneLayout;
-    if (store == null) return;
-    _persistLayout();
+    if (store == null) return true;
+    // After sign-out the live grid is intentionally empty. Saving it here
+    // would destroy the local work we are about to recover.
+    if (persistCurrent) _persistLayout();
     await store.flushSwarms();
-    await store.rekeyMachine(from: from, to: to, dropOthers: dropOthers);
-    if (_disposed) return;
+    if (!_authWorkCurrent(revision)) return false;
+    if (!await store.rekeyMachine(from: from, to: to, dropOthers: dropOthers)) {
+      if (_authWorkCurrent(revision)) {
+        _lastError =
+            'Could not restore this computer’s saved workspace. Try again.';
+        _lastErrorRetryable = true;
+      }
+      return false;
+    }
+    if (_disposed) return false;
+    // The file and the id it is keyed by move together, whatever happens next:
+    // a sign-in that overtakes this re-seat finds the desk through that id.
+    await store.saveLocalMachineId(to);
+    if (_disposed) return false;
     await _closeAllPanes(persist: false);
-    if (_disposed) return;
+    if (_disposed) return false;
     _closedHistory.clear();
     final starter = Swarm(id: 'swarm-${_nextSwarmId++}');
     swarms
       ..clear()
       ..add(starter);
     _activeSwarmId = starter.id;
+    if (!_authWorkCurrent(revision)) return false;
     await _restorePaneLayout();
-    if (_disposed) return;
+    if (!_authWorkCurrent(revision)) return false;
     for (final machine in machineStates.values) {
       // A restore at launch, or a machine re-seated under it.
       _attachPendingPanes(machine, intent: AttachIntent.automatic);
     }
     _announceAppFocus();
+    return true;
   }
 
   /// The local daemon (`harness start`) must be up before any local REST/WS call can work — unlike
@@ -3455,7 +3617,7 @@ class AppNotifier extends ChangeNotifier {
     if (status == AppStatus.unauthenticated || isGuest) {
       return; // idempotent: several sources can race here
     }
-    _invalidateAuthWork();
+    final revision = _invalidateAuthWork();
     cliLogin.cancel();
     _sessionExpired = true;
     currentUser = null;
@@ -3463,10 +3625,11 @@ class AppNotifier extends ChangeNotifier {
     pendingAuthorizeUrl = null;
     _awaitingFirstMessage = null;
     analyticsAccount.clear();
+    final previousMachineId = localMachineState?.machine.machineId;
+    _clearAccountWorkspace();
     // A VIEWER has nowhere to be but its login screen — no daemon, nothing of
     // its own to show.
-    if (viewer != null) {
-      _clearAccountWorkspace();
+    if (viewer != null || localManualFixture != null) {
       _lastError = message;
       _lastErrorRetryable = true;
       status = AppStatus.unauthenticated;
@@ -3477,8 +3640,18 @@ class AppNotifier extends ChangeNotifier {
     // and goes on serving this computer, so the agents that were running are
     // still running. This computer's tiles stay (under the id it serves now),
     // the other machines' leave, and the banner says why the list got shorter.
+    //
+    // The work was invalidated above, so the guest transition runs under THIS
+    // revision: invalidating again would clear [sessionExpired], and the banner
+    // would read as a failed sign-in rather than as the session having ended.
     _closedHistory.clear();
-    unawaited(_becomeGuest(banner: message));
+    unawaited(
+      _becomeGuest(
+        banner: message,
+        previousMachineId: previousMachineId,
+        revision: revision,
+      ),
+    );
   }
 
   /// Remove the old account's live objects without overwriting its saved desk.
@@ -3522,6 +3695,7 @@ class AppNotifier extends ChangeNotifier {
     _draftSwarmReturns.clear();
     _localMismatchReported.clear();
     _dismissedLinkPrompts.clear();
+    _requestedMachineLink = null;
     for (final controller in _orchestratorProjects.values) {
       controller.dispose();
     }
@@ -3532,25 +3706,32 @@ class AppNotifier extends ChangeNotifier {
       ..add(starter);
     _activeSwarmId = starter.id;
     _autoPickedAgent = false;
+    _trackWorkspaceCleanup(
+      Future.wait<void>([panesClosed, if (pool != null) pool.closeAll()]),
+    );
+  }
+
+  /// The old account's terminals detaching and its connections closing, which
+  /// a sign-in waits for (see [login]) so it cannot overtake them: a new
+  /// session must not be set up while the last one is still being torn down.
+  /// Joins any teardown already in flight; completes when all of it has, and
+  /// never with an error.
+  Future<void> _trackWorkspaceCleanup(Future<void> work) {
     late final Future<void> cleanup;
-    cleanup =
-        Future.wait<void>([
-              ?_workspaceCleanup,
-              panesClosed,
-              if (pool != null) pool.closeAll(),
-            ])
-            .then<void>(
-              (_) {},
-              onError: (Object error) {
-                debugPrint('account connection cleanup failed: $error');
-              },
-            )
-            .whenComplete(() {
-              if (identical(_workspaceCleanup, cleanup)) {
-                _workspaceCleanup = null;
-              }
-            });
+    cleanup = Future.wait<void>([?_workspaceCleanup, work])
+        .then<void>(
+          (_) {},
+          onError: (Object error) {
+            debugPrint('account connection cleanup failed: $error');
+          },
+        )
+        .whenComplete(() {
+          if (identical(_workspaceCleanup, cleanup)) {
+            _workspaceCleanup = null;
+          }
+        });
     _workspaceCleanup = cleanup;
+    return cleanup;
   }
 
   void _startUpdateChecking() {
@@ -3775,6 +3956,7 @@ class AppNotifier extends ChangeNotifier {
 
   Future<void> login() async {
     if (_disposed || signingIn || signingOut || signOutError != null) return;
+    final wasGuest = isGuest;
     final revision = _invalidateAuthWork();
     _closedHistory.clear();
     _monitorHarnesses.clear();
@@ -3817,6 +3999,7 @@ class AppNotifier extends ChangeNotifier {
       if (!_authWorkCurrent(revision) || status != AppStatus.authenticated) {
         return;
       }
+      _guestDeskRestorePending = false;
       analytics.signedIn();
       // Restarts the clock even if `_trackAppOpened` already started one: this
       // person met the login screen, so their wait begins where the launch's
@@ -3824,7 +4007,7 @@ class AppNotifier extends ChangeNotifier {
       _armFirstMessage('sign_in');
     } catch (error) {
       if (!_authWorkCurrent(revision)) return;
-      status = AppStatus.unauthenticated;
+      status = wasGuest ? AppStatus.authenticated : AppStatus.unauthenticated;
       _lastError = error.toString();
       _lastErrorRetryable = true;
       // A short code, never `error.toString()` — a CLI failure carries paths
@@ -3835,6 +4018,9 @@ class AppNotifier extends ChangeNotifier {
       analytics.signInFailed(
         error is CliNotAvailableException ? 'cli_missing' : 'failed',
       );
+      if (wasGuest && _guestDeskRestorePending && !signedIn) {
+        unawaited(_becomeGuest(revision: revision));
+      }
     } finally {
       // Takes the in-app browser view down once the redirect has landed; a no-op
       // where the page opened in a browser of its own.
@@ -3905,14 +4091,19 @@ class AppNotifier extends ChangeNotifier {
   /// cancelled attempt and cannot change a subsequent sign-in.
   void cancelLogin() {
     if (_disposed || !canCancelLogin) return;
-    _invalidateAuthWork();
+    final revision = _invalidateAuthWork();
     signingIn = false;
     pendingAuthorizeUrl = null;
-    status = AppStatus.unauthenticated;
+    status = isGuest ? AppStatus.authenticated : AppStatus.unauthenticated;
     _lastError = null;
     _lastErrorRetryable = false;
     cliLogin.cancel();
     notifyListeners();
+    // Cancellation can supersede the guest restore while old terminals are
+    // still detaching. Resume that restore under the new revision.
+    if (isGuest && _guestDeskRestorePending) {
+      unawaited(_becomeGuest(revision: revision));
+    }
   }
 
   Future<void> logout() {
@@ -3937,6 +4128,7 @@ class AppNotifier extends ChangeNotifier {
 
   Future<void> _logout() async {
     final revision = _invalidateAuthWork();
+    final previousMachineId = localMachineState?.machine.machineId;
     cliLogin.cancel();
     signingIn = false;
     signingOut = true;
@@ -3949,7 +4141,10 @@ class AppNotifier extends ChangeNotifier {
     // and becomes a guest — the daemon comes back signed out and keeps serving
     // this computer, so signing out of the account is not a reason to take the
     // agents off the screen. The rebind at the end sits the desk back down.
-    if (viewer != null) status = AppStatus.unauthenticated;
+    // The local-manual dev fixture goes back to the login screen too: it has
+    // no daemon of its own, and a guest desk would be served by the REAL CLI.
+    final becomesGuest = viewer == null && localManualFixture == null;
+    if (!becomesGuest) status = AppStatus.unauthenticated;
     currentUser = null;
     analyticsAccount.clear();
     notifyListeners();
@@ -3979,8 +4174,10 @@ class AppNotifier extends ChangeNotifier {
     // The CLI restarts its daemon signed out (`harness logout` does it itself),
     // so this window waits for that one and sits its desk back down on the id it
     // serves. In the background: the person asked to sign out, and that is done.
-    if (viewer == null && didClear) {
-      unawaited(_becomeGuest(revision: revision));
+    if (becomesGuest && didClear) {
+      unawaited(
+        _becomeGuest(previousMachineId: previousMachineId, revision: revision),
+      );
     }
   }
 
@@ -4146,6 +4343,36 @@ class AppNotifier extends ChangeNotifier {
     );
   }
 
+  /// The browser controls only a linked, owned machine's managed viewer. Requests fail while
+  /// disconnected rather than replaying old clicks after a new connection takes over.
+  Future<Map<String, dynamic>> viewerSurface(
+    String machineId,
+    String agentId,
+    Map<String, dynamic> payload,
+  ) {
+    final machine = machineStates[machineId];
+    if (machine == null ||
+        machine.machine.isShared ||
+        machine.needsLink ||
+        machine.nodeOnline == false ||
+        machine.connectionStatus != ConnectionStatus.connected) {
+      return Future.error(
+        StateError('Reconnect this machine to open its viewer.'),
+      );
+    }
+    final connection = _conn(machineId);
+    if (!connection.isReady) {
+      return Future.error(
+        StateError('Reconnect this machine to open its viewer.'),
+      );
+    }
+    return connection.request(
+      'viewer_surface',
+      payload: {...payload, 'agentId': agentId},
+      timeout: const Duration(seconds: 25),
+    );
+  }
+
   int _machineInventoryRevision = 0;
 
   bool _machineInventoryCurrent(int auth, int request) =>
@@ -4196,6 +4423,10 @@ class AppNotifier extends ChangeNotifier {
       return null;
     } catch (error) {
       if (!_machineInventoryCurrent(revision, request)) return null;
+      if (viewer != null && isUnauthorizedError(error)) {
+        _signedOutAtRuntime('Your sign-in expired. Sign in again.');
+        return null;
+      }
       if (isTransientApiError(error)) {
         _scheduleMachineRecovery(revision);
       } else {
@@ -4825,6 +5056,8 @@ class AppNotifier extends ChangeNotifier {
         await _pool?.closeMachine(targetId);
         if (_authWorkCurrent(attempt.authRevision)) _connectMachine(state);
       }
+      // One password, the whole group: this machine learns this device's other machines, and they it.
+      unawaited(_syncGroup(targetId, spread: true));
     } catch (_) {
       error = 'Could not link this machine. Try again.';
     } finally {
@@ -4833,6 +5066,45 @@ class AppNotifier extends ChangeNotifier {
       }
       attempt.result.complete(error);
       if (_authWorkCurrent(attempt.authRevision)) notifyListeners();
+    }
+  }
+
+  final Map<String, DateTime> _groupSyncedAt = {};
+  static const _groupResync = Duration(minutes: 5);
+
+  /// Viewer builds only: swaps trust-group rosters with [machineId] (`viewer/group_sync.dart`), at
+  /// most every few minutes per machine. With [spread] (a machine was just linked) or when the swap
+  /// taught this device a new machine, every other linked machine hears of it straight away. A
+  /// machine waiting for its password that the group now vouches for is picked up by its link retry.
+  /// No layout store means a test, which must not dial.
+  Future<void> _syncGroup(String machineId, {bool spread = false}) async {
+    // Only the app's own [DirectLink] dials for it: a CLI build's daemon keeps the group itself, and
+    // a test hands over fake links.
+    final links = peerLinks;
+    if (links is! DirectLink || _paneLayout == null) return;
+    final now = DateTime.now();
+    final last = _groupSyncedAt[machineId];
+    if (!spread && last != null && now.difference(last) < _groupResync) return;
+    _groupSyncedAt[machineId] = now;
+    // Fire-and-forget from the connection handler: a state file that is locked for a moment must not
+    // surface as an unhandled error. The next session retries.
+    try {
+      final label = localHostnameOrNull() ?? 'Desktop';
+      final GroupSyncOutcome outcome = await links.syncGroup(
+        machineId,
+        label: label,
+      );
+      if (!spread && outcome.pinned.isEmpty) return;
+      for (final other in [...machineStates.keys]) {
+        if (other == machineId || machineStates[other]?.nodeOnline == false) {
+          continue;
+        }
+        if (await links.keys.peer(other) == null) continue;
+        _groupSyncedAt[other] = DateTime.now();
+        await links.syncGroup(other, label: label);
+      }
+    } catch (_) {
+      _groupSyncedAt.remove(machineId);
     }
   }
 
@@ -5150,6 +5422,10 @@ class AppNotifier extends ChangeNotifier {
   Future<void> _performRetryMachines({required bool automatic}) async {
     final revision = _authRevision;
     if (!_authWorkCurrent(revision)) return;
+    if (isGuest && _guestDeskRestorePending) {
+      await _becomeGuest(revision: revision);
+      return;
+    }
     // Re-verify the daemon first: a retry that skips straight to `refreshMachines()` can hit
     // the exact same "daemon not connected yet" timeout the button was pressed to escape.
     try {
@@ -5168,10 +5444,10 @@ class AppNotifier extends ChangeNotifier {
     if (!_authWorkCurrent(revision) || status == AppStatus.unauthenticated) {
       return;
     }
-    if (currentUser == null) unawaited(_loadProfile());
+    if (signedIn && currentUser == null) unawaited(_loadProfile());
     // A boot that found the daemon still connecting finishes THROUGH here (see
     // `_loadProfile`), so the desk is joined here as well — once.
-    _deskEnsure(revision);
+    if (signedIn) _deskEnsure(revision);
     try {
       if (!await refreshMachines() || !_authWorkCurrent(revision)) return;
       if (!automatic) _lastError = null;
@@ -5523,9 +5799,25 @@ class AppNotifier extends ChangeNotifier {
     String machineId,
     Map<String, dynamic> payload, {
     Duration timeout = const Duration(seconds: 10),
-  }) =>
-      _conn(machineId)
-          .request('api_connections', payload: payload, timeout: timeout);
+  }) async {
+    final machine = stateOf(machineId);
+    if (machine == null ||
+        machine.machine.isShared ||
+        machine.needsLink ||
+        machine.nodeOnline == false ||
+        machine.connectionStatus != ConnectionStatus.connected) {
+      throw StateError('Reconnect this machine to manage its APIs.');
+    }
+    final connection = _conn(machineId);
+    if (!connection.isReady) {
+      throw StateError('Reconnect this machine to manage its APIs.');
+    }
+    return connection.request(
+      'api_connections',
+      payload: payload,
+      timeout: timeout,
+    );
+  }
 
   Future<Map<String, dynamic>> controlLocalModel(
     String machineId,
@@ -7047,6 +7339,26 @@ class AppNotifier extends ChangeNotifier {
     await _loadMachineData(machine, force: true);
   }
 
+  /// Arm the selected owner's daemon through an already linked browser. Never queue a QR code
+  /// across reconnection: closing the dialog must end future pairing attempts.
+  Future<Map<String, dynamic>> pairPhone(String machineId, String code) {
+    final machine = stateOf(machineId);
+    if (machine == null ||
+        machine.machine.isShared ||
+        machine.needsLink ||
+        machine.nodeOnline == false ||
+        machine.connectionStatus != ConnectionStatus.connected) {
+      return Future.value({'error': 'BACKEND_DOWN'});
+    }
+    final connection = _conn(machineId);
+    if (!connection.isReady) return Future.value({'error': 'BACKEND_DOWN'});
+    return connection.request(
+      'phone_pair',
+      payload: {'code': code},
+      timeout: const Duration(seconds: 60),
+    );
+  }
+
   /// What every connected REMOTE machine's agent accounts have spent, asked in
   /// parallel and read there with that machine's own credentials (`usage_read`).
   ///
@@ -7218,8 +7530,7 @@ class AppNotifier extends ChangeNotifier {
         'MEDIA_TOO_LARGE' => 'Remote previews support files up to 512 MB. Use a smaller export or transfer this file separately.',
         'MEDIA_CHANGED' => 'The file changed while downloading. Wait for it to finish generating and try again.',
         'MEDIA_UNSUPPORTED' => 'This file is not a supported image or video.',
-        'MEDIA_INVALID_REQUEST' =>
-          'Use a full path or a path inside this agent’s working folder.',
+        'MEDIA_INVALID_REQUEST' => 'This file is outside the folders Harness reads for this agent. Use one in its working folder or a temp folder.',
         'AGENT_NOT_FOUND' =>
           'This agent is no longer available. Reconnect and try again.',
         'NOT_TEXT' || 'FILE_TOO_LARGE' => 'Update the Harness CLI on this remote machine to open media previews.',
@@ -9687,6 +9998,7 @@ class AppNotifier extends ChangeNotifier {
     _dismissedLinkPrompts.remove(machineId);
     selectedMachineId = machineId;
     if (machine.isRemote && !machine.isLocalMachine && machine.needsLink) {
+      _requestedMachineLink = machineId;
       notifyListeners();
       return;
     }

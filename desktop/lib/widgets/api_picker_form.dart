@@ -467,6 +467,8 @@ class ApiPickerFormState extends State<ApiPickerForm> {
                             : _editing?.name ?? 'Add API',
                         style: style,
                       ),
+                      if (controller.app.viewer != null)
+                        Text('Saved on ${controller.hostLabel}', style: muted),
                       SizedBox(height: cell.height),
                       if (_editing != null &&
                           !widget.removing &&
@@ -548,7 +550,10 @@ class ApiPickerFormState extends State<ApiPickerForm> {
                           ),
                         ),
                       if (_editing != null && !widget.removing) ...[
-                        Text('Stored on this computer.', style: muted),
+                        Text(
+                          'Stored on ${controller.hostLabel}.',
+                          style: muted,
+                        ),
                         SizedBox(height: cell.height),
                       ],
                       if ((_errorField == null ? _error : null) ??
