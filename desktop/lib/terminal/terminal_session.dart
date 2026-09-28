@@ -128,6 +128,9 @@ class _ActiveUpload {
 /// reopen. Transport loss still freezes input until the user opens a session.
 class TerminalSession extends ChangeNotifier {
   static const protocolVersion = 3;
+
+  /// [errorCode] after [transportLost]: the link dropped, not the terminal.
+  static const disconnectedCode = 'TERMINAL_DISCONNECTED';
   static const minCols = 40;
   static const maxCols = 300;
   static const minRows = 12;
@@ -1585,7 +1588,7 @@ class TerminalSession extends ChangeNotifier {
     streamId = null;
     linkMode = null;
     status = TerminalSessionStatus.error;
-    errorCode = 'TERMINAL_DISCONNECTED';
+    errorCode = disconnectedCode;
     errorMessage = message;
     _abortActiveUpload();
     notifyListeners();
