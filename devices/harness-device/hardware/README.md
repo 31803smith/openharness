@@ -19,6 +19,9 @@ ESP32-S3-Touch-AMOLED-1.75C-compatible display module.
 This is the **full product BOM**; for just the PCB's own SMD components, see
 `pcb/production/BOM_Harness_1.75_AMOLED_PCB_Harness_1.75.xlsx` below.
 
+The live source is this [Google Sheet](https://docs.google.com/spreadsheets/d/1MMOfGeKkNdsgSDawAIyIZwCaAqGHyCPNr3bwAXBrkfU/edit?gid=0#gid=0) —
+`BOM.csv` is a snapshot of it; if the two disagree, treat the sheet as current and refresh the CSV.
+
 | # | Component | Qty | Source |
 |---|---|---|---|
 | 1 | Speaker, 2415 8Ω 1W (2-pin SH1.0 connector) | 1 | [AliExpress](https://www.aliexpress.us/item/3256813022741238.html) |
