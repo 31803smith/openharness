@@ -35,8 +35,9 @@ import { linkCodexProfile, listCodexProfiles } from './lib/codexProfiles.js'
 import { gridCliPresence } from './lib/gridExec.js'
 import { GridFleetRpc, GRID_FLEET_PROTOCOL, GRID_FLEET_MAX_TIMEOUT_MS, parseGridFleetRequest } from './lib/gridFleetRpc.js'
 import { LocalModels } from './lib/localModels.js'
-import { ApiConnections, apiConnectionsRequest } from './lib/apiConnections.js'
-import { gridCapableEngines, parseGridLaunchOverride, type GridLaunchOverride } from './lib/gridLaunch.js'
+import { ApiConnectionError, ApiConnections, apiConnectionsRequest } from './lib/apiConnections.js'
+import { apiModelsRequest, rememberSavedApis, resolveApiTarget } from './lib/apiModels.js'
+import { gridCapableEngines, isApiLaunch, parseGridLaunchOverride, type GridLaunchOverride } from './lib/gridLaunch.js'
 import {
   forgetGridModels, gridInventory, listAllGridModels, onGridModelsChanged, presentGridSections, retargetPrewarm, type GridSection,
 } from './lib/gridModels.js'
@@ -1644,7 +1645,12 @@ export class BackendSocket {
 
     if (type === 'api_connections') {
       if (!local) { reply(type, requestId, { error: 'LOCAL_ONLY', detail: 'Manage APIs on this computer.' }); return }
+      if (payload.action === 'models') {
+        reply(type, requestId, await apiModelsRequest(this.apiConnections, payload))
+        return
+      }
       reply(type, requestId, apiConnectionsRequest(this.apiConnections, payload))
+      if (payload.action === 'save') rememberSavedApis(this.apiConnections)
       return
     }
 
@@ -2514,6 +2520,26 @@ export class BackendSocket {
           // ever crosses the relay and the app cannot be the source of truth for an address it does
           // not know. A client that sends the full `grid` object still works unchanged.
           const picked = typeof payload.gridModel === 'string' ? payload.gridModel : ''
+          // `apiConnection` + `apiModel`: a model of an API saved on this computer. Same rule as a grid
+          // model — the app names it, and the endpoint and key are read here, from the store — and
+          // only from this computer, where the key is kept and its owner is the one asking.
+          const api = typeof payload.apiConnection === 'string' ? payload.apiConnection : ''
+          if (api && (picked || payload.grid !== undefined || clear)) {
+            reply(type, requestId, { error: 'INVALID_GRID', detail: 'Choose an API model, a grid model or the own login, not several.' })
+            return
+          }
+          if (api) {
+            if (!local) { reply(type, requestId, { error: 'LOCAL_ONLY', detail: 'Use saved APIs on this computer.' }); return }
+            try {
+              payload.grid = await resolveApiTarget(this.apiConnections, api, typeof payload.apiModel === 'string' ? payload.apiModel.trim() : '')
+            } catch (error) {
+              reply(type, requestId, {
+                error: 'API_UNAVAILABLE',
+                detail: error instanceof ApiConnectionError ? error.message : 'This API could not be used. Try again.',
+              })
+              return
+            }
+          }
           if (picked && payload.grid === undefined && !clear) {
             // The grid the model was picked FROM, when the picker says (a shared grid's section);
             // the account's own grid otherwise, as before.
@@ -2552,7 +2578,8 @@ export class BackendSocket {
           // The agent is on a grid model now and its pane is restarting: start that grid meanwhile if it
           // sleeps, so the first message rarely waits on a boot (issue 03). Detached — the move is done
           // and answered — and it decides for itself whether a wake is worth it.
-          if (override) void retargetPrewarm(override).catch(() => {})
+          // An API has no sleep to wake it from, and is not a grid to look up.
+          if (override && !isApiLaunch(override)) void retargetPrewarm(override).catch(() => {})
           return
         }
 
