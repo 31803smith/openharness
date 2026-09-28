@@ -9776,7 +9776,7 @@ class AppNotifier extends ChangeNotifier {
       // now, and each attempt lands here again through the `reconnecting` status. A pane already
       // dark with this very message has nothing to learn and nothing to repaint.
       if (session.status == TerminalSessionStatus.error &&
-          session.errorCode == 'TERMINAL_DISCONNECTED' &&
+          session.errorCode == TerminalSession.disconnectedCode &&
           session.errorMessage == message) {
         continue;
       }
