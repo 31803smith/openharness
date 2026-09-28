@@ -19,23 +19,84 @@ void main() {
     (tester) async {
       final opened = <Uri>[];
       final git = gitFixture();
+      git['activityUncertain'] = true;
+      git['history']['pullRequests'][0]['result'].addAll({
+        'headBranch': 'hn/preview-fix',
+        'baseBranch': 'main',
+        'headRepository': 'acme/app',
+        'title': 'Keep complete session previews',
+      });
+      git['history']['branches'].add({
+        'cwd': '/removed-temporary-checkout',
+        'remote': 'github.com/acme/app',
+        'branch': 'hn/nfc',
+        'at': '2026-09-26T13:00:00Z',
+      });
+      git['history']['pullRequests'].add({
+        'url': 'https://github.com/acme/app/pull/119',
+        'cwd': '/removed-temporary-checkout',
+        'at': '2026-09-26T13:00:00Z',
+        'checkedAt': '2026-09-27T13:01:00Z',
+        'result': {
+          'status': 'found',
+          'url': 'https://github.com/acme/app/pull/119',
+          'number': 119,
+          'state': 'Merged',
+          'headBranch': 'hn/nfc',
+          'baseBranch': 'main',
+          'headRepository': 'acme/app',
+          'title': 'Keep NFC conversations in order',
+        },
+      });
+      final boundary = GlobalKey();
+      tester.view.devicePixelRatio = 1;
+      tester.view.physicalSize = const Size(1000, 720);
+      addTearDown(tester.view.reset);
       await tester.pumpWidget(
-        MaterialApp(
-          home: Scaffold(
-            body: SessionWorkDialog(
-              agent: workAgent(git: git),
-              read: (_) async => {'gitContext': git, 'history': git['history']},
-              open: (uri) async {
-                opened.add(uri);
-                return true;
-              },
+        RepaintBoundary(
+          key: boundary,
+          child: MaterialApp(
+            debugShowCheckedModeBanner: false,
+            theme: grid.buildAppTheme(brightness: Brightness.dark),
+            home: Scaffold(
+              body: SessionWorkDialog(
+                agent: workAgent(git: git),
+                read: (_) async => {
+                  'gitContext': git,
+                  'history': git['history'],
+                },
+                open: (uri) async {
+                  opened.add(uri);
+                  return true;
+                },
+              ),
             ),
           ),
         ),
       );
       await tester.pumpAndSettle();
-      expect(find.text('/silent-beacon'), findsOneWidget);
-      expect(find.text('hn/preview-fix'), findsOneWidget);
+      expect(find.textContaining('/silent-beacon'), findsNothing);
+      expect(find.textContaining('/ship-hn'), findsNothing);
+      expect(find.text('hn/preview-fix · Checked out'), findsOneWidget);
+      expect(find.text('Branch checked out for this session.'), findsOneWidget);
+      expect(find.text('Work location unknown'), findsNothing);
+
+      final output = Platform.environment['HARNESS_GIT_CONTEXT_CAPTURE_DIR'];
+      if (output != null) {
+        await tester.runAsync(() async {
+          final render =
+              boundary.currentContext!.findRenderObject()!
+                  as RenderRepaintBoundary;
+          final picture = await render.toImage(pixelRatio: 1);
+          final bytes = await picture.toByteData(
+            format: ui.ImageByteFormat.png,
+          );
+          await Directory(output).create(recursive: true);
+          await File('$output/work-last-observed.png')
+              .writeAsBytes(bytes!.buffer.asUint8List());
+          picture.dispose();
+        });
+      }
       await tester.tap(
         find.byKey(
           const ValueKey('work-pr-https://github.com/acme/app/pull/12'),
@@ -123,7 +184,10 @@ void main() {
             ),
           );
           await tester.pumpAndSettle();
-          expect(find.text('Offline · last known work'), findsOneWidget);
+          expect(
+            find.text('Offline · saved branches and pull requests'),
+            findsOneWidget,
+          );
           expect(tester.takeException(), isNull);
           final output =
               Platform.environment['HARNESS_GIT_CONTEXT_CAPTURE_DIR'];
