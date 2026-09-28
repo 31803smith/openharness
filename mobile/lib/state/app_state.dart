@@ -3151,10 +3151,12 @@ class AppNotifier extends ChangeNotifier {
   /// timeout, not an `UNSUPPORTED`, which is why this asks with a short one and
   /// treats every failure alike: a machine that cannot say has nothing to add,
   /// and it must never hold up the figures of the ones that can.
-  Future<List<MachineUsage>> readRemoteUsage() async {
+  Future<List<MachineUsage>> readRemoteUsage({String? machineId}) async {
     final remotes = [
       for (final machine in machineStates.values)
-        if (machine.connectionStatus == ConnectionStatus.connected) machine,
+        if (machine.connectionStatus == ConnectionStatus.connected &&
+            (machineId == null || machine.machine.machineId == machineId))
+          machine,
     ];
     final answers = await Future.wait([
       for (final machine in remotes) _readMachineUsage(machine),
@@ -3414,6 +3416,7 @@ class AppNotifier extends ChangeNotifier {
     ProjectFolderRequest? projectFolder,
     String? permissionMode,
     String? codexHome,
+    GridModel? model,
     String? swarmId,
     AgentCreationAttempt? attempt,
     String? prompt,
@@ -3438,6 +3441,8 @@ class AppNotifier extends ChangeNotifier {
           ? false
           : permissionModeApproves(permissionMode),
       'codexHome': ?codexHome,
+      'gridModel': ?model?.id,
+      'gridName': ?model?.grid,
     };
     return _create(machineId, choices, swarmId: swarmId, attempt: creation);
   }
@@ -3549,6 +3554,31 @@ class AppNotifier extends ChangeNotifier {
       }
     }
     final connection = _conn(machineId);
+    // Recheck before launch: a selected model may have stopped since the picker
+    // opened. Status checks never repeat this or send a second creation.
+    if (!creation.awaitingConfirmation && choices['gridModel'] != null) {
+      final models = await gridModels(machineId);
+      if (!models.reachable) {
+        return creation._complete(
+          'Could not verify models on $machineName. Refresh models or use your subscription.',
+        );
+      }
+      if (!models.supportsModelLaunch) {
+        return creation._complete(
+          'Update Harness CLI on $machineName to choose a model before starting.',
+        );
+      }
+      if (!models.canRunLocally(choices['engine'] as String) ||
+          !models.sections.any(
+            (section) =>
+                section.name == choices['gridName'] &&
+                section.models.any((model) => model.id == choices['gridModel']),
+          )) {
+        return creation._complete(
+          'The selected model is unavailable. Refresh models or use your subscription.',
+        );
+      }
+    }
     final operation = creation.awaitingConfirmation
         ? 'agent_create_status'
         : 'agent_create';
@@ -4059,6 +4089,7 @@ class AppNotifier extends ChangeNotifier {
               .toList();
       final capable = response['localModelEngines'];
       return GridModels(
+        supportsModelLaunch: response['supportsModelLaunch'] == true,
         gridName: response['gridName'] as String?,
         // The own grid's list, which an older daemon sends on its own.
         models: parseModels(response['models']),
