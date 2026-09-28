@@ -126,6 +126,34 @@ class SwarmSearchController extends ChangeNotifier {
         : null;
   }
 
+  /// The live status word for a model row (no glyph), shown inline in the list
+  /// so you can see Running/Downloaded/usage at a glance. Derives the word from
+  /// the same catalogue [ModelSearchCatalog.localStatus] the preview uses, so
+  /// the list and the pane can never disagree.
+  String? modelRowStatus(SwarmDestination row) {
+    final catalog = models;
+    final entry = catalog?.entries[row.modelId];
+    if (entry == null || catalog == null) return null;
+    final local = entry.local;
+    final owner = entry.controller ?? catalog.manager;
+    return local != null
+        ? catalog.localStatus(local, controller: owner)
+        : entry.status;
+  }
+
+  /// Whether the model row is live right now (running, or a download/start/stop
+  /// in progress). Drives the green status colour in the list.
+  bool modelRowLive(SwarmDestination row) {
+    final catalog = models;
+    final entry = catalog?.entries[row.modelId];
+    if (entry == null || catalog == null) return false;
+    final local = entry.local;
+    final op = local == null
+        ? null
+        : (entry.controller ?? catalog.manager).operationFor(local);
+    return op?.active == true || (local?.running ?? false);
+  }
+
   bool canGetModel(SwarmDestination? row) {
     if (!isModelMode) return false;
     final entry = models?.entries[row?.modelId];
@@ -1156,8 +1184,20 @@ class SwarmSearchController extends ChangeNotifier {
               )
               .toList();
     if (isModelMode && matchQuery.trim().isEmpty && !modelDownloadsVisible) {
+      // Always surface the top few catalog models (in grid-ranking order) so the
+      // picker opens with them already in view; the rest stay hidden until
+      // "Get models" is pressed.
+      final topCatalog = candidates
+          .where((row) => models?.entries[row.modelId]?.needsDownload == true)
+          .take(5)
+          .map((row) => row.id)
+          .toSet();
       candidates = candidates
-          .where((row) => models?.entries[row.modelId]?.needsDownload != true)
+          .where(
+            (row) =>
+                models?.entries[row.modelId]?.needsDownload != true ||
+                topCatalog.contains(row.id),
+          )
           .toList();
     }
     if (scopedBranch case final branch?) {
@@ -1354,8 +1394,10 @@ class SwarmSearchController extends ChangeNotifier {
           final create = (a.isCreate ? 1 : 0).compareTo(b.isCreate ? 1 : 0);
           return create != 0 ? create : order[a.id]!.compareTo(order[b.id]!);
         }
-        final installed = (models?.entries[a.modelId]?.localRank ?? 1)
-            .compareTo(models?.entries[b.modelId]?.localRank ?? 1);
+        // The downloads toggle sorts AFTER the catalog rows (rank 2), so the
+        // always-visible top catalog models sit above the "[ Get models ]" row.
+        final installed = (models?.entries[a.modelId]?.localRank ?? 3)
+            .compareTo(models?.entries[b.modelId]?.localRank ?? 3);
         return installed != 0
             ? installed
             : order[a.id]!.compareTo(order[b.id]!);

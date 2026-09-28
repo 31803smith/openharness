@@ -1143,7 +1143,7 @@ class _SwarmSearchResultsState extends State<SwarmSearchResults> {
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
                   // The list is what is being read; the preview confirms it.
-                  Expanded(flex: 6, child: results),
+                  Expanded(flex: 5, child: results),
                   if (widget.terminal)
                     VerticalDivider(
                       width: 1,
@@ -1153,7 +1153,7 @@ class _SwarmSearchResultsState extends State<SwarmSearchResults> {
                     )
                   else
                     const SizedBox(width: 8),
-                  Expanded(flex: 4, child: preview ?? const SizedBox()),
+                  Expanded(flex: 5, child: preview ?? const SizedBox()),
                 ],
               )
             : preview == null
@@ -1332,12 +1332,7 @@ class _SearchRowContentState extends State<_SearchRowContent> {
           ? widget.search.modelRowAction(row)
           : null;
       final style = terminalContentStyle(
-        color:
-            !widget.enabled ||
-                (row.isModel &&
-                    !widget.search.isModelDownloadsRow(row) &&
-                    !widget.search.canSelectModel(row) &&
-                    !widget.search.canGetModel(row))
+        color: !widget.enabled
             ? theme.foreground.withValues(alpha: .28)
             : row.isCreate || widget.search.isModelDownloadsRow(row)
             ? theme.cursor
@@ -1409,19 +1404,21 @@ class _SearchRowContentState extends State<_SearchRowContent> {
                                 style: style,
                               ),
                       ),
-                    if (modelAction != null) ...[
+                    if (widget.search.modelRowStatus(row) case final status?) ...[
                       SizedBox(width: cell.width * 2),
                       Text(
-                        modelAction,
-                        key: ValueKey('model-row-action:${row.id}'),
+                        status,
+                        key: ValueKey('model-row-status:${row.id}'),
                         maxLines: 1,
                         style: terminalContentStyle(
-                          color: modelAction == 'Use'
-                              ? theme.foreground
+                          color: widget.search.modelRowLive(row) ||
+                                  status == 'Suggested'
+                              ? const Color(0xFF86E6A3)
                               : muted,
                         ),
                       ),
-                    ] else if (widget.unavailableReason case final reason?) ...[
+                    ],
+                    if (widget.unavailableReason case final reason?) ...[
                       SizedBox(width: cell.width * 2),
                       ConstrainedBox(
                         constraints: BoxConstraints(
