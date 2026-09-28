@@ -253,7 +253,7 @@ describe('SessionSearchStore', () => {
     expect(store.search('alpha', { now: NOW })).toHaveLength(1)
   })
 
-  it.each(['0', '8', '9'])('rebuilds an index written by schema %s', (version) => {
+  it.each(['0', '8', '9', '10'])('rebuilds an index written by schema %s', (version) => {
     const dir = mkdtempSync(join(tmpdir(), 'session-search-'))
     dirs.push(dir)
     const path = join(dir, 'index.db')
