@@ -297,7 +297,7 @@ void main() {
   );
 
   testWidgets(
-    'Open Harness builds a small window and Down reaches later rows',
+    'Open Harness builds a small window and arrow keys reach later rows',
     (tester) async {
       final app = createApp();
       app.machineStates['m']!.nodeOnline = true;

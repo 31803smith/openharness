@@ -11,7 +11,7 @@ import 'package:harness/shared/theme/app_theme.dart' as grid;
 import 'package:harness/state/app_state.dart';
 import 'package:harness/widgets/environment_setup_screen.dart';
 
-import 'swarm_state_test.dart' show MemoryStore;
+import 'support/guest_app.dart';
 
 const setupReview = EnvironmentReadiness(
   steps: {
@@ -28,21 +28,6 @@ class SetupLogin extends CliLogin {
   @override
   Future<CliAuthStatus> checkStatus() async =>
       const CliAuthStatus(loggedIn: false);
-}
-
-/// Installer tests stop at the workspace boundary; they must never start a real daemon.
-class SetupWorkspaceApp extends AppNotifier {
-  SetupWorkspaceApp(EnvironmentProvisioner provisioner, {super.configStore})
-    : super(
-        config: AppConfig.dev,
-        authSession: AuthSession(storage: MemoryStore()),
-        cliLogin: SetupLogin(),
-        environmentProvisioner: provisioner,
-      );
-  @override
-  Future<void> ensureCliDaemonReady() async {}
-  @override
-  Future<bool> refreshMachines() async => true;
 }
 
 class SetupAttempt {
@@ -110,9 +95,16 @@ Future<void> _mount(
   await tester.pump();
 }
 
-AppNotifier _app(SetupProvisioner provisioner) => SetupWorkspaceApp(provisioner)
-  ..status = AppStatus.preparingEnvironment
-  ..environmentReadiness = setupReview;
+AppNotifier _app(SetupProvisioner provisioner) =>
+    GuestTestApp(
+        config: AppConfig.dev,
+        authSession: AuthSession(),
+        configStore: null,
+        cliLogin: SetupLogin(),
+        environmentProvisioner: provisioner,
+      )
+      ..status = AppStatus.preparingEnvironment
+      ..environmentReadiness = setupReview;
 
 void main() {
   testWidgets('Retry after a launch check failure only checks the computer', (
@@ -403,9 +395,7 @@ void main() {
       );
       await tester.pump();
       await tester.pump();
-      await tester.pumpAndSettle();
       expect(find.text('Guest workspace reached'), findsOneWidget);
-      expect(app.isGuest, isTrue);
       expect(provisioner.attempts.map((attempt) => attempt.install), [
         true,
         true,

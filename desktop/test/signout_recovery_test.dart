@@ -13,11 +13,10 @@ import 'package:harness/screens/login_screen.dart';
 import 'package:harness/shared/theme/app_theme.dart' as grid;
 import 'package:harness/state/app_state.dart';
 import 'package:harness/terminal/terminal_session.dart';
-import 'package:harness/viewer/viewer_services.dart';
-import 'package:harness/viewer/viewer_key_store.dart';
 
 import 'support/real_fonts.dart';
 import 'swarm_state_test.dart' show MemoryStore;
+import 'support/guest_app.dart';
 
 class SignOutFixture extends CliLogin {
   final attempts = <Completer<void>>[];
@@ -60,25 +59,21 @@ Widget signOutHost(
   );
 }
 
-AppNotifier signOutApp(SignOutFixture cli, {bool local = false}) => AppNotifier(
-  config: AppConfig.dev,
-  configStore: null,
-  authSession: AuthSession(storage: MemoryStore()),
-  cliLogin: cli,
-  viewer: ViewerServices(
-    config: AppConfig.dev,
-    session: AuthSession(storage: MemoryStore()),
-    keys: ViewerKeyStore(storage: MemoryStore()),
-  ),
-  localManualFixture: local
-      ? const LocalManualFixture(
-          apiBaseUrl: 'http://127.0.0.1:1',
-          apiKey: 'fixture',
-          machineId: 'fixture',
-          machineName: 'Fixture',
-        )
-      : null,
-)..status = AppStatus.authenticated;
+AppNotifier signOutApp(SignOutFixture cli, {bool local = false}) =>
+    GuestTestApp(
+      config: AppConfig.dev,
+      configStore: null,
+      authSession: AuthSession(storage: MemoryStore()),
+      cliLogin: cli,
+      localManualFixture: local
+          ? const LocalManualFixture(
+              apiBaseUrl: 'http://127.0.0.1:1',
+              apiKey: 'fixture',
+              machineId: 'fixture',
+              machineName: 'Fixture',
+            )
+          : null,
+    )..status = AppStatus.authenticated;
 
 void main() {
   setUpAll(() async {
@@ -104,7 +99,8 @@ void main() {
       cli.attempts.single.complete();
       await first;
       await second;
-      expect(app.status, AppStatus.unauthenticated);
+      expect(app.status, AppStatus.authenticated);
+      expect(app.isGuest, isTrue);
       await app.login();
       expect(cli.logins, 1);
     },
@@ -118,7 +114,8 @@ void main() {
       addTearDown(app.dispose);
       await app.logout();
       expect(cli.attempts, isEmpty);
-      expect(app.status, AppStatus.unauthenticated);
+      expect(app.status, AppStatus.authenticated);
+      expect(app.isGuest, isTrue);
     },
   );
 

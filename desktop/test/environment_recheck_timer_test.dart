@@ -1,10 +1,19 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:harness/auth/auth_session.dart';
+import 'package:harness/auth/cli_login.dart';
 import 'package:harness/bootstrap/environment_provisioner.dart';
+import 'package:harness/core/config.dart';
 import 'package:harness/core/local_key_value_store.dart';
 import 'package:harness/settings/config_store.dart';
 import 'package:harness/state/app_state.dart';
 
-import 'environment_setup_screen_test.dart' show SetupWorkspaceApp;
+import 'support/guest_app.dart';
+
+class _FakeCliLogin extends CliLogin {
+  @override
+  Future<CliAuthStatus> checkStatus() async =>
+      const CliAuthStatus(loggedIn: false);
+}
 
 class _FakeKeyValueStore implements LocalKeyValueStore {
   final Map<String, String> values = {};
@@ -90,7 +99,13 @@ void main() {
       ),
     );
     final provisioner = _ScriptedProvisioner([review, waiting, failed]);
-    final app = SetupWorkspaceApp(provisioner);
+    final app = GuestTestApp(
+      config: AppConfig.dev,
+      authSession: AuthSession(),
+      configStore: null,
+      cliLogin: _FakeCliLogin(),
+      environmentProvisioner: provisioner,
+    );
     await app.bootstrap();
     await app.startEnvironmentSetup();
     await app.recheckEnvironmentStep(EnvironmentStep.tmux);
@@ -127,9 +142,12 @@ void main() {
       mode: EnvironmentSetupMode.automatic,
     );
     final provisioner = _ScriptedProvisioner([review, waiting, ready]);
-    final app = SetupWorkspaceApp(
-      provisioner,
+    final app = GuestTestApp(
+      config: AppConfig.dev,
+      authSession: AuthSession(),
       configStore: ConfigStore(storage: _FakeKeyValueStore()),
+      cliLogin: _FakeCliLogin(),
+      environmentProvisioner: provisioner,
     );
 
     await app.bootstrap();
@@ -144,7 +162,6 @@ void main() {
     expect(provisioner.installCalls, [false, true, false]);
     expect(app.environmentReadiness.isReady, isTrue);
     expect(app.environmentRecheckPending, isFalse);
-    await tester.pumpAndSettle();
     expect(app.status, AppStatus.authenticated);
     expect(app.isGuest, isTrue);
     app.dispose();

@@ -299,7 +299,11 @@ void main() {
       expect(
         fill,
         findsNothing,
-        reason: 'Status controls emphasize text on hover without a fill.',
+        reason: 'hover emphasizes text without filling the model control',
+      );
+      expect(
+        tester.widget<Text>(find.text('GPT-6 Astra')).style!.fontWeight,
+        FontWeight.bold,
       );
       expect(tester.getSize(control).height, 28);
       await hover.moveTo(Offset.zero);

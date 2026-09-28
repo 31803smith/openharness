@@ -1,3 +1,4 @@
+import 'support/resource_picker.dart';
 import 'support/workspace_tools.dart';
 import 'support/resource_picker.dart';
 import 'swarm_interactions_test.dart' show chord;

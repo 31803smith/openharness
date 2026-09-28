@@ -34,20 +34,6 @@ class WorkspaceAccountLogin extends CliLogin {
       const CliAuthStatus(loggedIn: false);
 }
 
-class _Discovery extends LocalCliDiscovery {
-  _Discovery() : super(config: AppConfig.dev);
-  @override
-  Future<LocalCliProbe> ensureRunning({
-    Duration timeout = const Duration(seconds: 15),
-    Duration readyTimeout = LocalCliDiscovery.defaultReadyTimeout,
-  }) async => const LocalCliProbe.down('fixture signed out');
-  @override
-  Future<String?> computerId() async => null;
-  @override
-  Future<LocalCliEndpoint?> discover({String? expectedComputerId}) async =>
-      null;
-}
-
 class _Api extends ApiClient {
   _Api()
     : super(

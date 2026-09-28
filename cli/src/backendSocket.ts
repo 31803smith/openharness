@@ -1,4 +1,4 @@
-import { readGitPullRequest } from './lib/gitPullRequest.js'
+import { readSessionGitPullRequest } from './lib/sessionGitPullRequest.js'
 import type { HarnessShareOwner } from './sharing/owner.js'
 import { SHARE_REQUEST_TYPES } from './sharing/protocol.js'
 import { AutonomousDeviceRelay } from './lib/autonomous-device/relay.js'
@@ -81,6 +81,7 @@ import { codexMessagesToEvents, windowCodexLines } from './engines/codex/normali
 import { codexSubagentResolverFor } from './engines/codex/subagent.js'
 import { parseHostTheme, type HostTheme } from './lib/hostTheme.js'
 import { cursorMessagesToEvents, windowCursorLines } from './engines/cursor/normalizer.js'
+import { cursorConfigDir, cursorDataDir } from './engines/cursor/home.js'
 import { loadCursorReplayTaskLinks } from './engines/cursor/subagent.js'
 import { opencodeMessagesToEvents, windowOpencodeMessages } from './engines/opencode/normalizer.js'
 import { kiloMessagesToEvents, windowKiloMessages } from './engines/kilo/normalizer.js'
@@ -1914,7 +1915,7 @@ export class BackendSocket {
             const fullEvents = s.engine === 'codex'
               ? codexMessagesToEvents(lines, codexSubagentResolverFor(s.codexHome))
               : s.engine === 'cursor'
-                ? cursorMessagesToEvents(lines, sessionId, await loadCursorReplayTaskLinks(env.CURSOR_HOME, sessionId))
+                ? cursorMessagesToEvents(lines, sessionId, await loadCursorReplayTaskLinks(cursorConfigDir(), sessionId, cursorDataDir()))
                 : s.engine === 'muse'
                   ? museMessagesToEvents(lines)
                   : s.engine === 'amp'
@@ -1990,7 +1991,7 @@ export class BackendSocket {
               ? cursorMessagesToEvents(
                   w.window,
                   sessionId,
-                  await loadCursorReplayTaskLinks(env.CURSOR_HOME, sessionId),
+                  await loadCursorReplayTaskLinks(cursorConfigDir(), sessionId, cursorDataDir()),
                   'startIndex' in w && typeof w.startIndex === 'number' ? w.startIndex : 0,
                   'initialTodos' in w && Array.isArray(w.initialTodos) ? w.initialTodos : [],
                 )
@@ -2409,7 +2410,9 @@ export class BackendSocket {
           // conversation is created with applies to it.
           let resumeSessionId: string | null = null
           if (payload.resumeSessionId !== undefined && payload.resumeSessionId !== null) {
-            if (typeof payload.resumeSessionId !== 'string' || !/^[A-Za-z0-9-]{8,80}$/.test(payload.resumeSessionId)) {
+            // Engines' ids: uuids, `ses_…` (OpenCode, Kilo), `20260927_101500_ab12cd` (Hermes), slugs
+            // (Devin), Pi's custom ids with dots. One word, never a path.
+            if (typeof payload.resumeSessionId !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._-]{1,127}$/.test(payload.resumeSessionId)) {
               reply(type, requestId, { error: 'INVALID_SESSION', detail: 'resumeSessionId must be a session id' }); return
             }
             if (terminal || projectFolder || grid.state === 'ok' || model.state === 'ok' || dsh || prompt || agent) {
@@ -2688,7 +2691,18 @@ export class BackendSocket {
           const id = payload.agentId
           const agent = typeof id === 'string' ? registry.resolve(id) : undefined
           if (!agent?.cwd) { reply(type, requestId, { status: 'unavailable' }); return }
-          void readGitPullRequest(agent.cwd).then(result => reply(type, requestId, result))
+          const requested = payload.context
+          if (requested !== undefined && (!requested || typeof requested !== 'object'
+            || typeof (requested as Record<string, unknown>).cwd !== 'string'
+            || typeof (requested as Record<string, unknown>).branch !== 'string'
+            || (requested as Record<string, unknown>).remote !== null && typeof (requested as Record<string, unknown>).remote !== 'string')) {
+            reply(type, requestId, { status: 'unavailable' }); return
+          }
+          void readSessionGitPullRequest(agent, {
+            expected: requested as import('./lib/sessionGitPullRequest.js').ExpectedGitContext | undefined,
+            history: payload.history === true, offset: typeof payload.offset === 'number' ? payload.offset : undefined,
+          }).then(result => reply(type, requestId, result))
+            .catch(() => reply(type, requestId, { status: 'unavailable' }))
           return
         }
 
