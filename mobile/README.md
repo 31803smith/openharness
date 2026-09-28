@@ -2,21 +2,28 @@
 
 A viewer onto the machines this device has linked — one agent at a time, on a phone.
 
+Start with the [mobile team handoff](../docs/research/2026-09-28-phone-overnight.md)
+for recent changes, the code map, validation and outstanding product decisions.
+
 ```bash
 flutter pub get
 flutter analyze          # 0 issues outside third_party/xterm
-flutter test
+env -u TMUX flutter test
 flutter run              # -d <your device>
 flutter build ios --debug --no-codesign
 flutter build apk --debug
 ```
 
-## This package depends on nothing else in this repo
+## Standalone runtime, monorepo tests
 
 `harness_mobile` is standalone. It used to be a thin shell over `path: ../desktop`, which meant every
 desktop-only concern was a phone concern too: the app pulled in `window_manager`, `file_selector`,
 `desktop_drop`, `sqlite3` and `go_router`, and the phone build was pinned to a Flutter app whose
 targets are macOS and Linux.
+
+Run the full tests from `mobile/` inside this repository: encryption protocol checks read CLI
+source, and the branch-history UI tests use a desktop font fixture. Automated app interaction
+uses only the offline sample and simulator; tests must not contact real accounts or daemons.
 
 The app it runs now lives under `lib/`, in the same folders the desktop app uses for it:
 
@@ -33,41 +40,26 @@ The app it runs now lives under `lib/`, in the same folders the desktop app uses
 
 Two folders are this package's own, and have no counterpart on the desktop:
 
-- **`lib/phone/`** — the shell a phone needs that a window does not: tabs, cards, sheets, the
-  one-agent-at-a-time terminal page.
+- **`lib/phone/`** — Focus, Find, New, voice input, approvals, onboarding and settings. `PhoneShell`
+  owns one navigation stack rooted in `AgentHome`, with the full-screen terminal in `TerminalPage`.
 - **`lib/p2p/`** — the phone's second wire to each machine. The `terminal-v1` WebRTC data channel the
   harness CLI opens with werift on the desktop's behalf, so a terminal rides p2p or TURN when it can
   and the relay only when it must.
 
+`lib/demo/` provides the offline sample runtime. `test/render/` captures the phone screens;
+`integration_test/tour_test.dart` opens `SampleApp` directly for the simulator walkthrough.
+
 ## The account's tabs are the desk's, here too
 
-The tabs a person has are one document per account on the backend (`/api/desk`), the same on every
-computer they sign in on. The desktop owns its half of that in `desktop/lib/state/desk_sync.dart`,
-which is **vendored here unchanged**; `lib/state/phone_desk.dart` is this package's own other half,
-and it is deliberately not the window's:
+The account's tabs are stored on the backend (`/api/desk`). `lib/state/desk_sync.dart` models
+that shared document; `lib/state/phone_desk.dart` handles the phone's reads and explicit writes.
+The phone's `swarms` are temporary terminal containers for the pager, not a projection of the
+account's tabs. Swiping must never rewrite the shared desk.
 
-- A window's tabs ARE its `swarms`, so the desktop diffs that projection after every layout change.
-  A phone's `swarms` are not tabs — they are where the pager attaches the agents either side of the
-  one on screen — so nothing here is projected onto the desk.
-- The phone reads the tabs, follows them (`desk_changed` rides each machine's relay socket, since a
-  phone holds no adapter socket of its own), and writes exactly twice: an agent created here joins
-  the tab the phone is in, and one deleted here leaves every tab that held it.
-- Which tab is open, and where you were inside it, stay on the device — as they do per window.
-
-What the person sees of it is one mark beside `⋯` in the terminal's header, which brings a panel up
-from the bottom (`lib/phone/desk_tabs_popup.dart`): the tabs as a row of names, and the agents of
-the one picked as a list of rows under it — the Agents tab's own rows. A name changes the list and
-nothing else, so another tab can be read into without leaving the terminal you are in; a row is
-what opens an agent. The swipe then walks
-that tab's agents rather than the whole account (`lib/phone/desk_groups.dart`).
-
-**The terminal keeps the screen**: a rail of tabs standing across the top was tried and taken out —
-it cost a line and a half of somebody's session, all day, for a choice made a few times a day.
-
-The tabs are re-read every 15s while the app is in the foreground (`PhoneDesk.pollInterval`), and
-that is not belt-and-braces here: `desk_changed` reaches a phone only over a machine's relay socket,
-so a backend that does not forward it, or a moment with no machine connected, delivers nothing at
-all.
+The phone follows desk updates over machine relay sockets and polls every 15 seconds in the
+foreground. Creating or deleting a harness updates its desk membership; explicit tab operations
+also live in `PhoneDesk`. The current tab and position remain device-local. `lib/phone/desk_groups.dart`
+resolves the tab's agents for navigation.
 
 ## It is a VIEWER build, always
 
@@ -81,34 +73,14 @@ through it or a browser, and the grid's presets, splits and keyboard rail.
 
 ## Keeping in step with `../desktop`
 
-The shared half of `lib/` was **vendored** from `desktop/lib/`, not rewritten, and outside
-`lib/phone/` and `lib/p2p/` the two trees are byte-identical apart from the package name and the
-files below. So a fix that belongs on both sides can be carried across with `diff`:
+Much of `lib/` originated in `desktop/lib/`, but the copies now differ substantially. Mobile
+removes desktop routing, local CLI supervision and transport, grid controls and local file access.
+It also owns its authentication, encryption and phone-specific lifecycle handling.
 
-```bash
-# What has drifted, ignoring the package rename
-cd mobile/lib && for f in $(find . -name '*.dart' | sed 's|^\./||'); do
-  [ -f "../../desktop/lib/$f" ] || continue
-  diff -q <(sed 's|package:harness_mobile/|package:harness/|g' "$f") "../../desktop/lib/$f" >/dev/null \
-    || echo "DIFFERS: $f"
-done
-```
+Port shared protocol and model fixes deliberately. Check `core/agent_git_context.dart`,
+`e2ee/envelope.dart`, `state/app_state.dart` and their regression tests when upstream adds RPCs
+or agent fields. `test/encrypted_down_types_test.dart` compares the phone's encryption rules with
+the CLI's source so a new machine request cannot silently leave unencrypted.
 
-The files expected to differ, and why:
-
-| File | Why |
-|---|---|
-| `main.dart` | mounts `PhoneShell` and the p2p transport, not `SwarmScreen` |
-| `app_shell.dart` | no managed window: `window_manager` ships for macOS/Windows/Linux only; and no application menu, update band, provisioning screens or desktop sign-in |
-| `widgets/engine_identity.dart` | assets are this package's own, so it no longer names a `package:` to load from |
-
-`lib/core/desktop_window.dart` and `lib/widgets/window_chrome.dart` have no copy here at all, and
-neither have the desktop screens a phone can never reach: the sign-in and boot screens (the phone
-has `PhoneWelcome` and `PhoneBoot`), first-run provisioning, the update notice, the firmware
-flasher, the layout palette and the shortcuts sheet.
-
-Nor has the code only those screens and a local CLI reached: the provisioner, the updater, local CLI
-discovery and its runner, the CLI and browser sign-in, pane presets and arrangements. So
-`state/app_state.dart`, `state/swarm.dart`, `state/terminal_pane.dart`, `state/pane_layout_store.dart`
-and `auth/` differ from the desktop's by that cut as well — a fix carried across from there lands in
-what is left.
+`third_party/xterm/` is patched code: preserve its mobile input, rendering and accessibility changes.
+Never commit local signing edits to `ios/Runner.xcodeproj/project.pbxproj`.

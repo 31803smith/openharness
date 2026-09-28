@@ -8,24 +8,24 @@ The goal set at bedtime was to make the Harness phone app world class. That mean
 
 That audience is people with strong consumer-app taste who now run Claude Code and Codex and want to manage them from a phone.
 
-Everything below is on branch `phone-overnight-polish` (pushed to origin), in [PR #398](https://github.com/autonomous-ai/openharness/pull/398). Nothing has been merged or released. **The last section is the handoff for the next agent.**
+This work is tracked in [PR #398](https://github.com/autonomous-ai/openharness/pull/398), from branch `phone-overnight-polish`. The user has authorized merging it to `main` and installing a local iPhone build for manual review; the PR records the merge status. No store release is included. **The last section is the handoff for the mobile team.**
 
 ## In one screen
 
-- **Tests:** 486 → 1,555 overnight → **1,600** after continuation (plus 25 render tests skipped in the ordinary suite; all 25 pass when rendering is enabled). The whole suite passes. `flutter analyze` is clean outside `third_party/`.
-- **Coverage:** 50.4% → 87.0% overnight → **88.8%** (18,185/20,485 lines), not counting `third_party/`.
+- **Tests:** 486 → 1,555 overnight → **1,614** after continuation and main integration (plus 25 render tests skipped in the ordinary suite; all 25 pass when rendering is enabled). The whole suite passes. `flutter analyze` is clean outside `third_party/`.
+- **Coverage:** 50.4% → 87.0% overnight → **88.7%** (18,450/20,790 lines; 88.8% before integrating main's branch/PR-history feature), not counting `third_party/`.
 
   | Area | Coverage |
   |---|---|
   | e2ee, api, auth, notify, theme | 100% |
   | viewer | 99.2% |
   | p2p | 98.5% |
-  | core | 97.2% |
+  | core | 96.3% |
   | usage | 95.0% |
   | ws | 94.8% |
   | analytics | 92.1% |
   | widgets | 89.8% |
-  | phone | 89.1% |
+  | phone | 89.0% |
   | shared | 81.2% |
   | state | 83.0% |
   | demo | 79.9% |
@@ -38,7 +38,7 @@ Everything below is on branch `phone-overnight-polish` (pushed to origin), in [P
   - 52 files and about 17,100 lines the phone never runs were deleted. Each deletion was proved with tree-shaken AOT builds for iOS and Android.
   - The desktop's half of `AppNotifier` was cut: 7,100 more lines, 13 files. `viewer` is now non-nullable.
   - The continuation removes the remaining handoff list: unused dial routing and grid navigation, local plaintext transport, the unauthenticated local API mode, local-file opening and the CLI log channel. The cleanup was prepared and tested in a disposable copy before application.
-- **Bugs:** 40 real bugs fixed, each with a regression test (listed below). The continuation fixes queued log notifications after disposal and misleading local-daemon explanations for phone backend failures.
+- **Bugs:** 41 real bugs fixed, each with a regression test (listed below). The continuation fixes queued log notifications after disposal and misleading local-daemon explanations for phone backend failures. Main integration also fixes encryption of branch/PR-history requests.
 - **Test safety:** every test now runs in a throwaway home (`test/flutter_test_config.dart`), so no test can read or write a developer's `~/.harness`. `test/test_home_guard_test.dart` pins this.
 - **Offline verification:** HTTP clients are blocked by default in tests. API and WebSocket tests now use in-memory transports, including handshakes, token refreshes and reconnects. The simulator tour launches `SampleApp` directly without reading a saved account.
 - **Review panel:** the four requested personas completed rounds 3 and 4. All now score the app **8+/10**; the round-4 mean is **8.05/10**. [Round-3/4 report](2026-09-28-phone-panel-rounds-3-4.md).
@@ -113,6 +113,7 @@ These are AI persona reviews of offline artifacts. They establish the visual sco
 - A second `terminal_ready` for one open no longer leaks a heartbeat.
 - A locked state file no longer stops a machine reconnecting for good.
 - Phone backend failures no longer tell the user that a local daemon is down or restarting.
+- Branch/PR-history requests are encrypted and held until the handshake completes; the machine no longer rejects them with `E2EE_REQUIRED`.
 - A terminal switched off by an unanswered negotiation is asked about again.
 
 **Terminal and Focus**
@@ -157,13 +158,30 @@ These are AI persona reviews of offline artifacts. They establish the visual sco
 - No scroll-position indicator. The "api-fix asking" label stays.
 - PRs only. The user merges and releases; nothing is merged or released without their explicit word.
 
-## Handoff for the next agent
+## Handoff for the mobile team
 
 ### State
 
-- Branch `phone-overnight-polish`, pushed. [PR #398](https://github.com/autonomous-ai/openharness/pull/398) is open for the user to review and merge. The continuation and its validation are included; no merge or release has run.
+- Branch `phone-overnight-polish`; [PR #398](https://github.com/autonomous-ai/openharness/pull/398) contains the continuation and main integration. The user explicitly authorized merging and a local iPhone install for manual review. Check the PR for the resulting merge commit; no store release was requested.
 - Merged into it and finished: `coverage-rest` (coverage engineer), `desktop-cut` (the desktop's half of the notifier), and the phone-screens and state-core engineers' passes. No engineer is still running.
 - Never commit `mobile/ios/Runner.xcodeproj/project.pbxproj`. It carries the local signing team and stays modified in the worktree.
+
+### Code map for the mobile team
+
+The runtime is a standalone Flutter package in `mobile/`; agents run on linked computers, never on the phone. Shared code was copied from desktop and now differs substantially: port fixes deliberately rather than replacing directories.
+
+| Location under `mobile/` | Responsibility |
+|---|---|
+| `lib/main.dart`, `lib/app_shell.dart` | Startup, authentication and root shell |
+| `lib/phone/` | Focus terminal, Find, New, voice, approvals, pairing and settings pages; `PhoneShell` owns one navigation stack |
+| `lib/state/` | `AppNotifier`, machine/agent lifecycle, terminal panes and desk synchronization |
+| `lib/terminal/`, `third_party/xterm/` | Terminal sessions/rendering, input, links and media; xterm is a patched vendor copy |
+| `lib/{auth,api,viewer,e2ee,ws,p2p}/` | Sign-in/linking, backend API, encrypted relay and WebRTC transport |
+| `lib/{core,settings,shared,theme}/` | Models, preferences and shared UI foundations |
+| `lib/demo/` | Offline sample runtime, including its own entry point |
+| `test/`, `test/render/`, `integration_test/` | Regression tests, 25 screen renders and the sample simulator tour |
+
+The full tests run from `mobile/` in the monorepo: protocol checks read CLI source, and a branch-history UI test imports a desktop font fixture. Desktop-only routing, local CLI transport and grid controls have been removed. The new `session_work_page.dart` preserves main's current branch and PR-history UI.
 
 ### How to run
 
@@ -189,7 +207,9 @@ From `mobile/`, with Flutter 3.47.2:
 3. Completed the round-2 attention-line, sheet, placeholder, Unlock-copy, sample-discovery and avatar work.
 4. Removed every item in the remaining dead-code list: `SpokenTaskRequest` and its unused routing stream/handler; `selectAutonomousEnv`; `hasNavigationRail` and unused pin/grid-keyboard methods; `paneFocusRequest`, `seedSwarm`, `openAgentFromDial`; `DialState.restore`; local plaintext WebSockets; ApiClient's no-auth local mode; the local-machine terminal-file branch; and `cliLog`. Caller searches and the CLI's local-only event routing established that these paths cannot serve the phone. The explicitly approved patch was tested before and after application.
 5. Added coverage in the requested order: settings persistence/reset; clipboard failures; logging lifecycle; terminal preferences, downloads and link opening; sample requests/lifecycle; and layout restoration/write coalescing. Every new real bug has a regression test.
-6. Final validation: **1,600 tests pass**, 25 conditional render skips; **88.8% line coverage** excluding `third_party/`; analyzer clean outside `third_party/`. The separate 25-render run and 19-state sample simulator tour pass.
+6. Final validation: **1,614 tests pass**, 25 conditional render skips; **88.7% line coverage** excluding `third_party/`; analyzer clean outside `third_party/`. The separate 25-render run and 19-state sample simulator tour pass.
+
+7. Integrated current `main`, retaining branch/PR history while keeping the phone cleanup. The protocol parity test caught an unsealed `git_pull_request`; a codec regression now verifies handshake gating and encryption. The numeric scroll-position tag remains removed, with its existing scrolling test passing.
 
 ### Remaining observations
 

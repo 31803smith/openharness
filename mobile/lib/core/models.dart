@@ -2,6 +2,7 @@
 library;
 
 import 'agent_output_stats.dart';
+import 'agent_git_context.dart';
 
 enum MachineAuthMode { managed, remote, self, provider }
 
@@ -180,6 +181,9 @@ class Agent {
   final String? dshName;
   final String? parentAgentId;
   final AgentProject? project;
+  final AgentGitContext? gitContext;
+  AgentProject? get displayProject =>
+      gitContext?.displayProject(project) ?? project;
   final String status;
   final String launchState;
   final String? launchError;
@@ -217,6 +221,7 @@ class Agent {
     this.dshName,
     this.parentAgentId,
     this.project,
+    this.gitContext,
     this.status = 'active',
     this.launchState = 'ready',
     this.launchError,
@@ -277,6 +282,7 @@ class Agent {
       dshName: _safeLabel(j['dshName']),
       parentAgentId: _safeLabel(j['parentAgentId'] ?? j['parentId']),
       project: AgentProject.fromJson(j['project']),
+      gitContext: AgentGitContext.fromJson(j['gitContext']),
       status: (j['status'] as String?) ?? 'active',
       launchState: launchState,
       launchError: launchState == 'failed' ? _safeLabel(launch['error']) : null,
@@ -297,7 +303,7 @@ class Agent {
     );
   }
 
-  Agent copyWith({String? name}) => Agent(
+  Agent copyWith({String? name, AgentGitContext? gitContext}) => Agent(
     id: id,
     sessionId: sessionId,
     name: name ?? this.name,
@@ -314,6 +320,7 @@ class Agent {
     dshName: dshName,
     parentAgentId: parentAgentId,
     project: project,
+    gitContext: gitContext ?? this.gitContext,
     status: status,
     launchState: launchState,
     launchError: launchError,
@@ -431,6 +438,7 @@ class AgentProject {
     this.root,
     this.remote,
     this.branch,
+    this.worktree = false,
     this.branchPending = false,
   });
   final String name;
@@ -438,6 +446,7 @@ class AgentProject {
   final String? root;
   final String? remote;
   final String? branch;
+  final bool worktree;
 
   /// [branch] is still the name Harness made up at Start; it is shown once the session's name
   /// replaces it.
@@ -503,10 +512,11 @@ class AgentProject {
       root == other.root &&
       remote == other.remote &&
       branch == other.branch &&
+      worktree == other.worktree &&
       branchPending == other.branchPending;
   @override
   int get hashCode =>
-      Object.hash(name, cwd, root, remote, branch, branchPending);
+      Object.hash(name, cwd, root, remote, branch, worktree, branchPending);
 
   static AgentProject? fromJson(Object? raw) {
     if (raw is! Map) return null;
@@ -529,6 +539,7 @@ class AgentProject {
       root: field('root'),
       remote: field('remote'),
       branch: field('branch', 256),
+      worktree: raw['worktree'] == true,
       branchPending: raw['branchPending'] == true,
     );
   }

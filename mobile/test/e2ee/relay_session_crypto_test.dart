@@ -125,24 +125,27 @@ void main() {
       expect(session.ready, isFalse);
     });
 
-    test('a signed welcome over a malformed key is refused, not thrown', () async {
-      final session = await client();
-      final hello = session.helloFrame()['payload'] as Map<String, dynamic>;
-      final webEphPub = b64d(hello['ephPub'] as String);
-      final shortKey = List.filled(31, 9);
-      final sig = await machineIdentity.sign(
-        lvCat(['e2e-welcome-v1', machineId, webEphPub, shortKey]),
-      );
-      expect(
-        await session.handleWelcome({
-          'ephPub': b64e(shortKey),
-          'sig': b64e(sig),
-          'enc': b64e(List.filled(40, 1)),
-        }),
-        isFalse,
-      );
-      expect(session.ready, isFalse);
-    });
+    test(
+      'a signed welcome over a malformed key is refused, not thrown',
+      () async {
+        final session = await client();
+        final hello = session.helloFrame()['payload'] as Map<String, dynamic>;
+        final webEphPub = b64d(hello['ephPub'] as String);
+        final shortKey = List.filled(31, 9);
+        final sig = await machineIdentity.sign(
+          lvCat(['e2e-welcome-v1', machineId, webEphPub, shortKey]),
+        );
+        expect(
+          await session.handleWelcome({
+            'ephPub': b64e(shortKey),
+            'sig': b64e(sig),
+            'enc': b64e(List.filled(40, 1)),
+          }),
+          isFalse,
+        );
+        expect(session.ready, isFalse);
+      },
+    );
 
     // ⚠️ A welcome is signed, but nothing in it is fresh: the relay can hand the same one back at
     // any time. Taken twice, it reset the group key to the one it carried, undoing the rekey the
@@ -468,6 +471,25 @@ void main() {
   });
 
   group('as the relay codec', () {
+    test('branch and pull-request history waits for encryption', () async {
+      final session = await client();
+      final codec = E2eeRelayCodec(session);
+      final request = {
+        'type': 'git_pull_request',
+        'payload': {'agentId': 'hn', 'history': true, 'offset': 4},
+      };
+      expect(codec.encodeFrame(request), isNull);
+
+      final machine = await MachineSession.answer(
+        codec.helloFrame(),
+        identity: machineIdentity,
+      );
+      expect(await codec.handleWelcome(await machine.welcome()), isTrue);
+      final sealed = codec.encodeFrame(request)!;
+      expect(isWrapped(sealed['payload']), isTrue);
+      expect(machine.openDown(sealed), request['payload']);
+    });
+
     test('holds a sealed or strict frame until the session is up', () async {
       final session = await client();
       final codec = E2eeRelayCodec(session);

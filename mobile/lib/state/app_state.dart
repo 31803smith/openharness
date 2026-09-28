@@ -15,6 +15,7 @@ import '../auth/peer_link_client.dart';
 import '../auth/sign_in_client.dart';
 import '../auth/cli_link.dart';
 import '../core/config.dart';
+import '../core/agent_git_context.dart';
 import '../core/agent_preference.dart';
 import '../core/engine_availability.dart';
 import '../core/device_name.dart';
@@ -1870,6 +1871,7 @@ class AppNotifier extends ChangeNotifier {
           prev.codexHome != agent.codexHome ||
           prev.parentAgentId != agent.parentAgentId ||
           prev.project != agent.project ||
+          prev.gitContext != agent.gitContext ||
           prev.launchState != agent.launchState ||
           prev.launchError != agent.launchError ||
           prev.launchDetail != agent.launchDetail ||
@@ -2795,6 +2797,11 @@ class AppNotifier extends ChangeNotifier {
   }
 
   void _replaceAgents(MachineState machine, List<Agent> agents) {
+    final previousWork = {for (final agent in machine.agents) agent.id: agent};
+    agents = [
+      for (final agent in agents)
+        retainNewerGitContext(agent, previousWork[agent.id]),
+    ];
     // Whatever was here before, this list came from the machine itself — see
     // [MachineState.agentsFromCache]. Cleared before the loops below, which are
     // exactly the code that retires an agent the cache was wrong about.
@@ -2846,6 +2853,7 @@ class AppNotifier extends ChangeNotifier {
   void _upsertAgent(MachineState machine, Agent agent) {
     final index = machine.agents.indexWhere((item) => item.id == agent.id);
     final previous = index == -1 ? null : machine.agents[index];
+    agent = retainNewerGitContext(agent, previous);
     if (index == -1) {
       machine.agents = [...machine.agents, agent];
     } else {
@@ -3303,6 +3311,33 @@ class AppNotifier extends ChangeNotifier {
       return SessionContentHit.listFromReply(machineId, reply);
     } catch (_) {
       return null;
+    }
+  }
+
+  Future<Map<String, dynamic>> readAgentGitHistory(
+    String machineId,
+    String agentId, {
+    int offset = 0,
+  }) async {
+    final machine = stateOf(machineId), revision = _authRevision;
+    final agent = machine?.agents.where((a) => a.id == agentId).firstOrNull;
+    if (machine == null || agent == null) return {'status': 'unavailable'};
+    try {
+      final result = await _conn(machineId).request(
+        'git_pull_request',
+        payload: {'agentId': agentId, 'history': true, 'offset': offset},
+        timeout: const Duration(seconds: 45),
+      );
+      if (!_machineWorkCurrent(machine, revision) ||
+          !sameGitConversation(
+            agent,
+            machine.agents.where((a) => a.id == agentId).firstOrNull,
+          )) {
+        return {'status': 'unavailable'};
+      }
+      return result;
+    } catch (_) {
+      return {'status': 'unavailable'};
     }
   }
 
