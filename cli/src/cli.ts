@@ -142,6 +142,7 @@ import { terminalRouteKey, terminalRuntimeLabel } from './lib/terminalRuntime.js
 import { TerminalAgentReconciler } from './lib/terminalAgentReconciler.js'
 import { processRows, type DiscoveredTerminalAgent } from './lib/terminalAgentDiscovery.js'
 import { remoteCommand } from './remoteCommand.js'
+import { tuiCommand } from './tui/index.js'
 import { newCommand } from './lib/newCommand.js'
 import { WebSocket as NewCommandSocket } from 'ws'
 import {
@@ -380,6 +381,7 @@ Machine:
   harness reset                stop the adapter and clear local CLI state
   harness status               show whether it's running (+ version)
   harness logs export          zip the last 7 days of logs (app, CLI, dial, daemon) to the Desktop
+  harness tui                  all of Harness in this terminal: tabs, panes, every machine (⌥O ⌥P ⌥N)
   harness new [agent] [@machine] [folder|name] [-- task]
                                make a harness from a shell: \`harness new\` is claude here; see \`harness new -h\`
   harness machines             list the machines on this account (this computer's is marked)
@@ -2536,6 +2538,8 @@ async function runForeground(session: AuthSession | null): Promise<void> {
     // before its answer arrived — as `question_response_result`.
     return questions.answer(payload)
   }
+  // What is still being asked, by session — handed to a window that connects later (openQuestions below).
+  const openQuestions = new Map<string, Record<string, unknown>>()
   const questionWatcher = new QuestionWatcher({
     getSession: (id) => registry.resolve(id),
     capture: captureTerminal,
@@ -2564,6 +2568,7 @@ async function runForeground(session: AuthSession | null): Promise<void> {
       // today: a remote machine's watcher is gated on ITS OWN audience, which a window attached over
       // here is not part of either way.
       backend.sendLocal(asked)
+      openQuestions.set(sessionId, asked)
       console.log(`[question] ${sid(sessionId)} asking the user · "${preview(shaped[0]?.q ?? '')}" · req=${requestId}`)
     },
     // Answered somewhere else — the app, or the pane by hand. Every client drawing it is told to stop
@@ -2582,6 +2587,7 @@ async function runForeground(session: AuthSession | null): Promise<void> {
       // one already answered. This is the mechanism behind "answer anywhere": the dial is cabled to
       // this very computer, so the dial and this window are always the same machine's audience.
       backend.sendLocal(closed)
+      openQuestions.delete(sessionId)
       console.log(`[question] ${sid(sessionId)} answered elsewhere · closing on every client · req=${requestId}`)
     },
   })
@@ -4282,6 +4288,7 @@ async function runForeground(session: AuthSession | null): Promise<void> {
     // one the dial has been using for every voice turn.
     // A window that connects after the dial did has missed the `dial_status` that announced it.
     dialStatus: () => cableHostRef?.currentDialStatus() ?? { attached: false },
+    openQuestions: () => [...openQuestions.values()],
     onRouteSend: backend.ownerCommands.onRouteSend = (agentId, text) => {
       const sent = cableHostRef?.sendTurn(agentId, text) ?? { ok: false as const, machine: '', reason: 'no agent list yet' }
       console.log(`[route] ⌘K → ${sid(agentId)} · bytes=${Buffer.byteLength(text, 'utf8')}`
@@ -7201,6 +7208,9 @@ async function logsExportCommand(json: boolean): Promise<void> {
 import { orchestratorCommand } from './orchestrator/command.js'
 
 // ── arg parse ──────────────────────────────────────────────────────────────────────────────────
+// `hn` is the terminal client's short name (like tmux, fzf): the same CLI, entered at `tui`. A call
+// back into this CLI from `hn` (login, start) is marked and runs as plain `harness`.
+if (/^hn(\.js)?$/.test(process.argv[1]?.split(/[\\/]/).pop() ?? '') && process.env.HARNESS_SELF !== '1') process.argv.splice(2, 0, 'tui')
 const [, , cmd, ...rest] = process.argv
 const flags = rest.filter((a) => a.startsWith('-'))
 const args = rest.filter((a) => !a.startsWith('-'))
@@ -7387,6 +7397,9 @@ switch (cmd) {
       output: (line) => console.log(line),
       error: (line) => console.error(line),
     }).then((code) => { process.exitCode = code }).catch(onError)
+    break
+  case 'tui':
+    tuiCommand(rest, { port: daemonPort(), signedIn: () => readAuthSession() !== null }).then((code) => { process.exitCode = code }).catch(onError)
     break
   case 'remote':
     remoteCommand({
