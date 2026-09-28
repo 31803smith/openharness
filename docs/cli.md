@@ -43,11 +43,16 @@ and answers them with `<type>_result`. Selecting one of your other machines prox
 through this daemon's link to it.
 
 What it answers: `agents_list`, `agent_create`, `agent_restart`, `agent_retarget`, `agent_delete`,
-`agent_update`, `agent_recent`, `agent_files`, `agent_read_file` (text, or media in 128 KiB chunks),
+`agent_update`, `agent_recent`, `agent_read_file` (media previews, in 128 KiB chunks),
 `fs_list_dir`, `engines_probe`, `codex_profiles_list`, `codex_profile_link`, `models_list`,
 `usage_read`, `question_response`, `voice_route`, `message`, `cancel`, and `terminal_open` for a
 binary terminal channel with scroll, resync and paste. The same frames travel from the web client
 over the relay.
+
+`question_response` carries the `requestId` of the `commander_question` it answers, and its
+`question_response_result` comes back under that same id, to that client alone (sealed, over the relay):
+`{ ok: true }` once the answer is typed, or `{ error: "STALE_QUESTION", detail }` when the dialog on
+screen is no longer that question — nothing is typed then.
 
 Engines report in over HTTP on the same port: `POST /api/hook/session-start`, `session-end`,
 `turn-start`, `turn-stop`, `tool-start`, authenticated by a per-install token the daemon writes into
