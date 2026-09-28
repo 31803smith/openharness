@@ -602,7 +602,8 @@ function locateQuestionPane(capture: string): FoundDialog | null {
     const line = lines[i].trim()
     if (!line) continue
     if (/[←→]/.test(line) || /^[☐☒✔✓]/.test(line) || /^[─━-]{6,}$/.test(line)) break
-    question = line
+    // Hermes's batch panel marks the active question with `▸`; that marker is chrome, not the question.
+    question = line.replace(/^▸\s*/, '')
     break
   }
 
