@@ -575,6 +575,12 @@ private extension SwarmTabStrip {
     emit = { method, args in calls.append((method, args as? [String: Any] ?? [:])) }
     for width in [CGFloat(360), CGFloat(520), CGFloat(1280)] {
       setFrameSize(NSSize(width: width, height: 40))
+      var hidden = state
+      hidden.removeValue(forKey: "shareAction")
+      update(hidden)
+      let withoutShare = barFrames()
+      try checkTitlebar(shareButton.isHidden && !shareButton.isEnabled && shareButton.frame.width == 0,
+        "The Share experiment reserves no space while off at width \(width)")
       update(state)
       try checkTitlebar(!shareButton.isHidden && shareButton.isEnabled &&
         shareButton.frame.width == shareButton.preferredWidth &&
@@ -582,6 +588,10 @@ private extension SwarmTabStrip {
         contextButton.frame.maxX < shareButton.frame.minX &&
         newButton.frame.maxX < shareButton.frame.minX,
         "Share stays prominent at the right edge without overlapping tabs or context at width \(width)")
+      update(hidden)
+      try checkTitlebar(barFrames() == withoutShare,
+        "Turning Share off restores the original toolbar layout at width \(width)")
+      update(state)
     }
     try checkTitlebar(shareButton.accessibilityLabel() == "Share Website launch" &&
       shareButton.toolTip == "Share Website launch · ⇧⌘S",
@@ -1214,7 +1224,7 @@ private extension SwarmTitlebar {
     try checkTitlebar(strip.newButton.accessibilityLabel() == "New Tab", "The plus announces New Tab")
     try checkTitlebar(main.defersToInput(event("n", 45, .command)) && main.defersToInput(event("t", 17, .command)),
       "Command-N and Command-T reach creation and New Tab")
-    try checkTitlebar(main.defersToInput(event("p", 35, .command)), "Command-P reaches Open Harness")
+    try checkTitlebar(main.defersToInput(event("p", 35, .command)), "Command-P reaches Harnesses")
     try checkTitlebar(main.defersToInput(event("p", 35, [.command, .shift])), "Command-Shift-P reaches commands")
     try checkTitlebar(main.defersToInput(event("o", 31, .command)), "Command-O reaches the project picker")
     try checkTitlebar(!main.defersToInput(event(";", 41, .command)) &&
@@ -1225,8 +1235,12 @@ private extension SwarmTitlebar {
       "Command-I reaches Flutter exactly once")
     try checkTitlebar(main.defersToInput(event("m", 46, .command)) &&
       !main.performKeyEquivalent(with: event("m", 46, .command)),
-      "Command-M reaches Flutter exactly once instead of invoking a native window action")
-    try checkTitlebar(!main.defersToInput(event("u", 32, .command)), "Command-U is no longer claimed")
+      "Command-M reaches Machines exactly once instead of invoking a native window action")
+    try checkTitlebar(main.defersToInput(event("s", 1, .command)) &&
+      !main.performKeyEquivalent(with: event("s", 1, .command)),
+      "Command-S reaches Store exactly once")
+    try checkTitlebar(!main.defersToInput(event("u", 32, .command)), "Command-U has no default workspace action")
+    try checkTitlebar(!main.defersToInput(event("y", 16, .command)), "Command-Y has no default workspace action")
     flutterKeyContext = "picker"
     syncMenuKeys()
     try checkTitlebar(!main.performKeyEquivalent(with: event("\u{f701}", 125)), "Result arrows are owned by the shared picker")
@@ -1248,7 +1262,7 @@ private extension SwarmTitlebar {
     }
     actionsEnabled = true
     // Orchestrator has no default chord now. Exercise an explicit user binding;
-    // Cmd-O opens projects; Cmd-P opens search through the exported default keymap.
+    // Cmd-O opens projects; Cmd-Shift-P opens commands through the exported default keymap.
     let viewerMap = HarnessNativeKeymap(["version": 1, "contexts": [
       "workspace": [["keys": ["cmd+y"], "command": "project.orchestrate", "hint": "⌘Y", "repeatable": false]],
       "terminal": [], "picker": [], "project": [],
@@ -1461,7 +1475,7 @@ private extension SwarmTitlebar {
     let closedItems = historyMenu.items.filter { $0.action == #selector(closedHistoryAction(_:)) }
     try checkTitlebar(recentItems.count == 15 && closedItems.count == 10, "Chrome-style direct History sections remain bounded")
     try checkTitlebar(historyMenu.items.filter { !$0.isSeparatorItem }.prefix(2).map(\.title) == ["Back", "Forward"], "History begins with Back and Forward")
-    try checkTitlebar(historyMenu.items.last?.title == "Show Full History" && historyMenu.items.last?.keyEquivalent == "y", "Full History uses Command-Y")
+    try checkTitlebar(historyMenu.items.last?.title == "Show Full History" && historyMenu.items.last?.keyEquivalent.isEmpty == true, "Full History remains available without a default shortcut")
     try checkTitlebar(historyMenu.items.allSatisfy { $0.submenu == nil }, "Recent work is available without nested menus")
     let recent = recentItems[0]
     let closed = closedItems[0]
