@@ -17,6 +17,7 @@ import '../terminal/terminal_theme.dart';
 import '../terminal/terminal_theme_store.dart';
 import 'box_chrome.dart';
 import 'terminal_prompt.dart';
+import 'terminal_text_action.dart';
 
 /// Harness ▸ Add Phone… — a QR the phone scans to sign in to this account AND
 /// pair with this computer, end to end encrypted, with no password typed.
@@ -45,6 +46,8 @@ Future<void> showAddPhoneDialog(
   AppKeymap? keymap,
   PhonePairCall? pair,
   PhoneSignInCodeCall? signInCode,
+  PairedDevicesCall? listDevices,
+  RemovePairedDeviceCall? removeDevice,
 }) => showTerminalPrompt<void>(
   context,
   keymap: keymap,
@@ -52,6 +55,8 @@ Future<void> showAddPhoneDialog(
     app: app,
     pair: pair ?? phonePairOverDaemon(app.api),
     signInCode: signInCode ?? app.api.phoneSignInCode,
+    listDevices: listDevices ?? app.api.pairedDevices,
+    removeDevice: removeDevice ?? app.api.removePairedDevice,
   ),
 );
 
@@ -193,17 +198,31 @@ PhonePairCall phonePairOverDaemon(ApiClient api) => (code, cancel) async {
 /// null when there is none to be had (see [ApiClient.phoneSignInCode]).
 typedef PhoneSignInCodeCall = Future<({String code, Duration ttl})?> Function();
 
+/// The devices paired with this computer, or null when the daemon cannot say
+/// (see [ApiClient.pairedDevices]).
+typedef PairedDevicesCall = Future<List<PairedDevice>?> Function();
+
+/// Unpair one device by its fingerprint; true when it is done.
+typedef RemovePairedDeviceCall = Future<bool> Function(String fingerprint);
+
 class AddPhoneDialog extends StatefulWidget {
   const AddPhoneDialog({
     super.key,
     required this.app,
     required this.pair,
     required this.signInCode,
+    this.listDevices,
+    this.removeDevice,
   });
 
   final AppNotifier app;
   final PhonePairCall pair;
   final PhoneSignInCodeCall signInCode;
+
+  /// The list under the QR — who can already reach this computer — with a way
+  /// to take a device's access back. Null shows no list.
+  final PairedDevicesCall? listDevices;
+  final RemovePairedDeviceCall? removeDevice;
 
   @override
   State<AddPhoneDialog> createState() => _AddPhoneDialogState();
@@ -247,6 +266,16 @@ class _AddPhoneDialogState extends State<AddPhoneDialog> {
   bool _signInAsked = false;
   Timer? _signInTimer;
 
+  /// The devices paired with this computer, newest first; null until the
+  /// daemon answers, or when it cannot.
+  List<PairedDevice>? _devices;
+  bool _allDevices = false;
+  final _removing = <String>{};
+
+  /// How many devices show before "+ N more": the dialog is the QR and a
+  /// line, and the list must not outweigh it.
+  static const _devicesShown = 3;
+
   /// No pairing to be had from this daemon — asking stopped for good.
   bool _stopped = false;
   String? _connected;
@@ -263,6 +292,7 @@ class _AddPhoneDialogState extends State<AddPhoneDialog> {
     app.addListener(_appChanged);
     _syncLoop();
     unawaited(_renewSignIn());
+    unawaited(_loadDevices());
   }
 
   @override
@@ -333,6 +363,8 @@ class _AddPhoneDialogState extends State<AddPhoneDialog> {
           _connected = label;
           _message = null;
         });
+        // The phone that just joined is on the list now.
+        unawaited(_loadDevices());
         if (await _sleep(_connectedHold) && mounted) {
           Navigator.of(context).pop();
         }
@@ -401,6 +433,45 @@ class _AddPhoneDialogState extends State<AddPhoneDialog> {
       wait > Duration.zero ? wait : _signInRenew,
       () => unawaited(_renewSignIn()),
     );
+  }
+
+  Future<void> _loadDevices() async {
+    final list = widget.listDevices;
+    if (list == null) return;
+    List<PairedDevice>? devices;
+    try {
+      devices = await list();
+    } catch (_) {
+      devices = null;
+    }
+    if (_closed || !mounted) return;
+    setState(() => _devices = devices);
+  }
+
+  /// Takes [device]'s access away. One click, no confirmation: undoing it is
+  /// scanning the QR above again, and a device that is not yours should be
+  /// gone in one move.
+  Future<void> _remove(PairedDevice device) async {
+    final remove = widget.removeDevice;
+    if (remove == null || _removing.contains(device.fingerprint)) return;
+    setState(() => _removing.add(device.fingerprint));
+    bool removed;
+    try {
+      removed = await remove(device.fingerprint);
+    } catch (_) {
+      removed = false;
+    }
+    if (_closed || !mounted) return;
+    setState(() {
+      _removing.remove(device.fingerprint);
+      if (removed) {
+        _devices = [
+          for (final kept in _devices ?? const <PairedDevice>[])
+            if (kept.fingerprint != device.fingerprint) kept,
+        ];
+      }
+    });
+    if (!removed) _say("Couldn't remove ${device.name}. Try again.");
   }
 
   void _say(String message, {bool sticky = false}) => setState(() {
@@ -534,7 +605,63 @@ class _AddPhoneDialogState extends State<AddPhoneDialog> {
       // One line, and it is the status too: what to do, then that it worked.
       // The phone's own screen says the rest (Yes — scan to connect).
       _status(),
+      ..._devicesList(row),
     ];
+  }
+
+  /// Who can already reach this computer, with a way to take it back: the
+  /// safety net for a QR somebody else scanned.
+  List<Widget> _devicesList(double row) {
+    final devices = _devices;
+    if (devices == null || devices.isEmpty) return const [];
+    final shown = _allDevices ? devices : devices.take(_devicesShown).toList();
+    final more = devices.length - shown.length;
+    return [
+      SizedBox(height: row),
+      Text(
+        'Paired with this ${_thisComputer()}',
+        key: const ValueKey('add-phone-devices'),
+        style: _ink(_faint),
+      ),
+      for (final device in shown) _deviceRow(device),
+      if (more > 0)
+        Align(
+          alignment: Alignment.centerLeft,
+          child: TerminalTextAction(
+            key: const ValueKey('add-phone-more-devices'),
+            label: '+ $more more',
+            padding: EdgeInsets.zero,
+            onPressed: () => setState(() => _allDevices = true),
+          ),
+        ),
+    ];
+  }
+
+  Widget _deviceRow(PairedDevice device) {
+    final removing = _removing.contains(device.fingerprint);
+    return Row(
+      key: ValueKey('add-phone-device-${device.fingerprint}'),
+      children: [
+        Expanded(
+          child: Text(
+            device.name,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: _ink(),
+          ),
+        ),
+        Text(
+          device.online ? 'online' : _pairedAgo(device.pairedAt),
+          style: _ink(device.online ? _theme.green : _faint),
+        ),
+        TerminalTextAction(
+          label: removing ? 'removing…' : 'remove',
+          onPressed: removing || widget.removeDevice == null
+              ? null
+              : () => unawaited(_remove(device)),
+        ),
+      ],
+    );
   }
 
   Widget _status() {
@@ -554,6 +681,16 @@ class _AddPhoneDialogState extends State<AddPhoneDialog> {
       ),
     );
   }
+}
+
+/// How long ago [at] was, in one short word: `now`, `5m`, `3h`, `2d`, `6w`.
+String _pairedAgo(DateTime at) {
+  final ago = DateTime.now().difference(at);
+  if (ago.inMinutes < 1) return 'now';
+  if (ago.inHours < 1) return '${ago.inMinutes}m';
+  if (ago.inDays < 1) return '${ago.inHours}h';
+  if (ago.inDays < 14) return '${ago.inDays}d';
+  return '${ago.inDays ~/ 7}w';
 }
 
 /// "Mac" where the menu says Harness ▸ Add Phone…; the command palette also
