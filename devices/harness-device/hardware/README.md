@@ -29,7 +29,7 @@ The live source is this [Google Sheet](https://docs.google.com/spreadsheets/d/1M
 | 3 | 1.75″ 466×466 round AMOLED display (DXQ0175Y003AMT003) | 1 | [Alibaba](https://www.alibaba.com/product-detail/DXQ-1-75-Inch-466-466_1601834013691.html) |
 | 4 | USB Type-C female PCB connector | 1 | [AliExpress](https://www.aliexpress.us/item/3256809703885548.html) |
 | 5 | PCBA — Harness_1.75_AMOLED (main board, assembled) | 1 | [JLCPCB](https://jlcpcb.com/) — build from `pcb/` |
-| 6 | Self-adhesive rubber foot pad (round) | 1 | [AliExpress](https://www.aliexpress.us/item/3256806493767498.html) |
+| 6 | Solid round adhesive-backed rubber pad, 35 mm × 1.5 mm thick | 1 | [AliExpress](https://www.aliexpress.us/item/3256806493767498.html) |
 | 7 | M2×5 screw | 4 | [AliExpress](https://www.aliexpress.us/item/3256808488953951.html) |
 | 8 | Housing — 3D printed | 1 | `3d/step/Housing.step` |
 | 9 | Button — 3D printed | 1 | `3d/step/Button.step` |
