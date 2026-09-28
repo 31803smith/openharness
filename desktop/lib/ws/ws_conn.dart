@@ -586,12 +586,24 @@ class WsConn {
     'terminal_sync',
     'dial_scroll',
     'dial_focus',
+    'dial_selection',
+    'app_selection_result',
+    'dial_visit',
+    'app_visit_result',
+    'dial_form',
+    'app_form_result',
     'ping',
     'pong',
   };
 
   static bool _worthLogging(String type) =>
       !_unlogged.contains(type) &&
+      !type.startsWith('phone_pair') &&
+      !type.startsWith('viewer_surface') &&
+      !type.startsWith('api_connections') &&
+      !type.startsWith('orchestrator') &&
+      !type.startsWith('command_bar') &&
+      !type.startsWith('route_') &&
       !type.startsWith('harness_share_') &&
       !type.startsWith('observer_');
 

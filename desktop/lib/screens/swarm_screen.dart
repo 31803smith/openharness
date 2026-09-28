@@ -39,6 +39,8 @@ import '../state/app_state.dart';
 import '../state/harness_sessions.dart';
 import '../state/harness_placement.dart';
 import '../state/new_harness.dart';
+import '../state/device_form.dart';
+import '../state/device_finder.dart';
 import '../state/pane_arrangement.dart';
 import '../terminal/terminal_viewport.dart';
 import '../terminal/terminal_text.dart';
@@ -60,6 +62,7 @@ import '../widgets/engine_identity.dart';
 import '../widgets/status_line.dart';
 import '../widgets/workspace_status_line.dart';
 import '../widgets/workspace_bar_control.dart';
+import '../widgets/session_work_dialog.dart';
 import '../widgets/web_download_button.dart';
 import '../widgets/grid_model_picker.dart';
 import '../store/store_mark.dart';
@@ -178,7 +181,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
   bool _commandBarOpen = false;
   bool _commandActionInFlight = false;
   FocusNode? _commandReturnFocus;
-  bool get _hasCommandBar => widget.commandBarEnabled && app.viewer == null;
+  bool get _hasCommandBar => widget.commandBarEnabled;
   late final _commandBar = CommandBarController(
     catalog: () => buildCommandBarCatalog(
       app,
@@ -191,7 +194,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
     resolve:
         widget.commandResolver ??
         (request, cancel) =>
-            app.api.resolveCommandBar(request, cancelToken: cancel),
+            app.resolveCommandBar(request, cancelToken: cancel),
   )..addListener(_commandChanged);
   final _canvasFocus = FocusNode(
     debugLabel: 'Swarm canvas',
@@ -213,11 +216,15 @@ class _SwarmScreenState extends State<SwarmScreen> {
   bool _tabRevealScheduled = false;
   SwarmSearchController? _search;
   OverlayEntry? _searchOverlay;
+  DeviceFinder? _searchDevice;
   final _resourcePreviewKey = GlobalKey();
 
   /// New Harness, open in the box. Never open beside the search: they are two
   /// modes of one surface, and opening either closes the other.
   NewHarnessController? _newHarness;
+  DeviceFormPort? _newHarnessDevicePort, _deviceFormPort;
+  String? _deviceFormId, _deviceFormMachine;
+  String _deviceFormSurface = 'new';
   OverlayEntry? _newHarnessOverlay;
 
   /// Escape keeps unfinished work with the machine/project/agent it started
@@ -241,6 +248,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
   bool _newHarnessHidden = false;
   bool _routeIsCurrent = true;
   String? _linkDialogMachineId;
+  bool _browserMachineSetupHandled = false;
   String? _nativeState;
   List<Object?>? _machinesPresentation;
   ModelsMenuController? _modelsMenu;
@@ -288,6 +296,8 @@ class _SwarmScreenState extends State<SwarmScreen> {
   @override
   void initState() {
     super.initState();
+    app.deviceNavigationAllowed = _allowDeviceNavigation;
+    app.deviceFormCommand = _deviceFormCommand;
     _pullRequest = WorkspacePullRequest(app)..addListener(_statusPrefsChanged);
     _keymap.addListener(_keymapChanged);
     app.hasNavigationRail = false;
@@ -403,6 +413,12 @@ class _SwarmScreenState extends State<SwarmScreen> {
 
   @override
   void dispose() {
+    if (app.deviceNavigationAllowed == _allowDeviceNavigation) {
+      app.deviceNavigationAllowed = null;
+    }
+    if (app.deviceFormCommand == _deviceFormCommand) {
+      app.deviceFormCommand = null;
+    }
     app.removeListener(_syncToolbarNotices);
     _toolbarNotices.removeListener(_toolbarNoticesChanged);
     _toolbarNotices.dispose();
@@ -435,6 +451,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
     FocusManager.instance.removeListener(_syncKeyContext);
     _searchOverlay?.remove();
     _searchOverlay?.dispose();
+    _searchDevice?.close();
     _search?.dispose();
     _pickerModels?.dispose();
     _focusedModelController.dispose();
@@ -514,6 +531,96 @@ class _SwarmScreenState extends State<SwarmScreen> {
 
   bool get _shortcutsEnabled =>
       mounted && _routeIsCurrent && !_dialogOpen && !_spokenPaletteOpen;
+
+  bool _allowDeviceNavigation() =>
+      _shortcutsEnabled &&
+      ModalRoute.of(context)?.isCurrent != false &&
+      _search == null &&
+      !_commandBarOpen &&
+      _newHarnessOverlay == null &&
+      !_modelsVisible &&
+      !_machinesVisible &&
+      !_harnessesVisible;
+
+  Future<Map<String, dynamic>> _deviceFormCommand(
+    String machineId,
+    Map<String, dynamic> command,
+  ) async {
+    final id = command['formId'] as String;
+    final op = command['op'] as String;
+    final surface =
+        command['surface'] as String? ??
+        (op == 'open' ? 'new' : _deviceFormSurface);
+    final finding = surface == 'find';
+    Map<String, dynamic> fail(String error) => {
+      'ok': false,
+      'active': false,
+      'error': error,
+    };
+    if (!_shortcutsEnabled ||
+        ModalRoute.of(context)?.isCurrent == false ||
+        _newHarnessHidden ||
+        _pickingFolder ||
+        _pickerModalDepth > 0 ||
+        _commandBarOpen ||
+        (finding
+            ? _newHarness != null ||
+                  _modelsOverlay != null ||
+                  _harnessesOverlay != null
+            : _search != null ||
+                  _modelsVisible ||
+                  _machinesVisible ||
+                  _harnessesVisible)) {
+      return fail('Return to the active picker on desktop.');
+    }
+    if (op == 'open' && _deviceFormId != id) {
+      final tab = app.activeSwarmId;
+      if (finding) {
+        if (_search == null) _openSearch();
+        if (_searchDevice?.supported != true) {
+          return fail('Open harness search on desktop first.');
+        }
+      } else if (_newHarness == null) {
+        await _newAgent(
+          stillCurrent: () =>
+              app.inForeground &&
+              _allowDeviceNavigation() &&
+              app.activeSwarmId == tab &&
+              DateTime.now().millisecondsSinceEpoch <
+                  (command['expiresAt'] as int),
+        );
+      }
+      // Opening loads remembered choices asynchronously. Never attach this
+      // remote to a form someone else opened while that load was in flight.
+      if (!mounted ||
+          app.activeSwarmId != tab ||
+          (finding ? _searchDevice == null : _newHarnessDevicePort == null) ||
+          DateTime.now().millisecondsSinceEpoch >=
+              (command['expiresAt'] as int)) {
+        return fail('Open the picker again.');
+      }
+      _deviceFormId = id;
+      _deviceFormMachine = machineId;
+      _deviceFormSurface = surface;
+      _deviceFormPort = finding ? _searchDevice!.port : _newHarnessDevicePort;
+      await WidgetsBinding.instance.endOfFrame;
+    }
+    final port = _deviceFormPort;
+    if (id != _deviceFormId ||
+        machineId != _deviceFormMachine ||
+        surface != _deviceFormSurface ||
+        port == null) {
+      return fail('This picker has ended. Open it again.');
+    }
+    if (op == 'open') return port.snapshot();
+    return port.command(
+      op,
+      command['revision'] as int? ?? 0,
+      command['delta'] as int? ?? 0,
+      queryId: command['queryId'] as String?,
+      text: command['text'] as String?,
+    );
+  }
 
   void _runShortcut(String id) {
     _closeModelsControls(restoreFocus: false);
@@ -851,7 +958,9 @@ class _SwarmScreenState extends State<SwarmScreen> {
       ),
     if (focused.branch != null && focused.project != null)
       StatusLineField.branch: (
-        label: 'Find harnesses on ${focused.branch} in ${focused.projectName}',
+        label: focused.agent?.gitContext == null
+            ? 'Find harnesses on ${focused.branch} in ${focused.projectName}'
+            : 'Branches and pull requests · ${focused.branch}\n${focused.detail}',
         onPressed: _shortcutsEnabled
             ? () =>
                   _openContextResource(StatusLineField.branch, focused.pane.id)
@@ -864,6 +973,10 @@ class _SwarmScreenState extends State<SwarmScreen> {
     final focused = WorkspacePaneContext.focused(app);
     if (focused == null || focused.pane.id != expectedPaneId) return;
     if (field == StatusLineField.branch && focused.branch == null) return;
+    if (field == StatusLineField.branch && focused.agent?.gitContext != null) {
+      unawaited(_showSessionWork(focused));
+      return;
+    }
     if (app.stateOf(focused.pane.machineId) == null) return;
     final group = field == StatusLineField.machine
         ? 'machine:${focused.pane.machineId}'
@@ -883,6 +996,22 @@ class _SwarmScreenState extends State<SwarmScreen> {
     );
     _focusSearch();
   }
+
+  Future<void> _showSessionWork(WorkspacePaneContext focused) =>
+      _dialog(() async {
+        final agent = focused.agent;
+        if (agent == null) return;
+        final machineId = focused.pane.machineId;
+        await showDialog<void>(
+          context: context,
+          builder: (_) => SessionWorkDialog(
+            agent: agent,
+            online: app.stateOf(machineId)?.isOffline == false,
+            read: (offset) =>
+                app.readAgentGitHistory(machineId, agent.id, offset: offset),
+          ),
+        );
+      });
 
   Future<void> _openFocusedPullRequest(String? expectedUrl) async {
     final pr = _pullRequest.value;
@@ -1721,8 +1850,14 @@ class _SwarmScreenState extends State<SwarmScreen> {
 
   /// Harness ▸ Add Phone… and `> add phone`: the QR a phone scans to sign in
   /// and pair with this computer. See `widgets/add_phone_dialog.dart`.
-  Future<void> _addPhone() =>
-      _dialog(() => showAddPhoneDialog(context, app, keymap: _keymap));
+  Future<void> _addPhone() => _dialog(
+    () => showAddPhoneDialog(
+      context,
+      app,
+      keymap: _keymap,
+      onConnectMachine: () => unawaited(_openMachines()),
+    ),
+  );
 
   /// Settings, by section, as rows of the box: `> usage` goes straight to
   /// Settings ▸ Usage. A palette that finds a setting by name is how an editor
@@ -1742,6 +1877,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
   }
 
   Future<void> _openMachines({String? initialMachineId}) async {
+    _browserMachineSetupHandled = true;
     _onboarding.acknowledge(OnboardingStep.machines);
     _openResourcePicker('@');
     if (initialMachineId != null && _search?.isMachineMode == true) {
@@ -1785,6 +1921,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
     String? task,
     HarnessPlacement? placement,
     _NewHarnessSource source = _NewHarnessSource.workspace,
+    bool Function()? stillCurrent,
   }) async {
     final search = source == _NewHarnessSource.workspace ? _search : null;
     // A pane never lands in the store tab: New Harness from there goes to
@@ -1829,7 +1966,11 @@ class _SwarmScreenState extends State<SwarmScreen> {
       return;
     }
     await Future.wait([app.agentPreference.load(), app.projectHistory.load()]);
-    if (!mounted || app.activeSwarmId != target) return;
+    if (!mounted ||
+        app.activeSwarmId != target ||
+        stillCurrent?.call() == false) {
+      return;
+    }
     final initialFolder =
         folder ??
         paneProject?.cwd ??
@@ -2036,6 +2177,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
     );
     final content = NewHarnessForm(
       controller: box,
+      devicePort: _newHarnessDevicePort = DeviceFormPort(),
       onCreated: () {
         _closeNewHarness(restoreFocus: false, keepDraft: false);
         unawaited(_focusCreatedPane());
@@ -2275,6 +2417,8 @@ class _SwarmScreenState extends State<SwarmScreen> {
     _newHarnessOverlay?.dispose();
     _newHarnessOverlay = null;
     _newHarness = null;
+    _newHarnessDevicePort?.detach();
+    _newHarnessDevicePort = null;
     if (keepDraft && _newHarnessContext != null) {
       _rememberNewHarnessDraft(_newHarnessContext!, box.draft);
     }
@@ -2909,6 +3053,37 @@ class _SwarmScreenState extends State<SwarmScreen> {
               : null),
       catalog: _searchCatalog,
     )..setQuery(query);
+    final deviceSearch = _search!;
+    _searchDevice = DeviceFinder(
+      deviceSearch,
+      isComposing: () =>
+          _searchText.value.composing.isValid &&
+          !_searchText.value.composing.isCollapsed,
+      dismiss: _dismissSearch,
+      choose: (choice) async {
+        if (!identical(_search, deviceSearch)) return false;
+        final target = deviceSearch.targetId;
+        _closeSearch(restoreFocus: false);
+        final destination = choice.destination;
+        _preparePaneFocus();
+        if (destination.hasView ||
+            app.paneOfAgent(destination.machineId!, destination.agentId!) !=
+                null) {
+          return app.revealAgentViewFromDevice(
+            destination.machineId!,
+            destination.agentId!,
+            swarmId: destination.swarmId,
+            paneId: destination.paneId,
+          );
+        }
+        // A missing view follows the desktop's explicit Open/Resume path.
+        await _activateSearch(SwarmSearchSelection(choice.destination), target);
+        final pane = app.focusedPane;
+        return mounted &&
+            pane?.machineId == choice.destination.machineId &&
+            pane?.agentId == choice.destination.agentId;
+      },
+    );
     _search!.addListener(_syncSearch);
     _searchOverlay = OverlayEntry(builder: _buildSearchOverlay);
     Overlay.of(context).insert(_searchOverlay!);
@@ -3057,6 +3232,8 @@ class _SwarmScreenState extends State<SwarmScreen> {
     _searchOverlay?.remove();
     _searchOverlay?.dispose();
     _searchOverlay = null;
+    _searchDevice?.close();
+    _searchDevice = null;
     _search!.removeListener(_syncSearch);
     _search!.dispose();
     _search = null;
@@ -3586,7 +3763,13 @@ class _SwarmScreenState extends State<SwarmScreen> {
   }
 
   void _maybeLink() {
-    final machine = app.stateOf(app.selectedMachineId ?? '');
+    if (kIsWeb && app.requestedMachineLink == null) {
+      _maybeInitialBrowserMachines();
+      return;
+    }
+    final machine = app.stateOf(
+      app.requestedMachineLink ?? app.selectedMachineId ?? '',
+    );
     if (machine == null ||
         !machine.needsLink ||
         machine.isLocalMachine ||
@@ -3601,11 +3784,68 @@ class _SwarmScreenState extends State<SwarmScreen> {
     _linkDialogMachineId = machine.machine.machineId;
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       if (mounted) {
+        app.acknowledgeMachineLinkRequest(machine.machine.machineId);
         await _openMachines(initialMachineId: machine.machine.machineId);
       }
       // Keep the prompt's identity until the picker closes. Otherwise Escape
       // would immediately reopen it on the next workspace update.
       if (_search?.isMachineMode != true) _linkDialogMachineId = null;
+    });
+  }
+
+  bool get _hasConnectedBrowserMachine => app.machineStates.values.any(
+    (machine) =>
+        !machine.machine.isShared &&
+        !machine.needsLink &&
+        machine.nodeOnline != false &&
+        machine.connectionStatus == ConnectionStatus.connected,
+  );
+
+  bool get _browserMachineSetupReady =>
+      app.machineInventoryLoaded &&
+      !app.machinesLoading &&
+      !app.machinesAreStale &&
+      app.machineListError == null &&
+      !app.machineStates.values.any(
+        (machine) =>
+            !machine.machine.isShared &&
+            !machine.needsLink &&
+            machine.nodeOnline != false &&
+            (machine.connectionStatus == ConnectionStatus.connecting ||
+                machine.connectionStatus == ConnectionStatus.reconnecting),
+      ) &&
+      !_dialogOpen &&
+      !_commandBarOpen &&
+      !_spokenPaletteOpen &&
+      _newHarness == null &&
+      _search == null &&
+      _routeIsCurrent;
+
+  void _maybeInitialBrowserMachines() {
+    if (_browserMachineSetupHandled) return;
+    if (_hasConnectedBrowserMachine) {
+      _browserMachineSetupHandled = true;
+      return;
+    }
+    // Discovery and saved links restore asynchronously. An unlinked row must
+    // not cover the workspace while another machine is still reconnecting.
+    if (!_browserMachineSetupReady) return;
+    _browserMachineSetupHandled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      // A connection or a deliberate user action may have won this frame.
+      if (!mounted ||
+          _hasConnectedBrowserMachine ||
+          !_browserMachineSetupReady) {
+        return;
+      }
+      final selected = app.stateOf(app.selectedMachineId ?? '');
+      unawaited(
+        _openMachines(
+          initialMachineId: selected?.needsLink == true
+              ? selected!.machine.machineId
+              : null,
+        ),
+      );
     });
   }
 
@@ -3699,6 +3939,10 @@ class _SwarmScreenState extends State<SwarmScreen> {
     'agent.add': _addAgent,
     if (kDebugSurfaceEnabled) 'app.onboarding_review': _newTab,
     'agent.rename': () => _editAgent(),
+    'agent.work': () async {
+      final focused = WorkspacePaneContext.focused(app);
+      if (focused != null) await _showSessionWork(focused);
+    },
     'agent.stop': () => _editAgent(stop: true),
     'agent.fork': _forkAgent,
     'agent.share': _shareAgent,
@@ -3735,6 +3979,9 @@ class _SwarmScreenState extends State<SwarmScreen> {
       return false;
     }
     if (id == 'keyboard.open_config') return _keymap.store != null;
+    if (id == 'agent.work') {
+      return WorkspacePaneContext.focused(app)?.agent != null;
+    }
     if (id == 'keyboard.pause_guide') return _learning.active;
     if (id == 'agent.share' || id == 'pane.toggle_viewer') {
       final focused = WorkspacePaneContext.focused(app);
@@ -3755,11 +4002,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
           !machine.machine.isShared &&
           !isTerminalEngine(pane!.session!.engineId);
     }
-    if (id == 'keyboard.quick_start' ||
-        id == 'keyboard.practice' ||
-        id == 'app.onboarding_review' ||
-        // A viewer has no daemon of its own to pair a phone with.
-        id == 'app.add_phone') {
+    if (id == 'app.onboarding_review') {
       return app.viewer == null;
     }
     if (id == 'agent.rename' ||
@@ -4105,7 +4348,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
                         WorkspacePaneContext.focused(app),
                         menuOnly: true,
                       ),
-                    if (_learning.active && app.viewer == null)
+                    if (_learning.active)
                       WorkspaceQuickStart(
                         learning: _learning,
                         onCommand: _runShortcut,
@@ -4277,15 +4520,11 @@ class _SwarmScreenState extends State<SwarmScreen> {
                                                         onCommands:
                                                             _showSearchCommands,
                                                         onQuickStart:
-                                                            _learning.offer &&
-                                                                app.viewer ==
-                                                                    null
+                                                            _learning.offer
                                                             ? _startQuickStart
                                                             : null,
                                                         onPractice:
-                                                            app.viewer == null
-                                                            ? _practiceKeyboard
-                                                            : null,
+                                                            _practiceKeyboard,
                                                         onNew: () => _newAgent(
                                                           placement:
                                                               HarnessPlacement

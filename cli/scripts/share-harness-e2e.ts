@@ -150,7 +150,7 @@ try {
   run('backend', join(repo, 'backend'), ['--import', 'tsx', 'src/server.ts'], backendEnv)
   await until('backend', async () => fetch(`${backendUrl}/api/health`).then(r => r.ok).catch(() => false))
   const engine = join(root, 'codex')
-  await writeFile(engine, `#!${process.execPath}\nif (process.argv.includes('--version')) { console.log('codex-cli 1.0.0'); process.exit(0) }\nif (process.argv.includes('--help')) { console.log('--approve-for-me --dangerously-bypass-approvals-and-sandbox --ask-for-approval'); process.exit(0) }\nprocess.title = 'codex'; process.stdin.setRawMode?.(true); console.log('SHARING_READY'); process.stdin.on('data', x => process.stdout.write('ECHO:' + x + '\\r\\n')); setInterval(() => {}, 1000);\n`, { mode: 0o700 })
+  await writeFile(engine, `#!${process.execPath}\nif (process.argv.includes('--version')) { console.log('codex-cli 1.0.0'); process.exit(0) }\nif (process.argv.includes('--help')) { console.log('--approve-for-me --dangerously-bypass-approvals-and-sandbox --ask-for-approval'); process.exit(0) }\nconst { appendFileSync } = require('node:fs'); process.title = 'codex'; process.stdin.setRawMode?.(true); console.log('SHARING_READY'); process.stdin.on('data', x => { appendFileSync(${JSON.stringify(join(root, 'fixture-input.bin'))}, x); process.stdout.write('ECHO:' + x + '\\r\\n'); }); setInterval(() => {}, 1000);\n`, { mode: 0o700 })
   const fixture = join(root, 'harness-source')
   await mkdir(join(fixture, 'template'), { recursive: true })
   await writeFile(join(fixture, 'harness.json'), JSON.stringify({ spec: 1, id: 'fixture/sharing', name: 'Sharing demo', engine: 'codex',
@@ -158,7 +158,8 @@ try {
     viewer: { command: './viewer.mjs', url: 'http://127.0.0.1:${port}/' }, verdict: '.harness/verdict.json' }))
   await writeFile(join(fixture, 'AGENTS.md'), 'Share harness test fixture.\n')
   await writeFile(join(fixture, 'template/result.txt'), 'Sharing demo')
-  await writeFile(join(fixture, 'viewer.mjs'), `#!${process.execPath}\nimport { createServer } from 'node:http';\ncreateServer((req, res) => { res.setHeader('Content-Type', 'text/html'); res.end('<html><body style="background:#152238;color:white;font:40px sans-serif"><h1>Live harness</h1><p id="clock"></p><script>setInterval(() => document.getElementById("clock").textContent=Date.now(), 200)</script></body></html>'); }).listen(Number(process.env.HARNESS_VIEWER_PORT), '127.0.0.1');\n`, { mode: 0o700 })
+  const viewerPage = `<html><body style="margin:0;background:#152238;color:white;font:40px sans-serif"><h1 style="position:absolute;left:20px;top:20px;margin:0;font-size:36px">Live harness</h1><button style="position:absolute;left:20px;top:100px;width:200px;height:56px;font-size:24px" onclick="fetch('/event?click=1')">Click me</button><input aria-label="Viewer text" style="position:absolute;left:20px;top:180px;width:400px;height:56px;font-size:24px" oninput="fetch('/event?text='+encodeURIComponent(this.value))"><p id="clock" style="position:absolute;left:20px;top:250px"></p><script>setInterval(() => document.getElementById('clock').textContent=Date.now(), 200)</script></body></html>`
+  await writeFile(join(fixture, 'viewer.mjs'), `#!${process.execPath}\nimport { createServer } from 'node:http';\nimport { appendFileSync } from 'node:fs';\ncreateServer((req, res) => { if (req.url.startsWith('/event?')) { appendFileSync(${JSON.stringify(join(root, 'viewer-events.log'))}, req.url + '\\n'); res.end('ok'); return; } res.setHeader('Content-Type', 'text/html'); res.end(${JSON.stringify(viewerPage)}); }).listen(Number(process.env.HARNESS_VIEWER_PORT), '127.0.0.1');\n`, { mode: 0o700 })
   const machines: Array<{ machineId: string; port: number; env: NodeJS.ProcessEnv; child: ChildProcess; socket: string; workspace: string }> = []
   for (const account of accounts.slice(0, 3)) {
     const folder = join(root, account.name), data = join(folder, 'data'), auth = join(folder, 'auth'), workspace = join(folder, 'project')
@@ -197,6 +198,23 @@ try {
   await until('fixture model ready', () => owner.text.includes('SHARING_READY'))
   owner.input('owner-before-sharing')
   await until('owner terminal input', () => owner.text.includes('ECHO:owner-before-sharing'))
+  const workspaceCheck = process.env.HARNESS_WORKSPACE_BROWSER_CHECK
+  if (workspaceCheck) {
+    const password = `Fixture-only-${randomUUID()}`
+    const response = await fetch(`http://127.0.0.1:${host.port}/api/remote-password/set`, {
+      method: 'POST', headers: { 'content-type': 'application/json', 'x-adapter-local': '1' },
+      body: JSON.stringify({ password }),
+    })
+    assert.equal(response.status, 200, await response.text())
+    const path = join(root, 'browser-workspace.json')
+    await writeFile(path, JSON.stringify({ origin: process.env.HARNESS_SHARE_BROWSER_ORIGIN,
+      backendUrl, token: accounts[0].token, machineId: host.machineId, agentId, password, root }), { mode: 0o600 })
+    const result = await exec(process.execPath, [workspaceCheck, path], { env: process.env, timeout: 240_000 })
+    console.log(result.stdout)
+    // The browser took control and resized this terminal. Reclaim it explicitly before the
+    // observer assertions below; viewers must inherit the controller's dimensions.
+    await owner.open(agentId, 110, 33)
+  }
   console.log('Owner input verified; inviting Ken and Diego')
   const invitation = await owner.rpc('harness_share_invite', { agentId, emails: [accounts[1].email.toUpperCase(), accounts[2].email], days: 30 })
   assert.equal(invitation.shares.length, 2, JSON.stringify(invitation))
