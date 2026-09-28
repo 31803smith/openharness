@@ -220,32 +220,6 @@ class MachineState {
   }
 }
 
-/// Auth, Remote-machine discovery, E2EE and one explicit terminal attachment.
-/// Structured chat intentionally does not exist in the Desktop MVP state.
-/// A spoken task the daemon wants THIS window to route — see the `voice_route_request` case below.
-///
-/// Deliberately not the palette's own [SpokenTask]: this layer holds no callback and knows nothing about
-/// dialogs. The screen that can open one turns this into that, and wires the answer back through
-/// [AppNotifier.reportVoiceRoute].
-class SpokenTaskRequest {
-  const SpokenTaskRequest({
-    required this.voiceId,
-    required this.machineId,
-    required this.text,
-    required this.cmd,
-  });
-
-  final String voiceId;
-
-  /// Which daemon asked — the answer has to go back to that one, not to whichever is selected when the
-  /// person finally picks.
-  final String machineId;
-  final String text;
-
-  /// 'goal', 'loop', or empty: which of the dial's three buttons was held.
-  final String cmd;
-}
-
 /// What every `agents_list` asks for.
 ///
 /// ⚠️ **`includeStopped` is not optional polish — without it the fleet is
@@ -288,14 +262,6 @@ class AppNotifier extends ChangeNotifier {
   final ViewerServices viewer;
   final ConfigStore? _store;
 
-  /// Spoken tasks waiting for a palette. Broadcast because the screen subscribes and unsubscribes with
-  /// its own lifetime, and a request that arrives with no screen up is dropped rather than queued — the
-  /// daemon's own deadline is the thing that decides how long a spoken task stays interesting.
-  final StreamController<SpokenTaskRequest> _spokenTasks =
-      StreamController<SpokenTaskRequest>.broadcast();
-
-  /// Words from the dial, for whoever can put a palette on screen.
-  Stream<SpokenTaskRequest> get spokenTasks => _spokenTasks.stream;
   final Duration turnActivityTimeout;
   @visibleForTesting
   final WsConn Function(String machineId)? connectionForTest;
@@ -681,7 +647,6 @@ class AppNotifier extends ChangeNotifier {
     if (owner.zoomedPaneId != null) owner.zoomedPaneId = pane.id;
     _activeSwarmId = owner.id;
     selectedMachineId = machineId;
-    _paneFocusRequest++;
     _persistLayout();
     notifyListeners();
     return true;
@@ -806,7 +771,6 @@ class AppNotifier extends ChangeNotifier {
         );
       }
       target.focusedPaneId ??= target.panes.firstOrNull?.id;
-      _paneFocusRequest++;
       selectSwarm(target.id);
       return;
     }
@@ -883,7 +847,6 @@ class AppNotifier extends ChangeNotifier {
     }
     _activeSwarmId = target.id;
     _settlePins();
-    _paneFocusRequest++;
     selectSwarm(target.id);
     return true;
   }
@@ -902,23 +865,6 @@ class AppNotifier extends ChangeNotifier {
     takeControl: takeControl,
   );
 
-  Future<void> seedSwarm(
-    String name,
-    List<({String machineId, String agentId})> agents,
-  ) async {
-    final target = activeSwarm;
-    renameSwarm(target.id, name);
-    // Each call records membership synchronously, before its attachment waits.
-    // A slow/offline host must not hold back the other panes or retarget a tab.
-    final attachments = <Future<void>>[];
-    for (final agent in agents) {
-      attachments.add(
-        addAgentToSwarm(agent.machineId, agent.agentId, swarmId: target.id),
-      );
-    }
-    await Future.wait(attachments);
-  }
-
   /// Which tile the keyboard, the dial and the rail's highlight all mean.
   ///
   /// Typing itself does NOT go through this on macOS — the renderer is a
@@ -928,11 +874,6 @@ class AppNotifier extends ChangeNotifier {
   /// the rail draws as current.
   int? get focusedPaneId => activeSwarm.focusedPaneId;
   set focusedPaneId(int? value) => activeSwarm.focusedPaneId = value;
-
-  int _paneFocusRequest = 0;
-
-  /// Explicit navigation must reveal and refocus even an already-selected pane.
-  int get paneFocusRequest => _paneFocusRequest;
 
   int _nextPaneId = 1;
 
@@ -1108,7 +1049,6 @@ class AppNotifier extends ChangeNotifier {
     if (moved) _previousPaneId = focusedPaneId;
     focusedPaneId = paneId;
     selectedMachineId = focusedPane?.machineId;
-    if (reveal) _paneFocusRequest++;
     if (zoomedPaneId != null) zoomedPaneId = paneId;
     // ⚠️ **Nothing is told which agent is on screen.** The desktop sends `app_focus` and
     // `app_panes` here for the dial beside it; only the CLI's loopback server reads them
@@ -1147,31 +1087,6 @@ class AppNotifier extends ChangeNotifier {
     if (_dismissedLinkPrompts.remove(machineId)) notifyListeners();
   }
 
-  /// Answer the daemon about a spoken task it asked this window to route.
-  ///
-  /// Fire and forget, and correlated by `voiceId` rather than by the rpc convention: the question
-  /// travelled the other way, so the pending id belongs to the daemon and this is a report, not a
-  /// request. Sent back to the machine that ASKED — with two daemons attached, answering the selected
-  /// one leaves the asker waiting on a reply that went to a stranger.
-  void reportVoiceRoute(
-    String machineId,
-    String voiceId,
-    String state,
-    String agentId,
-  ) {
-    final connection = _pool?[machineId];
-    if (connection == null) return;
-    unawaited(
-      connection
-          .sendTerminalFrame('voice_route_reply', {
-            'voiceId': voiceId,
-            'state': state,
-            if (agentId.isNotEmpty) 'agentId': agentId,
-          })
-          .catchError((_) => false),
-    );
-  }
-
   MachineState? get activeMachineState {
     final terminal = activeTerminal;
     if (terminal != null) return machineStates[terminal.machineId];
@@ -1199,19 +1114,6 @@ class AppNotifier extends ChangeNotifier {
       default:
         return null;
     }
-  }
-
-  Future<void> selectAutonomousEnv(String value) async {
-    if (value != 'prod' && value != 'stag') return;
-    _autonomousEnv = value;
-    config = AppConfig(
-      apiBaseUrl: config.apiBaseUrl,
-      autonomousEnv: value,
-      localCliBaseUrl: config.localCliBaseUrl,
-    );
-    _lastError = null;
-    notifyListeners();
-    await _store?.saveEnvironment(value);
   }
 
   Future<void> bootstrap() async {
@@ -2310,10 +2212,7 @@ class AppNotifier extends ChangeNotifier {
     final testConnection = connectionForTest;
     if (testConnection != null) return testConnection(machineId);
     // Every machine is dialled through the relay: there is no local CLI to proxy for it.
-    final connection = _pool!.connFor(
-      machineId,
-      transportKind: WsTransportKind.cloudE2ee,
-    );
+    final connection = _pool!.connFor(machineId);
     _wireConnectionHooks(connection, machineId);
     return connection;
   }
@@ -4375,26 +4274,6 @@ class AppNotifier extends ChangeNotifier {
     }
   }
 
-  /// Opens a dial notification in this swarm without changing other memberships.
-  ///
-  /// Already on screen means FOCUS it, never open it twice: the daemon keeps a
-  /// single controller per agent, so a second open is a takeover — the window
-  /// would fight itself and the first tile would go dark with
-  /// `TERMINAL_TAKEN_OVER`.
-  ///
-  /// At capacity, the usual visible capacity error asks for another swarm.
-  Future<void> openAgentFromDial(String machineId, String agentId) async {
-    // Already on the desk: it has its tile, so this is only "look at it".
-    final existing = paneOfAgent(machineId, agentId);
-    if (existing != null) {
-      focusPane(existing.id);
-      selectedMachineId = machineId;
-      notifyListeners();
-      return;
-    }
-    await addAgentToSwarm(machineId, agentId);
-  }
-
   /// Enable-time fallback: preserve the user's current choice and acknowledge it.
   /// Selection records focus before waiting for terminal attachment, so a later
   /// user click is never overwritten by completion of an asynchronous open.
@@ -4844,63 +4723,13 @@ class AppNotifier extends ChangeNotifier {
     terminal.dispose();
   }
 
-  /// Take a tile off the grid.
-  ///
-  /// Closing sends `terminal_close`, which is what lets the daemon put the
-  /// agent's tmux window back to the size it had before this app borrowed it —
-  /// a tile that vanished without saying so would leave that agent living in a
-  /// quarter-width terminal.
-  /// Put the pane at [paneId] where [targetPaneId] is, and that one where this
-  /// one was.
-  ///
-  /// A SWAP, not an insert. Position here is nothing but the index in [panes] —
-  /// PaneGrid lays the list out row-major — and on a 2x2 grid "between two
-  /// cells" names no place, so shifting the others would move tiles the user
-  /// did not touch. Swapping leaves every other tile exactly where it was.
-  ///
-  /// Focus follows the PANE, not the slot: `focusedPaneId` is an id, so a tile
-  /// that was focused stays focused after it moves, which is what the hand that
-  /// dragged it expects.
-  void reorderPane(int paneId, int targetPaneId) {
-    if (paneId == targetPaneId) return;
-    final from = panes.indexWhere((pane) => pane.id == paneId);
-    final to = panes.indexWhere((pane) => pane.id == targetPaneId);
-    if (from == -1 || to == -1) return;
-    final moved = panes[from];
-    panes[from] = panes[to];
-    panes[to] = moved;
-    // The pin follows the hand. A pinned tile dragged elsewhere is someone
-    // saying "here now", and a pinned tile displaced by another drag was still
-    // put there deliberately — bouncing either back would make the drag look
-    // broken while the state was in fact correct.
-    if (isPanePinned(panes[to])) _setPin(panes[to], to);
-    if (isPanePinned(panes[from])) _setPin(panes[from], from);
-    _persistLayout();
-    notifyListeners();
-  }
-
-  bool hasNavigationRail = true;
-
   /// ⌘; — the pane focused before this one.
   ///
   /// tmux spells it the same way, and the reason it earns a key is that two
   /// agents at a time is the shape most work actually has: a thing being built
   /// and a thing being watched. Walking a list to get back to the other one is
   /// the wrong motion, and it gets longer as the grid fills.
-  int? get _previousPaneId => activeSwarm.previousPaneId;
   set _previousPaneId(int? value) => activeSwarm.previousPaneId = value;
-
-  void focusLastPane() {
-    final back = _previousPaneId;
-    if (back == null) return;
-    if (!panes.any((pane) => pane.id == back)) {
-      // It was closed while we were away. Say nothing and stay put — jumping
-      // somewhere arbitrary is worse than a key that did not fire.
-      _previousPaneId = null;
-      return;
-    }
-    focusPane(back);
-  }
 
   /// ⌘⏎ — one pane filling the grid, and back.
   ///
@@ -4910,80 +4739,6 @@ class AppNotifier extends ChangeNotifier {
   /// expects; a boolean would have shown tile 3 while the focus was elsewhere.
   int? get zoomedPaneId => activeSwarm.zoomedPaneId;
   set zoomedPaneId(int? value) => activeSwarm.zoomedPaneId = value;
-
-  void toggleZoomPane() {
-    final id = focusedPaneId;
-    if (id == null || panes.length < 2) return;
-    zoomedPaneId = zoomedPaneId == id ? null : id;
-    _persistLayout();
-    notifyListeners();
-  }
-
-  /// Focus the nth tile on the grid — ⌘1…⌘9.
-  ///
-  /// The number is the tile's position on screen, which is also the number the
-  /// dial walks, so "the third one" means one thing wherever it is said. A digit
-  /// past the last tile does NOTHING: it used to address the sidebar instead,
-  /// where ⌘3 opened an agent that was not on the grid and replaced a tile to
-  /// show it — a key meant only to look, rearranging the desk.
-  void focusPaneByIndex(int index) {
-    if (index < 0 || index >= panes.length) return;
-    focusPane(panes[index].id);
-  }
-
-  /// Walk the focus one tile — ⌘← / ⌘→, and ⌘[ / ⌘].
-  ///
-  /// Wraps, because the grid is what the eye reads as a loop of tiles; stopping
-  /// dead at the last one reads as a broken key. Moves focus ONLY — nothing on
-  /// the grid changes, which is what separates it from [movePaneBy].
-  void focusPaneBy(int delta) {
-    if (panes.length < 2) return;
-    final at = panes.indexWhere((pane) => pane.id == focusedPaneId);
-    final next = at < 0 ? 0 : (at + delta + panes.length) % panes.length;
-    focusPane(panes[next].id);
-  }
-
-  /// Move the focused pane one slot, for the keyboard twin of the drag.
-  ///
-  /// Stops at the ends rather than wrapping: the grid is a shape, not a ring,
-  /// and a tile jumping from the last slot to the first reads as a bug.
-  void movePaneBy(int delta) {
-    final id = focusedPaneId;
-    if (id == null) return;
-    final from = panes.indexWhere((pane) => pane.id == id);
-    if (from == -1) return;
-    final to = from + delta;
-    if (to < 0 || to >= panes.length) return;
-    reorderPane(id, panes[to].id);
-  }
-
-  /// Pin this tile to the slot it is in, or let it go.
-  ///
-  /// Pinning records the CURRENT slot rather than asking for one: the tile the
-  /// user is looking at is the answer they mean, and a dialog asking "which
-  /// number?" would be arithmetic about a thing they can already see.
-  int? pinnedSlotFor(TerminalPane pane) =>
-      hasNavigationRail ? pane.pinnedSlot : activeSwarm.pinnedSlots[pane.id];
-
-  bool isPanePinned(TerminalPane pane) => pinnedSlotFor(pane) != null;
-
-  void _setPin(TerminalPane pane, int? slot) {
-    if (slot == null) {
-      activeSwarm.pinnedSlots.remove(pane.id);
-    } else {
-      activeSwarm.pinnedSlots[pane.id] = slot;
-    }
-    if (hasNavigationRail) pane.pinnedSlot = slot;
-  }
-
-  void togglePinPane(int paneId) {
-    final index = panes.indexWhere((pane) => pane.id == paneId);
-    if (index == -1) return;
-    final pane = panes[index];
-    _setPin(pane, isPanePinned(pane) ? null : index);
-    _persistLayout();
-    notifyListeners();
-  }
 
   /// Put pinned tiles back in their slots after the list moved under them.
   ///
@@ -4997,10 +4752,10 @@ class AppNotifier extends ChangeNotifier {
   /// closed can come back, and forgetting the pin the moment the grid got small
   /// would quietly undo a choice the user never revisited.
   void _settlePins() {
-    final pinned = panes.where(isPanePinned).toList()
-      ..sort((a, b) => pinnedSlotFor(a)!.compareTo(pinnedSlotFor(b)!));
+    final pinned = panes.where((pane) => pane.pinnedSlot != null).toList()
+      ..sort((a, b) => a.pinnedSlot!.compareTo(b.pinnedSlot!));
     for (final pane in pinned) {
-      final want = pinnedSlotFor(pane)!;
+      final want = pane.pinnedSlot!;
       if (want >= panes.length) continue;
       final at = panes.indexOf(pane);
       if (at == want) continue;
@@ -5387,49 +5142,12 @@ class AppNotifier extends ChangeNotifier {
           }
         }
         break;
-      case 'voice_route_request':
-        // WORDS SPOKEN INTO THE DIAL, handed here to be routed.
-        //
-        // The dial used to pick the agent itself with an older copy of this router — no candidate cap,
-        // untrimmed recaps, a shorter budget, and no way to ask when it was unsure, so an uncertain
-        // route was still a send. This window has the palette that can hold the answer up, so the
-        // decision moved to it and the dial became the microphone.
-        //
-        // The daemon is waiting on a reply for this voiceId; SpokenTask is what guarantees one goes
-        // back on every path out of the palette.
-        final voiceId = payload['voiceId'];
-        final spokenText = payload['text'];
-        if (voiceId is String &&
-            voiceId.isNotEmpty &&
-            spokenText is String &&
-            spokenText.trim().isNotEmpty) {
-          _spokenTasks.add(
-            SpokenTaskRequest(
-              voiceId: voiceId,
-              machineId: machineId,
-              text: spokenText.trim(),
-              cmd: payload['cmd'] is String ? payload['cmd'] as String : '',
-            ),
-          );
-        }
-        break;
       case 'dial_swarm':
         // The dial picked a swarm from its own list. The ordinary switch, exactly as ⌘] or a click on
         // the tab: the desk changes, `_persistLayout` re-describes it, and the dial's ring and swarm
         // line follow from that — nothing is answered to the dial directly.
         final swarmId = payload['swarmId'];
         if (swarmId is String && swarmId.isNotEmpty) selectSwarm(swarmId);
-        break;
-      case 'dial_open':
-        // A notification was tapped on the dial. Unlike `dial_focus` this asks for a tile of its own —
-        // see openAgentFromDial for why a finished turn is not a replacement for what is on screen.
-        final openId = payload['agentId'];
-        if (openId is String && openId.isNotEmpty) {
-          final targetMachineId = _dialFocusMachine(payload, openId);
-          if (targetMachineId != null) {
-            unawaited(openAgentFromDial(targetMachineId, openId));
-          }
-        }
         break;
       case 'desk_changed':
         // The account's tabs changed — in a window on some computer, or on
@@ -5803,7 +5521,6 @@ class AppNotifier extends ChangeNotifier {
     for (final swarm in swarms) {
       swarm.panes.clear();
     }
-    unawaited(_spokenTasks.close());
     sessionPreviews.dispose();
     agentNotices.dispose();
     _desk.dispose();

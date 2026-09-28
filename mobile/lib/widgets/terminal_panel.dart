@@ -1035,7 +1035,6 @@ class _TerminalPanelState extends State<TerminalPanel>
       final message = await _linkOpener.open(
         target,
         // The agent runs on another machine: a file it names is there, not here.
-        isLocalMachine: false,
         isCancelled: () =>
             cancellation.isCancelled ||
             !mounted ||

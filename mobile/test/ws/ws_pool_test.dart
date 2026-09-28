@@ -3,8 +3,9 @@ import 'dart:async';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:harness_mobile/core/models.dart';
-import 'package:harness_mobile/ws/ws_conn.dart';
 import 'package:harness_mobile/ws/ws_pool.dart';
+
+import 'memory_web_socket.dart';
 
 /// One connection per machine, and who may speak for that machine.
 void main() {
@@ -15,6 +16,12 @@ void main() {
     events = [];
     pool = WsPool(
       wsBaseUrl: 'ws://fixture.invalid',
+      connectChannel: (_, {protocols}) {
+        final (client, server) = MemoryWebSocket.pair();
+        server.stream.listen((_) {});
+        client.accept();
+        return client;
+      },
       autonomousEnv: 'test',
       // Never resolves: nothing is ever dialled.
       accessTokenProvider: (_, _) => Completer<String>().future,
@@ -107,18 +114,5 @@ void main() {
     // Both are mid-dial (the credential never arrives), so there is nothing to redo.
     pool.reconnectAll();
     expect(a.isClosed || b.isClosed, isFalse);
-  });
-
-  test('a local connection keys on its loopback address', () {
-    final conn = pool.connFor(
-      'm',
-      transportKind: WsTransportKind.localPlaintext,
-      localWsUri: Uri.parse('ws://127.0.0.1:1/ws'),
-    );
-    expect(conn.endpointKey, 'local:ws://127.0.0.1:1/ws');
-    expect(conn.isLocal, isTrue);
-    // A different transport for the same machine replaces it.
-    final cloud = pool.connFor('m');
-    expect(cloud, isNot(same(conn)));
   });
 }

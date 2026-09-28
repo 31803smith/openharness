@@ -45,7 +45,7 @@ void main() {
     await tester.tap(find.text('Try a sample'));
     await settle(tester, const Duration(seconds: 2));
     // It opens on its sessions to pick from, as a new phone does: the working one is picked.
-    expect(find.byKey(const ValueKey('pick-up-title')), findsOneWidget);
+    expect(find.text('Try a sample\nharness'), findsOneWidget);
     await tester.tap(find.text('fix-login', findRichText: true).first);
     await settle(tester, const Duration(seconds: 2));
     return tester.widget<PhoneShell>(find.byType(PhoneShell)).notifier;
@@ -93,7 +93,16 @@ void main() {
       reason: 'the terminal shows the session so far',
     );
     expect(notifier.agentIsProcessing(_studio, 'sample-fix-login'), isTrue);
+    expect(find.text('Sample'), findsOneWidget);
+    final dot = find.byKey(const ValueKey('sample-guide-dot'));
+    final dotBefore = tester.getRect(dot);
+    expect(dotBefore.left, 12);
     await settle(tester, const Duration(seconds: 6));
+    expect(
+      tester.getRect(dot),
+      dotBefore,
+      reason: 'attention cue must not drift',
+    );
     expect(
       screenOf(notifier, 'sample-fix-login'),
       contains('ensureSession'),

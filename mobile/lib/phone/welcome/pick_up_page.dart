@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:harness_mobile/shared/theme/app_theme.dart';
 import 'package:harness_mobile/state/app_state.dart';
 
+import '../../demo/sample_mode.dart' show SampleMode;
 import '../agent_index.dart';
 import '../agents_page.dart' show openNewAgent;
 import '../phone_status.dart';
@@ -99,7 +100,9 @@ class _PickUpPageState extends State<PickUpPage> {
                 ),
                 child: Text(
                   // Broken by hand: at 28pt it wraps with "off" alone on the second line.
-                  'Pick up where\nyou left off',
+                  SampleMode.maybeOf(context) != null
+                      ? 'Try a sample\nharness'
+                      : 'Pick up where\nyou left off',
                   key: const ValueKey('pick-up-title'),
                   style: tty
                       .style(size: TtySize.display, weight: FontWeight.w600)

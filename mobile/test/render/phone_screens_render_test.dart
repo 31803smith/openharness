@@ -278,7 +278,9 @@ void main() {
           key.currentContext!.findRenderObject()! as RenderRepaintBoundary;
       final image = await boundary.toImage(pixelRatio: 3);
       final png = await image.toByteData(format: ui.ImageByteFormat.png);
-      await File('$_outDir/$name.png').writeAsBytes(png!.buffer.asUint8List());
+      final file = File('$_outDir/$name.png');
+      await file.parent.create(recursive: true);
+      await file.writeAsBytes(png!.buffer.asUint8List());
     });
     // Done with the screen: take it down and run its clocks out, so no timer outlives the test.
     await tester.pumpWidget(const SizedBox());
@@ -383,7 +385,11 @@ void main() {
   testWidgets('set up your computer', skip: skip, (tester) async {
     final key = await pumpScreen(
       tester,
-      ConnectComputerPage(notifier: notifier, onTrySample: (_) async => null),
+      ConnectComputerPage(
+        notifier: notifier,
+        onTrySample: (_) async => null,
+        loadDownloads: () async => const {},
+      ),
     );
     await shoot(tester, key, '0d-connect-computer');
   });
@@ -398,6 +404,7 @@ void main() {
             child: SetUpComputerPage(
               onScan: () {},
               onBack: () {},
+              onTrySample: () {},
               loadDownloads: () async => const {},
             ),
           ),

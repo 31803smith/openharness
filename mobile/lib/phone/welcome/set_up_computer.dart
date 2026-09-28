@@ -116,6 +116,7 @@ class SetUpComputerPage extends StatefulWidget {
     super.key,
     required this.onScan,
     this.onBack,
+    this.onTrySample,
     this.status,
     this.trailing = const [],
     this.loadDownloads,
@@ -127,6 +128,9 @@ class SetUpComputerPage extends StatefulWidget {
 
   /// Null draws no back button: the page is a home screen, not a pushed one.
   final VoidCallback? onBack;
+
+  /// Opens the offline sample before the user sets up a computer.
+  final VoidCallback? onTrySample;
 
   /// A line under the title about what is going on — signed in, the watch for the computer.
   final Widget? status;
@@ -207,6 +211,25 @@ class _SetUpComputerPageState extends State<SetUpComputerPage> {
                     .style(size: TtySize.display, weight: FontWeight.w600)
                     .copyWith(height: 34 / 28, letterSpacing: -0.6),
               ),
+              if (widget.onTrySample case final onTrySample?) ...[
+                const SizedBox(height: 16),
+                TtyTap(
+                  onTap: onTrySample,
+                  semanticsLabel:
+                      'Try the sample. No account or computer needed.',
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 10),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        TtyText('Try the sample ›', size: TtySize.title),
+                        const SizedBox(height: 4),
+                        Text('No account or computer needed.', style: faint),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
               if (widget.status case final status?) ...[
                 const SizedBox(height: 18),
                 status,

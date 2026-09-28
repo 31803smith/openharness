@@ -8,12 +8,12 @@ The goal set at bedtime was to make the Harness phone app world class. That mean
 
 That audience is people with strong consumer-app taste who now run Claude Code and Codex and want to manage them from a phone.
 
-Everything below is on branch `phone-overnight-polish` (pushed to origin). Nothing was merged or released overnight. **The last section is the handoff for the next agent.**
+Everything below is on branch `phone-overnight-polish` (pushed to origin), in [PR #398](https://github.com/autonomous-ai/openharness/pull/398). Nothing has been merged or released. **The last section is the handoff for the next agent.**
 
 ## In one screen
 
-- **Tests:** 486 → 1,555 (plus 25 skipped). The whole suite passes. `flutter analyze` is clean outside `third_party/`.
-- **Coverage:** 50.4% → **87.0%** of lines, not counting `third_party/`.
+- **Tests:** 486 → 1,555 overnight → **1,600** after continuation (plus 25 render tests skipped in the ordinary suite; all 25 pass when rendering is enabled). The whole suite passes. `flutter analyze` is clean outside `third_party/`.
+- **Coverage:** 50.4% → 87.0% overnight → **88.8%** (18,185/20,485 lines), not counting `third_party/`.
 
   | Area | Coverage |
   |---|---|
@@ -22,36 +22,38 @@ Everything below is on branch `phone-overnight-polish` (pushed to origin). Nothi
   | p2p | 98.5% |
   | core | 97.2% |
   | usage | 95.0% |
-  | ws | 93.1% |
+  | ws | 94.8% |
   | analytics | 92.1% |
   | widgets | 89.8% |
-  | phone | 89.0% |
+  | phone | 89.1% |
   | shared | 81.2% |
-  | state | 80.3% |
-  | demo | 77.0% |
-  | terminal | 74.9% |
-  | logging | 72.6% |
-  | settings | 46.2% |
-  | clipboard | 33.3% |
+  | state | 83.0% |
+  | demo | 79.9% |
+  | terminal | 84.4% |
+  | logging | 87.6% |
+  | settings | 100.0% |
+  | clipboard | 88.9% |
 
 - **Dead code:**
   - 52 files and about 17,100 lines the phone never runs were deleted. Each deletion was proved with tree-shaken AOT builds for iOS and Android.
   - The desktop's half of `AppNotifier` was cut: 7,100 more lines, 13 files. `viewer` is now non-nullable.
-- **Bugs:** 38 real bugs fixed, each with a regression test (listed below).
+  - The continuation removes the remaining handoff list: unused dial routing and grid navigation, local plaintext transport, the unauthenticated local API mode, local-file opening and the CLI log channel. The cleanup was prepared and tested in a disposable copy before application.
+- **Bugs:** 40 real bugs fixed, each with a regression test (listed below). The continuation fixes queued log notifications after disposal and misleading local-daemon explanations for phone backend failures.
 - **Test safety:** every test now runs in a throwaway home (`test/flutter_test_config.dart`), so no test can read or write a developer's `~/.harness`. `test/test_home_guard_test.dart` pins this.
-- **Review panel:** five AI personas, two rounds. The average score went from 6/10 to 7/10. The round 2 fixes landed after scoring; round 3 has not run yet.
+- **Offline verification:** HTTP clients are blocked by default in tests. API and WebSocket tests now use in-memory transports, including handshakes, token refreshes and reconnects. The simulator tour launches `SampleApp` directly without reading a saved account.
+- **Review panel:** the four requested personas completed rounds 3 and 4. All now score the app **8+/10**; the round-4 mean is **8.05/10**. [Round-3/4 report](2026-09-28-phone-panel-rounds-3-4.md).
 
 ## The review panel
 
 Five personas each reviewed renders of every phone screen. In round 2 they also saw an 18-screen walk-through of the real app, recorded on the iOS simulator in sample mode.
 
-| Persona | Lens | Round 1 | Round 2 |
-|---|---|---|---|
-| Maya | design lead on two iconic consumer apps | 6 | 7 |
-| Theo | founder of a Things/Superhuman/Linear-style productivity app | 6 | – |
-| Priya | runs 6–10 Claude Code and Codex harnesses across three machines | 6 | 7 |
-| Sam | first-time user with consumer taste; Claude Code on the Mac, no Harness | 6 | 7 |
-| Jordan | former Apple Design Award juror (HIG, accessibility) | 6 | 7 |
+| Persona | Lens | Round 1 | Round 2 | Round 3 | Round 4 |
+|---|---|---|---|---|---|
+| Maya | design lead on two iconic consumer apps | 6 | 7 | 7 | 8 |
+| Theo | founder of a Things/Superhuman/Linear-style productivity app | 6 | – | – | – |
+| Priya | runs 6–10 Claude Code and Codex harnesses across three machines | 6 | 7 | 7.5 | 8.2 |
+| Sam | first-time user with consumer taste; Claude Code on the Mac, no Harness | 6 | 7 | 7 | 8 |
+| Jordan | former Apple Design Award juror (HIG, accessibility) | 6 | 7 | 7 | 8 |
 
 ### Round 1 findings that all five agreed on, and what happened
 
@@ -80,6 +82,18 @@ Five personas each reviewed renders of every phone screen. In round 2 they also 
 - **"Stop this harness…"** stays small at the foot of the menu but is now red; faint grey read as disabled.
 - **Form rows** put the label on the value's first line; "approvals" used to sit beside its note.
 
+### Rounds 3 and 4
+
+- The attention line has a fixed yellow dot, solid backing and readable text aligned to the terminal gutter.
+- Chooser sheets fit their content, align headings with rows and support native drag dismissal.
+- Field placeholders have stronger contrast, verified numerically in a regression test.
+- Unlock uses the desktop's verified `Machines ▸ computer ▸ Set password` route and identifies the password as the Harness phone password.
+- The sample is prominent on Welcome and setup, and labels pickup, Focus, Find and New. Its terminal input hint fits beside the mic.
+- The Settings avatar is neutral. Incomplete sign-in codes visibly disable Sign in. New's compact keyboard summary puts the project first.
+- All 25 screens were rendered again. The sample simulator walkthrough was recorded again and now captures 19 states, including the written help page.
+
+These are AI persona reviews of offline artifacts. They establish the visual score; live VoiceOver, real-device speech and production connection behavior require separate verification.
+
 ## Bugs fixed (each with a regression test)
 
 **Sign-in and pairing**
@@ -98,6 +112,7 @@ Five personas each reviewed renders of every phone screen. In round 2 they also 
 - A data channel closing under an open link no longer throws uncaught.
 - A second `terminal_ready` for one open no longer leaks a heartbeat.
 - A locked state file no longer stops a machine reconnecting for good.
+- Phone backend failures no longer tell the user that a local daemon is down or restarting.
 - A terminal switched off by an unanswered negotiation is asked about again.
 
 **Terminal and Focus**
@@ -132,6 +147,7 @@ Five personas each reviewed renders of every phone screen. In round 2 they also 
 - Log redaction blanks plain-base64 bearer tokens, Basic auth and sign-in codes in URLs.
 - An analytics event trimmed while on the wire no longer takes the next one with it.
 - A busy analytics visit keeps `analytics.json` within a minute of the clock.
+- A queued log update no longer notifies a disposed stream.
 
 ## Decisions already made by the user (do not re-propose)
 
@@ -145,7 +161,7 @@ Five personas each reviewed renders of every phone screen. In round 2 they also 
 
 ### State
 
-- Branch `phone-overnight-polish`, pushed. It is 113 commits ahead of `main`. **No PR is open yet**; opening one is the next step (the user merges).
+- Branch `phone-overnight-polish`, pushed. [PR #398](https://github.com/autonomous-ai/openharness/pull/398) is open for the user to review and merge. The continuation and its validation are included; no merge or release has run.
 - Merged into it and finished: `coverage-rest` (coverage engineer), `desktop-cut` (the desktop's half of the notifier), and the phone-screens and state-core engineers' passes. No engineer is still running.
 - Never commit `mobile/ios/Runner.xcodeproj/project.pbxproj`. It carries the local signing team and stays modified in the worktree.
 
@@ -166,40 +182,20 @@ From `mobile/`, with Flutter 3.47.2:
 - Every git and gh action is done as `deehw`.
 - No private data in the repo (no home paths, real usernames or emails).
 
-### Open work, in order
+### Continuation completed
 
-1. **Open the PR** for `phone-overnight-polish`, with this document as its summary.
-2. **Panel round 3.** Re-render, re-record the walk-through, and re-run the four personas on the same brief. The target is 8+/10.
-3. **Round 2 items still open.** None of these conflict with the user's decisions:
-   - **The "needs you" line above the mic.**
-     - Its dot is green, but green means *working* in Find; make it the asking yellow.
-     - Give it an opaque band so terminal text never shows through it.
-     - Keep the dot at a fixed offset from the text; it moves between frames.
-     - Left-align it on the terminal gutter.
-   - **Sheets.**
-     - The Agent sheet covers about 75% of the screen for three rows; size sheets to their content.
-     - The sheet titles "Project" and "Agent" sit about 4pt right of the rows below them.
-     - Consider the system grabber.
-   - **Placeholder contrast.** #8B8B8B on the #2C2C2C raised field is 4.1:1. Use about #9A9A9A (5:1).
-   - **The Unlock page** says "Machines → studio → Set password". Check what the desktop menu actually calls it first, then use the same word, with ▸ as elsewhere.
-   - **The sample.**
-     - The pick-up heading should say it is a sample.
-     - The placeholder in Claude's input line (`Try "run the…`) runs under the mic; shorten it in `lib/demo/sample_scripts.dart`.
-     - "Try the sample" should be a first-class row near the top of the set-up page, not the last, dimmest line.
-   - **Settings:** the lone "?" avatar is the only blue in the app.
-4. **Dead code** found by the desktop-cut engineer, now with no callers:
-   - In `app_state.dart`:
-     - `SpokenTaskRequest`, `spokenTasks`, `reportVoiceRoute` and the handling of `voice_route_request`;
-     - `selectAutonomousEnv`;
-     - `hasNavigationRail`, and the pin and grid-keyboard methods (`togglePinPane`, `focusLastPane`, `toggleZoomPane`, `focusPaneBy*`, `movePaneBy`, `reorderPane`);
-     - `paneFocusRequest`, `seedSwarm`, `openAgentFromDial`.
-   - Elsewhere:
-     - `DialState.restore`;
-     - `WsTransportKind.localPlaintext` in `ws_conn.dart`/`ws_pool.dart`;
-     - ApiClient's no-auth `localCliBaseUrl` mode;
-     - `TerminalLinkOpener.open(isLocalMachine:)`;
-     - the `cliLog` channel.
-5. **Coverage gaps**, weakest first: `settings` (46%), `clipboard`, `logging` (73%), `terminal` (75%), `demo` (77%), `state` (80%).
+1. Opened PR #398 with this report as its starting summary.
+2. Ran the four-person panel twice more. Round 4: Maya 8, Priya 8.2, Sam 8, Jordan 8; all would use it daily.
+3. Completed the round-2 attention-line, sheet, placeholder, Unlock-copy, sample-discovery and avatar work.
+4. Removed every item in the remaining dead-code list: `SpokenTaskRequest` and its unused routing stream/handler; `selectAutonomousEnv`; `hasNavigationRail` and unused pin/grid-keyboard methods; `paneFocusRequest`, `seedSwarm`, `openAgentFromDial`; `DialState.restore`; local plaintext WebSockets; ApiClient's no-auth local mode; the local-machine terminal-file branch; and `cliLog`. Caller searches and the CLI's local-only event routing established that these paths cannot serve the phone. The explicitly approved patch was tested before and after application.
+5. Added coverage in the requested order: settings persistence/reset; clipboard failures; logging lifecycle; terminal preferences, downloads and link opening; sample requests/lifecycle; and layout restoration/write coalescing. Every new real bug has a regression test.
+6. Final validation: **1,600 tests pass**, 25 conditional render skips; **88.8% line coverage** excluding `third_party/`; analyzer clean outside `third_party/`. The separate 25-render run and 19-state sample simulator tour pass.
+
+### Remaining observations
+
+- The [round-4 report](2026-09-28-phone-panel-rounds-3-4.md) records optional finishing details: retain computer/project identity in asking Find rows, improve long-value spacing and compact agent labels, and simplify recovery/glossary copy. None blocks the panel's 8/10 threshold.
+- Future coverage work can concentrate on the remaining state and sample branches. The desktop-only paths removed in this continuation should not be restored merely to exercise them in tests.
+- The proposals below remain exactly as left by the user. No proposal has been implemented or reclassified as approved.
 
 ### Proposals that need the user's decision (do not build without it)
 

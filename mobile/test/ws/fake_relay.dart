@@ -1,17 +1,17 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:harness_mobile/e2ee/keys.dart';
 
 import '../e2ee/machine_session.dart';
+import 'memory_web_socket.dart';
 
 /// One socket a phone opened to the [FakeRelay], and the machine behind it.
 class RelayLink {
   RelayLink(this.ws, this.protocol);
 
-  final WebSocket ws;
+  final MemoryWebSocket ws;
   final String protocol;
 
   /// Every JSON frame the phone sent on this socket, as sent (sealed payloads stay sealed).
@@ -27,15 +27,15 @@ class RelayLink {
   /// nothing to anyone.
   void send(Map<String, dynamic> frame) {
     try {
-      ws.add(jsonEncode(frame));
+      ws.sink.add(jsonEncode(frame));
     } on StateError {
       // Already hung up.
     }
   }
 
-  void sendText(String text) => ws.add(text);
+  void sendText(String text) => ws.sink.add(text);
 
-  void sendBytes(List<int> bytes) => ws.add(bytes);
+  void sendBytes(List<int> bytes) => ws.sink.add(bytes);
 
   Future<void> close([int? code, String? reason]) => ws.close(code, reason);
 
@@ -47,13 +47,11 @@ class RelayLink {
   ];
 }
 
-/// A relay on loopback — nothing leaves the process — with the machine at the far end of it
+/// An in-memory relay with no network access — with the machine at the far end of it
 /// played the way `manager.ts` plays it: `connected` for the select, a signed welcome for the
 /// hello. Each hook lets a test replace one step with something broken or hostile.
 class FakeRelay {
-  FakeRelay._(this.server, this.machineIdentity);
-
-  final HttpServer server;
+  FakeRelay._(this.machineIdentity);
   final E2eeIdentity machineIdentity;
   final links = <RelayLink>[];
   int get opened => links.length;
@@ -89,13 +87,17 @@ class FakeRelay {
   /// The next socket whose session the machine has welcomed.
   Future<RelayLink> nextSession() => _ready.stream.first;
 
-  String get url => 'ws://127.0.0.1:${server.port}';
+  String get url => 'ws://relay.invalid';
 
-  static Future<FakeRelay> start(E2eeIdentity machineIdentity) async {
-    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
-    final relay = FakeRelay._(server, machineIdentity);
-    server.listen(relay._serve);
-    return relay;
+  static Future<FakeRelay> start(E2eeIdentity machineIdentity) async =>
+      FakeRelay._(machineIdentity);
+
+  MemoryWebSocket connect(Uri uri, {Iterable<String>? protocols}) {
+    final (client, server) = MemoryWebSocket.pair(
+      protocol: protocols?.firstOrNull,
+    );
+    unawaited(_serve(client, server));
+    return client;
   }
 
   /// When set, a dial waits here before its upgrade is answered — a slow network's handshake.
@@ -104,25 +106,20 @@ class FakeRelay {
   /// Completes when a dial has reached the relay (and is being held, if [holdUpgrade] is set).
   final dialled = StreamController<void>.broadcast();
 
-  Future<void> _serve(HttpRequest request) async {
+  Future<void> _serve(MemoryWebSocket client, MemoryWebSocket server) async {
     dialled.add(null);
     final hold = holdUpgrade;
     if (hold != null) await hold.future;
-    if (refuse || !WebSocketTransformer.isUpgradeRequest(request)) {
-      request.response.statusCode = 404;
-      await request.response.close();
+    if (refuse) {
+      client.reject();
+      await client.close();
       return;
     }
-    final protocol = request.headers.value('sec-websocket-protocol') ?? '';
-    final ws = await WebSocketTransformer.upgrade(
-      request,
-      protocolSelector: (protocols) =>
-          protocols.isNotEmpty ? protocols.first : null,
-    );
-    final link = RelayLink(ws, protocol);
+    client.accept();
+    final link = RelayLink(server, server.protocol ?? '');
     links.add(link);
     _linked.add(link);
-    ws.listen(
+    server.stream.listen(
       (data) => unawaited(_receive(link, data)),
       onError: (_) {},
       cancelOnError: false,
@@ -178,6 +175,8 @@ class FakeRelay {
     for (final link in links) {
       await link.ws.close();
     }
-    await server.close(force: true);
+    await _linked.close();
+    await _ready.close();
+    await dialled.close();
   }
 }

@@ -9,6 +9,7 @@ import 'ws_conn.dart';
 
 /// Owns one SSO-authenticated [WsConn] per machine.
 class WsPool {
+  final WsChannelFactory? connectChannel;
   final String wsBaseUrl;
   final String autonomousEnv;
 
@@ -30,6 +31,7 @@ class WsPool {
 
   WsPool({
     required this.wsBaseUrl,
+    this.connectChannel,
     required this.autonomousEnv,
     this.relayCodecs,
     this.transportPlugins,
@@ -40,16 +42,8 @@ class WsPool {
     required this.onStatus,
   });
 
-  WsConn connFor(
-    String machineId, {
-    WsTransportKind transportKind = WsTransportKind.cloudE2ee,
-    Uri? localWsUri,
-    String? localApiKey,
-    int localProtocolVersion = 1,
-  }) {
-    final desiredKey = transportKind == WsTransportKind.localPlaintext
-        ? 'local:${localWsUri.toString()}'
-        : 'cloud:$wsBaseUrl:$autonomousEnv';
+  WsConn connFor(String machineId) {
+    final desiredKey = 'cloud:$wsBaseUrl:$autonomousEnv';
     final current = _conns[machineId];
     if (current != null &&
         current.endpointKey == desiredKey &&
@@ -63,7 +57,7 @@ class WsPool {
       appLog.warn(
         'ws',
         'replacing connection $machineId '
-        '(was ${current.endpointKey}, now $desiredKey)',
+            '(was ${current.endpointKey}, now $desiredKey)',
       );
       unawaited(current.close());
     }
@@ -80,13 +74,10 @@ class WsPool {
 
     conn = WsConn(
       wsBaseUrl: wsBaseUrl,
+      connectChannel: connectChannel,
       autonomousEnv: autonomousEnv,
-      relayCodecs: transportKind == WsTransportKind.cloudE2ee
-          ? relayCodecs
-          : null,
-      transportPlugins: transportKind == WsTransportKind.cloudE2ee
-          ? transportPlugins
-          : null,
+      relayCodecs: relayCodecs,
+      transportPlugins: transportPlugins,
       machineId: machineId,
       accessTokenProvider: accessTokenProvider,
       onAuthFailure: (message) {
@@ -103,10 +94,6 @@ class WsPool {
       onStatus: (status) {
         if (!replaced()) onStatus(machineId, status);
       },
-      transportKind: transportKind,
-      localWsUri: localWsUri,
-      localApiKey: localApiKey,
-      localProtocolVersion: localProtocolVersion,
     );
     _conns[machineId] = conn;
     unawaited(conn.connect());

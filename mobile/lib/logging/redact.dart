@@ -76,7 +76,7 @@ String redactValue(Object? value) {
 ///
 /// [redactValue] above works on a decoded frame, where a secret is identified
 /// by its KEY. A CLI's stdout has no keys: `harness auth status --json` prints
-/// a session, and it goes into the transcript `cliLog` keeps. This is the same denylist idea applied to text — ported from
+/// a session, and it can appear in an error log. This is the same denylist idea applied to text — ported from
 /// Grid's `redactLogSecrets` (`features/feedback/logic/log_bundle.dart`), so a
 /// log line means the same thing in both products. Keep the two in step.
 ///

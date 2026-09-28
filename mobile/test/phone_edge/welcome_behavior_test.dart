@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:harness_mobile/phone/new_agent_page.dart';
+import 'package:harness_mobile/phone/tty_controls.dart';
 import 'package:harness_mobile/phone/phone_shell_scope.dart';
 import 'package:harness_mobile/phone/welcome/connect_code.dart';
 import 'package:harness_mobile/phone/welcome/connect_computer.dart';
@@ -120,9 +121,13 @@ void main() {
       expect(find.text('Resend in 30s'), findsOneWidget);
 
       await tester.enterText(find.byType(TextField), '12');
+      final signIn = tester.widget<TtyPrimaryButton>(
+        find.byType(TtyPrimaryButton),
+      );
+      expect(signIn.onPressed, isNull, reason: 'two digits cannot sign in');
       await tester.tap(find.text('Sign in'));
       await frames(tester);
-      expect(find.textContaining('Enter the 4 digits'), findsOneWidget);
+      expect(find.textContaining('Enter the 4 digits'), findsNothing);
 
       await tester.enterText(find.byType(TextField), '1234');
       await frames(tester);
@@ -176,11 +181,11 @@ void main() {
       await close(tester, app);
     });
 
-    testWidgets('the sample, behind a long press, left to set up a computer', (
+    testWidgets('the visible sample action leads back to setup', (
       tester,
     ) async {
       final (:app, sent: _, scans: _) = await welcome(tester, sample: 'set-up');
-      await tester.longPress(find.byKey(const ValueKey('welcome-wordmark')));
+      await tester.tap(find.text('Try the sample'));
       await frames(tester);
       expect(find.text('Get Harness for\nyour computer'), findsOneWidget);
       await close(tester, app);
@@ -297,7 +302,7 @@ void main() {
       await frames(tester);
       expect(find.text('Apple Silicon'), findsOneWidget);
       expect(find.text('Email me the setup link'), findsNothing);
-      await tapInView(tester, find.text('Try the sample while you wait'));
+      await tapInView(tester, find.text('Try the sample ›'));
       await frames(tester);
       expect(samples, 1);
       await close(tester, app);

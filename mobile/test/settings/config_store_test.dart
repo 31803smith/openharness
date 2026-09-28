@@ -5,9 +5,7 @@ import 'package:harness_mobile/settings/config_store.dart';
 /// The connection settings the phone reads once, at the top of every launch
 /// (`AppNotifier.bootstrap`), before it knows which backend to sign in to.
 ///
-/// Only the read is the phone's: the writes behind it (a base URL, the staging
-/// switch, a skipped desktop update) have no screen on a phone, and are left to
-/// the desktop's own suite.
+/// Persistence and reset contracts are exercised against an isolated in-memory store.
 void main() {
   test('before anything is read it points at production', () {
     // Touches the shared file store's constructor only — no read, no IO.
@@ -37,6 +35,34 @@ void main() {
     // file lock and re-parses `state.json` on the launch path.
     expect(storage.batches, 1);
     expect(storage.reads, 0);
+  });
+
+  test('saved connection choices survive a fresh store', () async {
+    final storage = _Store({});
+    final store = ConfigStore(storage: storage);
+    await store.save('https://private-backend.example');
+    await store.saveEnvironment('stag');
+    final restored = await ConfigStore(storage: storage).load();
+    expect(restored.apiBaseUrl, 'https://private-backend.example');
+    expect(restored.autonomousEnv, 'stag');
+    await store.saveEnvironment('unknown');
+    expect((await ConfigStore(storage: storage).load()).autonomousEnv, 'prod');
+  });
+
+  test('reset removes connection and legacy settings, preserving other preferences', () async {
+    final storage = _Store({
+      'terminal_font_size': '18',
+      'app_api_base_url': 'https://staging.example',
+      'app_autonomous_environment': 'stag',
+      'skipped_desktop_update_version': 'old',
+      'environment_setup_version': 'old',
+    });
+    final store = ConfigStore(storage: storage);
+    await store.load();
+    await store.reset();
+    expect(storage.values, {'terminal_font_size': '18'});
+    expect(store.config.apiBaseUrl, ConfigStore.defaultBaseUrl);
+    expect(store.config.autonomousEnv, 'prod');
   });
 
   test('an environment that is not staging is production', () async {

@@ -17,7 +17,7 @@ import 'package:harness_mobile/ws/ws_conn.dart';
 import '../e2ee/machine_session.dart';
 import 'fake_relay.dart';
 
-/// A phone's relay connection end to end, against a loopback relay with the machine behind it:
+/// A phone's relay connection end to end, against an in-memory relay with the machine behind it:
 /// the dial, the E2EE handshake, requests and events through the session — and the ways each of
 /// those goes wrong on a phone.
 void main() {
@@ -58,6 +58,7 @@ void main() {
     events = [];
     final conn = WsConn(
       wsBaseUrl: relay.url,
+      connectChannel: relay.connect,
       autonomousEnv: 'test',
       machineId: machineId,
       accessTokenProvider: tokens ?? (_, _) async => 'token',
@@ -110,7 +111,6 @@ void main() {
           ConnectionStatus.connected,
         ]);
         expect(conn.endpointKey, 'cloud:${relay.url}:test');
-        expect(conn.isLocal, isFalse);
       },
     );
 

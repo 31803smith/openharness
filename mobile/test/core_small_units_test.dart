@@ -97,7 +97,6 @@ void main() {
         'ws://127.0.0.1:4000',
       );
       expect(AppConfig.dev.autonomousEnv, 'prod');
-      expect(AppConfig.dev.localCliBaseUrl, 'http://127.0.0.1:18473');
     });
   });
 

@@ -102,7 +102,7 @@ void main() {
     final links = _Links(const CliLinkConnectResult(linkedMachineId: 'studio'));
     final (_, unlocked) = await pump(tester, links);
     expect(find.text('Scan its code'), findsOneWidget);
-    expect(find.text('or enter its phone password'), findsOneWidget);
+    expect(find.text('or enter its Harness phone password'), findsOneWidget);
 
     await scan(
       tester,

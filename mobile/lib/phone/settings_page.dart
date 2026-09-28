@@ -281,14 +281,14 @@ class _Avatar extends StatelessWidget {
       width: 34,
       height: 34,
       decoration: BoxDecoration(
-        color: AppPalette.avatarFill,
+        color: Tty.of(context).selected,
         shape: BoxShape.circle,
       ),
       alignment: Alignment.center,
       child: Text(
         initial,
-        style: const TextStyle(
-          color: Colors.white,
+        style: TextStyle(
+          color: Tty.of(context).text,
           // Scaled with the disc: 15pt inside 34 left almost no ring around the letter, which
           // reads as a cramped badge rather than an avatar.
           fontSize: 14,

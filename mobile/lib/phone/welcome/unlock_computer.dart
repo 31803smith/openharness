@@ -17,10 +17,10 @@ import 'scan_to_connect.dart';
 ///
 /// ```
 /// Unlock M2
-/// On M2, open Harness ▸ Add Phone…, then scan it.
+/// On M2, open Harness ▸ Add Phone…, then scan the QR code.
 /// [          Scan its code           ]
 ///
-/// or enter its phone password
+/// or enter its Harness phone password
 /// [ ••••••••                          Show ]
 ///                                   Unlock
 ///
@@ -171,7 +171,7 @@ class _UnlockComputerState extends State<UnlockComputer> {
         TtyText('Unlock $name', size: 24, weight: FontWeight.w600),
         const SizedBox(height: 12),
         Text(
-          'On $name, open Harness ▸ Add Phone…, then scan it.',
+          'On $name, open Harness ▸ Add Phone…, then scan the QR code.',
           style: tty.style(size: TtySize.row, color: tty.faint),
         ),
         const SizedBox(height: 18),
@@ -184,7 +184,7 @@ class _UnlockComputerState extends State<UnlockComputer> {
         ),
         const SizedBox(height: 28),
         Text(
-          'or enter its phone password',
+          'or enter its Harness phone password',
           style: tty.style(size: TtySize.meta, color: tty.faint),
         ),
         const SizedBox(height: 8),
@@ -215,7 +215,12 @@ class _UnlockComputerState extends State<UnlockComputer> {
         ),
         const SizedBox(height: 32),
         Text(
-          'Forgot it, or never set one? On $name, run',
+          'Forgot it? In Harness on $name, choose Machines ▸ $name ▸ Set password.',
+          style: tty.style(size: TtySize.meta, color: tty.faint),
+        ),
+        const SizedBox(height: 8),
+        Text(
+          'Using the CLI? Run this on $name:',
           style: tty.style(size: TtySize.meta, color: tty.faint),
         ),
         const SizedBox(height: 8),
@@ -257,11 +262,6 @@ class _UnlockComputerState extends State<UnlockComputer> {
               ),
             ],
           ),
-        ),
-        const SizedBox(height: 8),
-        Text(
-          'or, in the Harness app on $name: Machines → $name → Set password.',
-          style: tty.style(size: TtySize.meta, color: tty.faint),
         ),
         const SizedBox(height: 28),
         Row(
@@ -333,7 +333,10 @@ class _PasswordField extends StatelessWidget {
                 enabledBorder: InputBorder.none,
                 focusedBorder: InputBorder.none,
                 hintText: 'Phone password',
-                hintStyle: tty.style(size: TtySize.title, color: tty.faint),
+                hintStyle: tty.style(
+                  size: TtySize.title,
+                  color: tty.placeholder,
+                ),
               ),
             ),
           ),

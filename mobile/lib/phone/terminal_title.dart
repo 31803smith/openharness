@@ -30,9 +30,11 @@ class TerminalTitle extends StatelessWidget {
     this.branch,
     this.asking,
     this.onHold,
+    this.sample = false,
   });
 
   final String name;
+  final bool sample;
 
   /// `machine:folder` — where the harness works.
   final String? place;
@@ -146,6 +148,15 @@ class TerminalTitle extends StatelessWidget {
                       ],
                     ),
                   ),
+                  if (sample)
+                    Padding(
+                      padding: const EdgeInsets.only(left: 12),
+                      child: TtyText(
+                        'Sample',
+                        color: tty.faint,
+                        size: TtySize.meta,
+                      ),
+                    ),
                   if (asking case final asking?)
                     Semantics(
                       button: true,

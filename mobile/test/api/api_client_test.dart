@@ -16,52 +16,68 @@ import 'package:harness_mobile/viewer/email_code_api.dart';
 import '../viewer/fake_http.dart';
 import '../voice_fakes.dart' show MemoryKeyValueStore;
 
-/// The backend on loopback — nothing leaves the process. Each request is recorded, and answered
-/// by [answer] with a status and a JSON body.
-class _Backend {
-  _Backend._(this.server);
+/// Answers serialized HTTP requests in-process, after the real auth interceptors.
+class _Backend implements HttpClientAdapter {
+  final requests = <_Request>[];
+  ({int status, Object? body}) Function(_Request request, int index) answer = (
+    _,
+    _,
+  ) => (status: 200, body: {'success': true, 'data': <String, Object?>{}});
 
-  final HttpServer server;
-  final requests =
-      <
-        ({
-          String method,
-          String path,
-          Map<String, String> query,
-          HttpHeaders headers,
-          List<int> body,
-        })
-      >[];
-  ({int status, Object? body}) Function(HttpRequest request, int index) answer =
-      (_, _) =>
-          (status: 200, body: {'success': true, 'data': <String, Object?>{}});
+  @override
+  Future<ResponseBody> fetch(
+    RequestOptions options,
+    Stream<Uint8List>? requestStream,
+    Future<void>? cancelFuture,
+  ) async {
+    final body =
+        await requestStream?.fold<List<int>>(
+          [],
+          (all, chunk) => all..addAll(chunk),
+        ) ??
+        <int>[];
+    final request = _Request(
+      options.method,
+      options.uri.path,
+      options.uri.queryParameters,
+      _Headers(options.headers),
+      body,
+    );
+    final index = requests.length;
+    requests.add(request);
+    final reply = answer(request, index);
+    return ResponseBody.fromString(
+      jsonEncode(reply.body),
+      reply.status,
+      headers: {
+        Headers.contentTypeHeader: [Headers.jsonContentType],
+      },
+    );
+  }
 
-  String get url => 'http://127.0.0.1:${server.port}';
+  @override
+  void close({bool force = false}) {}
+}
 
-  static Future<_Backend> start() async {
-    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
-    final backend = _Backend._(server);
-    server.listen((request) async {
-      final body = await request.fold<List<int>>(
-        [],
-        (all, chunk) => all..addAll(chunk),
-      );
-      final index = backend.requests.length;
-      backend.requests.add((
-        method: request.method,
-        path: request.uri.path,
-        query: request.uri.queryParameters,
-        headers: request.headers,
-        body: body,
-      ));
-      final reply = backend.answer(request, index);
-      request.response
-        ..statusCode = reply.status
-        ..headers.contentType = ContentType.json
-        ..write(jsonEncode(reply.body));
-      await request.response.close();
-    });
-    return backend;
+class _Request {
+  _Request(this.method, this.path, this.query, this.headers, this.body);
+  final String method, path;
+  final Map<String, String> query;
+  final _Headers headers;
+  final List<int> body;
+}
+
+class _Headers {
+  _Headers(Map<String, dynamic> headers)
+    : values = {
+        for (final entry in headers.entries)
+          entry.key.toLowerCase(): entry.value.toString(),
+      };
+  final Map<String, String> values;
+  String? value(String key) => values[key.toLowerCase()];
+  ContentType? get contentType {
+    final type = value('content-type');
+    return type == null ? null : ContentType.parse(type);
   }
 }
 
@@ -86,11 +102,14 @@ class _Tokens implements AccessTokenSource {
 
 void main() {
   late _Backend backend;
-  setUp(() async => backend = await _Backend.start());
-  tearDown(() async => backend.server.close(force: true));
+  setUp(() => backend = _Backend());
 
   ApiClient client(AccessTokenSource auth) => ApiClient(
-    config: AppConfig(apiBaseUrl: backend.url, autonomousEnv: 'stag'),
+    config: const AppConfig(
+      apiBaseUrl: 'https://api.invalid',
+      autonomousEnv: 'stag',
+    ),
+    httpClientAdapter: backend,
     session: AuthSession(storage: MemoryKeyValueStore()),
     auth: auth,
   );
@@ -98,6 +117,19 @@ void main() {
   Map<String, Object?> ok(Object? data) => {'success': true, 'data': data};
 
   group('signing', () {
+    test(
+      'a real API call without credentials fails before transport',
+      () async {
+        final api = ApiClient(
+          config: const AppConfig(apiBaseUrl: 'https://api.invalid'),
+          session: AuthSession(storage: MemoryKeyValueStore()),
+          httpClientAdapter: backend,
+        );
+        await expectLater(api.me(), throwsStateError);
+        expect(backend.requests, isEmpty);
+      },
+    );
+
     test('every call carries the bearer and the environment', () async {
       backend.answer = (_, _) => (status: 200, body: ok({'email': 'a@b.co'}));
       final me = await client(_Tokens(['t1'])).me();
@@ -345,11 +377,25 @@ void main() {
       message: type == DioExceptionType.unknown ? 'boom' : null,
     );
 
+    test('phone backend errors never point to a local daemon', () {
+      for (final type in [
+        DioExceptionType.connectionError,
+        DioExceptionType.receiveTimeout,
+        DioExceptionType.badResponse,
+      ]) {
+        final message = describeApiError(dio(type, status: 503));
+        expect(message, contains('Harness'));
+        expect(message, isNot(contains('local')));
+        expect(message, isNot(contains('port')));
+        expect(message, isNot(contains('restarts')));
+      }
+    });
+
     test('says which leg failed, in words', () {
       expect(describeApiError(ApiException('nope')), 'nope');
       expect(
         describeApiError(dio(DioExceptionType.connectionError)),
-        contains('not answering'),
+        contains('could not reach Harness'),
       );
       expect(
         describeApiError(dio(DioExceptionType.receiveTimeout)),

@@ -153,7 +153,7 @@ class _QueryInput extends StatelessWidget {
         hintText: hintText,
         // A size down from the query's own 16pt. Set when the hint spelled out
         // four modes on a 390pt screen, and kept.
-        hintStyle: TextStyle(color: AppPalette.textFaint, fontSize: 13),
+        hintStyle: TextStyle(color: AppPalette.textSecondary, fontSize: 13),
       ),
     );
   }

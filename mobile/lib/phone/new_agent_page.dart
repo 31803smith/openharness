@@ -13,6 +13,7 @@ import 'package:harness_mobile/core/git_project.dart';
 import 'package:harness_mobile/core/project_folder.dart';
 import 'package:harness_mobile/widgets/remote_folder_picker.dart';
 
+import '../demo/sample_mode.dart' show SampleMode;
 import 'agent_index.dart';
 import 'branch_picker_sheet.dart';
 import 'phone_navigation.dart';
@@ -697,8 +698,8 @@ class _NewAgentPageState extends State<NewAgentPage> {
       // Typing the task, the keyboard leaves room for one line of the choices, not four cut ones.
       final typing = MediaQuery.viewInsetsOf(context).bottom > 0;
       final summary = [
-        if (_engine != null) _engineName(_engine!),
         if (_folder != null || _project != null) _projectValue,
+        if (_engine != null) _engineName(_engine!),
         if (_repository != null) _worktree ? 'worktree' : _branchTitle,
         if (_permissionModes.isNotEmpty)
           (_permissionModeChoice?.label ?? 'Auto-approve'),
@@ -736,6 +737,15 @@ class _NewAgentPageState extends State<NewAgentPage> {
                           weight: FontWeight.w600,
                         ),
                       ),
+                      if (SampleMode.ofNotifier(widget.notifier) != null)
+                        Padding(
+                          padding: const EdgeInsets.only(right: 8),
+                          child: TtyText(
+                            'Sample',
+                            color: tty.faint,
+                            size: TtySize.meta,
+                          ),
+                        ),
                       // No Cancel: a swipe right goes back, the way a swipe left came in.
                       const SizedBox(height: 44),
                     ],

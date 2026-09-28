@@ -123,6 +123,7 @@ void main() {
   WsConn newConn({RelayCodecFactory? relayCodecs}) {
     final conn = WsConn(
       wsBaseUrl: relay.url,
+      connectChannel: relay.connect,
       autonomousEnv: 'test',
       machineId: machineId,
       accessTokenProvider: (_, _) async => 'token',

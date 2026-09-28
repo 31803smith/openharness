@@ -185,20 +185,9 @@ class _ConnectComputerPageState extends State<ConnectComputerPage> {
                   ],
                 )
               : null,
-          trailing: [
-            if (widget.onTrySample case final trySample?)
-              Align(
-                alignment: Alignment.centerLeft,
-                child: Transform.translate(
-                  offset: const Offset(-12, 0),
-                  child: TtyTextButton(
-                    label: 'Try the sample while you wait',
-                    color: tty.faint,
-                    onPressed: () => unawaited(trySample(context)),
-                  ),
-                ),
-              ),
-          ],
+          onTrySample: widget.onTrySample == null
+              ? null
+              : () => unawaited(widget.onTrySample!(context)),
         ),
       ),
     );

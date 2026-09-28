@@ -1015,7 +1015,7 @@ void main() {
         s.attachViewport(viewport);
 
         s.clearPrompt();
-        await Future<void>.delayed(const Duration(milliseconds: 10));
+        await until(() => _typed(wire).length == 2);
 
         expect(_typed(wire), '\x05\x15');
         expect(viewport.cleared, 1);

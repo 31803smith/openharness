@@ -105,7 +105,7 @@ void main() {
     expect(find.byType(SetUpComputerPage), findsOneWidget);
     expect(find.text('Apple Silicon'), findsOneWidget);
     expect(find.textContaining('Waiting for your computer'), findsOneWidget);
-    expect(find.text('Try the sample while you wait'), findsOneWidget);
+    expect(find.text('Try the sample ›'), findsOneWidget);
     // The old page's second way of saying all this is gone.
     expect(find.text('Email me the setup link'), findsNothing);
     expect(find.textContaining('remote-password'), findsNothing);

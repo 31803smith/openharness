@@ -432,7 +432,7 @@ class _TtyFieldState extends State<TtyField> {
           hintText: widget.hint,
           hintMaxLines: multi ? 3 : 1,
           hintStyle: tty.style(
-            color: tty.faint,
+            color: tty.placeholder,
             size: multi ? TtySize.row : TtySize.title,
           ),
         ),

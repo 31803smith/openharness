@@ -360,7 +360,7 @@ class ClaudeLook extends SampleLook {
         width - 6,
         // Claude Code's own kind of nudge, and true of any project: not one project's file name
         // on every harness.
-        placeholder: 'Try "run the tests and fix what fails"',
+        placeholder: 'Try "test"',
       ).indexed)
         [Span(i == 0 ? '> ' : '  '), ...row],
     ], width);
