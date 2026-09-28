@@ -166,9 +166,9 @@ These are AI persona reviews of offline artifacts. They establish the visual sco
 
 ### State
 
-- Local iPhone build **48** implements the user's desktop-parity request: separate Branch/Worktree controls and a Model chooser, all under collapsed Options. **1,636 tests** pass (28 conditional render skips), **28 screen renders** pass, and refreshed coverage is **88.9%** (18,622/20,957 lines, excluding `third_party/`). Analysis has only the same 12 third-party informational findings. [Brief team handoff](2026-09-28-mobile-team-handoff.md).
-- The user's build-46 review and a [twelve-hour change audit](2026-09-28-mobile-ui-change-audit.md) record the four corrections above, implemented for local iPhone build **47**. They supersede conflicting panel recommendations. Follow-up validation: **1,621 tests** and **25 renders** pass; analyzer clean outside the same 12 third-party informational findings. The coverage figures above were measured on build 46. The user requested an iPhone install only, not TestFlight.
-- Branch `phone-overnight-polish`; [PR #398](https://github.com/autonomous-ai/openharness/pull/398) contains the continuation and main integration. The user explicitly authorized merging and a local iPhone install for manual review. Check the PR for the resulting merge commit; no store release was requested.
+- [PR #402](https://github.com/autonomous-ai/openharness/pull/402) implements the user's desktop-parity request: separate Branch/Worktree controls and a Model chooser, all under collapsed Options. **1,636 tests** pass (28 conditional render skips), **28 screen renders** pass, and refreshed coverage is **88.9%** (18,622/20,957 lines, excluding `third_party/`). Analysis has only the same 12 third-party informational findings. Signed build **48** is installed and its version verified on the review iPhone. [Brief team handoff](2026-09-28-mobile-team-handoff.md).
+- The user's build-46 review and a [twelve-hour change audit](2026-09-28-mobile-ui-change-audit.md) record the four corrections above, merged in [PR #401](https://github.com/autonomous-ai/openharness/pull/401) for local iPhone build **47**. They supersede conflicting panel recommendations. Follow-up validation: **1,621 tests** and **25 renders** pass; analyzer clean outside the same 12 third-party informational findings. The original overnight coverage figures were measured on build 46. The user requested an iPhone install only, not TestFlight.
+- [PR #398](https://github.com/autonomous-ai/openharness/pull/398) merged the overnight polish, cleanup and main integration. The user explicitly authorized the merges and local iPhone installs for manual review; no store release was requested.
 - Merged into it and finished: `coverage-rest` (coverage engineer), `desktop-cut` (the desktop's half of the notifier), and the phone-screens and state-core engineers' passes. No engineer is still running.
 - Never commit `mobile/ios/Runner.xcodeproj/project.pbxproj`. It carries the local signing team and stays modified in the worktree.
 
@@ -193,7 +193,7 @@ The full tests run from `mobile/` in the monorepo: protocol checks read CLI sour
 
 From `mobile/`, with Flutter 3.47.2:
 
-- **Everything:** `flutter test`, about one minute. For coverage, `flutter test --coverage`, then read `coverage/lcov.info`.
+- **Everything:** `flutter test`, about two minutes. For coverage, `flutter test --coverage`, then read `coverage/lcov.info`.
 - **Screen renders:** `PHONE_RENDER_DIR=<dir> flutter test test/render/phone_screens_render_test.dart`. It writes 28 PNGs, including expanded Options and Model selection. The fixture terminal is 42 columns, so canned lines must fit in 42.
 - **Walk-through on the iOS simulator, sample mode only:** `HARNESS_JOURNEY_OUT=<dir> flutter drive --driver=test_driver/journey_driver.dart --target=integration_test/tour_test.dart`.
 
@@ -239,5 +239,5 @@ From `mobile/`, with Flutter 3.47.2:
 
 - **Desktop [PR #393](https://github.com/autonomous-ai/openharness/pull/393)** is merged: Add Phone lists/removes paired devices; password pairing retains the authenticated device name. Validated on current main with 18 desktop tests, 23 CLI pairing tests and clean analysis of the changed desktop files.
 - **Mobile PR #321** (clipboard image paste) remains open. The user limited merges to their own PRs; this PR belongs to another author and was not changed.
-- **Website `/pair` page:** PR autonomous-ai/autonomous-code#4 needs a `_web` tag to deploy.
-- **TestFlight** is blocked until someone is on the release Mac, which has the App Store Connect key. Until then, the phone is a local `devicectl` install only.
+- **Website [PR #4](https://github.com/autonomous-ai/autonomous-code/pull/4)** is merged: the `/pair` landing page and phone setup redirects. Its page test, redirect assertions and production build pass; changed files have no lint errors. Deployment still needs a `_web` release tag; no website release was made.
+- **TestFlight** still needs production signing and App Store Connect credentials on the release machine. The user requested local iPhone installation only; no TestFlight upload was made.
