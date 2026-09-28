@@ -76,26 +76,6 @@ For a local production build, run `bash scripts/build-web-release.sh X.Y.Z`.
 `FLUTTER_BIN` can select an SDK installed outside `PATH`. Output is under
 `build/web-release/` and `build/web-dist/`; the ordinary local preview is separate.
 
-### Web image
-
-[`deploy/web/`](deploy/web/) is a standalone image of the app alone: nginx serving
-only the app's routes (`/`, `/s/:id`, `/auth/callback`, `/callback`,
-`/harness-web/*`) on port 8080, with `/healthz`. **Release web does not build or
-push it**; production serves the app from the website image above. It remains for
-checking a published release in isolation: `prepare.py` verifies the checksum and
-applies the versioned asset layout, and `smoke.sh` fails if `/` is not that
-release's Flutter app.
-
-```bash
-gh release download vX.Y.Z_web -D rel -p 'harness-web-*.tar.gz' -p harness-web-release.json
-python3 deploy/web/prepare.py rel/harness-web-release.json rel/harness-web-X.Y.Z.tar.gz ctx
-docker build -f deploy/web/Dockerfile -t harness-web ctx
-docker run -d -p 8080:8080 harness-web && bash deploy/web/smoke.sh http://127.0.0.1:8080 rel/harness-web-release.json
-```
-
-Keep Docker files out of `web/`: `flutter build web` copies that folder into the
-public bundle.
-
 ### Browser behavior
 
 - Authenticated access to existing machines uses the shared viewer services and
