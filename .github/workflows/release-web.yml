@@ -42,8 +42,56 @@ jobs:
         run: |
           printf '%s\n' \
             'Browser build of the shared desktop Flutter app.' \
-            'The website deployment pins the archive and SHA-256 from harness-web-release.json.' \
+            'The harness-web image serves these exact bytes, verified against harness-web-release.json.' \
             > "$RUNNER_TEMP/web-release-notes.md"
           gh release create "$RELEASE_TAG" desktop/build/web-dist/* \
             --verify-tag --latest=false --title "Harness Web $WEB_VERSION" \
             --notes-file "$RUNNER_TEMP/web-release-notes.md"
+
+  # The image ArgoCD rolls out for the app's routes on harness.autonomous.ai (desktop/deploy/web).
+  # Built from the release just published, smoke-tested, then pushed as <HARNESS_WEB_IMAGE>:<tag>.
+  # TODO(devops): set the repository variable HARNESS_WEB_IMAGE (e.g.
+  # <region>-docker.pkg.dev/<project>/<repo>/harness-web) and the GCP_WORKLOAD_IDENTITY_PROVIDER /
+  # GCP_SERVICE_ACCOUNT secrets the website's build uses. Until then the image is built and tested only.
+  image:
+    needs: bundle
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      RELEASE_TAG: ${{ github.ref_name }}
+      WEB_IMAGE: ${{ vars.HARNESS_WEB_IMAGE }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Fetch the published bundle
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download "$RELEASE_TAG" -D "$RUNNER_TEMP/release" \
+            -p 'harness-web-*.tar.gz' -p harness-web-release.json
+      - name: Build the image
+        run: |
+          python3 desktop/deploy/web/prepare.py "$RUNNER_TEMP/release/harness-web-release.json" \
+            "$RUNNER_TEMP"/release/harness-web-*.tar.gz "$RUNNER_TEMP/image"
+          docker build -f desktop/deploy/web/Dockerfile -t harness-web:ci "$RUNNER_TEMP/image"
+      - name: Smoke test
+        run: |
+          docker run -d --name harness-web -p 8080:8080 harness-web:ci
+          bash desktop/deploy/web/smoke.sh http://127.0.0.1:8080 "$RUNNER_TEMP/release/harness-web-release.json"
+      - name: Sign in to Google Cloud
+        if: env.WEB_IMAGE != ''
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+      - name: Push
+        if: env.WEB_IMAGE != ''
+        run: |
+          gcloud auth configure-docker "${WEB_IMAGE%%/*}" --quiet
+          docker tag harness-web:ci "$WEB_IMAGE:$RELEASE_TAG"
+          docker push "$WEB_IMAGE:$RELEASE_TAG"
+      - name: Not pushed
+        if: env.WEB_IMAGE == ''
+        run: echo "::warning::HARNESS_WEB_IMAGE is not set — the image was built and smoke-tested but not pushed."

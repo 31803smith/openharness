@@ -83,6 +83,35 @@ For a local production build, run `bash scripts/build-web-release.sh X.Y.Z`.
 `FLUTTER_BIN` can select an SDK installed outside `PATH`. Output is under
 `build/web-release/` and `build/web-dist/`; the ordinary local preview is separate.
 
+### Web image
+
+The same tag also builds the app's own image, [`deploy/web/`](deploy/web/), for the
+existing ArgoCD rollout. It is nginx serving only the app's routes (`/`, `/s/:id`,
+`/auth/callback`, `/callback`, `/harness-web/*`) on port 8080, with `/healthz`. The
+website keeps downloads, `/pair`, `/install.sh` and its redirects, so the ingress
+routes only those app paths to this image. The image job:
+
+1. Downloads the release it just published.
+2. Runs `prepare.py`, which verifies the checksum and applies the versioned asset
+   layout above.
+3. Builds the image and runs `smoke.sh` against it. The smoke test fails if `/` is
+   not this release's Flutter app.
+4. Pushes `$HARNESS_WEB_IMAGE:vX.Y.Z_web`.
+
+Push needs the repository variable `HARNESS_WEB_IMAGE` and the
+`GCP_WORKLOAD_IDENTITY_PROVIDER`/`GCP_SERVICE_ACCOUNT` secrets. Without them, the
+image is built and tested only. To build and check it locally:
+
+```bash
+gh release download vX.Y.Z_web -D rel -p 'harness-web-*.tar.gz' -p harness-web-release.json
+python3 deploy/web/prepare.py rel/harness-web-release.json rel/harness-web-X.Y.Z.tar.gz ctx
+docker build -f deploy/web/Dockerfile -t harness-web ctx
+docker run -d -p 8080:8080 harness-web && bash deploy/web/smoke.sh http://127.0.0.1:8080 rel/harness-web-release.json
+```
+
+Keep Docker files out of `web/`: `flutter build web` copies that folder into the
+public bundle.
+
 ### Browser behavior
 
 - Authenticated access to existing machines uses the shared viewer services and

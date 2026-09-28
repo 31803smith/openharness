@@ -35,7 +35,9 @@ cd "$ROOT"
 BRANCH="${BRANCH:-main}"
 WORKFLOW="${WORKFLOW:-release-web.yml}"
 WEBSITE_REPO="${WEBSITE_REPO:-autonomous-ai/autonomous-code}"
-WEBSITE_BRANCH="${WEBSITE_BRANCH:-main}"
+# Not the website's main: the Flutter host (bundle fetch in `prebuild`, next.config rewrites) lives on
+# deploy/flutter-web. v1.2.22_web was cut from main and took the app off harness.autonomous.ai.
+WEBSITE_BRANCH="${WEBSITE_BRANCH:-deploy/flutter-web}"
 WEBSITE_MANIFEST="${WEBSITE_MANIFEST:-apps/web/harness-web-release.json}"
 RUN_APPEAR_TIMEOUT="${RUN_APPEAR_TIMEOUT:-180}"   # seconds for the tag's workflow run to show up
 
@@ -54,6 +56,15 @@ done
 
 say() { echo ">> $*"; }
 die() { echo "ERROR $*" >&2; exit 1; }
+
+# The website branch must actually serve the bundle, or its release replaces the app with the plain site.
+require_flutter_host() {
+  local web="$SITE/apps/web"
+  [ -f "$web/scripts/fetch-harness-web.mjs" ] \
+    && grep -q 'fetch-harness-web' "$web/package.json" \
+    && grep -q 'harness-web' "$web/next.config.js" \
+    || die "$WEBSITE_REPO $WEBSITE_BRANCH does not host the Flutter app (no bundle fetch or /harness-web rewrites) — releasing it would take the app off the site"
+}
 
 # Same rollover as release-desktop.sh: .99 goes to the next MINOR at .1.
 next_version() {
@@ -113,11 +124,17 @@ say "website : $WEBSITE_REPO $WEBSITE_BRANCH → $WEBSITE_MANIFEST"
 gh repo clone "$WEBSITE_REPO" "$SITE" -- --quiet --filter=blob:none --branch "$WEBSITE_BRANCH" >/dev/null 2>&1 \
   || die "could not clone $WEBSITE_REPO"
 SITE_LAST_TAG="$(git -C "$SITE" tag -l 'v*_web' | { grep -E '^v[0-9]+\.[0-9]+\.[0-9]+_web$' || true; } | sort -V | tail -1)"
+require_flutter_host
 if [ -n "$SITE_LAST_TAG" ]; then
   PENDING="$(git -C "$SITE" log --oneline "$SITE_LAST_TAG..HEAD")"
   if [ -n "$PENDING" ]; then
     say "website commits since $SITE_LAST_TAG that will ALSO go live:"
     echo "$PENDING" | sed 's/^/      /'
+  fi
+  DROPPED="$(git -C "$SITE" log --oneline "HEAD..$SITE_LAST_TAG")"
+  if [ -n "$DROPPED" ]; then
+    say "WARNING live in $SITE_LAST_TAG but NOT on $WEBSITE_BRANCH — this release takes them down:"
+    echo "$DROPPED" | sed 's/^/      /'
   fi
 fi
 
@@ -179,6 +196,7 @@ if ! cmp -s "$WORK/harness-web-release.json" "$SITE/$WEBSITE_MANIFEST"; then
 fi
 cmp -s "$WORK/harness-web-release.json" "$SITE/$WEBSITE_MANIFEST" \
   || die "$WEBSITE_REPO $WEBSITE_BRANCH does not pin $VER after the merge — someone else changed it; check before releasing"
+require_flutter_host
 
 # --- 4. the website release, by the website's own script (skipped when its last release already pins it) ---
 if [ -n "$SITE_LAST_TAG" ] && git -C "$SITE" show "$SITE_LAST_TAG:$WEBSITE_MANIFEST" 2>/dev/null \
