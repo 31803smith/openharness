@@ -57,12 +57,21 @@ The Flutter source remains in this package. The existing website deployment in
 with `/` and `/auth/callback` opening the Flutter app. It also serves the desktop
 downloads and installer redirects.
 
-Push a `vX.Y.Z_web` tag on a tested commit to run **Release web bundle**. CI builds
-with Flutter 3.47.2 and publishes the archive, SHA-256, and
-`harness-web-release.json` as GitHub release assets. Copy that manifest into the
-website's `apps/web/harness-web-release.json`, verify the website build, and use
-its existing `scripts/release-web.sh` release procedure. Its build checks the
-archive's checksum before including it in the image; ArgoCD deploys that image.
+From the repo root, on a tested commit already on `main`, run `make release-web`
+(`ARGS="--dry-run"` to preview). [`scripts/release-web.sh`](scripts/release-web.sh)
+does the whole release from this repo:
+
+1. Tags the commit `vX.Y.Z_web`, which runs **Release web bundle**. CI builds with
+   Flutter 3.47.2 and publishes the archive, SHA-256, and `harness-web-release.json`
+   as GitHub release assets.
+2. Opens and merges a PR on the website repo that pins
+   `apps/web/harness-web-release.json` to that release.
+3. Runs the website's own `scripts/release-web.sh`. The website build checks the
+   archive's checksum before including it in the image; ArgoCD deploys that image.
+
+It lists any other unreleased website commits that ship with it. After a failure,
+re-run with the same version (`make release-web ARGS=X.Y.Z`); completed steps are
+skipped.
 For a local production build, run `bash scripts/build-web-release.sh X.Y.Z`.
 `FLUTTER_BIN` can select an SDK installed outside `PATH`. Output is under
 `build/web-release/` and `build/web-dist/`; the ordinary local preview is separate.
