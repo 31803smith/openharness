@@ -3,6 +3,13 @@ name: Release web bundle
 on:
   push:
     tags: ['v*_web']
+  # Rebuild the image from a release that already exists — no new release, no version used up. For
+  # trying the image job on a branch: gh workflow run release-web.yml --ref <branch> -f release_tag=vX.Y.Z_web
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 'Existing vX.Y.Z_web release to build the image from'
+        required: true
 
 permissions:
   contents: write
@@ -13,6 +20,7 @@ concurrency:
 
 jobs:
   bundle:
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
@@ -55,13 +63,15 @@ jobs:
   # GCP_SERVICE_ACCOUNT secrets the website's build uses. Until then the image is built and tested only.
   image:
     needs: bundle
+    # After a new bundle, or on its own for a dispatched rebuild (bundle skipped).
+    if: always() && (needs.bundle.result == 'success' || needs.bundle.result == 'skipped')
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
       contents: read
       id-token: write
     env:
-      RELEASE_TAG: ${{ github.ref_name }}
+      RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
       WEB_IMAGE: ${{ vars.HARNESS_WEB_IMAGE }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
