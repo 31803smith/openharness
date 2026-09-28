@@ -1142,12 +1142,7 @@ class _SwarmResourcePreviewState extends State<SwarmResourcePreview> {
         SizedBox(height: cell.height),
         Text(
           statusWord,
-          style: terminalContentStyle(
-            color:
-                local?.running == true || opActive || statusWord == 'Suggested'
-                ? const Color(0xFF86E6A3)
-                : theme.foreground,
-          ),
+          style: terminalContentStyle(color: theme.foreground),
         ),
         if (widget.search.modelUseErrorId == entry.id &&
             widget.search.modelUseError != null)
