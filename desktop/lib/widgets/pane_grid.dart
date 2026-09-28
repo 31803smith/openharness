@@ -32,6 +32,7 @@ import 'new_agent_dialog.dart';
 import 'delete_agent_dialog.dart';
 import 'restart_agent_action.dart';
 import 'terminal_panel.dart';
+import 'harness_activity_mark.dart';
 import 'web_pane_panel.dart';
 import 'pane_resize_handle.dart';
 import 'box_chrome.dart';
@@ -1320,6 +1321,7 @@ class _PaneContent extends StatelessWidget {
         notifier: notifier,
         pane: pane,
         title: viewerPaneName(owner, machine?.dsh.entries ?? const []),
+        visible: visible,
         ownerName: owner?.name ?? pane.ownerAgentId ?? 'Viewer',
         ownerEngine: owner?.identityEngine,
         ownerDisplayName: owner?.identityDisplayName,
@@ -1340,6 +1342,14 @@ class _PaneContent extends StatelessWidget {
     }
     final session = pane.session;
     final wantedAgentId = pane.agentId;
+    final activityMark = wantedAgentId == null
+        ? null
+        : HarnessActivityMark(
+            app: notifier,
+            machineId: pane.machineId,
+            agentId: wantedAgentId,
+            visible: visible,
+          );
     final agent = machine?.agents
         .where((agent) => agent.id == wantedAgentId)
         .firstOrNull;
@@ -1508,6 +1518,7 @@ class _PaneContent extends StatelessWidget {
       final waiting = !listFailed && !notifier.machineInventoryLoaded;
       final stale = notifier.machinesAreStale;
       return _PaneStatus(
+        activity: activityMark,
         title: wantedAgentId == null ? 'Machine' : kUntitledPane,
         icon: listFailed || stale ? Icons.cloud_off : Icons.link_off,
         message: listFailed
@@ -1525,6 +1536,7 @@ class _PaneContent extends StatelessWidget {
     }
     if (needsLink) {
       return _PaneStatus(
+        activity: activityMark,
         title: agentName ?? machine.machine.displayName,
         icon: Icons.link_off,
         message:
@@ -1545,6 +1557,7 @@ class _PaneContent extends StatelessWidget {
     }
     if (offline) {
       return _Guide(
+        activity: activityMark,
         single: single && !swarmMode,
         onClose: close,
         title: agentName ?? machine.machine.displayName,
@@ -1561,6 +1574,7 @@ class _PaneContent extends StatelessWidget {
     }
     if (wantedAgentId == null) {
       return _PaneStatus(
+        activity: activityMark,
         title: machine.machine.displayName,
         icon: Icons.check_circle_outline,
         message: 'This machine is ready. Drag an agent here to open it.',
@@ -1569,6 +1583,7 @@ class _PaneContent extends StatelessWidget {
     }
     if (agentName == null) {
       return _PaneStatus(
+        activity: activityMark,
         title: wantedAgentId,
         icon: Icons.help_outline,
         message: 'This agent is no longer on ${machine.machine.displayName}.',
@@ -1577,6 +1592,7 @@ class _PaneContent extends StatelessWidget {
     }
     if (agent != null && !agent.terminalAvailable) {
       return _PaneStatus(
+        activity: activityMark,
         title: agentName,
         icon: Icons.terminal,
         message:
@@ -1591,6 +1607,7 @@ class _PaneContent extends StatelessWidget {
     // would promise something that is never coming.
     if (!machine.terminalNoTakeoverAvailable) {
       return _PaneStatus(
+        activity: activityMark,
         title: agentName,
         icon: Icons.terminal,
         message:
@@ -1605,6 +1622,7 @@ class _PaneContent extends StatelessWidget {
       );
     }
     return _PaneStatus(
+      activity: activityMark,
       title: agentName,
       icon: Icons.hourglass_empty,
       message: 'Attaching…',
@@ -1953,6 +1971,7 @@ class _Guide extends StatelessWidget {
     required this.single,
     required this.onClose,
     required this.title,
+    this.activity,
     required this.compactMessage,
     required this.compactIcon,
     required this.full,
@@ -1961,6 +1980,7 @@ class _Guide extends StatelessWidget {
   final bool single;
   final VoidCallback onClose;
   final String title;
+  final Widget? activity;
   final String compactMessage;
   final IconData compactIcon;
   final Widget full;
@@ -1977,12 +1997,13 @@ class _Guide extends StatelessWidget {
           if (single) return full;
           return Column(
             children: [
-              _PaneHeader(title: title, onClose: onClose),
+              _PaneHeader(title: title, onClose: onClose, activity: activity),
               Expanded(child: full),
             ],
           );
         }
         return _PaneStatus(
+          activity: activity,
           title: title,
           icon: compactIcon,
           message: compactMessage,
@@ -1996,9 +2017,10 @@ class _Guide extends StatelessWidget {
 /// The same 46pt strip TerminalPanel draws, for the tiles that have no terminal
 /// to draw one — so the close button never moves between states.
 class _PaneHeader extends StatelessWidget {
-  const _PaneHeader({required this.title, this.onClose});
+  const _PaneHeader({required this.title, this.onClose, this.activity});
 
   final String title;
+  final Widget? activity;
   final VoidCallback? onClose;
 
   @override
@@ -2015,13 +2037,20 @@ class _PaneHeader extends StatelessWidget {
             child: Row(
               children: [
                 Expanded(
-                  child: Text(
-                    title,
-                    overflow: TextOverflow.ellipsis,
-                    style: grid.AppType.monoLabel(
-                      color: AppColors.text,
-                      fontWeight: FontWeight.w600,
-                    ),
+                  child: Row(
+                    children: [
+                      Flexible(
+                        child: Text(
+                          title,
+                          overflow: TextOverflow.ellipsis,
+                          style: grid.AppType.monoLabel(
+                            color: AppColors.text,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                      ?activity,
+                    ],
                   ),
                 ),
                 if (onClose != null) PaneCloseButton(onPressed: onClose!),
@@ -2037,6 +2066,7 @@ class _PaneHeader extends StatelessWidget {
 class _PaneStatus extends StatelessWidget {
   const _PaneStatus({
     required this.title,
+    this.activity,
     required this.icon,
     required this.message,
     this.onClose,
@@ -2046,6 +2076,7 @@ class _PaneStatus extends StatelessWidget {
   });
 
   final String title;
+  final Widget? activity;
   final IconData icon;
   final String message;
   final VoidCallback? onClose;
@@ -2061,7 +2092,7 @@ class _PaneStatus extends StatelessWidget {
     grid.AppTheme.watch(context);
     return Column(
       children: [
-        _PaneHeader(title: title, onClose: onClose),
+        _PaneHeader(title: title, onClose: onClose, activity: activity),
         Divider(height: 1, color: AppColors.border),
         Expanded(
           child: Center(
