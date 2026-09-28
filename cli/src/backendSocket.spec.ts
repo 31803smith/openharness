@@ -834,7 +834,8 @@ describe('BackendSocket outbound queue', () => {
       type: 'git_project_info', payload: { __e2e: { v: 1, k: 'p', n: 1, ct: 'encrypted-request' } },
     } })
     await vi.waitFor(() => expect(wrap).toHaveBeenCalledWith('viewer-a', 'git_project_info_result', 'preview-1', preview))
-    expect(read).toHaveBeenCalledWith('/remote/workspace', { refresh })
+    // The fence travels with the request — no registered agents here, so it is the home folder alone.
+    expect(read).toHaveBeenCalledWith('/remote/workspace', { refresh, knownRoots: [] })
     expect(parseSent(ws)).toContainEqual(expect.objectContaining({ targetConnId: 'viewer-a', frame: {
       type: 'git_project_info_result', payload: { __e2e: { v: 1, k: 'p', n: 1, ct: 'encrypted-preview' } },
     } }))
@@ -906,7 +907,7 @@ describe('BackendSocket outbound queue', () => {
       type: 'git_project_info', payload: { __e2e: { v: 1, k: 'p', n: 1, ct: 'encrypted-request' } },
     } })
     await vi.waitFor(() => expect(wrap).toHaveBeenCalledWith('viewer-a', 'git_project_info_result', 'git-error', { error: 'UNAVAILABLE' }))
-    expect(read).toHaveBeenCalledWith('', { refresh: false })
+    expect(read).toHaveBeenCalledWith('', { refresh: false, knownRoots: [] })
     await socket.stop()
   })
 

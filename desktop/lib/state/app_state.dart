@@ -7395,7 +7395,7 @@ class AppNotifier extends ChangeNotifier {
         'MEDIA_CHANGED' => 'The file changed while downloading. Wait for it to finish generating and try again.',
         'MEDIA_UNSUPPORTED' => 'This file is not a supported image or video.',
         'MEDIA_INVALID_REQUEST' =>
-          'Use a full path or a path inside this agent’s working folder.',
+          'This file is outside the folders Harness reads for this agent. Use one in its working folder or a temp folder.',
         'AGENT_NOT_FOUND' =>
           'This agent is no longer available. Reconnect and try again.',
         'NOT_TEXT' || 'FILE_TOO_LARGE' => 'Update the Harness CLI on this remote machine to open media previews.',

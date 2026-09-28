@@ -72,7 +72,6 @@ import { routeVoiceTask } from './lib/voiceRouter.js'
 import { tailFile } from './lib/sessions.js'
 import { stoppedAgents } from './lib/stoppedAgents.js'
 import { messagesToEvents, windowRawLines, subagentStatsFromRawLines, type SessionEvent } from './lib/normalize.js'
-import { listFileTree, readProjectFile } from './lib/files.js'
 import { MediaPreviewError, readMediaPreviewChunk } from './lib/mediaPreview.js'
 import { ViewerForwarder } from './lib/viewerForwarder.js'
 import { InteractiveViewers } from './lib/interactiveViewer.js'
@@ -2713,17 +2712,6 @@ export class BackendSocket {
           return
         }
 
-        case 'agent_files': {
-          // SourceTree list — rooted at the tmux session's working dir.
-          const projectId = payload.agentId as string | undefined
-          if (!projectId) { reply(type, requestId, { error: 'MISSING_AGENT_ID' }); return }
-          const s = registry.resolve(projectId)
-          if (!s?.cwd) { reply(type, requestId, { error: 'AGENT_NOT_FOUND' }); return }
-          try { reply(type, requestId, { files: listFileTree(s.cwd) }) }
-          catch (e) { reply(type, requestId, { error: e instanceof Error ? e.message : 'FILE_TREE_ERROR' }) }
-          return
-        }
-
         case 'git_pull_request': {
           const id = payload.agentId
           const agent = typeof id === 'string' ? registry.resolve(id) : undefined
@@ -2745,7 +2733,10 @@ export class BackendSocket {
 
         case 'git_project_info': {
           const path = typeof payload.path === 'string' ? payload.path : ''
-          void readGitProject(path, { refresh: payload.refresh === true })
+          // Same root set as project_preview below: the browsable home, widened by the workspaces
+          // agents are running in, so a repo outside both is not somewhere this daemon runs git.
+          void readGitProject(path, { refresh: payload.refresh === true,
+            knownRoots: registry.list().flatMap(agent => agent.cwd ? [agent.cwd] : []) })
             .then(result => reply(type, requestId, result))
             .catch(() => reply(type, requestId, { error: 'UNAVAILABLE' }))
           return
@@ -2793,23 +2784,20 @@ export class BackendSocket {
         }
 
         case 'agent_read_file': {
-          // Text reads keep their ≤5 MB guard; media uses bounded binary chunks.
+          // Media previews, in bounded binary chunks. The text mode this RPC also used to serve was
+          // read by nothing — every client has always asked with `media: true` — so it is gone rather
+          // than carrying a second, laxer file reader (lib/mediaPreview.ts).
           const projectId = payload.agentId as string | undefined
           const path = payload.path as string | undefined
           if (!projectId || !path) { reply(type, requestId, { error: 'MISSING_AGENT_OR_PATH' }); return }
+          if (payload.media !== true) { reply(type, requestId, { error: 'UNSUPPORTED', detail: 'agent_read_file serves media previews only' }); return }
           const s = registry.resolve(projectId)
           if (!s?.cwd) { reply(type, requestId, { error: 'AGENT_NOT_FOUND' }); return }
-          if (payload.media === true) {
-            if (typeof path !== 'string') { reply(type, requestId, { error: 'MEDIA_INVALID_REQUEST' }); return }
-            try {
-              reply(type, requestId, { ...await readMediaPreviewChunk(s.cwd, path, payload.offset, payload.revision) })
-            } catch (error) {
-              reply(type, requestId, { error: error instanceof MediaPreviewError ? error.message : 'MEDIA_READ_FAILED' })
-            }
-            return
+          try {
+            reply(type, requestId, { ...await readMediaPreviewChunk(s.cwd, path, payload.offset, payload.revision) })
+          } catch (error) {
+            reply(type, requestId, { error: error instanceof MediaPreviewError ? error.message : 'MEDIA_READ_FAILED' })
           }
-          try { reply(type, requestId, { path, content: readProjectFile(s.cwd, path) }) }
-          catch (e) { reply(type, requestId, { error: e instanceof Error ? e.message : 'NOT_FOUND' }) }
           return
         }
 
