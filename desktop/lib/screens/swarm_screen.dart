@@ -114,6 +114,7 @@ import '../orchestrator/orchestrator_workspace.dart';
 import '../teams/team_workspace.dart';
 import '../state/workspace_learning.dart';
 import '../state/workspace_onboarding.dart';
+import '../state/workspace_chrome.dart';
 import '../daemons/daemon_brain.dart';
 import '../daemons/daemon_face.dart';
 import '../daemons/daemon_plate_client.dart';
@@ -151,6 +152,7 @@ class SwarmScreen extends StatefulWidget {
     this.daemonClock,
     this.daemonsPreview,
     this.experimentalFeatures,
+    this.chrome,
   });
   final AppNotifier notifier;
   final bool? nativeTabs;
@@ -175,6 +177,9 @@ class SwarmScreen extends StatefulWidget {
   /// uses a separate, window-only collection and never seeds an account.
   final ValueListenable<bool>? daemonsPreview;
   final ExperimentalFeaturesStore? experimentalFeatures;
+
+  /// Extra tab-bar controls from a host composition (the web build's menu).
+  final WorkspaceChrome? chrome;
   @override
   State<SwarmScreen> createState() => _SwarmScreenState();
 }
@@ -866,6 +871,12 @@ class _SwarmScreenState extends State<SwarmScreen> {
       text: command['text'] as String?,
     );
   }
+
+  late final _workspaceCommands = WorkspaceCommands(
+    enabled: () => _shortcutsEnabled,
+    canRun: _canExecuteCommand,
+    run: _runShortcut,
+  );
 
   void _runShortcut(String id) {
     _closeDaemonHint();
@@ -2508,6 +2519,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
             .firstOrNull
             ?.machine
             .machineId ??
+        widget.chrome?.newHarnessMachine?.call() ??
         (newHarnessOpensInBox ? null : app.machineStates.keys.firstOrNull);
     final paneProject =
         projectName != null || agent == null || id != focused?.machineId
@@ -6463,9 +6475,15 @@ class _SwarmScreenState extends State<SwarmScreen> {
         WorkspaceStoreButton.widthOf(context),
         math.max(0.0, constraints.maxWidth - cell.width * 14),
       );
+      final chrome = widget.chrome;
+      final leadingWidth = chrome?.leadingWidth(context) ?? 0.0;
       final tabBudget = math.max(
         0.0,
-        constraints.maxWidth - cell.width * 6 - storeWidth - cell.width * 8,
+        constraints.maxWidth -
+            cell.width * 6 -
+            storeWidth -
+            cell.width * 8 -
+            leadingWidth,
       );
       _tabWidths = [
         for (var i = 0; i < labels.length; i++)
@@ -6494,6 +6512,11 @@ class _SwarmScreenState extends State<SwarmScreen> {
           child: Row(
             children: [
               SizedBox(width: cell.width),
+              if (chrome != null)
+                SizedBox(
+                  width: leadingWidth,
+                  child: chrome.leading(context, _workspaceCommands),
+                ),
               SizedBox(
                 width: tabsWidth,
                 child: ReorderableListView.builder(

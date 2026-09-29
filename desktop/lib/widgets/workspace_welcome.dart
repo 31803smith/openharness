@@ -1,6 +1,5 @@
 import 'dart:async';
 
-import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
@@ -150,8 +149,6 @@ class _WorkspaceWelcomeState extends State<WorkspaceWelcome> {
     ('models.list', 'Deploy a local model'),
     ('machines.list', 'Manage all your machines'),
     ('app.store', 'Build beyond code'),
-    // Desktop reaches Settings from the native app menu; the browser has none.
-    if (kIsWeb) ('app.settings', 'Open settings'),
   ];
 
   @override

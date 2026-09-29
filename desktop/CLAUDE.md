@@ -95,8 +95,17 @@ its consumer is now the `harness` installer rather than this app.
 
 ### One Flutter UI, native and browser transports
 
-`flutter build web` builds the same `lib/main.dart` and workspace as desktop.
-Do not fork screens or create a second frontend. `kViewerMode` is true on the web:
+`lib/main.dart` serves both targets; its signed-in workspace is a conditional import
+(`desktop_workspace.dart`, or `web/web_entry.dart` when `dart.library.js_interop`), so the
+web build **is mouse-first** (product decision, 2026-09-29): every action
+desktop keeps in native menus or chords must be clickable. Keys keep working but are not
+advertised. Browser-only UI lives in `lib/web/` and is never imported by desktop code;
+it plugs into shared screens through additive seams whose default is today's desktop
+behavior (e.g. `SwarmScreen.chrome` / `WorkspaceChrome` in `state/workspace_chrome.dart`,
+which runs the same `_commands` table keys use). Do not change desktop behavior for the
+web, and do not copy shared screens into `lib/web/` — add a seam instead.
+
+`kViewerMode` is true on the web:
 the browser owns its OAuth session, peer links, and end-to-end relay encryption.
 `viewer/browser_login.dart` validates the same-tab callback against the backend's
 PKCE transaction; conditional adapters handle storage and native-only services.
