@@ -421,29 +421,36 @@ void main() {
             matching: find.byType(TextButton),
           ),
         );
-        expect(button('picker.resource_settings').focusNode!.hasFocus, isTrue);
+        expect(button('picker.resource_view').focusNode!.hasFocus, isTrue);
         await key(tester, LogicalKeyboardKey.arrowRight);
-        expect(button('picker.resource_rename').focusNode!.hasFocus, isTrue);
+        expect(button('picker.resource_settings').focusNode!.hasFocus, isTrue);
         await key(tester, LogicalKeyboardKey.arrowLeft);
-        expect(button('picker.resource_settings').focusNode!.hasFocus, isTrue);
+        expect(button('picker.resource_view').focusNode!.hasFocus, isTrue);
         await key(tester, LogicalKeyboardKey.arrowDown);
-        expect(button('picker.resource_rename').focusNode!.hasFocus, isTrue);
+        expect(button('picker.resource_settings').focusNode!.hasFocus, isTrue);
         await key(tester, LogicalKeyboardKey.arrowUp);
-        expect(button('picker.resource_settings').focusNode!.hasFocus, isTrue);
+        expect(button('picker.resource_view').focusNode!.hasFocus, isTrue);
         await key(tester, LogicalKeyboardKey.keyJ, ctrl: true);
-        expect(button('picker.resource_rename').focusNode!.hasFocus, isTrue);
-        await key(tester, LogicalKeyboardKey.keyK, ctrl: true);
         expect(button('picker.resource_settings').focusNode!.hasFocus, isTrue);
+        await key(tester, LogicalKeyboardKey.keyK, ctrl: true);
+        expect(button('picker.resource_view').focusNode!.hasFocus, isTrue);
         expect(controller.selected!.id, selectedId);
         expect(controller.managing, isTrue);
         await key(tester, LogicalKeyboardKey.tab);
         expect(tester.widget<TextField>(field).focusNode!.hasFocus, isTrue);
         await key(tester, LogicalKeyboardKey.tab, shift: true);
-        expect(button('picker.resource_settings').focusNode!.hasFocus, isTrue);
+        expect(button('picker.resource_view').focusNode!.hasFocus, isTrue);
         await key(tester, LogicalKeyboardKey.escape);
         expect(tester.widget<TextField>(field).focusNode!.hasFocus, isTrue);
         expect(controller.selected!.id, selectedId);
         await capture(tester, 'machine-controls');
+        await key(tester, LogicalKeyboardKey.enter);
+        expect(button('picker.resource_view').focusNode!.hasFocus, isTrue);
+        await key(tester, LogicalKeyboardKey.enter);
+        expect(controller.canGoBack, isTrue);
+        expect(controller.title, startsWith('Harnesses · '));
+        expect(controller.managing, isFalse);
+        expect(tester.widget<TextField>(field).focusNode!.hasFocus, isTrue);
 
         await tester.enterText(field, ':Qwen3.8-27B');
         await tester.pumpAndSettle();

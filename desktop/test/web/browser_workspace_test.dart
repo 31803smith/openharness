@@ -13,6 +13,7 @@ import 'package:harness/core/test_run.dart';
 import 'package:harness/core/viewer_mode.dart';
 import 'package:harness/screens/swarm_screen.dart';
 import 'package:harness/screens/login_screen.dart';
+import 'package:harness/settings/settings_screen.dart';
 import 'package:harness/shared/theme/app_theme.dart' as grid;
 import 'package:harness/state/app_state.dart';
 import 'package:harness/state/grid_pictures.dart';
@@ -285,6 +286,36 @@ void main() {
     final download = tester.getRect(find.byType(WebDownloadButton));
     expect(download.right, lessThanOrEqualTo(390));
     expect(download.top, greaterThanOrEqualTo(0));
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox.shrink());
+    app.dispose();
+  });
+
+  testWidgets('the welcome page offers Settings on Alt+comma', (tester) async {
+    final app = AppNotifier(config: AppConfig.dev, authSession: AuthSession())
+      ..newSwarm(newTabPage: true);
+    tester.view.physicalSize = const Size(1280, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: grid.buildAppTheme(brightness: Brightness.dark),
+        home: SwarmScreen(notifier: app),
+      ),
+    );
+    await tester.pump(const Duration(milliseconds: 200));
+    final row = find.byKey(const ValueKey('welcome-app.settings'));
+    expect(row, findsOneWidget);
+    expect(
+      find.descendant(of: row, matching: find.textContaining('Alt+,')),
+      findsOneWidget,
+    );
+    expect(find.byType(SettingsScreen), findsNothing);
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.altLeft);
+    await tester.sendKeyEvent(LogicalKeyboardKey.comma);
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.altLeft);
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(find.byType(SettingsScreen), findsOneWidget);
     expect(tester.takeException(), isNull);
     await tester.pumpWidget(const SizedBox.shrink());
     app.dispose();

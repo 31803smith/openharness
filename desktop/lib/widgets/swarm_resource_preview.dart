@@ -146,6 +146,19 @@ class _SwarmResourcePreviewState extends State<SwarmResourcePreview> {
     widget.onRefocus();
   }
 
+  bool _isOnline(MachineState machine) =>
+      machine.nodeOnline != false &&
+      !machine.needsLink &&
+      machine.connectionStatus == ConnectionStatus.connected;
+
+  /// Scope the picker to this machine's harnesses — the same list Enter on
+  /// a project/machine group opens, so Rename/Delete are not the only doors.
+  void _viewMachine() {
+    final selected = row;
+    if (selected == null || !widget.search.scopeToGroup(selected.id)) return;
+    widget.onRefocus();
+  }
+
   void _focusActions({bool last = false}) {
     final selectedId = row?.id;
     if (selectedId == null) return;
@@ -435,6 +448,7 @@ class _SwarmResourcePreviewState extends State<SwarmResourcePreview> {
           title:
               {
                     'picker.resource_toggle',
+                    'picker.resource_view',
                     'picker.resource_rename',
                     'picker.resource_settings',
                     'picker.resource_remove',
@@ -829,6 +843,12 @@ class _SwarmResourcePreviewState extends State<SwarmResourcePreview> {
       if (machine == null) return [];
       final secondary = _secondaryActions();
       return [
+        if (_isOnline(machine))
+          _ResourceAction(
+            'View',
+            _viewMachine,
+            command: 'picker.resource_view',
+          ),
         ...secondary.where((a) => a.command == 'picker.resource_connect'),
         ...secondary.where((a) => a.command == 'picker.resource_settings'),
         if (!machine.machine.isShared)
@@ -1278,11 +1298,7 @@ class _SwarmResourcePreviewState extends State<SwarmResourcePreview> {
   Widget _machinePreview() {
     final machine = app.stateOf(row!.machineId!);
     if (machine == null) return _details([row!.title, 'Unavailable']);
-    final online =
-        machine.nodeOnline != false &&
-        !machine.needsLink &&
-        machine.connectionStatus == ConnectionStatus.connected;
-    final resources = online
+    final resources = _isOnline(machine)
         ? widget.search.machineResources[row!.machineId]
         : null;
     final status = machine.nodeOnline == false
