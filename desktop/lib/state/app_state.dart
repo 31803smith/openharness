@@ -65,6 +65,7 @@ import 'grid_pictures.dart';
 import 'model_start_watch.dart';
 import 'harness_placement.dart';
 import 'desk_sync.dart';
+import 'machine_profile.dart';
 import 'pane_layout_store.dart';
 import 'terminal_pane.dart';
 import 'device_visit.dart';
@@ -910,6 +911,14 @@ class AppNotifier extends ChangeNotifier {
   /// Swarms own arrangements; a shared pane owns one live terminal controller.
   final List<Swarm> swarms = [Swarm(id: 'swarm-1')];
 
+  /// null shows every machine's tabs. A machine id shows only tabs whose
+  /// agents all live on that computer. The account desk is not rewritten:
+  /// the other computers' tabs stay, they are just not drawn here.
+  String? _machineProfileId;
+  String? get machineProfileId => _machineProfileId;
+  List<Swarm> get profileSwarms =>
+      swarmsForMachineProfile(swarms, _machineProfileId);
+
   // ── the desk: the account's tabs, the same on every computer ─────────────
   //
   // `desk_sync.dart` has the shape and the rules; this is the window's half.
@@ -1407,13 +1416,33 @@ class AppNotifier extends ChangeNotifier {
   /// Command-number follows the current visual tab order, retaining each tab's
   /// focused pane. A missing position is a no-op, never a pane selection.
   void selectSwarmByIndex(int index) {
-    if (index < 0 || index >= swarms.length) return;
-    selectSwarm(swarms[index].id);
+    final view = profileSwarms;
+    if (index < 0 || index >= view.length) return;
+    selectSwarm(view[index].id);
   }
 
   void stepSwarm(int delta) {
-    final index = swarms.indexOf(activeSwarm);
-    selectSwarm(swarms[(index + delta) % swarms.length].id);
+    final view = profileSwarms;
+    if (view.isEmpty) return;
+    final index = view.indexWhere((swarm) => swarm.id == activeSwarmId);
+    var next = index < 0 ? (delta < 0 ? -1 : 0) : index + delta;
+    next %= view.length;
+    if (next < 0) next += view.length;
+    selectSwarm(view[next].id);
+  }
+
+  /// Show every machine, or only [machineId]. An empty value is every machine.
+  /// The hidden tabs stay on the account desk.
+  void setMachineProfile(String? machineId) {
+    final next = machineId == null || machineId.isEmpty ? null : machineId;
+    if (next == _machineProfileId) return;
+    _machineProfileId = next;
+    unawaited(_paneLayout?.saveMachineProfile(next));
+    if (!profileSwarms.any((swarm) => swarm.id == _activeSwarmId)) {
+      _ensureProfileFocus();
+      _persistLayout();
+    }
+    notifyListeners();
   }
 
   void renameSwarm(String id, String name) {
@@ -1428,10 +1457,23 @@ class AppNotifier extends ChangeNotifier {
   }
 
   void reorderSwarm(String id, int destination) {
-    final index = swarms.indexWhere((s) => s.id == id);
-    if (index < 0) return;
-    final swarm = swarms.removeAt(index);
-    swarms.insert(destination.clamp(0, swarms.length), swarm);
+    final view = List<Swarm>.of(profileSwarms);
+    final from = view.indexWhere((swarm) => swarm.id == id);
+    if (from < 0) return;
+    final moved = view.removeAt(from);
+    view.insert(destination.clamp(0, view.length), moved);
+    if (view.length == swarms.length) {
+      swarms
+        ..clear()
+        ..addAll(view);
+    } else {
+      var next = 0;
+      for (var i = 0; i < swarms.length; i++) {
+        if (swarmMatchesMachineProfile(swarms[i], _machineProfileId)) {
+          swarms[i] = view[next++];
+        }
+      }
+    }
     _persistLayout();
     notifyListeners();
   }
@@ -1442,10 +1484,14 @@ class AppNotifier extends ChangeNotifier {
     if (index < 0) return;
     // Held ⌘W must not manufacture and close an endless sequence of blank
     // welcome tabs, evicting the real work from recently closed history.
-    if (swarms.length == 1 &&
-        swarms.single.panes.isEmpty &&
-        swarms.single.name == Swarm.defaultName &&
-        swarms.single.presets.isEmpty) {
+    // Under a machine profile the hidden tabs do not count as something still
+    // open: the last visible welcome is the one this window can see.
+    final visible = profileSwarms;
+    if (visible.length == 1 &&
+        visible.single.id == id &&
+        visible.single.panes.isEmpty &&
+        visible.single.name == Swarm.defaultName &&
+        visible.single.presets.isEmpty) {
       return;
     }
     final removed = swarms.removeAt(index);
@@ -1472,7 +1518,13 @@ class AppNotifier extends ChangeNotifier {
       ),
     );
     if (_activeSwarmId == id) {
-      _activeSwarmId = swarms[index.clamp(0, swarms.length - 1)].id;
+      // The next full-list tab may belong to another computer. Land on the
+      // next tab this profile still shows. With none left the profile shows
+      // every tab (see [profileSwarms]) rather than a new one being made: a
+      // profile only hides, it never adds to the account desk.
+      _activeSwarmId =
+          profileNeighborId(swarms, _machineProfileId, index) ??
+          swarms[index.clamp(0, swarms.length - 1)].id;
       // The tab beside it is shown and selected, but its terminal is not where
       // the next key goes: that key was typed at the work that just closed. The
       // keyboard waits on the tab strip ([tabStripFocused]). A fresh welcome
@@ -11685,6 +11737,12 @@ class AppNotifier extends ChangeNotifier {
       // Treating it as a gesture here can start a terminal takeover loop.
       _paneFocusByUser = false;
     }
+    final visible = profileSwarms;
+    if (visible.isNotEmpty && visible.every((s) => s.id != _activeSwarmId)) {
+      _activeSwarmId = visible.first.id;
+      selectedMachineId = focusedPane?.machineId;
+      _paneFocusByUser = false;
+    }
 
     // Streams nobody shows any more.
     for (final pane in released.toSet()) {
@@ -11713,8 +11771,20 @@ class AppNotifier extends ChangeNotifier {
     notifyListeners();
   }
 
+  void _ensureProfileFocus() {
+    if (_machineProfileId == null || _machineProfileId!.isEmpty) return;
+    if (profileSwarms.any((swarm) => swarm.id == _activeSwarmId)) return;
+    // Never empty while the desk has a tab: a profile that matches none shows
+    // them all (swarmsForMachineProfile), so nothing is made to fill it.
+    final visible = profileSwarms;
+    if (visible.isEmpty) return;
+    _activeSwarmId = visible.first.id;
+    selectedMachineId = focusedPane?.machineId;
+  }
+
   void _persistLayout() {
     if (workspaceEnabled?.call() == false) return;
+    _ensureProfileFocus();
     for (final pane in allPanes) {
       if (pane.agentId case final id?) {
         rememberOpenedHarness(pane.machineId, id);
@@ -11777,9 +11847,15 @@ class AppNotifier extends ChangeNotifier {
     final initialSwarm = activeSwarm;
     final revision = _layoutRevision;
     final authRevision = _authRevision;
+    final savedProfile = await store.loadMachineProfile();
     final saved = await store.loadSwarms();
     final known = await store.loadMonitorHarnesses(saved);
     if (!_authWorkCurrent(authRevision)) return;
+    // This window's own choice, never the desk's. No saved choice — a window
+    // that never picked one — is All machines.
+    _machineProfileId = savedProfile == null || savedProfile.isEmpty
+        ? null
+        : savedProfile;
     for (final (machine, agent) in known) {
       rememberOpenedHarness(machine, agent);
     }
@@ -11918,11 +11994,17 @@ class AppNotifier extends ChangeNotifier {
         _activeSwarmId = restored.any((s) => s.id == saved['activeId'])
             ? saved['activeId'] as String
             : restored.first.id;
+        final restoredActive = _activeSwarmId;
+        // A saved active tab can belong to another computer. The profile
+        // choice has to win on launch, or the strip hides the tab on screen.
+        _ensureProfileFocus();
         while (swarms.any((s) => s.id == 'swarm-$_nextSwarmId')) {
           _nextSwarmId++;
         }
         _autoPickedAgent = true;
-        if (hadDuplicateStarters) _persistLayout();
+        if (hadDuplicateStarters || _activeSwarmId != restoredActive) {
+          _persistLayout();
+        }
         notifyListeners();
         return;
       }
