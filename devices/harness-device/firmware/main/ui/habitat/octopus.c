@@ -125,7 +125,14 @@ static void expression(char row[55], int y, int eye, const ht_tim_face_t *f)
  * headline, and the full text stays one tap away in the reader.
  */
 #define RECAP_FONT (&ht_mono_28)
+#if HT_FACE_PX >= 720
+// 656 / 17 = 38 cells a row, six rows. The dial's cap of 60 exists because four tapering rows inside a
+// circle genuinely cannot hold more; neither reason applies here, and a recap that fits is the single
+// biggest thing the square face changes about living with this device.
+#define RECAP_MAX_CELLS 228
+#else
 #define RECAP_MAX_CELLS 60
+#endif
 static void recap_lines(ht_scene_t *s, int y, int width, int rows, bool centered, const int *widths,
                         uint16_t ink, const char *recap)
 {
@@ -253,8 +260,18 @@ void ht_octopus_face(ht_scene_t *s, const ht_tim_face_t *f, uint8_t frame, uint1
     bool result = recap && *recap;
     bool brief = result && ht_octopus_short_recap(recap);
     bool compact = f->focus || f->carrying;
+#if HT_FACE_PX >= 720
+    // Two rungs up the atlas ladder, because the face is 720 and not 466. Live work gets font_16 —
+    // 27*16 = 432 px of companion against the dial's 270 — and every other state drops the way the
+    // dial's does, just from higher up: a result to font_8, a brief result to font_10, and the
+    // carrying state to font_14, which is the rung that leaves room for a detail line.
+    const ht_font_t *font = result ? (brief ? &ht_octopus_font_10 : &ht_octopus_font_8)
+                                   : compact ? &ht_octopus_font_14 : &ht_octopus_font_16;
+    int y = result ? HT_OCTOPUS_READING_Y : compact ? 140 : 140;
+#else
     const ht_font_t *font = result ? (brief ? &ht_octopus_font_6 : &ht_octopus_font_4) : compact ? &ht_octopus_font_8 : &ht_octopus_font_10;
     int y = result ? (brief ? 78 : 72) : compact ? 113 : 98;
+#endif
     if (result && f->roomy_reading)
         y = brief ? HT_OCTOPUS_BRIEF_Y : HT_OCTOPUS_READING_Y;
     ht_octopus_portrait(s, f, frame, ink, font, y);
@@ -275,6 +292,19 @@ void ht_octopus_face(ht_scene_t *s, const ht_tim_face_t *f, uint8_t frame, uint1
      * widths taper to the chord: 372 is the widest the fourth row can be at y=364.
      */
     static const int roomy_widths[] = {408, 408, 396, 372};
+#if HT_FACE_PX >= 720
+    (void)reading_widths; (void)brief_widths; (void)roomy_widths;
+    // SIX ROWS OF 656, and no width table at all. On the dial every row is a different width because
+    // each one is a different chord; here they are all the same, so passing NULL is not laziness — it
+    // is the shape of the face.
+    if (result) recap_lines(s, brief ? HT_OCTOPUS_BRIEF_TEXT_Y : HT_OCTOPUS_READING_TEXT_Y,
+                            656, brief ? 3 : 6, false, NULL, f->foreground, recap);
+    else lines(s, 542, 656, 1, &ht_mono_20, f->dim, compact ? f->detail : "", false, NULL);
+    // Straight, both of them. ht_arc_status bakes a 205 px radius into arc_trig[32][2] and there is no
+    // rim here to bend text around, so the status is an ordinary run and the hint is the control row.
+    lines(s, 600, 656, 1, RECAP_FONT, f->ink, f->status, false, NULL);
+    lines(s, 660, 656, 1, &ht_mono_20, f->dim, f->hint, false, NULL);
+#else
     if (result && f->roomy_reading) recap_lines(s,
         brief ? HT_OCTOPUS_BRIEF_TEXT_Y : 212,
         brief ? 372 : 408, brief ? 3 : 4, false,
@@ -285,4 +315,5 @@ void ht_octopus_face(ht_scene_t *s, const ht_tim_face_t *f, uint8_t frame, uint1
     if (!f->footer_action && !f->straight_title) ht_arc_status(s, f->ink, f->status);
     else lines(s, f->footer_action ? 369 : 385, 276, 1, &ht_mono_20, f->ink, f->status, false, NULL);
     lines(s, 417, 210, 1, &ht_mono_20, f->dim, f->hint, false, NULL);
+#endif
 }
