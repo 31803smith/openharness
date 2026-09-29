@@ -13,6 +13,34 @@ fix and the regression in `test/terminal_session_test.dart` passes against it.
 
 ## Local patches
 
+- **OSC 8 hyperlinks are kept per cell** (`lib/src/core/escape/parser.dart`,
+  `lib/src/core/cursor.dart`, `lib/src/core/buffer/line.dart`,
+  `lib/src/core/buffer/buffer.dart`, `lib/src/terminal.dart`). Upstream drops
+  OSC 8, so a Claude Code markdown link printed as just its label (`!125`)
+  had no address to open. The target rides on `CursorStyle.hyperlink`, which
+  SGR resets leave alone, and `BufferLine.getHyperlink` reads it back; the
+  per-line array is allocated only once a linked cell is written. Regressions:
+  the `OSC 8 hyperlinks` group in `test/terminal_links_test.dart`.
+
+- **Pane-local wheel coordinates** (`lib/src/terminal_view.dart`). Convert the
+  pointer's global position to renderer-local coordinates before constructing
+  alternate-screen mouse-wheel reports. Offset panes otherwise report the
+  wrong cell (often clamped to the bottom/right edge), so a TUI can receive a
+  wheel event over its prompt instead of its scrollable content. Regression:
+  `test/swarm_terminal_scroll_test.dart` checks every four-pane preset, exact
+  emitted coordinates, and normal-buffer history scrolling.
+
+- **Browser accessibility input and editor switching**
+  (`lib/src/ui/custom_text_edit.dart`). The browser's text-input strategy needs
+  an editable semantics node when accessibility is enabled. The custom adapter
+  now publishes its editing value and focus through one such node, while the
+  enclosing `Focus` omits duplicate semantics. That prevents switching between
+  terminal and remote-viewer editors from deactivating the new DOM editor.
+  Read-only surfaces stay read-only; native input uses its existing path.
+  `semanticLabel` lets the viewer reuse the IME adapter. Validation includes
+  the native input regressions and `desktop/scripts/check-workspace.cjs`, which
+  checks actual received terminal bytes and remote viewer input after switching.
+
 - **Linux clipboard and Meta keys leave shell editing intact**
   (`lib/src/ui/shortcut/shortcuts.dart`, `lib/src/terminal_view.dart`,
   `lib/src/core/input/handler.dart`). Linux uses Ctrl-Shift-C/V/A for clipboard
@@ -204,3 +232,45 @@ it if one is dropped.
     follow the text path. Box drawing (U+2500–U+257F) still comes from the
     font. Regression: `test/terminal_block_glyph_test.dart`, which also
     rasterises through the real painter.
+
+12. **Only lines that changed are drawn again** (`lib/src/core/buffer/line.dart`,
+    `lib/src/ui/line_picture_cache.dart`, `lib/src/ui/painter.dart`,
+    `lib/src/ui/render.dart`). Every frame with output — and every cursor blink,
+    twice a second — drew each visible cell again, one paragraph per glyph,
+    though usually one line had changed. `BufferLine.paintVersion` now moves
+    whenever anything a line draws changes (colours too, unlike `textVersion`),
+    but not when a cell is rewritten with the value it already holds, because a
+    TUI redrawing its screen rewrites mostly identical cells. The renderer keeps
+    each visible line's drawing as a `Picture` keyed by the line object and
+    replays it while the version holds; lines keep their identity as they
+    scroll (patch 1), so streaming output records only the newest line. A line
+    is recorded at its sub-device-pixel phase and replayed moved by whole device
+    pixels, so block-glyph snapping (patch 11) lands exactly where a direct
+    paint would put it even at a fractional pixel ratio. The
+    cache holds only what the last frame drew and is cleared with the theme,
+    font, text scale, pixel ratio, and whenever the view stops rendering.
+    Regression: `test/terminal_line_paint_cache_test.dart`, including a
+    pixel-for-pixel comparison of replayed and directly painted lines.
+
+13. **A line's backgrounds are filled a run at a time, before its glyphs**
+    (`lib/src/ui/painter.dart`). Neighbouring cells with the same background
+    colour share one rectangle — the same area, one-pixel overlap included —
+    and a single `Paint` serves them all. Painting every background before any
+    glyph also means a glyph that overhangs its cell (italic, a wide face) now
+    shows over a coloured neighbour just as it always did over the default
+    background, instead of being clipped by that neighbour's fill. Regression:
+    `test/terminal_line_paint_cache_test.dart` (backgrounds identical to the
+    per-cell fill; glyph edges the only difference).
+
+14. **Plain ASCII in one style is drawn as one paragraph**
+    (`lib/src/ui/painter.dart`). Two or more neighbouring printable-ASCII,
+    single-width cells with the same colours and attributes are laid out and
+    drawn together, with ligatures, contextual alternates and kerning disabled
+    so each glyph keeps its cell. A weight/slant is only batched when every
+    printable ASCII character measures exactly one cell wide in it, so a face
+    whose bold or italic runs wider (or a proportional face) stays cell by
+    cell. Wide characters, non-ASCII, block glyphs and the substituted U+23FA
+    still go through `paintCellForeground`. Runs of bare spaces draw nothing,
+    as before; underlined spaces become U+00A0 as in the per-cell path.
+    Regression: `test/terminal_line_paint_cache_test.dart` (where runs are cut,
+    and a rendering within antialiasing of the per-cell one).

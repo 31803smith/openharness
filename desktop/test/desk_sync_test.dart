@@ -1,6 +1,7 @@
 // The desk: the account's tabs, the same on every computer. The pure half
 // (diff and replay) and the window's half (a document becomes `swarms`, an
 // edit becomes ops, and what a window keeps for itself stays put).
+import 'dart:async';
 import 'dart:ui' show Rect;
 
 import 'package:flutter_test/flutter_test.dart';
@@ -13,6 +14,7 @@ import 'package:harness/state/pane_layout_store.dart';
 import 'package:harness/state/pane_preset.dart';
 import 'package:harness/state/swarm.dart';
 import 'package:harness/state/terminal_pane.dart';
+import 'package:harness/terminal/terminal_session.dart';
 
 import 'swarm_state_test.dart' show MemoryStore, createApp;
 
@@ -35,6 +37,7 @@ class _DeskApi extends ApiClient {
   DeskDoc? doc = const DeskDoc(revision: 0, tabs: []);
   bool available = true;
   Object? failWith;
+  Completer<void>? readGate;
   final batches = <List<Map<String, dynamic>>>[];
 
   Map<String, dynamic>? _json(DeskDoc d) => {
@@ -46,7 +49,9 @@ class _DeskApi extends ApiClient {
   Future<Map<String, dynamic>?> desk() async {
     if (failWith != null) throw failWith!;
     if (!available || doc == null) return null;
-    return _json(doc!);
+    final snapshot = _json(doc!);
+    if (readGate case final gate?) await gate.future;
+    return snapshot;
   }
 
   @override
@@ -198,6 +203,105 @@ void main() {
   });
 
   group('the window and the desk', () {
+    for (final destinationFirst in [false, true]) {
+      for (final closeSource in [false, true]) {
+        test(
+          'a remote pane move preserves its terminal (destination first: $destinationFirst, source closed: $closeSource)',
+          () async {
+            final api = _DeskApi();
+            final app = createApp()..api = api;
+            addTearDown(app.dispose);
+            final sent = <String>[];
+            final session =
+                TerminalSession(
+                    machineId: 'm',
+                    agentId: 'a0',
+                    agentName: 'Agent 0',
+                    engineId: 'codex',
+                    send: (type, _) async {
+                      sent.add(type);
+                      return true;
+                    },
+                    sendBinary: (_) async => true,
+                  )
+                  ..status = TerminalSessionStatus.controlling
+                  ..streamId = 'existing-stream';
+            session.terminal.write('output before the move');
+            final moved = app.adoptSessionForTest(session);
+            final source = app.activeSwarm;
+            app.newSwarm(name: 'Destination');
+            final destination = app.activeSwarm;
+            app.selectSwarm(source.id);
+            await app.deskStartForTest();
+            final tabs = [
+              if (!closeSource) tab(source.id),
+              tab(
+                destination.id,
+                name: 'Destination',
+                custom: true,
+                agents: ['a0'],
+              ),
+            ];
+            api.doc = DeskDoc(
+              revision: api.doc!.revision + 1,
+              tabs: destinationFirst ? tabs.reversed.toList() : tabs,
+            );
+
+            await app.deskFetchForTest();
+
+            expect(destination.panes.single, same(moved));
+            expect(moved.session, same(session));
+            expect(session.streamId, 'existing-stream');
+            expect(
+              session.terminal.buffer.getText(),
+              contains('output before the move'),
+            );
+            expect(
+              sent.where(
+                (type) => type == 'terminal_close' || type == 'terminal_open',
+              ),
+              isEmpty,
+            );
+          },
+        );
+      }
+    }
+
+    test(
+      'a remote move changing the focused pane does not claim terminal control',
+      () async {
+        final api = _DeskApi();
+        final app = createApp()..api = api;
+        addTearDown(app.dispose);
+        await app.addAgentToSwarm('m', 'a0');
+        await app.addAgentToSwarm('m', 'a1');
+        final source = app.activeSwarm;
+        app.newSwarm(name: 'Destination');
+        final destination = app.activeSwarm;
+        app.selectSwarm(source.id);
+        app.focusPane(source.panes.first.id);
+        await app.deskStartForTest();
+        expect(app.paneFocusByUser, isTrue);
+        api.doc = DeskDoc(
+          revision: api.doc!.revision + 1,
+          tabs: [
+            tab(source.id, agents: ['a1']),
+            tab(
+              destination.id,
+              name: 'Destination',
+              custom: true,
+              agents: ['a0'],
+            ),
+          ],
+        );
+
+        await app.deskFetchForTest();
+
+        expect(app.focusedPane?.agentId, 'a1');
+        expect(app.paneFocusByUser, isFalse);
+      },
+    );
+
     test('joins the desk: its own tabs get desk ids and are seeded, the desk\'s tabs appear as intent', () async {
       final api = _DeskApi()
         ..doc = DeskDoc(
@@ -291,6 +395,127 @@ void main() {
         expect(app.deskSyncForTest.pending, isEmpty);
       },
     );
+
+    test('a pending desk join preserves a rename and neighboring tab closure', () async {
+      final officeId = newDeskId(), termId = newDeskId();
+      final office = Swarm(id: officeId, name: 'term');
+      final term = Swarm(id: termId, name: 'term');
+      final api = _DeskApi()
+        ..doc = DeskDoc(
+          revision: 1,
+          tabs: [
+            tab(termId, name: 'term', custom: true),
+            tab(officeId, name: 'term', custom: true),
+          ],
+        )
+        ..readGate = Completer<void>();
+      final app = createApp()..api = api;
+      addTearDown(app.dispose);
+      app.swarms
+        ..clear()
+        ..addAll([term, office]);
+      app.selectSwarm(termId);
+      final joining = app.deskStartForTest();
+
+      app.renameSwarm(officeId, 'office');
+      await app.closeSwarm(termId);
+      expect(app.activeSwarm, same(office));
+      expect(office.name, 'office');
+
+      api.readGate!.complete();
+      await joining;
+      expect(office.name, 'office');
+      expect(app.swarms, [office]);
+      expect(api.doc!.tabs.single.id, officeId);
+      expect(api.doc!.tabs.single.name, 'office');
+      expect(api.doc!.tabs.single.nameIsCustom, isTrue);
+      expect(app.deskSyncForTest.pending, isEmpty);
+    });
+
+    test('a pending join keeps remote renames and seeds new tabs with local edits', () async {
+      final officeId = newDeskId(), termId = newDeskId();
+      final office = Swarm(id: officeId, name: 'term');
+      final term = Swarm(id: termId, name: 'term');
+      final api = _DeskApi()
+        ..doc = DeskDoc(
+          revision: 2,
+          tabs: [
+            tab(termId, name: 'term', custom: true),
+            tab(officeId, name: 'office', custom: true),
+          ],
+        )
+        ..readGate = Completer<void>();
+      final app = createApp()..api = api;
+      addTearDown(app.dispose);
+      app.swarms
+        ..clear()
+        ..addAll([term, office]);
+      app.selectSwarm(termId);
+      final joining = app.deskStartForTest();
+
+      await app.closeSwarm(termId);
+      app.newSwarm(name: 'scratch');
+      final scratch = app.activeSwarm;
+      api.readGate!.complete();
+      await joining;
+
+      expect(office.name, 'office');
+      expect(app.swarms, [office, scratch]);
+      expect(app.activeSwarm, same(scratch));
+      expect(isDeskId(scratch.id), isTrue);
+      expect(api.doc!.tabs.map((tab) => tab.name), ['office', 'scratch']);
+      expect(
+        api.batches
+            .expand((batch) => batch)
+            .where((op) => op['op'] == 'tab.rename'),
+        isEmpty,
+        reason: 'An unchanged local name must not undo a rename on another machine',
+      );
+    });
+
+    test('closing term preserves office through an older desk reply and retry', () async {
+      final officeId = newDeskId(), termId = newDeskId();
+      final api = _DeskApi()
+        ..doc = DeskDoc(
+          revision: 1,
+          tabs: [
+            tab(termId, name: 'term', custom: true, agents: ['a2']),
+            tab(officeId, name: 'office', custom: true, agents: ['a0', 'a1']),
+          ],
+        );
+      final app = createApp()..api = api;
+      addTearDown(app.dispose);
+      await app.deskStartForTest();
+      final office = app.swarms.singleWhere((tab) => tab.id == officeId);
+      final panes = office.panes.toList();
+      app.selectSwarm(termId);
+      api.batches.clear();
+      api.failWith = StateError('offline');
+      await app.closeSwarm(termId);
+      await Future<void>.delayed(Duration.zero);
+      expect(app.activeSwarm, same(office));
+
+      api.failWith = null;
+      await app.deskFetchForTest();
+      expect(app.swarms.any((tab) => tab.id == termId), isFalse);
+      expect(office.name, 'office');
+      expect(office.nameIsCustom, isTrue);
+      expect(office.panes, orderedEquals(panes));
+      expect(app.deskSyncForTest.pending, [
+        {'op': 'tab.close', 'id': termId},
+      ]);
+
+      await app.deskFlushForTest();
+      expect(app.deskSyncForTest.pending, isEmpty);
+      expect(office.name, 'office');
+      expect(
+        api.doc!.tabs.singleWhere((tab) => tab.id == officeId).name,
+        'office',
+      );
+      expect(api.batches.expand((batch) => batch), [
+        {'op': 'tab.close', 'id': termId},
+      ]);
+    });
 
     test('a desk_changed push closes a tab closed elsewhere and opens one opened elsewhere, keeping this window\'s focus', () async {
       final api = _DeskApi()
@@ -580,7 +805,7 @@ void main() {
 
       app.setPreset(2, PanePreset.rows);
       await Future<void>.delayed(Duration.zero);
-      final onDesk = () =>
+      DeskLayout? onDesk() =>
           api.doc!.tabs.singleWhere((t) => t.id == work.id).layout;
       expect(onDesk()?.presets, {'2': 'rows'});
       expect(

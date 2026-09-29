@@ -68,6 +68,7 @@ class DshEntry {
     required this.id,
     required this.name,
     required this.engine,
+    this.engines = const [],
     this.description,
     this.category,
     this.installed = false,
@@ -87,6 +88,7 @@ class DshEntry {
     this.installedCommit,
     this.availableCommit,
     this.updateAvailable = false,
+    this.unverified = false,
   });
 
   /// `owner/name` — the install directory on the machine and the wire id.
@@ -95,8 +97,10 @@ class DshEntry {
   /// The tile's name, as the manifest or the registry spells it.
   final String name;
 
-  /// The base engine the harness runs on: what `agent_create` must be sent.
+  /// Default engine. Older daemons only advertise this one engine.
   final String engine;
+  final List<String> engines;
+  List<String> get supportedEngines => engines.isEmpty ? [engine] : engines;
   final String? description;
 
   /// The kind of thing it makes, in a word or two — the picker's second line.
@@ -146,6 +150,15 @@ class DshEntry {
   final bool updateAvailable;
   bool get hasUpdate => installed && !linked && updateAvailable;
 
+  /// The machine says Harness has NOT reviewed this package (`verified: false`
+  /// in `dsh_list`): a community entry whose code lives in someone else's
+  /// repository. Installing or updating it runs that code's setup script as
+  /// the person, so it is never done without their say-so. The daemon decides
+  /// it — an entry cannot mark itself verified (cli `parseStoreCatalog`). An
+  /// older daemon that sends no `verified` at all offered built-ins only, so
+  /// only an explicit false counts.
+  final bool unverified;
+
   static DshEntry? fromJson(Object? raw) {
     if (raw is! Map) return null;
     final id = raw['id'];
@@ -187,10 +200,20 @@ class DshEntry {
       installedCommit: _commit(raw['installedCommit']),
       availableCommit: _commit(raw['availableCommit']),
       updateAvailable: raw['updateAvailable'] == true,
+      unverified: raw['verified'] == false,
       name: name is String && name.trim().isNotEmpty
           ? name.trim().substring(0, name.trim().length.clamp(0, 40))
           : id.substring(id.indexOf('/') + 1),
       engine: engine is String ? engine : '',
+      engines: raw['engines'] is List
+          ? (raw['engines'] as List)
+                .whereType<String>()
+                .where(
+                  (id) => id.isNotEmpty && id.length <= 64 && !id.contains('/'),
+                )
+                .toSet()
+                .toList(growable: false)
+          : const [],
       kind: kind,
       description: description is String && description.trim().isNotEmpty
           ? description.trim().substring(

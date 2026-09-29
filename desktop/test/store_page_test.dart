@@ -1,3 +1,5 @@
+import 'support/agent_picker.dart';
+
 // A harness's page in the Harness Store, past the happy path the screen test
 // pins: this computer's install state, Get/Open/Remove
 // under double clicks and pages that vanish mid-dialog, engines as the probes
@@ -83,10 +85,18 @@ class _Notifier extends AppNotifier {
   }
 
   @override
-  Future<String?> installDsh(String machineId, String id) async {
+  Future<String?> installDsh(
+    String machineId,
+    String id, {
+    bool trustUnverified = false,
+  }) async {
     installs.add((machineId, id));
+    trusted.add(trustUnverified);
     return installGate?.future;
   }
+
+  /// `trustUnverified` of each install/update, in order.
+  final trusted = <bool>[];
 
   @override
   Future<String?> removeDsh(String machineId, String id) async {
@@ -95,8 +105,13 @@ class _Notifier extends AppNotifier {
   }
 
   @override
-  Future<String?> updateDsh(String machineId, String id) async {
+  Future<String?> updateDsh(
+    String machineId,
+    String id, {
+    bool trustUnverified = false,
+  }) async {
     updates.add((machineId, id));
+    trusted.add(trustUnverified);
     return updateGate?.future;
   }
 
@@ -468,6 +483,61 @@ void main() {
         );
       },
     );
+
+    testWidgets(
+      'Get on a package Harness has not reviewed warns first, and only a yes installs it',
+      (tester) async {
+        const thing = DshEntry(
+          id: 'someone/thing',
+          name: 'Thing',
+          engine: 'claude',
+          category: 'Documents',
+          repo: 'https://github.com/someone/thing',
+          unverified: true,
+        );
+        final (app, _) = await _open(
+          tester,
+          initialHarness: thing.id,
+          seed: (app) => app.machine(
+            'machine-1',
+            name: 'studio-mac',
+            local: true,
+            dsh: const [thing, _typst],
+            engines: const [
+              EngineAvailability(engine: 'claude', installed: true),
+            ],
+          ),
+        );
+        await tester.tap(_key('store-primary-action'));
+        await tester.pumpAndSettle();
+        expect(find.text('Harness has not reviewed Thing'), findsOneWidget);
+        expect(
+          find.textContaining('https://github.com/someone/thing'),
+          findsOneWidget,
+        );
+        await tester.tap(find.widgetWithText(TextButton, 'Cancel'));
+        await tester.pumpAndSettle();
+        expect(app.installs, isEmpty);
+
+        await tester.tap(_key('store-primary-action'));
+        await tester.pumpAndSettle();
+        await tester.tap(_key('store-confirm'));
+        await tester.pumpAndSettle();
+        expect(app.installs, [('machine-1', 'someone/thing')]);
+        expect(app.trusted, [true]);
+      },
+    );
+
+    testWidgets('a reviewed package installs without a warning', (
+      tester,
+    ) async {
+      final (app, _) = await _open(tester, initialHarness: _typst.id);
+      await tester.tap(_key('store-primary-action'));
+      await tester.pumpAndSettle();
+      expect(find.textContaining('has not reviewed'), findsNothing);
+      expect(app.installs, [('machine-1', 'autonomous/typst')]);
+      expect(app.trusted, [false]);
+    });
 
     testWidgets('an install that ends after the page is gone says nothing', (
       tester,
@@ -1330,6 +1400,7 @@ void main() {
       );
       await tester.tap(_key('store-primary-action'));
       await tester.pumpAndSettle();
+      await expandNewAgentAdvanced(tester);
       expect(
         tester
             .widget<AppChoicePicker<String>>(_key('new-agent-machine-field'))

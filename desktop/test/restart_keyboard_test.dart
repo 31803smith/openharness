@@ -68,7 +68,7 @@ void main() {
     WidgetTester tester, {
     LogicalKeyboardKey accept = LogicalKeyboardKey.enter,
   }) async {
-    await key(tester, LogicalKeyboardKey.keyP, cmd: true);
+    await key(tester, LogicalKeyboardKey.keyP, cmd: true, shift: true);
     await tester.enterText(
       find.byKey(const ValueKey('swarm-search-input')),
       '> restart',
@@ -143,7 +143,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(
       find.text(
-        'Started a new conversation. The previous session could not be resumed.',
+        'Started a new conversation. The previous conversation could not be resumed.',
       ),
       findsOneWidget,
     );

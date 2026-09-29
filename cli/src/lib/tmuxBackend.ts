@@ -25,7 +25,7 @@ import {
   ENGINE_EXIT_PANE_OPTION,
   listPaneTitles,
   LSTART_MARKER_RE,
-  resolvePaneEngineProcess,
+  lookupPaneEngineProcess,
   sendKeyToTmux,
   sendLiteralToTmux,
   sendToTmux,
@@ -33,7 +33,7 @@ import {
   setPaneWindowStyle,
 } from './tmux.js'
 import { DEFAULT_HOST_THEME, windowStyleOf, type HostTheme } from './hostTheme.js'
-import { listTmuxPanes } from './tmuxAgentDiscovery.js'
+import { isNoTmuxServerError, listTmuxPanes } from './tmuxAgentDiscovery.js'
 import { terminalRouteKey } from './terminalRuntime.js'
 
 const TMUX_KEYS: Record<TerminalLogicalKey, string> = {
@@ -190,12 +190,26 @@ export class TmuxBackend implements TerminalBackend<TmuxRuntimeRef> {
   }
 
   async kill(runtime: TmuxRuntimeRef): Promise<TerminalActionResult> {
-    const sessionId = await this.resolveSessionId(runtime.paneId)
-    if (!sessionId) return terminalActionNotStarted('tmux session could not be resolved from pane')
+    if (!/^%\d+$/.test(runtime.paneId)) return terminalActionNotStarted('invalid tmux pane identity')
+    // Discovered harnesses can share a tmux session with unrelated work. The
+    // canonical pane id is the entire target; never widen this to kill-session.
     const ok = await new Promise<boolean>((resolve) => {
-      execFile('tmux', ['kill-session', '-t', sessionId], { timeout: 5_000 }, (error) => resolve(!error))
+      execFile('tmux', ['kill-pane', '-t', runtime.paneId], { timeout: 5_000 }, (error) => resolve(!error))
     })
-    return legacyActionResult(ok, 'tmux session close')
+    if (ok) return TERMINAL_ACTION_SUCCEEDED
+    // The engine may have exited and removed its pane before the parallel PID
+    // check completed. Only authoritative inventory makes that an idempotent success.
+    // Use all panes here: discovery deliberately hides sessions that were renamed
+    // or created elsewhere, and their absence from discovery is not proof of exit.
+    const absent = await new Promise<boolean>(resolve => {
+      execFile('tmux', ['list-panes', '-a', '-F', '#{pane_id}'], { timeout: 2_000 }, (error, stdout) => {
+        if (error) { resolve(isNoTmuxServerError(error.message)); return }
+        const ids = stdout.trim().split('\n').filter(Boolean)
+        resolve(ids.every(id => /^%\d+$/.test(id)) && !ids.includes(runtime.paneId))
+      })
+    })
+    if (absent) return TERMINAL_ACTION_SUCCEEDED
+    return legacyActionResult(false, 'tmux pane close')
   }
 
   /**
@@ -301,17 +315,17 @@ export class TmuxBackend implements TerminalBackend<TmuxRuntimeRef> {
 
   async validate(runtime: TmuxRuntimeRef, expected: TerminalProcessExpectation): Promise<RuntimeValidation> {
     try {
-      const live = await resolvePaneEngineProcess(runtime.paneId, expected.engine)
-      if (!live) return { state: 'gone', reason: `no ${expected.engine} process under tmux pane` }
+      const found = await lookupPaneEngineProcess(runtime.paneId, expected.engine)
+      if (!found.ok) return { state: found.unknown ? 'unknown' : 'gone', reason: found.reason }
+      const live = found.identity
       // A saved marker that is not a C-locale `lstart` stamp was written either by the pre-fix parser,
       // with its fields shifted, or by a `ps` that still inherited the user's LC_TIME (see psEnv in
       // lib/childLocale.ts). Either way it can never equal the corrected stamp for the same live
       // process, so comparing it would report a running engine as gone — once, on the upgrade that
       // fixed the reading. The pane still has a matching engine process; take it.
       //
-      // checkSessionRuntime makes the same allowance, but nothing calls that function today, so this
-      // is where the allowance has to live: coordinator.validate/acquireLease pass the PERSISTED
-      // identity straight through to here.
+      // Resume's checkSessionRuntime makes the same allowance. The coordinator passes persisted
+      // identities directly here when validating or acquiring a terminal lease.
       if (expected.processIdentity && !LSTART_MARKER_RE.test(expected.processIdentity.startMarker)) {
         return { state: 'alive' }
       }
@@ -384,8 +398,8 @@ export class TmuxBackend implements TerminalBackend<TmuxRuntimeRef> {
    * `TmuxControlStream.open` reads `paneMeta` first and refuses a missing pane and a multi-pane
    * window. Dropping the check also takes a whole-process-table `ps` scan off every terminal open.
    *
-   * `expected` stays in the signature because `TerminalBackend` defines it and Herdr may still want
-   * it; it is intentionally unused here.
+   * `expected` stays in the signature because `TerminalBackend` defines it; it is intentionally
+   * unused here.
    */
   async openStream(
     runtime: TmuxRuntimeRef,

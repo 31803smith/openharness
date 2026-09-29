@@ -2,14 +2,16 @@ import 'dart:async';
 
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
+import 'package:harness/shared/theme/app_theme.dart' as grid;
 import 'package:harness/shared/theme/app_type.dart';
 
+import '../core/desktop_window.dart';
 import '../shared/widgets/app_dialog.dart';
 import '../shared/widgets/app_select_field.dart';
 import '../state/app_state.dart';
 import '../shortcuts/app_keymap.dart';
 import '../state/swarm_catalog.dart';
-import 'link_another_machine_dialog.dart';
+import 'machines_panel.dart';
 import 'remote_folder_picker.dart';
 import 'clone_repository_dialog.dart';
 import 'terminal_name_prompt.dart';
@@ -23,10 +25,10 @@ Future<String?> showSwarmRenameDialog(
   context,
   keymap: keymap,
   builder: (_) => TerminalNamePrompt(
-    title: 'Rename Tab',
+    title: 'Rename Swarm',
     name: name,
     fieldKey: const Key('tab-rename-input'),
-    fieldLabel: 'Tab name',
+    fieldLabel: 'Swarm name',
     maxLength: 80,
   ),
 );
@@ -79,7 +81,9 @@ class _ProjectDialogState extends State<_ProjectDialog> {
     });
     try {
       final folder = widget.notifier.stateOf(id)?.isLocalMachine == true
-          ? await getDirectoryPath(initialDirectory: path)
+          ? await whileNativePicker(
+              () => getDirectoryPath(initialDirectory: path),
+            )
           : await showRemoteFolderPicker(
               context,
               notifier: widget.notifier,
@@ -132,7 +136,12 @@ class _ProjectDialogState extends State<_ProjectDialog> {
           children: [
             Text(
               'Choose an existing working folder.',
-              style: AppType.body(color: Colors.white60),
+              style: AppType.body(
+                color: grid.AppTheme.pick(
+                  grid.AppPalette.textSecondary,
+                  Colors.white60,
+                ),
+              ),
             ),
             const SizedBox(height: 20),
             if (machineId != null)
@@ -169,11 +178,26 @@ class _ProjectDialogState extends State<_ProjectDialog> {
                 true)
               TextButton(
                 onPressed: picking ? null : clone,
-                style: TextButton.styleFrom(foregroundColor: Colors.white70),
+                style: TextButton.styleFrom(
+                  foregroundColor: grid.AppTheme.pick(
+                    grid.AppPalette.textSecondary,
+                    Colors.white70,
+                  ),
+                ),
                 child: const Text('Clone repository…'),
               ),
             if (error != null)
-              Text(error!, style: AppType.body(color: Colors.orangeAccent)),
+              // Pale orange only reads on a dark dialog; a light one takes
+              // the deep warning ink.
+              Text(
+                error!,
+                style: AppType.body(
+                  color: grid.AppTheme.pick(
+                    grid.AppPalette.warn,
+                    Colors.orangeAccent,
+                  ),
+                ),
+              ),
           ],
         ),
       ),
@@ -200,11 +224,11 @@ class _ProjectDialogState extends State<_ProjectDialog> {
   }
 }
 
-/// Link another machine. The dialog itself lives in
-/// `link_another_machine_dialog.dart`; this name is what every caller — the
-/// Machines menu, ⌘ commands, the machines manager — has always used.
+/// Compatibility entry point: every setup entry opens the same Machines panel.
 Future<void> showSwarmLinkDialog(
   BuildContext context,
   AppNotifier notifier, {
   AppKeymap? keymap,
-}) => showLinkAnotherMachineDialog(context, notifier, keymap: keymap);
+}) async {
+  await showMachinesPanel(context, notifier, keymap: keymap);
+}

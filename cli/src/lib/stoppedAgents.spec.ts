@@ -47,9 +47,24 @@ describe('stopped harness persistence', () => {
     expect(store.patch(saved.agentId, { cwd: '/tmp/work-repaired' })).toBe(true)
     const after = store.get(saved.agentId)!
     expect(after).toEqual({ ...before, cwd: '/tmp/work-repaired' })
-    expect(after.updatedAt).toBe(before.updatedAt)
+    expect(after.touchedAt).toBe(before.touchedAt)
     expect(after.defaultName).toBe('harness Desktop')
     expect(store.patch('never-saved', { cwd: '/tmp' })).toBe(false)
+  })
+
+  // The global "last used" order must not forget an agent because it was paused: the archive keeps
+  // the stamp, the store reads it back, and the resumed row carries it into the live registry.
+  it('keeps when an app last opened the agent through a stop and a resume', async () => {
+    const { registry, StoppedAgentStore, saved, store } = await fixture()
+    const opened = registry.markOpened(saved.agentId)!.lastOpenedAt!
+    expect(opened).toBeGreaterThan(0)
+    store.save({ ...registry.byAgent(saved.agentId)!, sessionId: saved.sessionId })
+    registry.removeAgent(saved.agentId)
+    const archived = new StoppedAgentStore(join(directory, 'stopped-agents')).get(saved.agentId)!
+    expect(archived.lastOpenedAt).toBe(opened)
+    const resumed = registry.resumePendingAgent(archived, [{ backend: 'tmux', paneId: '%77' }])!
+    expect(resumed.lastOpenedAt).toBe(opened)
+    expect(registry.byAgent(saved.agentId)?.lastOpenedAt).toBe(opened)
   })
 
   it('hides a running identity or conversation, without discarding its archive', async () => {
@@ -125,6 +140,27 @@ it('reserves allocation across daemon restarts and different receipt IDs', async
   expect(store.beginResume(saved.agentId)).not.toBeNull()
 })
 
+// A reservation left behind by a crash can be half-written, and that is exactly the one the
+// age-based takeover in `resumeAgentService` has to be able to clear.
+it('reports how long a reservation has been held, and clears a half-written one', async () => {
+  const { store, saved } = await fixture()
+  const before = Date.now()
+  expect(store.resumeReservedAt(saved.agentId)).toBeNull()
+  const token = store.beginResume(saved.agentId)!
+  const held = store.resumeReservedAt(saved.agentId)
+  expect(held).not.toBeNull()
+  expect(held!).toBeGreaterThanOrEqual(before - 1000)
+
+  writeFileSync(join(directory, 'stopped-agents', `${saved.agentId}.resume`), '{"token": "trunc')
+  // A caller clearing ITS OWN reservation still has to read the marker to know it is its own.
+  expect(() => store.finishResume(saved.agentId, token)).toThrow()
+  expect(store.resumeReservedAt(saved.agentId)).not.toBeNull()
+  // A caller taking it over is not asking whose it is.
+  store.finishResume(saved.agentId)
+  expect(store.resumeReservedAt(saved.agentId)).toBeNull()
+  expect(store.beginResume(saved.agentId)).not.toBeNull()
+})
+
 it('keeps readable archives discoverable beside corrupt, unsupported and mismatched records', async () => {
   const { saved, store } = await fixture()
   expect(store.list()).toEqual([])
@@ -147,7 +183,7 @@ it('keeps readable archives discoverable beside corrupt, unsupported and mismatc
 
 it('persists a standalone shell and a runtime without the legacy tmux alias', async () => {
   const { saved, store } = await fixture()
-  store.save({ ...saved, engine: 'terminal', sessionId: '', tmuxPane: '', runtimes: [{ backend: 'herdr', endpointId: 'fixture', paneId: '1' } as any], primaryRuntimeKey: ['herdr', 'fixture', '1'].join('\0'), codexHome: null })
+  store.save({ ...saved, engine: 'terminal', sessionId: '', tmuxPane: '', runtimes: [{ backend: 'unknown', endpointId: 'fixture', paneId: '1' } as any], primaryRuntimeKey: ['unknown', 'fixture', '1'].join('\0'), codexHome: null })
   const disk = JSON.parse(readFileSync(join(directory, 'stopped-agents', `${saved.agentId}.json`), 'utf8'))
   expect(disk.session).not.toHaveProperty('tmuxPane')
   expect(disk.session.sessionId).toBe('')

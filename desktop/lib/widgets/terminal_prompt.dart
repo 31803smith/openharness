@@ -199,6 +199,8 @@ class TerminalPromptKeys extends StatelessWidget {
             FocusManager.instance.primaryFocus?.nextFocus(),
         'picker.complete_back': () =>
             FocusManager.instance.primaryFocus?.previousFocus(),
+        'picker.page_down': ?pageDown,
+        'picker.page_up': ?pageUp,
         'picker.preview_page_down': ?pageDown,
         'picker.preview_page_up': ?pageUp,
         'picker.refresh': ?refresh,
@@ -248,7 +250,7 @@ Widget terminalPromptButton(
   focusNode: focusNode,
   onPressed: onPressed,
   style: TextButton.styleFrom(
-    foregroundColor: danger ? Colors.orangeAccent : Colors.white70,
+    foregroundColor: danger ? boxErrorText : boxText(.70),
     textStyle: AppType.label(),
     padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
     minimumSize: const Size(0, 30),

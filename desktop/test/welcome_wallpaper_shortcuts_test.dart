@@ -16,7 +16,6 @@ import 'package:harness/shortcuts/shortcuts_browser.dart';
 import 'package:harness/terminal/terminal_text.dart';
 import 'package:harness/widgets/shortcuts_sheet.dart';
 import 'package:harness/widgets/workspace_welcome.dart';
-import 'package:package_info_plus/package_info_plus.dart';
 import 'package:xterm/xterm.dart';
 
 import 'keymap_host_test.dart' show MemoryKeymap, key;
@@ -43,13 +42,6 @@ void main() {
     savedFont = terminalFontStore.value;
     savedAppearance = appearancePrefsStore.value;
     appearancePrefsStore.value = const AppearancePrefs();
-    PackageInfo.setMockInitialValues(
-      appName: 'Harness',
-      packageName: 'ai.autonomous.harness',
-      version: '1.1.25',
-      buildNumber: '25',
-      buildSignature: '',
-    );
   });
   tearDown(() {
     grid.AppTheme.brightness.value = savedBrightness;
@@ -123,8 +115,12 @@ void main() {
     void check(InlineSpan span, TextStyle parent) {
       final style = parent.merge(span.style);
       if (span is TextSpan) {
-        if (span.text?.trim().isNotEmpty == true &&
-            style.fontFamily != 'MaterialIcons') {
+        // Icon glyphs (Material's, and the app's Lucide set) are not type.
+        final icon =
+            style.fontFamily == 'MaterialIcons' ||
+            (style.fontFamily?.startsWith('packages/lucide_icons_flutter/') ??
+                false);
+        if (span.text?.trim().isNotEmpty == true && !icon) {
           expect(style.fontSize, terminalFontStore.size, reason: span.text);
           expect(
             style.fontFamily,
@@ -269,7 +265,7 @@ void main() {
       await tester.enterText(search, 'clone');
       await tester.pump();
       expect(find.text('Clone Harness'), findsOneWidget);
-      expect(find.text('New Tab'), findsNothing);
+      expect(find.text('New Swarm'), findsNothing);
       await tester.enterText(search, 'unknown shortcut');
       await tester.pump();
       expect(find.textContaining('No shortcuts found'), findsOneWidget);
@@ -278,7 +274,7 @@ void main() {
       );
       await tester.enterText(search, 'cmd+y');
       await tester.pump();
-      expect(find.text('New Tab'), findsOneWidget);
+      expect(find.text('New Swarm'), findsOneWidget);
       expect(find.text('Y'), findsOneWidget);
       await key(tester, LogicalKeyboardKey.arrowDown);
       await key(tester, LogicalKeyboardKey.enter);
@@ -286,7 +282,7 @@ void main() {
       expect(find.byType(KeyboardPractice), findsOneWidget);
       await key(tester, LogicalKeyboardKey.keyY, cmd: true);
       await tester.pumpAndSettle();
-      expect(find.text('[x] New Tab'), findsOneWidget);
+      expect(find.text('[x] New Swarm'), findsOneWidget);
       await key(tester, LogicalKeyboardKey.escape);
       await key(tester, LogicalKeyboardKey.escape);
       await tester.pumpAndSettle();

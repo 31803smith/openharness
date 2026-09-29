@@ -2,12 +2,18 @@ import * as esbuild from 'esbuild'
 import { readdirSync, statSync, readFileSync } from 'fs'
 import { join } from 'path'
 import { readDshRegistry } from './scripts/lib/dshRegistry.mjs'
+import { readModelManagerBundle } from './scripts/lib/modelManagerBundle.mjs'
+import { plateWorkerSource } from './scripts/lib/plateWorker.mjs'
+import { fileURLToPath } from 'node:url'
+const modelManagerBundle = JSON.stringify(readModelManagerBundle(fileURLToPath(new URL('../store/agents/autonomous-grid', import.meta.url))))
 
 // Bake the version in so `node dist/cli.js version` works in the dev/per-file build too (parity with
 // build-bundle.mjs). The bundle build overrides this from ADAPTER_VERSION at release time.
 const version = JSON.parse(readFileSync('package.json', 'utf8')).version
 // The bundled registry (the store/ folders and store/registry at the repo root) — see src/dsh/registry.ts.
 const dshRegistry = JSON.stringify(readDshRegistry(join('..', 'store')))
+// The plate worker, bundled on its own (src/pair/plateService.ts): harnessd starts it from this string.
+const plateWorker = await plateWorkerSource()
 
 function getAllTsFiles(dir, fileList = []) {
   const files = readdirSync(dir)
@@ -39,6 +45,8 @@ try {
     define: {
       __ADAPTER_VERSION__: JSON.stringify(version),
       __DSH_REGISTRY__: JSON.stringify(dshRegistry),
+      __MODEL_MANAGER_BUNDLE__: JSON.stringify(modelManagerBundle),
+      __PLATE_WORKER__: JSON.stringify(plateWorker),
     },
     logLevel: 'info',
   })

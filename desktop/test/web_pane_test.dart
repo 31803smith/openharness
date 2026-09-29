@@ -3,9 +3,9 @@
 // once the person closes it, and taken down with the agent.
 
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:harness/core/open_in_browser.dart';
 import 'package:harness/state/app_state.dart';
 import 'package:harness/state/pane_arrangement.dart';
 import 'package:harness/state/terminal_pane.dart';
@@ -325,24 +325,31 @@ void main() {
     expect(WebPanePanel.webviewAvailable, isFalse);
     expect(find.byType(WebPanePanel), findsOneWidget);
     expect(find.byKey(const ValueKey('web-pane-placeholder')), findsOneWidget);
-    expect(find.text('http://127.0.0.1:4179/'), findsOneWidget);
+    expect(find.textContaining('http://127.0.0.1:4179/'), findsOneWidget);
+    // With no embedded webview the page opens in the browser instead
+    // (openharness#108 — a Linux desktop, or WSLg, has none today).
+    final opened = <Uri>[];
+    final previousOpener = browserOpener;
+    browserOpener = (url) async {
+      opened.add(url);
+      return true;
+    };
+    addTearDown(() => browserOpener = previousOpener);
+    await tester.tap(find.byKey(const ValueKey('web-pane-open-in-browser')));
+    await tester.pump();
+    expect(opened, [Uri.parse('http://127.0.0.1:4179/')]);
     // Its own close control, and no way to end an agent from it.
     expect(find.byTooltip('Close viewer'), findsOneWidget);
-    // This split is narrow: the terminal keeps its actions in the menu.
-    final actions = tester.widget<IconButton>(
-      find.widgetWithIcon(IconButton, Icons.more_horiz),
+    // Stop remains a command, not a pane-header control. Viewer visibility
+    // is also available through View and command search.
+    expect(find.byTooltip('Stop Harness'), findsNothing);
+    expect(
+      find.descendant(
+        of: find.byType(WebPanePanel),
+        matching: find.byTooltip('Stop Harness'),
+      ),
+      findsNothing,
     );
-    actions.focusNode!.requestFocus();
-    await tester.pump();
-    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
-    await tester.pumpAndSettle();
-    expect(find.text('Stop Harness'), findsOneWidget);
-    expect(find.text('Hide viewer'), findsOneWidget);
-    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
-    await tester.pumpAndSettle();
-    // The verdict is the viewer's to show — chip and strip in its header,
-    // nothing on the terminal's — and the terminal's header carries the
-    // control that hides and shows the viewer.
     expect(find.byKey(const ValueKey('pane-status')), findsNothing);
     await _synced(
       app,
@@ -377,7 +384,7 @@ void main() {
     expect(find.text('1 warning'), findsNothing, reason: 'the phase wins');
     expect(find.textContaining('·  Viewer'), findsNothing);
     await tester.tap(find.byTooltip('Close viewer'));
-    await tester.pump();
+    await tester.pumpAndSettle();
     expect(_viewers(app), isEmpty);
     expect(tester.takeException(), isNull);
   });

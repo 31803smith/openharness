@@ -82,14 +82,14 @@ class HarnessCustomizePane extends StatelessWidget {
                   dividerColor: grid.AppPalette.divider,
                   labelStyle: grid.AppType.label(),
                   tabs: const [
-                    Tab(key: ValueKey('customize-prompt'), text: 'Pane'),
+                    Tab(key: ValueKey('customize-prompt'), text: 'Status'),
                     Tab(
                       key: ValueKey('customize-appearance'),
                       text: 'Appearance',
                     ),
                     Tab(
                       key: ValueKey('customize-wallpaper'),
-                      text: 'Wallpaper',
+                      text: 'Background',
                     ),
                     Tab(key: ValueKey('customize-terminal'), text: 'Terminal'),
                   ],

@@ -4,6 +4,7 @@ import { deflateSync } from 'node:zlib'
 import { ENGINES } from '../engines/types.js'
 import type { RegisteredSession } from './registry.js'
 import { writeImageToOsClipboard } from './osClipboard.js'
+import { sleptFor } from './sleepAware.js'
 import { writePasteDropFile, writePasteImageFile } from './pasteDropFiles.js'
 import type { TerminalBackendCoordinator } from './terminalBackendCoordinator.js'
 import { terminalPlacementKey, terminalRouteKey } from './terminalRuntime.js'
@@ -77,7 +78,15 @@ export function clientDescriptorFrom(raw: unknown): TerminalClientDescriptor | u
 const PROTOCOL_VERSION = 3
 const HEARTBEAT_TIMEOUT_MS = 30_000
 const SYNC_INTERVAL_MS = 5_000
+const EXPIRY_SWEEP_MS = 5_000
 const OUTPUT_FLUSH_MS = 8
+// The terminal the person is typing into on the loopback desktop gains nothing from the 8ms window:
+// a frame across 127.0.0.1 costs tens of microseconds, and the app already folds every write between
+// two vsyncs into one paint. What the window did cost it was a keystroke echo held up to 8ms whenever
+// a TUI was redrawing — a quarter of them in the benchmark. Only the FOCUSED one, though: every frame
+// costs the app a decode and a write, and four streaming tiles all on 2ms took its CPU from 15% to
+// 18% for background tiles that repaint every 80ms anyway. Those, and the relay, keep 8ms.
+const LOOPBACK_OUTPUT_FLUSH_MS = 2
 const OUTPUT_CHUNK_BYTES = 32 * 1024
 const INPUT_MAX_BYTES = 64 * 1024
 const PAUSE_HIGH_WATERMARK_BYTES = 384 * 1024
@@ -94,6 +103,8 @@ interface PendingOutput {
 
 interface ActiveStream {
   connId: string
+  /** A local view can share its upstream connection with other independent terminal owners. */
+  ownerId: string
   /** What the client declared on open, or what `describeClient` could tell; absent when neither knew. */
   client?: TerminalClientDescriptor
   streamId: string
@@ -105,6 +116,11 @@ interface ActiveStream {
   placementKey: string
   handle: TerminalStreamHandle
   compression: 'none' | 'zlib'
+  /** Whether this stream serves the desktop on this computer (see `TerminalStreamManagerDeps.isLoopback`). */
+  loopback: boolean
+  /** The output coalescing window: LOOPBACK_OUTPUT_FLUSH_MS for the window's focused terminal on this
+   *  computer, OUTPUT_FLUSH_MS for everything else. Follows `setFocusedAgent`. */
+  flushMs: number
   expiresAt: number
   lastSyncAt: number
   nextSeq: number
@@ -151,6 +167,14 @@ export interface TerminalStreamManagerDeps {
   streamingAvailable: boolean
   now?: () => number
   diagnostic?: (event: string, fields: Record<string, unknown>) => void
+  /**
+   * An agent's terminal just took input (a keystroke or a paste) from the stream that holds it — never
+   * from a watcher, whose input is refused before it gets here. Called on every accepted frame, so it
+   * must be cheap and must not throw; the daemon starts a sleeping grid from it (the keystroke prewarm,
+   * grid-reads-without-waking issue 03), which is why it lives here, below every client that types.
+   */
+  onInput?: (agentId: string) => void
+  onScopedInput?: (agentId: string, bytes: Uint8Array, tabId: string | undefined, pasted: boolean) => void
 }
 
 function sizeFrom(payload: FramePayload): TerminalStreamSize | null {
@@ -187,12 +211,17 @@ export class TerminalStreamManager {
   // Terminal opens from different backend connections can arrive concurrently. Serialize opens for
   // the same tmux placement so takeover is deterministic and never leaves two live controllers.
   private readonly leaseLocks = new Map<string, Promise<void>>()
+  // The agent each loopback window last said it has focused (`app_focus`), null for none. A window that
+  // never said is absent, and all its terminals keep the short window, as before focus was followed.
+  private readonly focusByConn = new Map<string, string | null>()
   private readonly now: () => number
   private readonly expiryTimer: ReturnType<typeof setInterval>
+  private lastSweepAt: number
 
   constructor(private readonly deps: TerminalStreamManagerDeps) {
     this.now = deps.now ?? (() => Date.now())
-    this.expiryTimer = setInterval(() => this.expireLeases(), 5_000)
+    this.lastSweepAt = this.now()
+    this.expiryTimer = setInterval(() => this.expireLeases(), EXPIRY_SWEEP_MS)
     this.expiryTimer.unref?.()
   }
 
@@ -302,10 +331,10 @@ export class TerminalStreamManager {
       return
     }
     if (frame.kind === TerminalBinaryKind.paste) {
-      await this.paste(state, frame.bytes)
+      await this.paste(state, frame.bytes, frame.tabId)
       return
     }
-    await this.input(state, frame.seq, frame.bytes)
+    await this.input(state, frame.seq, frame.bytes, frame.tabId)
   }
 
   private capabilities(connId: string, requestId: unknown): void {
@@ -316,6 +345,7 @@ export class TerminalStreamManager {
       available: this.deps.streamingAvailable,
       features: {
         rawInput: !this.deps.readOnly,
+        swarmInput: !this.deps.readOnly,
         resize: !this.deps.readOnly,
         mouse: !this.deps.readOnly,
         keyframe: true,
@@ -406,11 +436,16 @@ export class TerminalStreamManager {
     // it, and the client asks again, without the key, once a person actually lands there. Absent
     // (every older client) is the takeover it has always been.
     const takeover = payload.takeover !== false
+    // Older clients have one owner per connection. A pooled relay supplies a stable identity
+    // for each attached view; this partitions leases, not authentication or stream access.
+    const viewId = typeof payload.viewId === 'string' && payload.viewId.length > 0 && payload.viewId.length <= 128
+      ? payload.viewId : null
+    const ownerId = JSON.stringify([connId, viewId])
     // The fallback is read as strictly as a claim: a machine name the backend handed out is not
     // this module's to trust with the wire shape either.
     const client = clientDescriptorFrom(payload.client) ?? clientDescriptorFrom(this.deps.describeClient?.(connId))
     await this.withLeaseLock(reservedPlacement, async () => {
-      const incumbents = this.incumbentsFor(session.agentId, reservedPlacement, connId)
+      const incumbents = this.incumbentsFor(session.agentId, reservedPlacement, ownerId)
       // Inside the lock, so the answer cannot go stale against an open racing this one for the
       // same placement.
       //
@@ -420,13 +455,16 @@ export class TerminalStreamManager {
       // a WATCHER: tmux attaches read-only (no control lease, no resize, no input), the incumbent
       // keeps the terminal, and the client is told which it got by `readOnly` on `terminal_ready`.
       const watching = !this.deps.readOnly && !takeover && incumbents.length > 0
+      // Who a watcher is watching, named on its banner — "MacBook Pro is using this terminal" — as
+      // `takenBy` names the winner on the incumbent's. Read now, before any stream below moves.
+      const heldBy = watching ? this.holderOf(incumbents, reservedPlacement) : undefined
       // A terminal is single-controller. A later client explicitly wins the lease and the incumbent
       // receives a targeted close notification; it must not be broadcast to other clients. The
       // notification names the winner when it can (`takenBy`), so the incumbent's banner can too.
       if (!this.deps.readOnly && !watching) {
-        await this.closeStreamsForTakeover(session.agentId, reservedPlacement, connId, client)
+        await this.closeStreamsForTakeover(session.agentId, reservedPlacement, ownerId, client)
       }
-      // Only THIS connection's stream for THIS terminal, not every stream it holds.
+      // Only THIS view's stream for THIS terminal, not every stream the connection holds.
       //
       // It used to be closeConnection(connId), i.e. "opening a terminal ends every other terminal
       // this client had". That was invisible while a client could only ever show one terminal at a
@@ -435,10 +473,10 @@ export class TerminalStreamManager {
       // after handing it its opening keyframe. The pane kept rendering that stale keyframe and
       // looked alive, but its session never reached `controlling`, so every keystroke into it was
       // dropped in silence.
-      await this.closeOwnStreamsFor(connId, session.agentId, reservedPlacement)
+      await this.closeOwnStreamsFor(ownerId, session.agentId, reservedPlacement)
       // A watcher never becomes the controller — that is the whole point of it.
-      if (!this.deps.readOnly && !watching) this.controllerByAgent.set(session.agentId, connId)
-      if (!this.deps.readOnly && !watching) this.controllerByPlacement.set(reservedPlacement, connId)
+      if (!this.deps.readOnly && !watching) this.controllerByAgent.set(session.agentId, ownerId)
+      if (!this.deps.readOnly && !watching) this.controllerByPlacement.set(reservedPlacement, ownerId)
       const streamId = randomUUID()
       const buffered: Buffer[] = []
       let state: ActiveStream | null = null
@@ -454,31 +492,31 @@ export class TerminalStreamManager {
           },
         }, this.deps.readOnly || watching)
       } catch {
-        if (this.controllerByAgent.get(session.agentId) === connId) this.controllerByAgent.delete(session.agentId)
-        if (this.controllerByPlacement.get(reservedPlacement) === connId) this.controllerByPlacement.delete(reservedPlacement)
+        if (this.controllerByAgent.get(session.agentId) === ownerId) this.controllerByAgent.delete(session.agentId)
+        if (this.controllerByPlacement.get(reservedPlacement) === ownerId) this.controllerByPlacement.delete(reservedPlacement)
         this.sendError(connId, 'TERMINAL_OPEN_FAILED', { requestId })
         return
       }
       if (opened.state !== 'succeeded') {
-        if (this.controllerByAgent.get(session.agentId) === connId) this.controllerByAgent.delete(session.agentId)
-        if (this.controllerByPlacement.get(reservedPlacement) === connId) this.controllerByPlacement.delete(reservedPlacement)
+        if (this.controllerByAgent.get(session.agentId) === ownerId) this.controllerByAgent.delete(session.agentId)
+        if (this.controllerByPlacement.get(reservedPlacement) === ownerId) this.controllerByPlacement.delete(reservedPlacement)
         this.sendError(connId, opened.reason, { requestId })
         return
       }
 
       const placementKey = terminalPlacementKey(opened.value.runtime)
       const actualController = this.controllerByPlacement.get(placementKey)
-      if (!this.deps.readOnly && !watching && actualController && actualController !== connId) {
-        if (this.controllerByAgent.get(session.agentId) === connId) this.controllerByAgent.delete(session.agentId)
-        if (this.controllerByPlacement.get(reservedPlacement) === connId) this.controllerByPlacement.delete(reservedPlacement)
+      if (!this.deps.readOnly && !watching && actualController && actualController !== ownerId) {
+        if (this.controllerByAgent.get(session.agentId) === ownerId) this.controllerByAgent.delete(session.agentId)
+        if (this.controllerByPlacement.get(reservedPlacement) === ownerId) this.controllerByPlacement.delete(reservedPlacement)
         await opened.value.close().catch(() => { /* best effort */ })
         this.sendError(connId, 'CONTROL_LEASE_HELD', { requestId })
         return
       }
-      if (reservedPlacement !== placementKey && this.controllerByPlacement.get(reservedPlacement) === connId) {
+      if (reservedPlacement !== placementKey && this.controllerByPlacement.get(reservedPlacement) === ownerId) {
         this.controllerByPlacement.delete(reservedPlacement)
       }
-      if (!this.deps.readOnly && !watching) this.controllerByPlacement.set(placementKey, connId)
+      if (!this.deps.readOnly && !watching) this.controllerByPlacement.set(placementKey, ownerId)
 
       const requestedCompression = Array.isArray(payload.compression) ? payload.compression : []
       // Never compress for the loopback desktop, whatever it asks for: the bytes cross 127.0.0.1,
@@ -486,9 +524,11 @@ export class TerminalStreamManager {
       // every TUI redraw for nothing. Decided here rather than in the app because the app cannot
       // tell this daemon's own machine from one it reaches through the relay — where the same
       // frames DO cross the internet and zlib still earns its keep.
-      const wantsZlib = requestedCompression.includes('zlib') && !this.deps.isLoopback?.(connId)
+      const loopback = this.deps.isLoopback?.(connId) ?? false
+      const wantsZlib = requestedCompression.includes('zlib') && !loopback
       state = {
         connId,
+        ownerId,
         ...(client ? { client } : {}),
         streamId,
         watching,
@@ -497,6 +537,8 @@ export class TerminalStreamManager {
         placementKey,
         handle: opened.value,
         compression: wantsZlib ? 'zlib' : 'none',
+        loopback,
+        flushMs: this.flushWindow(connId, session.agentId, loopback),
         expiresAt: this.now() + HEARTBEAT_TIMEOUT_MS,
         lastSyncAt: this.now(),
         nextSeq: 0,
@@ -535,6 +577,8 @@ export class TerminalStreamManager {
         // True for a watcher too: the client draws output and withholds input, exactly as it does
         // for an observer's stream. See the `takeover: false` branch above.
         readOnly: this.deps.readOnly === true || watching,
+        swarmInput: !this.deps.readOnly,
+        ...(heldBy ? { heldBy } : {}),
       })) {
         await this.closeStream(state, 'backend disconnected', false)
         return
@@ -580,7 +624,7 @@ export class TerminalStreamManager {
     else if (state.outputPaused) this.armStallTimer(state)
   }
 
-  private async input(state: ActiveStream, inputSeq: number, bytes: Uint8Array): Promise<void> {
+  private async input(state: ActiveStream, inputSeq: number, bytes: Uint8Array, tabId?: string): Promise<void> {
     if (!Number.isSafeInteger(inputSeq) || inputSeq !== state.lastInputSeq + 1 || bytes.length === 0 || bytes.length > INPUT_MAX_BYTES) {
       // Nothing here reached the pty, and `lastInputSeq` is deliberately left where it was. Say what
       // WOULD have been accepted: a client whose counter has drifted (a frame it dropped on its own
@@ -601,6 +645,8 @@ export class TerminalStreamManager {
     }
     state.lastInputSeq = inputSeq
     state.expiresAt = this.now() + HEARTBEAT_TIMEOUT_MS
+    this.tookInput(state)
+    this.deps.onScopedInput?.(state.agentId, bytes, tabId, false)
     // Not awaited. `writeRaw` hands its `send-keys` to the control client's FIFO synchronously, so
     // keystroke order is already fixed by the time it returns its promise — and the seq above is
     // spent, so the next frame cannot race this one. Awaiting the reply held the whole local
@@ -625,6 +671,13 @@ export class TerminalStreamManager {
       // surface only as a process-level unhandledRejection.
       this.diagnostic(state, 'input_report_failed', { reason: error instanceof Error ? error.message : String(error) })
     })
+  }
+
+  /** See `TerminalStreamManagerDeps.onInput`. A listener's failure is its own: input is never held by it. */
+  private tookInput(state: ActiveStream): void {
+    try { this.deps.onInput?.(state.agentId) } catch (error) {
+      this.diagnostic(state, 'input_listener_failed', { reason: error instanceof Error ? error.message : String(error) })
+    }
   }
 
   private async resize(connId: string, payload: FramePayload): Promise<void> {
@@ -657,7 +710,7 @@ export class TerminalStreamManager {
    * (TERMINAL_*_PASTE_MAX_*_BYTES in terminalBinary.ts) — anything over that never decodes into a
    * frame at all, so there is nothing left to check here.
    */
-  private async paste(state: ActiveStream, bytes: Uint8Array): Promise<void> {
+  private async paste(state: ActiveStream, bytes: Uint8Array, tabId?: string): Promise<void> {
     if (bytes.length === 0) return
     let text: string
     try {
@@ -667,6 +720,8 @@ export class TerminalStreamManager {
       return
     }
     state.expiresAt = this.now() + HEARTBEAT_TIMEOUT_MS
+    this.tookInput(state)
+    this.deps.onScopedInput?.(state.agentId, bytes, tabId, true)
     const result = await state.handle.pasteRaw(text)
     if (result.state !== 'succeeded') {
       this.sendError(state.connId, 'TERMINAL_PASTE_FAILED', { streamId: state.streamId, message: result.reason })
@@ -788,6 +843,7 @@ export class TerminalStreamManager {
       this.deps.sendTarget(connId, 'terminal_chunked_upload_begin_result', {
         streamId: claimedStreamId,
         accepted: false,
+        code: 'TERMINAL_STREAM_NOT_FOUND',
         reason: 'no live terminal stream for this pane (reopen it and try again)',
       })
       return
@@ -901,9 +957,9 @@ export class TerminalStreamManager {
 
   /** Scroll gestures arrive stream-scoped, same as resize — no ordering/seq guard needed since,
    *  unlike input, an out-of-order or dropped scroll frame just means one gesture scrolled a little
-   *  more or less than intended, never a corrupted stream. The pane's live output stream (already
-   *  flowing via `sink.onData`) naturally carries the scrolled copy-mode view back to the client, so
-   *  no explicit keyframe push is needed here the way resize needs one. */
+   *  more or less than intended, never a corrupted stream. PageUp/PageDown are written into the
+   *  pty, so the program's own redraw rides the live output stream (`sink.onData`) back to the
+   *  client; no explicit keyframe push is needed here the way resize needs one. */
   private async scroll(connId: string, payload: FramePayload): Promise<void> {
     const state = this.streamFor(connId, payload)
     if (!state) return
@@ -952,14 +1008,14 @@ export class TerminalStreamManager {
       return
     }
     // Leading edge: the first output after a quiet gap goes out immediately, which is what a
-    // keystroke echo is. Waiting the full window for it cost every echo 8ms for no benefit —
+    // keystroke echo is. Waiting the full window for it cost every echo the window for no benefit —
     // there was nothing else to coalesce it with. A burst still lands on the trailing timer
-    // below, so the frame rate ceiling is unchanged.
-    if (!state.flushTimer && this.now() - state.lastFlushAt >= OUTPUT_FLUSH_MS) {
+    // below, so the frame rate stays capped at one frame per `state.flushMs`.
+    if (!state.flushTimer && this.now() - state.lastFlushAt >= state.flushMs) {
       this.flushOutput(state)
       return
     }
-    state.flushTimer ??= setTimeout(() => this.flushOutput(state), OUTPUT_FLUSH_MS)
+    state.flushTimer ??= setTimeout(() => this.flushOutput(state), state.flushMs)
   }
 
   private flushOutput(state: ActiveStream): void {
@@ -1070,7 +1126,9 @@ export class TerminalStreamManager {
       reason: 'tmux snapshot did not run',
     }
     try {
-      snapshot = await state.handle.snapshot()
+      snapshot = await state.handle.snapshot(
+        state.engineId === 'grok' ? { tuiOwnsScrollback: true } : undefined,
+      )
     } catch (error) {
       snapshot = { state: 'failed', reason: error instanceof Error ? error.message : 'tmux snapshot failed' }
     }
@@ -1153,6 +1211,15 @@ export class TerminalStreamManager {
 
   private expireLeases(): void {
     const now = this.now()
+    // A sweep that arrives long after its period is the computer waking up, and the time asleep is
+    // nobody's silence: the window slept too, and could not have sent `terminal_alive`. Every lease is
+    // carried over the gap, so the window's first heartbeat after the wake finds its stream still
+    // there. Closing them all here is what put every local terminal on "reconnecting" at each wake.
+    const slept = sleptFor(now - this.lastSweepAt, EXPIRY_SWEEP_MS)
+    this.lastSweepAt = now
+    if (slept > 0) {
+      for (const state of this.streams.values()) state.expiresAt += slept
+    }
     for (const state of [...this.streams.values()]) {
       if (!state.closing && state.expiresAt <= now) void this.closeStream(state, 'heartbeat timeout', true)
       else if (!state.closing && now - state.lastSyncAt >= SYNC_INTERVAL_MS) this.sendSync(state, now)
@@ -1168,34 +1235,46 @@ export class TerminalStreamManager {
     })
   }
 
-  /// Replace this connection's own stream for the same terminal.
+  /// Replace this view's own stream for the same terminal.
   ///
   /// Reopening is routine — a resync, a relay that came back — and the old stream has to go or the
   /// agent would have two tmux clients on one window. Matched on agent AND placement so a client
-  /// holding several different terminals keeps the ones it did not ask about. No notification: the
-  /// client that asked for this is the one being replaced, and it already knows.
-  private async closeOwnStreamsFor(connId: string, agentId: string, placementKey: string): Promise<void> {
+  /// holding several different terminals keeps the ones it did not ask about. Notify even older
+  /// pooled clients that omit viewId: a different view may still be using the old stream. Omit
+  /// takenBy here, since older clients automatically watch a named taker using the same owner ID.
+  private async closeOwnStreamsFor(ownerId: string, agentId: string, placementKey: string): Promise<void> {
     const own = [...this.streams.values()].filter((state) =>
-      !state.closing && state.connId === connId
+      !state.closing && state.ownerId === ownerId
         && (state.agentId === agentId || state.placementKey === placementKey))
-    await Promise.all(own.map((state) => this.closeStream(state, 'replaced', false)))
+    await Promise.all(own.map((state) => this.closeStream(
+      state, 'terminal reopened in another view', true, 'TERMINAL_TAKEN_OVER',
+    )))
   }
 
-  /// The live streams OTHER connections hold on this terminal — exactly the ones a takeover would
+  /// The live streams OTHER views hold on this terminal — exactly the ones a takeover would
   /// close, which is what makes it the right question for an open that must not take over.
-  private incumbentsFor(agentId: string, placementKey: string, nextConnId: string): ActiveStream[] {
+  private incumbentsFor(agentId: string, placementKey: string, nextOwnerId: string): ActiveStream[] {
     return [...this.streams.values()].filter((state) =>
-      !state.closing && state.connId !== nextConnId
+      !state.closing && state.ownerId !== nextOwnerId
         && (state.agentId === agentId || state.placementKey === placementKey))
+  }
+
+  /** The client driving a terminal a watcher opened onto: the placement's controller, or failing
+   *  that the first incumbent that said who it is. Undefined when none did — the banner then says
+   *  "another app", as it always has. */
+  private holderOf(incumbents: ActiveStream[], placementKey: string): TerminalClientDescriptor | undefined {
+    const controller = this.controllerByPlacement.get(placementKey)
+    return (incumbents.find((state) => state.ownerId === controller && state.client)
+      ?? incumbents.find((state) => state.client))?.client
   }
 
   private async closeStreamsForTakeover(
     agentId: string,
     placementKey: string,
-    nextConnId: string,
+    nextOwnerId: string,
     takenBy?: TerminalClientDescriptor,
   ): Promise<void> {
-    const incumbents = this.incumbentsFor(agentId, placementKey, nextConnId)
+    const incumbents = this.incumbentsFor(agentId, placementKey, nextOwnerId)
     await Promise.all(incumbents.map((state) => this.closeStream(
       state,
       'another client connected',
@@ -1232,8 +1311,8 @@ export class TerminalStreamManager {
     state.flushTimer = null
     state.stallTimer = null
     this.streams.delete(state.streamId)
-    if (this.controllerByAgent.get(state.agentId) === state.connId) this.controllerByAgent.delete(state.agentId)
-    if (this.controllerByPlacement.get(state.placementKey) === state.connId) this.controllerByPlacement.delete(state.placementKey)
+    if (this.controllerByAgent.get(state.agentId) === state.ownerId) this.controllerByAgent.delete(state.agentId)
+    if (this.controllerByPlacement.get(state.placementKey) === state.ownerId) this.controllerByPlacement.delete(state.placementKey)
     if (state.outputPaused) await state.handle.resumeOutput().catch(() => { /* best effort */ })
     await state.handle.close().catch(() => { /* best effort */ })
     if (notify) this.deps.sendTarget(state.connId, 'terminal_closed', {
@@ -1245,7 +1324,27 @@ export class TerminalStreamManager {
     })
   }
 
+  /**
+   * The loopback window on `connId` focused `agentId` (null: no terminal). That agent's terminal gets the
+   * short output window and the window's other terminals go back to the long one. Applied to open
+   * streams, so a focus move takes effect from the next flush rather than the next open; a batch already
+   * waiting on the long window still waits it out, once.
+   */
+  setFocusedAgent(connId: string, agentId: string | null): void {
+    this.focusByConn.set(connId, agentId)
+    for (const state of this.streams.values()) {
+      if (state.connId === connId) state.flushMs = this.flushWindow(connId, state.agentId, state.loopback)
+    }
+  }
+
+  private flushWindow(connId: string, agentId: string, loopback: boolean): number {
+    if (!loopback) return OUTPUT_FLUSH_MS
+    const focused = this.focusByConn.get(connId)
+    return focused === undefined || focused === agentId ? LOOPBACK_OUTPUT_FLUSH_MS : OUTPUT_FLUSH_MS
+  }
+
   async closeConnection(connId: string, reason = 'connection closed', notify = false): Promise<void> {
+    this.focusByConn.delete(connId)
     const states = [...this.streams.values()].filter((state) => state.connId === connId)
     await Promise.all(states.map((state) => this.closeStream(state, reason, notify)))
   }
@@ -1266,6 +1365,7 @@ export class TerminalStreamManager {
 
   async stop(): Promise<void> {
     clearInterval(this.expiryTimer)
+    this.focusByConn.clear()
     await this.closeAll('terminal manager stopped')
   }
 }

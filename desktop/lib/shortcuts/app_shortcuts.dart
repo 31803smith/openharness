@@ -5,7 +5,8 @@ import 'package:flutter/widgets.dart';
 import '../logging/debug_surface.dart';
 
 /// Harness uses Command as a direct prefix for frequent workspace actions.
-/// T opens a tab, O opens a harness, P opens commands, N creates a harness, S opens the Store,
+/// T opens a tab, N creates a harness. S opens Store, M machines, I models,
+/// O projects, P harnesses, and Shift-P commands.
 /// Shift-L chooses a layout. H/J/K/L and arrows focus panes; B routes a task.
 /// The same definitions feed live keys, help and search.
 ///
@@ -36,6 +37,9 @@ enum ShortcutAction {
   movePaneUp,
   movePaneDown,
 
+  /// Send the focused pane to another tab, terminal and all.
+  movePaneToTab,
+
   /// The agent this window was on before the current one — tmux's `prefix ;`.
   lastPane,
 
@@ -63,8 +67,15 @@ enum ShortcutAction {
   /// profile and permission mode — with a fresh conversation: fork minus the
   /// context. No dialog, like [newTerminal].
   cloneAgent,
+
+  /// Start the focused pane's harness again in place, resuming its
+  /// conversation where the engine can — the pane, its folder and its settings
+  /// all stay. Asks first, unlike [cloneAgent]: the running process ends.
+  restartAgent,
+  shareAgent,
   routeTask,
   orchestrate,
+  team,
   reload,
   showLayout,
   pinPane,
@@ -214,6 +225,16 @@ const List<AppShortcut> kAppShortcuts = [
     label: 'Move this pane right',
     group: ShortcutGroup.panes,
   ),
+  AppShortcut(
+    action: ShortcutAction.movePaneToTab,
+    activator: SingleActivator(
+      LogicalKeyboardKey.keyM,
+      meta: true,
+      shift: true,
+    ),
+    label: 'Move this pane to another swarm',
+    group: ShortcutGroup.panes,
+  ),
 
   // ⌘⏎ — tmux's `prefix z`, one of the most-pressed keys that multiplexer has.
   // Enter because it reads as "make THIS the thing", and because it is the one
@@ -224,18 +245,13 @@ const List<AppShortcut> kAppShortcuts = [
     label: 'Zoom this pane, or put it back',
     group: ShortcutGroup.panes,
   ),
-  // ⌘; — tmux's `prefix ;`, spelled the same. Two agents at a time is the shape
-  // most work actually has, and walking a list to get back to the other one is
-  // the wrong motion for it.
-  AppShortcut(
-    action: ShortcutAction.lastPane,
-    activator: SingleActivator(LogicalKeyboardKey.semicolon, meta: true),
-    label: 'Back to the pane you were just on',
-    group: ShortcutGroup.panes,
-  ),
   AppShortcut(
     action: ShortcutAction.closePane,
-    activator: SingleActivator(LogicalKeyboardKey.keyW, meta: true),
+    activator: SingleActivator(
+      LogicalKeyboardKey.keyW,
+      meta: true,
+      shift: true,
+    ),
     label: 'Close the focused pane',
     group: ShortcutGroup.panes,
   ),
@@ -301,13 +317,13 @@ const List<AppShortcut> kAppShortcuts = [
   AppShortcut(
     action: ShortcutAction.routeTask,
     activator: SingleActivator(LogicalKeyboardKey.keyB, meta: true),
-    label: 'Describe a task, and let it pick the agent',
+    label: 'Describe a task, and let it pick the harness',
     group: ShortcutGroup.actions,
   ),
   AppShortcut(
     action: ShortcutAction.reload,
     activator: SingleActivator(LogicalKeyboardKey.keyR, meta: true),
-    label: 'Reload machines and agents',
+    label: 'Reload machines and harnesses',
     group: ShortcutGroup.actions,
   ),
   AppShortcut(
@@ -336,23 +352,91 @@ const AppShortcut kDebugShortcut = AppShortcut(
 /// The one list the bindings, the ⌘/ sheet and the tooltips all read, so a
 /// build cannot bind a key it does not document or document one it does not
 /// bind.
-List<AppShortcut> appShortcuts({bool swarmMode = true}) => [
-  for (final shortcut in kAppShortcuts)
-    if (!swarmMode ||
-        (!const {
-              ShortcutAction.toggleRail,
-              ShortcutAction.closePane,
-              ShortcutAction.reload,
-            }.contains(shortcut.action) &&
-            !shortcut.activator.control))
-      shortcut,
-  if (swarmMode) ...kSwarmShortcuts,
-  if (kDebugSurfaceEnabled) kDebugShortcut,
-];
+List<AppShortcut> appShortcuts({bool swarmMode = true}) =>
+    [
+          for (final shortcut in kAppShortcuts)
+            if (!swarmMode ||
+                (!const {
+                      ShortcutAction.toggleRail,
+                      ShortcutAction.closePane,
+                      ShortcutAction.reload,
+                    }.contains(shortcut.action) &&
+                    !shortcut.activator.control))
+              shortcut,
+          if (swarmMode)
+            for (final shortcut in kSwarmShortcuts)
+              if (!kIsWeb &&
+                  shortcut.action == ShortcutAction.addAgent &&
+                  defaultTargetPlatform == TargetPlatform.linux)
+                AppShortcut(
+                  action: shortcut.action,
+                  activator: const SingleActivator(
+                    LogicalKeyboardKey.keyO,
+                    control: true,
+                  ),
+                  label: shortcut.label,
+                  group: shortcut.group,
+                )
+              else
+                shortcut,
+          if (kDebugSurfaceEnabled) kDebugShortcut,
+        ]
+        .where(
+          (shortcut) =>
+              !kIsWeb || shortcut.activator.trigger != LogicalKeyboardKey.tab,
+        )
+        .map(_platformShortcut)
+        .toList(growable: false);
+
+/// The browser owns Command/Control keys such as Print, New Tab and Close.
+/// Web uses Option/Alt as its workspace prefix. Editing and terminal Control
+/// keys keep their normal behavior; help and live bindings share this mapping.
+String get workspaceCommandModifier => kIsWeb ? 'alt' : 'cmd';
+
+String platformWorkspaceBinding(String keys) {
+  if (!kIsWeb || !keys.split('+').contains('cmd')) return keys;
+  final parts = keys.split('+');
+  return {
+    for (final part in parts) part == 'cmd' ? workspaceCommandModifier : part,
+  }.join('+');
+}
+
+SingleActivator _platformActivator(SingleActivator keys) {
+  if (!kIsWeb || !keys.meta) return keys;
+  final modifier = workspaceCommandModifier;
+  return SingleActivator(
+    keys.trigger,
+    meta: modifier == 'cmd',
+    control: keys.control || modifier == 'ctrl',
+    alt: keys.alt || modifier == 'alt',
+    shift: keys.shift,
+    includeRepeats: keys.includeRepeats,
+  );
+}
+
+AppShortcut _platformShortcut(AppShortcut shortcut) => !kIsWeb
+    ? shortcut
+    : AppShortcut(
+        action: shortcut.action,
+        activator: _platformActivator(shortcut.activator),
+        label: shortcut.label,
+        group: shortcut.group,
+      );
 
 /// Swarm bindings replace the old workspace navigation in the retained legacy
 /// screen. Live Swarm bindings, tooltips, and help all use this same catalog.
 const kSwarmShortcuts = [
+  AppShortcut(
+    action: ShortcutAction.shareAgent,
+    activator: SingleActivator(
+      LogicalKeyboardKey.keyS,
+      meta: true,
+      shift: true,
+      includeRepeats: false,
+    ),
+    label: 'Share the focused harness',
+    group: ShortcutGroup.actions,
+  ),
   AppShortcut(
     action: ShortcutAction.addAgent,
     activator: SingleActivator(LogicalKeyboardKey.keyO, meta: true),
@@ -360,19 +444,13 @@ const kSwarmShortcuts = [
     group: ShortcutGroup.actions,
   ),
   AppShortcut(
-    action: ShortcutAction.showHistory,
-    activator: SingleActivator(LogicalKeyboardKey.keyY, meta: true),
-    label: 'Show full history',
-    group: ShortcutGroup.navigate,
-  ),
-  AppShortcut(
     action: ShortcutAction.newSwarm,
     activator: SingleActivator(LogicalKeyboardKey.keyT, meta: true),
-    label: 'New Tab',
+    label: 'New Swarm',
     group: ShortcutGroup.navigate,
   ),
   // ⌘⇧T is New Terminal, as it is in a terminal app. "Reopen last closed
-  // harness" used to sit on it; it lives on in the History menu, the ⌘P
+  // harness" used to sit on it; it lives on in the History menu, the ⇧⌘P
   // command palette and `keybindings.jsonc`, without a default chord.
   AppShortcut(
     action: ShortcutAction.newTerminal,
@@ -382,6 +460,18 @@ const kSwarmShortcuts = [
       shift: true,
     ),
     label: 'New Terminal',
+    group: ShortcutGroup.actions,
+  ),
+  // ⌘⇧E, not ⌘⇧R: R is Rename Tab, and ⌘R is Split Right. E for "engine
+  // again" — the pane stays, the process starts over.
+  AppShortcut(
+    action: ShortcutAction.restartAgent,
+    activator: SingleActivator(
+      LogicalKeyboardKey.keyE,
+      meta: true,
+      shift: true,
+    ),
+    label: 'Restart Harness',
     group: ShortcutGroup.actions,
   ),
   // ⌘⇧N was Create Agent until ⌘N became New Harness (01989f5a); reclaimed
@@ -399,7 +489,7 @@ const kSwarmShortcuts = [
   AppShortcut(
     action: ShortcutAction.closeSwarm,
     activator: SingleActivator(LogicalKeyboardKey.keyW, meta: true),
-    label: 'Close Tab',
+    label: 'Close Swarm',
     group: ShortcutGroup.navigate,
   ),
   AppShortcut(
@@ -409,7 +499,7 @@ const kSwarmShortcuts = [
       meta: true,
       shift: true,
     ),
-    label: 'Rename Tab',
+    label: 'Rename Swarm',
     group: ShortcutGroup.navigate,
   ),
   AppShortcut(
@@ -419,7 +509,7 @@ const kSwarmShortcuts = [
       meta: true,
       shift: true,
     ),
-    label: 'Next Tab',
+    label: 'Next Swarm',
     group: ShortcutGroup.navigate,
   ),
   AppShortcut(
@@ -429,13 +519,13 @@ const kSwarmShortcuts = [
       meta: true,
       shift: true,
     ),
-    label: 'Previous Tab',
+    label: 'Previous Swarm',
     group: ShortcutGroup.navigate,
   ),
   AppShortcut(
     action: ShortcutAction.nextSwarm,
     activator: SingleActivator(LogicalKeyboardKey.tab, control: true),
-    label: 'Next Tab',
+    label: 'Next Swarm',
     group: ShortcutGroup.navigate,
   ),
   AppShortcut(
@@ -445,7 +535,7 @@ const kSwarmShortcuts = [
       control: true,
       shift: true,
     ),
-    label: 'Previous Tab',
+    label: 'Previous Swarm',
     group: ShortcutGroup.navigate,
   ),
   AppShortcut(
@@ -455,7 +545,7 @@ const kSwarmShortcuts = [
       meta: true,
       shift: true,
     ),
-    label: 'Show agents needing input',
+    label: 'Show harnesses needing input',
     group: ShortcutGroup.navigate,
   ),
   AppShortcut(
@@ -480,7 +570,7 @@ const kSwarmShortcuts = [
 /// shortcut sheet prints one row; pane movement uses Command-arrows.
 const int kTabDigitCount = 9;
 
-List<SingleActivator> tabDigitActivators() => const [
+List<SingleActivator> tabDigitActivators() => (const [
   SingleActivator(LogicalKeyboardKey.digit1, meta: true),
   SingleActivator(LogicalKeyboardKey.digit2, meta: true),
   SingleActivator(LogicalKeyboardKey.digit3, meta: true),
@@ -490,7 +580,7 @@ List<SingleActivator> tabDigitActivators() => const [
   SingleActivator(LogicalKeyboardKey.digit7, meta: true),
   SingleActivator(LogicalKeyboardKey.digit8, meta: true),
   SingleActivator(LogicalKeyboardKey.digit9, meta: true),
-];
+]).map(_platformActivator).toList(growable: false);
 
 /// One line in the shortcuts UI: what it does, and every chord that does it.
 ///
@@ -546,9 +636,9 @@ List<ShortcutRow> shortcutRows() {
   // The digits are not in [kAppShortcuts] — nine near-identical rows would bury
   // everything around them — so they join here, at the end of their group.
   final digits = ShortcutRow(
-    label: 'Select tabs 1–9',
+    label: 'Select swarms 1–9',
     chords: const [
-      ['⌘', '1 – $kTabDigitCount'],
+      [kIsWeb ? 'Alt' : '⌘', '1 – $kTabDigitCount'],
     ],
     group: ShortcutGroup.navigate,
   );
@@ -627,16 +717,16 @@ typedef KeyChord = List<String>;
 
 /// The caps for [activator], in the order Apple prints them.
 KeyChord describeShortcutKeys(SingleActivator activator) => [
-  if (activator.control) '⌃',
-  if (activator.alt) '⌥',
-  if (activator.shift) '⇧',
-  if (activator.meta) '⌘',
+  if (activator.control) kIsWeb ? 'Ctrl' : '⌃',
+  if (activator.alt) kIsWeb ? 'Alt' : '⌥',
+  if (activator.shift) kIsWeb ? 'Shift' : '⇧',
+  if (activator.meta) kIsWeb ? 'Cmd' : '⌘',
   _keyLabel(activator.trigger),
 ];
 
 /// "⇧⌘]" — the way a Mac menu prints it, in the order Apple prints it.
 String describeShortcut(SingleActivator activator) =>
-    describeShortcutKeys(activator).join();
+    describeShortcutKeys(activator).join(kIsWeb ? '+' : '');
 
 String _keyLabel(LogicalKeyboardKey key) {
   // keyLabel spells these out ("Arrow Left"), which is not how a Mac prints a

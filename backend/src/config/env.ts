@@ -1,5 +1,6 @@
 import 'dotenv/config'
 import { z } from 'zod'
+import { parseDaemonsSwitch } from '../lib/daemonsSwitch.js'
 
 const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
@@ -16,6 +17,9 @@ const envSchema = z.object({
   // Same MongoDB (and database) as the agent-manager — backend owns `users` +
   // `machines`; reads `managers`/`machine_nodes` via raw queries when needed.
   DATABASE_URL: z.string().default('mongodb://localhost:27017/harness?replicaSet=rs0'),
+  // Module availability only. Each account must separately opt in in Experimental;
+  // no settings record means OFF. False disables the whole module for operators.
+  HARNESS_CHANNELS: z.string().default('true').transform(v => v === 'true'),
 
   // Redis for the cross-instance data bus. Behind a load balancer an agent's web socket and its
   // manager socket may land on different backend instances; Redis pub/sub bridges them
@@ -131,6 +135,16 @@ const envSchema = z.object({
   // (`harness auth device`). That path is free and its computer id is self-declared, so this caps the
   // rows one account can mint; 0 disables the check. Hygiene, not a security control.
   HARNESS_DEVICE_AUTH_MACHINE_LIMIT: z.coerce.number().int().min(0).default(20),
+  // Same idea for device rows (`/api/device-ws` resolves-or-creates one per self-declared computer id).
+  // A revoked device is hard-deleted, so the ceiling alone is not enough — see the rates below.
+  HARNESS_DEVICE_LIMIT: z.coerce.number().int().min(0).default(20),
+  // How fast one account may mint NEW machine / device ids (Redis fixed windows, shared by every
+  // replica). A reconnect of an existing id never counts. Ceilings above stop a pile-up; these stop a
+  // create → delete → create loop, which the ceilings cannot see. 0 disables that window.
+  HARNESS_NEW_MACHINE_PER_HOUR: z.coerce.number().int().min(0).default(5),
+  HARNESS_NEW_MACHINE_PER_DAY: z.coerce.number().int().min(0).default(20),
+  HARNESS_NEW_DEVICE_PER_HOUR: z.coerce.number().int().min(0).default(5),
+  HARNESS_NEW_DEVICE_PER_DAY: z.coerce.number().int().min(0).default(20),
   AUTONOMOUS_BFF_URL: z.string().url().default('https://apiv2.autonomous.ai'),
   STAGING_AUTONOMOUS_BFF_URL: z.string().url().default('https://apiv2.staging.autonomousdev.xyz'),
   // Server-to-server subscription snapshots used by the singleton billing worker. These use
@@ -164,6 +178,11 @@ const envSchema = z.object({
 
   // Comma-separated emails granted role=admin on first creation.
   ADMIN_EMAILS: z.string().default(''),
+
+  // Server availability, not user opt-in. Accounts must enable the creature in Experimental settings.
+  // Explicit false keeps the module dark; the optional allowlist further limits availability.
+  HARNESS_DAEMONS: z.string().default('true'),
+  HARNESS_DAEMONS_USERS: z.string().default(''),
 
   // Device voice STT (PCM arrives on /api/device-ws → batch STT). VOICE_PROVIDER selects the backend:
   //   'deepgram' → needs DEEPGRAM_API_KEY
@@ -244,3 +263,6 @@ export const env = validateEnv()
 export const ADMIN_EMAILS = new Set(
   env.ADMIN_EMAILS.split(',').map((s) => s.trim().toLowerCase()).filter(Boolean),
 )
+
+/** Server availability (lib/daemonsSwitch.ts). The account's Experimental opt-in defaults off. */
+export const DAEMONS = parseDaemonsSwitch(env.HARNESS_DAEMONS, env.HARNESS_DAEMONS_USERS)

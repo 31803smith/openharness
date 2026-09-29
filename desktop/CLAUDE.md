@@ -93,10 +93,41 @@ its consumer is now the `harness` installer rather than this app.
 
 ## Architecture
 
-### The app talks only to the local `harness` CLI
+### One Flutter UI, native and browser transports
 
-This is the single most important thing to know. The desktop app **never** dials the cloud backend or
-holds an SSO token:
+`lib/main.dart` serves both targets; its signed-in workspace is a conditional import
+(`desktop_workspace.dart`, or `web/web_entry.dart` when `dart.library.js_interop`), so the
+web build **is mouse-first** (product decision, 2026-09-29): every action
+desktop keeps in native menus or chords must be clickable. Keys keep working but are not
+advertised. Browser-only UI lives in `lib/web/` and is never imported by desktop code;
+it plugs into shared screens through additive seams whose default is today's desktop
+behavior (e.g. `SwarmScreen.chrome` / `WorkspaceChrome` in `state/workspace_chrome.dart`,
+which runs the same `_commands` table keys use, adds a bar over the picker, and turns off
+`KeyHints` — `widgets/key_hints.dart`, absent means hints shown). Do not change desktop behavior for the
+web, and do not copy shared screens into `lib/web/` — add a seam instead.
+
+`kViewerMode` is true on the web:
+the browser owns its OAuth session, peer links, and end-to-end relay encryption.
+`viewer/browser_login.dart` validates the same-tab callback against the backend's
+PKCE transaction; conditional adapters handle storage and native-only services.
+`platform_auth_web.dart` serializes shared login/refresh/logout with Web Locks
+and reloads other tabs when the account changes. Auth and E2EE keys persist in
+origin-local storage; only the OAuth transaction is in session storage.
+Shared sessions use `ObserverRelayCodec` and `/api/observer-ws`, verifying the
+owner and permitting only observation and authenticated comments. `/s/:id#key=…`
+opens `SharedAgentPage` without restoring the visitor's workspace. Public links
+allow anonymous viewing; private links require an invited account. Preserve the
+fragment identity pin through sign-in and reload: `startHarness` disables Flutter
+hash routing, while the sign-in adapter owns the callback and return URL.
+The owner daemon stores comments and enforces link/invitation access on every
+request. Reuse `ShareHarnessDialog` and `HarnessComments` for both app targets.
+See [README.md](README.md#web-development) for origin setup, browser storage
+lifetime, capability limits, and Chrome checks. Browser tests must set
+`--dart-define=HARNESS_TEST=true` so no production pollers or analytics run.
+
+### Native desktop talks to the local `harness` CLI
+
+The native desktop target uses the CLI for cloud access and SSO tokens:
 
 - **Auth** lives in the CLI. `lib/auth/cli_login.dart` shells out to `harness auth status --json` and
   drives `harness login --json` (NDJSON event stream); `cli_link.dart` wraps `harness link create/import/list`.
@@ -127,7 +158,17 @@ holds an SSO token:
   `LocalCliDiscovery`, which runs `harness start` when needed). The CLI terminates E2EE for relayed
   machines; the app carries no crypto. Close code `4404`/`NO_PEER_LINK` means the machine needs
   `harness link import` — surfaced as `MachineState.needsLink` and polled via `_linkRetryTimers`.
-- The **only** direct-to-backend path is `LocalManualFixture` (`lib/main_local_manual.dart`), a
+- **Both REST and the local WS prefer the daemon's Unix socket** (`lib/ws/local_daemon_transport.dart`;
+  CLI `lib/localSocket.ts`): `~/.harness/cli/data/daemon-<port>.sock`, 0600, named for the port in
+  `localCliBaseUrl` so it always leads to the same daemon as the TCP fallback. The loopback port takes
+  any local user's process; the socket only this user's. One `LocalDaemonTransport`, owned by
+  `LocalCliDiscovery`, is shared by `ApiClient` (a Dio adapter that only routes the daemon's own
+  address) and `WsPool`/`WsConn`. Discovery probes the socket first and the port second; a request or
+  dial that cannot reach the socket retries on the port, and each WS connect re-checks whether the
+  socket file exists, so a daemon restart does not strand the app on TCP. Windows and paths over 96
+  bytes have no socket. The CLI, engine hooks and the dashboard stay on TCP. Under `flutter test`
+  `LocalDaemonTransport.detect` finds no socket, so tests never reach a real daemon.
+- Besides viewer builds, a direct-to-backend test path is `LocalManualFixture` (`lib/main_local_manual.dart`), a
   compile-time-gated dev entrypoint fed by `scripts/start-terminal-local-manual.sh`. It fails closed
   unless every `--dart-define` is present.
 
@@ -187,18 +228,30 @@ injection point (`main_local_manual.dart` overrides it). `bootstrap()` → `_pre
 `cliLogin.checkStatus()` → `_finishBootstrapSignedIn()` (restore pane layout, create `WsPool`, ensure
 the daemon, `api.me()`, `refreshMachines()`).
 
+Experimental switches are account state. `AppNotifier.experimentalFeatures` binds after `api.me()`
+identifies the account, clears on sign-out/account change, and rejects stale responses. It uses
+`/api/experimental-settings`, refreshes on account invalidations and a 30-second fallback poll, and
+shows changes only after server acknowledgement. Do not restore the old unscoped local keys at startup.
+Swarm collaboration keeps its existing account settings RPC. The creature switch opens the account's
+`ZooController` collection; disabling it hides the creature without deleting eggs, individuals or progress.
+Window-only preview collections are test/render fixtures, not a user setting.
+
 Per-machine runtime state is `MachineState` (connection status, transport mode, agents, `nodeOnline`
 from `node_status` pushes — distinct from our own socket status, pending offline agent, turn activity).
 
 ### Command dock
 
+For workspace presentation, follow the [terminal workspace design system](design/terminal-workspace.md).
+For dialog presentation, follow the [terminal dialog design system](design/terminal-dialogs.md):
+fixed cells, plain text, one-line selection. Cmd-N and Cmd-O are the reference implementations.
+
 `SwarmSearchController` owns search and selection; `SwarmSearchResults` keeps a bounded cache of
 visible/recent row controls. Query-dependent match text listens separately, so typing does not
-rebuild unchanged `ListTile` controls and arrows rebuild only changed highlights. The cache still
+rebuild unchanged row controls and arrows rebuild only changed highlights. The cache still
 invalidates for row metadata, availability, action, geometry, theme, and font changes. Keep focus,
 semantics, and traversal on the row; do not replace them with paint-only search results.
 Creation and draft precedence are documented in `design/new-harness-entry-rules.md` and exercised
-by its listed tests. Cmd-T/Cmd-P retarget the same draft/search; Store requests own their explicit
+by its listed tests. Cmd-T/Cmd-O retarget the same draft/search; Store requests own their explicit
 product and machine. `test/benchmarks/swarm_benchmark.dart` measures large synthetic inventories;
 its headless debug timings do not establish native display or network latency.
 
@@ -242,6 +295,13 @@ its headless debug timings do not establish native display or network latency.
   `grid.AppTheme.brightness`, which `_GridTokenScope` in `main.dart` sets from `Theme.of(context)`.
   Chrome widgets call `grid.AppTheme.watch(context)` at the top of `build` so `const` subtrees still
   repaint on a theme flip.
+- The [workspace status bar](design/workspace-status-bar.md) places compact numbered tabs and global actions at the top,
+  with focused machine/repo/branch/PR at the bottom left and the model at the bottom right. Automatic names use the strongest shared harness type,
+  project, or machine, preferring traits that distinguish tabs and excluding dependent viewers.
+  The context follows a viewer's owner and uses the compact project label, never a worktree path
+  or marker. User-renamed tabs always retain their saved name. Customize Harness → Status
+  selects shell-inspired text or Powerline themes; the focused PR label uses that same theme.
+  The single focused PR reader is `state/workspace_pull_request.dart`.
 - `lib/theme/app_theme.dart` (`AppColors`, `AppTheme.terminalLight/terminalDark`) is a set of
   adapters over those tokens. Nothing here is `const` on purpose — freezing a colour is how light mode
   silently breaks. Do not add a parallel palette.
@@ -249,10 +309,13 @@ its headless debug timings do not establish native display or network latency.
   heading 15, label/mono 13, monoLabel 12, caption/monoMeta 11) across two faces. The terminal's
   face leads — headings, labels, buttons, rows, fields, tabs, shortcuts and anything copied are
   mono — and the system sans is kept for prose alone (`body`, `caption`), which is what stops a
-  screen reading as a wall of mono. Sizes are fixed: `terminalTextStyle` (the terminal's own size,
-  ⌘+/⌘−) is only for the grid, its composer and find field, and the empty tab's welcome page (it
-  stands where a terminal will), and `terminalTextScaleOf` only for their geometry — UI boxes use `appTextScaleOf`. Native tabs get the terminal face at
-  `AppType.chromeSize`; native menus keep the system menu font.
+  screen reading as a wall of mono. Ordinary UI stays on the `AppType` scale and uses
+  `appTextScaleOf` for geometry. The terminal grid, composer, find field, empty tab's welcome
+  page, and terminal-workspace dialogs follow the selected terminal size (⌘+/⌘−). Dialogs use
+  `terminalContentStyle()` and `terminalCellSizeOf(context)` for the exact font and character grid;
+  see [the dialog guide](design/terminal-dialogs.md). Workspace tabs, status text, pane
+  titles, and model selectors use `workspaceBarTextStyle()`: fixed 13 pt SF Mono regular
+  on macOS, platform monospace elsewhere. Native menus keep the system menu font.
 - `ThemeModeStore` and `TerminalFontStore` are `ValueNotifier` singletons (they must resolve above the
   provider scope and before sign-in).
 
@@ -521,9 +584,9 @@ its headless debug timings do not establish native display or network latency.
   `shortcuts/shortcuts_browser.dart` shares searchable, grouped rows between the ⌘/ dialog and
   Settings ▸ Keyboard shortcuts. It reads resolved bindings through `keyboardLessons()`, so remaps
   appear immediately; clicking a row or pressing Enter opens keyboard practice without dispatching
-  that action. Labels and keycaps use the selected terminal font and size. ⌘P opens commands with
-  the query `>`; ⌘O opens harnesses. `shortcuts/key_cap.dart` uses the app type scale elsewhere.
-  Every shortcut is ⌘-based — Ctrl belongs to the shell/tmux, ⌥ is a
+  that action. Labels and keycaps use the selected terminal font and size. ⇧⌘P opens commands with
+  the query `>`; ⌘P opens the unified picker. On Linux these use Ctrl+Shift+P and Ctrl+P. `shortcuts/key_cap.dart` uses the app type scale elsewhere.
+  Other workspace shortcuts are ⌘-based — Ctrl otherwise belongs to the shell/tmux, ⌥ is a
   Meta prefix for the pty (⌥⏎ and ⌥⌫ only — `AltAsMetaInputHandler` in
   `lib/terminal/terminal_input.dart` turns them into `ESC` + Return and `ESC` + `\x7f`, so the
   engine's prompt breaks the line instead of submitting and kills the word behind the cursor

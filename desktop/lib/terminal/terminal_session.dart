@@ -1,9 +1,9 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
 import 'dart:math';
 
 import 'package:flutter/foundation.dart';
+import 'package:archive/archive.dart' show ZLibDecoder;
 import 'package:xterm/xterm.dart';
 
 import '../core/crash_log.dart';
@@ -128,6 +128,9 @@ class _ActiveUpload {
 /// reopen. Transport loss still freezes input until the user opens a session.
 class TerminalSession extends ChangeNotifier {
   static const protocolVersion = 3;
+
+  /// [errorCode] after [transportLost]: the link dropped, not the terminal.
+  static const disconnectedCode = 'TERMINAL_DISCONNECTED';
   static const minCols = 40;
   static const maxCols = 300;
   static const minRows = 12;
@@ -145,6 +148,11 @@ class TerminalSession extends ChangeNotifier {
   String? engineId;
   final TerminalFrameSender send;
   final TerminalBinarySender sendBinary;
+
+  /// Set by the view receiving input. Capture it with the bytes, before any async send.
+  String? inputTabId;
+  String? _bufferedInputTabId;
+  bool _swarmInput = false;
   final Duration resyncTimeout;
   final bool readOnly;
 
@@ -166,6 +174,37 @@ class TerminalSession extends ChangeNotifier {
   /// for a viewer that never takes control and so is never anyone's taker.
   final TerminalClientDescriptor? client;
 
+  /// Whether the next `terminal_open` may TAKE the terminal from whoever holds
+  /// it. A terminal has one controller, and an ordinary open wins it — which is
+  /// right when a person on THIS window asked for the pane, and wrong for every
+  /// other reason a pane attaches: a tab another Mac opened arriving over the
+  /// desk, a reconnect, a machine answering its agent list, the dial turning.
+  /// Those open with `takeover: false` and are answered as a WATCHER (the
+  /// daemon attaches tmux read-only and the person typing keeps the terminal),
+  /// or `CONTROL_LEASE_HELD` if the race is lost.
+  ///
+  /// ⚠️ **An arrival arms ONE open.** Lowered again the moment an open it armed
+  /// is answered, because from then on this session HOLDS the lease and its
+  /// later opens rest on holding it. Left standing, it would outlive the
+  /// gesture: a window reconnecting hours later would take the terminal off
+  /// whoever had it by then, with nobody having touched this Mac at all.
+  ///
+  /// ⚠️ Only meaningful against a daemon that advertises `noTakeover`; an older
+  /// one ignores the key and takes over regardless, so the caller checks first
+  /// — `MachineState.terminalNoTakeoverAvailable`.
+  bool takeover;
+
+  /// What the open now in flight asked for — [takeover] as it was when that
+  /// frame was built. The two differ when a person lands on the pane while a
+  /// polite open is still out.
+  bool _openAskedTakeover = true;
+
+  /// Whether the stream this session holds is a WATCHER: real output, live, but
+  /// another client drives it and the daemon refuses anything typed here. Told
+  /// by `readOnly` on `terminal_ready`. A normal state, not a failure — the
+  /// pane shows the band and its "Take control" button. Reset by every open.
+  bool watching = false;
+
   TerminalSession({
     required this.machineId,
     required this.agentId,
@@ -175,6 +214,7 @@ class TerminalSession extends ChangeNotifier {
     required this.sendBinary,
     this.client,
     this.onOpenStalled,
+    this.takeover = true,
     this.readOnly = false,
     this.resyncTimeout = const Duration(seconds: 4),
     DateTime Function()? now,
@@ -235,6 +275,7 @@ class TerminalSession extends ChangeNotifier {
   List<int> _utf8Tail = const [];
   final List<int> _inputBytes = [];
   Timer? _heartbeat;
+  DateTime? _lastStreamActivityAt;
   Timer? _ackTimer;
   Timer? _inputTimer;
   Timer? _resizeTimer;
@@ -254,6 +295,7 @@ class TerminalSession extends ChangeNotifier {
 
   bool get acceptsInput =>
       !readOnly &&
+      !watching &&
       status == TerminalSessionStatus.controlling &&
       streamId != null;
 
@@ -295,10 +337,13 @@ class TerminalSession extends ChangeNotifier {
 
   /// Reconnect the same agent without discarding its last usable screen.
   /// Input resumes only after the replacement stream's first keyframe.
-  Future<void> reopen() async {
+  /// [force] is a person asking: it arms one takeover and reopens a stream this
+  /// session is merely watching, which is what the band's "Take control" does.
+  Future<void> reopen({bool force = false}) async {
+    if (force) takeover = true;
     if (_disposed ||
         status == TerminalSessionStatus.opening ||
-        status == TerminalSessionStatus.controlling ||
+        (status == TerminalSessionStatus.controlling && !(force && watching)) ||
         status == TerminalSessionStatus.resyncing) {
       return;
     }
@@ -329,10 +374,12 @@ class TerminalSession extends ChangeNotifier {
     _pendingScrollLines = 0;
     _lastInputFlushAt = null;
     _lastResizeFlushAt = null;
+    _lastStreamActivityAt = null;
     _renderTail = Future<void>.value();
     _inputSendTail = Future<void>.value();
     streamId = null;
     linkMode = null;
+    watching = false;
     errorCode = null;
     errorMessage = null;
     takenOverBy = null;
@@ -391,7 +438,11 @@ class TerminalSession extends ChangeNotifier {
       'rows': rows,
       'compression': const ['zlib', 'none'],
       if (client != null) 'client': client!.toJson(),
+      // Absent is the takeover an open has always been; `false` asks the daemon
+      // to leave whoever holds the terminal alone and hand this one a watcher.
+      if (!takeover) 'takeover': false,
     };
+    _openAskedTakeover = takeover;
     var sent = await send('terminal_open', openPayload);
     if (!_isCurrent(generation) ||
         status != TerminalSessionStatus.opening ||
@@ -505,6 +556,14 @@ class TerminalSession extends ChangeNotifier {
           _fail('TERMINAL_READY_INVALID', 'Harness returned no stream id');
           return true;
         }
+        // Which kind of stream came back. A watcher renders the terminal and
+        // may not type into it; the band says who has it and offers to ask.
+        watching = payload['readOnly'] == true;
+        _swarmInput = payload['swarmInput'] == true;
+        // The claim is spent here: from now on this session holds the lease,
+        // and every later open of its own rests on holding it rather than on a
+        // gesture nobody has made since. See [takeover].
+        if (!watching) takeover = false;
         _resyncTimer?.cancel();
         _resyncTimer = null;
         _heartbeat = Timer.periodic(
@@ -525,6 +584,14 @@ class TerminalSession extends ChangeNotifier {
         final accepted = payload['accepted'] == true;
         if (_activeUpload?.beginAccepted.isCompleted == false) {
           _activeUpload!.beginAccepted.complete(accepted);
+        }
+        // Older daemons only sent this text. A vanished stream cannot accept input or upload
+        // chunks; retain its screen and reopen once, without replaying the failed paste.
+        if (!accepted &&
+            (payload['code'] == 'TERMINAL_STREAM_NOT_FOUND' ||
+                payload['reason'] ==
+                    'no live terminal stream for this pane (reopen it and try again)')) {
+          await _recoverByReopen(reason: 'TERMINAL_STREAM_NOT_FOUND');
         }
         return true;
       case 'terminal_chunked_upload_progress':
@@ -634,6 +701,29 @@ class TerminalSession extends ChangeNotifier {
           }
           return true;
         }
+        // A polite open, refused: another client is driving this terminal and
+        // this open asked not to take it from them. Not a failure, and it must
+        // not read as one — `error` is what the notifier's reattach sweep
+        // retries, which would ask again for as long as the other client stayed.
+        // `takenOver` already means "someone else has it, and only a person
+        // gets it back", which is exactly this.
+        //
+        // Only for an open that ASKED to be polite: the daemon answers the same
+        // code to an ordinary open that lost a race, and that one keeps the
+        // retry it has always had, below.
+        if (errorCode == 'CONTROL_LEASE_HELD' && !_openAskedTakeover) {
+          _cancelTimers();
+          streamId = null;
+          watching = false;
+          status = TerminalSessionStatus.takenOver;
+          this.errorCode = 'TERMINAL_TAKEN_OVER';
+          errorMessage = 'Another client is using this terminal.';
+          notifyListeners();
+          // Somebody landed on this pane while the polite open was still out:
+          // ask again, the way a pane a person is looking at always has.
+          if (takeover) unawaited(reopen(force: true));
+          return true;
+        }
         // A genuine mid-transfer failure (the daemon couldn't write the clipboard/disk, or the
         // pty write itself failed) IS treated like a real transport/protocol failure — same as
         // TERMINAL_PASTE_FAILED already is, since it may mean the pty is in an unknown state.
@@ -693,6 +783,7 @@ class TerminalSession extends ChangeNotifier {
             _resyncTimer?.cancel();
             _resyncTimer = null;
             status = TerminalSessionStatus.controlling;
+            _lastStreamActivityAt = _now();
             _markForAck(bytes.length);
             notifyListeners();
             final measured = _measuredViewport;
@@ -713,6 +804,7 @@ class TerminalSession extends ChangeNotifier {
             }
             _expectedSeq = frame.seq + 1;
             _lastRenderedSeq = frame.seq;
+            _lastStreamActivityAt = _now();
             _markForAck(0);
             return;
           }
@@ -730,6 +822,7 @@ class TerminalSession extends ChangeNotifier {
           }
           _expectedSeq = frame.seq + 1;
           _lastRenderedSeq = frame.seq;
+          _lastStreamActivityAt = _now();
           _markForAck(bytes.length);
         })
         .catchError((Object error, StackTrace stackTrace) async {
@@ -766,7 +859,7 @@ class TerminalSession extends ChangeNotifier {
   Uint8List? _decodeBinaryBytes(TerminalBinaryFrame frame) {
     try {
       return frame.compressed
-          ? Uint8List.fromList(ZLibDecoder().convert(frame.bytes))
+          ? const ZLibDecoder().decodeBytes(frame.bytes, verify: true)
           : frame.bytes;
     } catch (_) {
       return null;
@@ -911,12 +1004,13 @@ class TerminalSession extends ChangeNotifier {
   /// the injection from there: it adapts slash commands to the pane's engine and retries the
   /// submit Enter. A client typing bytes can do neither — which is exactly how Codex ended up
   /// holding a composed line unsent, its Enter arriving in the same read as the text.
-  Future<bool> sendComposerText(String text) async {
+  Future<bool> sendComposerText(String text, {String? tabId}) async {
     if (!acceptsInput) return false;
     final content = text.trimRight();
     if (content.trim().isEmpty) return false;
     return send('message', {
       'content': content,
+      'tabId': ?(tabId ?? inputTabId),
       'agentId': agentId,
       'mode': 'auto',
     });
@@ -939,7 +1033,7 @@ class TerminalSession extends ChangeNotifier {
   ///
   /// The caller must check [MachineState.terminalPasteRawAvailable] first: an older CLI does not know
   /// this binary kind at all, so sending it there would silently go nowhere.
-  Future<bool> pasteText(String text) async {
+  Future<bool> pasteText(String text, {String? tabId}) async {
     if (!acceptsInput) return false;
     // Forwarded verbatim, including a stray 0x03 — same as _onTerminalOutput/sendComposerText.
     if (text.isEmpty) return false;
@@ -948,6 +1042,7 @@ class TerminalSession extends ChangeNotifier {
     final generation = _generation;
     final frame = TerminalBinaryFrame(
       kind: TerminalBinaryKind.paste,
+      tabId: _swarmInput ? (tabId ?? inputTabId) : null,
       streamId: currentStreamId,
       // Unused server-side (a paste is one self-contained unit, not part of the ordered keystroke
       // stream `input`'s seq guards) — kept at 0 rather than threading a second counter for a field
@@ -1113,6 +1208,11 @@ class TerminalSession extends ChangeNotifier {
 
   void _onTerminalOutput(String data) {
     if (!acceptsInput || data.isEmpty) return;
+    final origin = _swarmInput ? inputTabId : null;
+    if (_inputBytes.isNotEmpty && _bufferedInputTabId != origin) {
+      unawaited(_flushInput());
+    }
+    _bufferedInputTabId = origin;
     final bytes = utf8.encode(data);
     final isBoundary =
         data.contains('\r') ||
@@ -1157,6 +1257,7 @@ class TerminalSession extends ChangeNotifier {
       return;
     }
     final bytes = List<int>.from(_inputBytes);
+    final origin = _bufferedInputTabId;
     _inputBytes.clear();
     _lastInputFlushAt = inputClockForTest();
     final currentStreamId = streamId;
@@ -1191,6 +1292,7 @@ class TerminalSession extends ChangeNotifier {
         final end = min(offset + kInputFrameMaxBytes, bytes.length);
         final frame = TerminalBinaryFrame(
           kind: TerminalBinaryKind.input,
+          tabId: origin,
           streamId: currentStreamId,
           seq: _inputSeq++,
           bytes: Uint8List.fromList(bytes.sublist(offset, end)),
@@ -1221,7 +1323,36 @@ class TerminalSession extends ChangeNotifier {
 
   void find(TerminalFindAction action) => _viewport?.find(action);
 
+  Map<String, dynamic> selectPassage(Map<String, dynamic> command) {
+    final viewport = _viewport;
+    return viewport is TerminalPassageViewport
+        ? (viewport as TerminalPassageViewport).selectPassage(command)
+        : {'ok': false, 'error': 'Open the terminal pane first.'};
+  }
+
+  Future<Map<String, dynamic>> searchPassage(
+    Map<String, dynamic> command,
+  ) async {
+    final viewport = _viewport;
+    return viewport is TerminalPassageSearchViewport
+        ? (viewport as TerminalPassageSearchViewport).searchPassage(command)
+        : {'ok': false, 'error': 'Open the terminal pane first.'};
+  }
+
   bool focusInput() => _viewport?.focusInput() ?? false;
+
+  TerminalReadingBookmark? bookmarkReading() {
+    final viewport = _viewport;
+    return viewport is TerminalReadingViewport
+        ? (viewport as TerminalReadingViewport).bookmarkReading()
+        : null;
+  }
+
+  bool showLatestReading() {
+    final viewport = _viewport;
+    return viewport is TerminalLatestViewport &&
+        (viewport as TerminalLatestViewport).showLatestReading();
+  }
 
   /// Coalescing windows for the two things the user drives directly.
   ///
@@ -1355,6 +1486,16 @@ class TerminalSession extends ChangeNotifier {
     final sent = await send('terminal_alive', {'streamId': streamId});
     if (!sent && _isCurrent(generation)) {
       transportLost('Terminal heartbeat was not sent');
+      return;
+    }
+    // The daemon sends sync frames every five seconds even when the terminal is idle. Sending
+    // successfully only proves the shared socket is open, not that THIS stream still exists.
+    final lastActivity = _lastStreamActivityAt;
+    if (_isCurrent(generation) &&
+        status == TerminalSessionStatus.controlling &&
+        lastActivity != null &&
+        _now().difference(lastActivity) >= const Duration(seconds: 15)) {
+      await _requestResync('TERMINAL_STREAM_TIMEOUT');
     }
   }
 
@@ -1468,7 +1609,7 @@ class TerminalSession extends ChangeNotifier {
   }
 
   void transportLost([
-    String message = 'Connection lost. Select the agent to reconnect.',
+    String message = 'Connection lost. Select the harness to reconnect.',
   ]) {
     // `takenOver` is a deliberate dead end (see `_paneNeedsAttach`): only the user's own retry
     // may reopen a stream someone else claimed. A WS hiccup must not quietly overwrite that into
@@ -1485,7 +1626,7 @@ class TerminalSession extends ChangeNotifier {
     streamId = null;
     linkMode = null;
     status = TerminalSessionStatus.error;
-    errorCode = 'TERMINAL_DISCONNECTED';
+    errorCode = disconnectedCode;
     errorMessage = message;
     _abortActiveUpload();
     notifyListeners();

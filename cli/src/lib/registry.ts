@@ -15,6 +15,7 @@
 
 import { DSH_ID_RE } from '../dsh/manifest.js'
 import { AGENT_NAME_RE } from './engineLaunch.js'
+import { resumesConversation } from './resumeCapability.js'
 import { namingTitle } from './sessionTitle.js'
 import { claudeProjectMatches, claudeTranscriptCwd, isClaudeProjectTranscript } from './claudeProject.js'
 import { automaticAgentName, engineLabel, isAutomaticName } from './agentNames.js'
@@ -37,6 +38,7 @@ import {
 import { randomUUID } from 'crypto'
 import { join, basename, dirname, relative } from 'path'
 import { hostname, uptime } from 'os'
+import { cursorDataDir } from '../engines/cursor/home.js'
 import { env } from '../config/env.js'
 import { readCodexRolloutMeta, resolveCodexRollout } from '../engines/codex/rollout.js'
 import { ENGINES, isTerminalEngine, type AgentEngine } from '../engines/types.js'
@@ -45,7 +47,7 @@ import { parseGridLaunchOverride, type GridLaunchOverride, type GridLaunchRecord
 import { commandcodeTranscriptPath } from '../engines/commandcode/transcript.js'
 import { agyTranscriptPath } from '../engines/agy/session.js'
 import { copilotTranscriptPath } from '../engines/copilot/session.js'
-import { lockOwnerAlive, processStartMarker } from './processLiveness.js'
+import { lockOwnerAlive, lockStartMarker, processLockIdentity } from './processLiveness.js'
 import { hardenPrivateStateFileIfPresent, readPrivateStateFile, secureStateDirectory } from './secureState.js'
 import { mergeTerminalRuntimes, processIdentityKey, terminalPlacementKey, terminalRouteKey } from './terminalRuntime.js'
 import type { HookTerminalHint, ProcessIdentity, TerminalRuntimeRef } from './terminalTypes.js'
@@ -165,6 +167,8 @@ export interface RegisteredSession {
    * again after a restart) is still labelled. Fill-only, like `codexHome`. See `src/dsh/`.
    */
   dsh?: string | null
+  /** Stable key of the session-scoped harness runtime; preserved by bind, restore and fork. */
+  dshRuntime?: string | null
   /**
    * The engine's own named agent this pane was opened as (`agent_create`'s `agent`; opencode
    * `--agent <name>`), or null for a general session. Chosen at creation and carried into every
@@ -213,7 +217,7 @@ export interface RegisteredSession {
   /** Authoritative backend-neutral terminal placements for this one process-owned agent. */
   runtimes: TerminalRuntimeRef[]
   primaryRuntimeKey: string
-  /** Additive rollback/wire projection. Empty in memory and omitted on disk for Herdr-only agents. */
+  /** Additive rollback/wire projection of the tmux runtime. */
   tmuxPane: string
   source: string | null
   title: string | null
@@ -221,9 +225,28 @@ export interface RegisteredSession {
   cliVersion: string | null
   processIdentity: ProcessIdentity | null
   registeredAt: number
-  updatedAt: number
+  /**
+   * When the daemon last changed this row: housekeeping (a reconcile pass, an attach, a rename),
+   * never when the conversation moved. That is `lastActivityAt` (agentFrame.ts), which is what
+   * clients get as `updatedAt`. Rows saved before 2026-09-27 call this `updatedAt` ([savedTouchedAt]).
+   */
+  touchedAt: number
   lastHookAt: number
   lastTranscriptAt: number
+  /**
+   * When an app last OPENED this agent (ms epoch) — a desktop window focusing its tab, the phone
+   * landing on it — on any computer. Stamped by `markOpened` with THIS daemon's clock, never a
+   * client's: the agent's owner is the one place every app reads from, so it is the one clock they
+   * can all agree on, and "last used" comes out in the same order on every screen. Absent until the
+   * first open; persisted, carried through a hook bind, a stop and a resume like any other fact
+   * about the agent. A client sorts by the later of this and the frame's `updatedAt`.
+   */
+  lastOpenedAt?: number
+}
+
+/** A saved row's `touchedAt`, which rows saved before 2026-09-27 call `updatedAt`. */
+function savedTouchedAt(row: { touchedAt?: unknown; updatedAt?: unknown }): number | null {
+  return typeof row.touchedAt === 'number' ? row.touchedAt : typeof row.updatedAt === 'number' ? row.updatedAt : null
 }
 
 export interface RegisterInput {
@@ -313,6 +336,12 @@ function permissionModeName(value: unknown): value is string {
   return typeof value === 'string' && /^[A-Za-z]{1,24}$/.test(value)
 }
 
+/** A persisted `lastOpenedAt`, or undefined for anything that is not a real moment (a row from before
+ *  the field, or a hand-edited one) — undefined rather than 0, so "never opened" stays absent. */
+function normalizedOpenedAt(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value > 0 ? value : undefined
+}
+
 function normalizedAgentEngine(value: unknown): AgentEngine {
   return typeof value === 'string' && AGENT_ENGINES.has(value)
     ? value as AgentEngine
@@ -336,7 +365,7 @@ function removeRegistryLockOwnedBy(token: string): void {
 function withRegistryFileLock<T>(apply: () => T): T {
   secureStateDirectory(env.ADAPTER_DATA_DIR)
   const uid = typeof process.getuid === 'function' ? process.getuid() : null
-  const processMarker = processStartMarker(process.pid) ?? ''
+  const processIdentity = processLockIdentity(process.pid)
   for (let attempt = 0; attempt < LOCK_ATTEMPTS; attempt++) {
     const token = randomUUID()
     let created = false
@@ -346,7 +375,7 @@ function withRegistryFileLock<T>(apply: () => T): T {
       const owner = join(LOCK_DIR, 'owner.json')
       const fd = openSync(owner, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600)
       try {
-        writeFileSync(fd, JSON.stringify({ pid: process.pid, startMarker: processMarker, token }))
+        writeFileSync(fd, JSON.stringify({ pid: process.pid, ...processIdentity, token }))
         fsyncSync(fd)
       } finally { closeSync(fd) }
       try {
@@ -368,10 +397,10 @@ function withRegistryFileLock<T>(apply: () => T): T {
         if (!ownerStat.isFile() || ownerStat.isSymbolicLink() || (uid !== null && ownerStat.uid !== uid)
           || (ownerStat.mode & 0o777) !== 0o600) throw new Error('registry lock owner has unsafe owner, mode, or type')
         const owner = JSON.parse(readFileSync(join(LOCK_DIR, 'owner.json'), 'utf8')) as {
-          pid?: unknown; startMarker?: unknown; token?: unknown
+          pid?: unknown; startMarker?: unknown; generationMarker?: unknown; token?: unknown
         }
         ownerPid = Number(owner.pid)
-        ownerStartMarker = typeof owner.startMarker === 'string' ? owner.startMarker : ''
+        ownerStartMarker = lockStartMarker(owner)
         ownerToken = typeof owner.token === 'string' ? owner.token : ''
       } catch (inspectionError) {
         if (inspectionError instanceof Error && inspectionError.message.startsWith('registry lock')) throw inspectionError
@@ -379,10 +408,10 @@ function withRegistryFileLock<T>(apply: () => T): T {
       if (ownerPid > 0 && ownerToken && !lockOwnerAlive(ownerPid, ownerStartMarker)) {
         try {
           const current = JSON.parse(readFileSync(join(LOCK_DIR, 'owner.json'), 'utf8')) as {
-            pid?: unknown; startMarker?: unknown; token?: unknown
+            pid?: unknown; startMarker?: unknown; generationMarker?: unknown; token?: unknown
           }
           if (Number(current.pid) === ownerPid
-            && current.startMarker === ownerStartMarker
+            && lockStartMarker(current) === ownerStartMarker
             && current.token === ownerToken
             && !lockOwnerAlive(ownerPid, ownerStartMarker)) {
             rmSync(LOCK_DIR, { recursive: true, force: true })
@@ -436,12 +465,46 @@ function boundedIdentityPart(value: unknown, max = 200): value is string {
 export function validTerminalRuntime(value: unknown): value is TerminalRuntimeRef {
   if (!value || typeof value !== 'object') return false
   const runtime = value as Partial<TerminalRuntimeRef>
-  if (runtime.backend === 'tmux') return typeof runtime.paneId === 'string' && PANE_RE.test(runtime.paneId)
-  return runtime.backend === 'herdr'
-    && boundedIdentityPart(runtime.endpointId)
-    && boundedIdentityPart(runtime.sessionName, 100)
-    && boundedIdentityPart(runtime.terminalId)
-    && boundedIdentityPart(runtime.paneId)
+  return runtime.backend === 'tmux' && typeof runtime.paneId === 'string' && PANE_RE.test(runtime.paneId)
+}
+
+function retiredRuntime(value: unknown): boolean {
+  return !!value && typeof value === 'object' && (value as { backend?: unknown }).backend === 'herdr'
+}
+
+/**
+ * Earlier builds could also place an agent in a Herdr pane. That backend is gone, so its runtimes are
+ * dropped on read — the rest of the row is untouched, and a primary that named one falls to the first
+ * remaining tmux route. Returns `null` for a row left with no terminal at all: nothing can reach it.
+ * A row without a retired runtime is returned as is.
+ */
+function withoutRetiredRuntimes(value: unknown): unknown {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return value
+  const row = value as Record<string, unknown>
+  if (!Array.isArray(row.runtimes) || !row.runtimes.some(retiredRuntime)) return value
+  const runtimes = row.runtimes.filter((runtime) => !retiredRuntime(runtime))
+  const hasLegacyPane = typeof row.tmuxPane === 'string' && PANE_RE.test(row.tmuxPane)
+  if (!runtimes.length && !hasLegacyPane) return null
+  const { runtimes: _retired, ...rest } = row
+  const cleaned: Record<string, unknown> = runtimes.length ? { ...rest, runtimes } : rest
+  if (typeof row.primaryRuntimeKey === 'string' && row.primaryRuntimeKey.startsWith('herdr\u0000')) {
+    const first = runtimes.find(validTerminalRuntime)
+    cleaned.primaryRuntimeKey = first ? terminalRouteKey(first) : ''
+  }
+  // A v2 row always carries `runtimes`, even when only the legacy pane is left to fill it.
+  if (!runtimes.length && Object.hasOwn(row, 'schemaVersion')) {
+    const pane = { backend: 'tmux' as const, paneId: row.tmuxPane as string }
+    cleaned.runtimes = [pane]
+    cleaned.primaryRuntimeKey = terminalRouteKey(pane)
+  }
+  return cleaned
+}
+
+/** `withoutRetiredRuntimes` over a whole stored file, dropping the rows it empties. */
+function withoutRetiredRows(stored: readonly unknown[]): { rows: unknown[]; dropped: number; changed: boolean } {
+  const cleaned = stored.map(withoutRetiredRuntimes)
+  const rows = cleaned.filter((row, i) => row !== null || stored[i] === null)
+  return { rows, dropped: stored.length - rows.length, changed: cleaned.some((row, i) => row !== stored[i]) }
 }
 
 function normalizedRuntimes(raw: unknown, legacyTmuxPane?: unknown): TerminalRuntimeRef[] {
@@ -462,7 +525,8 @@ function persistedRow(entry: RegisteredSession): RegisteredSession | Omit<Regist
   return { ...row, runtimes: row.runtimes.map((runtime) => ({ ...runtime })) }
 }
 
-export function strictPersistedRow(value: unknown): RegisteredSession | null {
+export function strictPersistedRow(raw: unknown): RegisteredSession | null {
+  const value = withoutRetiredRuntimes(raw)
   if (!value || typeof value !== 'object') return null
   const row = value as Partial<RegisteredSession>
   const runtimes = normalizedRuntimes(row.runtimes, row.tmuxPane)
@@ -487,8 +551,12 @@ export function strictPersistedRow(value: unknown): RegisteredSession | null {
     || (row.processIdentity !== null && !validProcessIdentity(row.processIdentity))) return null
   const placements = runtimes.map(terminalPlacementKey)
   if (new Set(placements).size !== placements.length) return null
+  // Taken out of the spread and put back only when it is a real moment: the spread would otherwise
+  // carry a hand-edited string or a negative number straight into the frame's `toISOString()`.
+  const { lastOpenedAt: rawOpenedAt, ...rest } = row
+  const lastOpenedAt = normalizedOpenedAt(rawOpenedAt)
   return {
-    ...row,
+    ...rest,
     schemaVersion: 2,
     active,
     ...(launch ? { launch } : {}),
@@ -512,9 +580,10 @@ export function strictPersistedRow(value: unknown): RegisteredSession | null {
     processIdentity: row.processIdentity ?? null,
     ...(row.terminalHost === true || row.engine === 'terminal' ? { terminalHost: true } : {}),
     registeredAt: typeof row.registeredAt === 'number' ? row.registeredAt : Date.now(),
-    updatedAt: typeof row.updatedAt === 'number' ? row.updatedAt : Date.now(),
+    touchedAt: savedTouchedAt(row) ?? Date.now(),
     lastHookAt: typeof row.lastHookAt === 'number' ? row.lastHookAt : Date.now(),
     lastTranscriptAt: typeof row.lastTranscriptAt === 'number' ? row.lastTranscriptAt : Date.now(),
+    ...(lastOpenedAt !== undefined ? { lastOpenedAt } : {}),
   }
 }
 
@@ -614,33 +683,49 @@ function isWithin(root: string, file: string): boolean {
   return rel === '' || (!rel.startsWith('..') && !rel.startsWith(`/`) && !rel.startsWith(`\\`))
 }
 
+/**
+ * Where each engine's conversation file lives, or **null for an engine that keeps no file at all**.
+ *
+ * The null entries are not gaps: opencode, kilo, hermes and devin keep their conversations in a
+ * SQLite database (`sessionRepair.ts`'s `dbEngineSession` reads an id out and has no path to
+ * return), and a terminal has no conversation. Written as a table rather than the nested ternary it
+ * replaces so "this engine has no transcript" is a fact a caller can ASK for — Pause and Resume both
+ * need it, and both used to demand a file every engine was assumed to have.
+ */
+const TRANSCRIPT_ROOT: Readonly<Record<AgentEngine, ((codexHome?: string) => string) | null>> = {
+  // Amp's root is OURS, not Amp's: the transcript is written by the adapter's own plugin because Amp
+  // keeps no conversation on disk (see installAmpPlugin).
+  amp: () => env.AMP_SESSIONS_DIR,
+  muse: () => join(env.MUSE_HOME, 'sessions'),
+  // The specific agent's own CODEX_HOME profile, when it has one — see RegisteredSession.codexHome.
+  codex: codexHome => join(codexHome || env.CODEX_HOME, 'sessions'),
+  grok: () => join(env.GROK_HOME, 'sessions'),
+  agy: () => join(env.AGY_HOME, 'brain'),
+  copilot: () => join(env.COPILOT_HOME, 'session-state'),
+  cursor: () => join(cursorDataDir(), 'projects'),
+  pi: () => join(env.PI_HOME, 'agent', 'sessions'),
+  commandcode: () => join(env.COMMANDCODE_HOME, 'projects'),
+  claude: () => env.CLAUDE_PROJECTS_DIR,
+  opencode: null,
+  kilo: null,
+  hermes: null,
+  devin: null,
+  terminal: null,
+}
+
+/** Whether this engine's conversation is a FILE the daemon can point a resume at. False for the
+ *  database-backed engines and the shell — for them a recorded session id is the whole record, and
+ *  demanding a transcript would refuse a resume that works. */
+export function engineKeepsTranscriptFile(engine: AgentEngine): boolean {
+  return TRANSCRIPT_ROOT[engine] !== null
+}
+
 export function validTranscriptPath(engine: AgentEngine, filePath: string, codexHome?: string): boolean {
+  const rootFor = TRANSCRIPT_ROOT[engine]
+  if (!rootFor) return false
   try {
     const actual = realpathSync(filePath)
-    const root = realpathSync(
-      // Amp's root is OURS, not Amp's: the transcript is written by the adapter's own plugin because Amp
-      // keeps no conversation on disk (see installAmpPlugin).
-      engine === 'amp'
-        ? env.AMP_SESSIONS_DIR
-        : engine === 'muse'
-        ? join(env.MUSE_HOME, 'sessions')
-        : engine === 'codex'
-        // The specific agent's own CODEX_HOME profile, when it has one — see RegisteredSession.codexHome.
-        ? join(codexHome || env.CODEX_HOME, 'sessions')
-        : engine === 'grok'
-        ? join(env.GROK_HOME, 'sessions')
-        : engine === 'agy'
-        ? join(env.AGY_HOME, 'brain')
-        : engine === 'copilot'
-        ? join(env.COPILOT_HOME, 'session-state')
-        : engine === 'cursor'
-          ? join(env.CURSOR_HOME, 'projects')
-          : engine === 'pi'
-            ? join(env.PI_HOME, 'agent', 'sessions')
-            : engine === 'commandcode'
-              ? join(env.COMMANDCODE_HOME, 'projects')
-              : env.CLAUDE_PROJECTS_DIR,
-    )
+    const root = realpathSync(rootFor(codexHome))
     const st = statSync(actual)
     if (!st.isFile() || !isWithin(root, actual)) return false
     if (engine === 'cursor') {
@@ -697,7 +782,7 @@ class Registry {
    *  `sessionId` (`cancel`, `question_response`, `compact`, `session_get`) while everything else
    *  addresses the agent. `resolve()` is the one lookup that accepts either. */
   private sessionIndex = new Map<string, string>()
-  /** backend-scoped route → agentId. Public Herdr pane ids are never indexed without endpointId. */
+  /** backend-scoped route → agentId. */
   private runtimeIndex = new Map<string, string>()
   /** engine + PID start marker → agentId. This is authoritative across nested multiplexers. */
   private processIndex = new Map<string, string>()
@@ -780,12 +865,14 @@ class Registry {
     const rebooted = bootChanged(savedBoot, bootId)
     writeBoot(bootId) // refresh the reference so a reboot is detected exactly once, even across same-boot restarts
     try {
-      const parsed = JSON.parse(readPrivateStateFile(FILE)) as unknown
-      if (!Array.isArray(parsed)) {
+      const stored = JSON.parse(readPrivateStateFile(FILE)) as unknown
+      if (!Array.isArray(stored)) {
         this.writeBlocked = true
         console.error('[registry] registry root is not an array; refusing to overwrite it')
         return
       }
+      const { rows: parsed, dropped, changed: strippedRetired } = withoutRetiredRows(stored)
+      if (dropped) console.log(`[registry] dropped ${dropped} agent(s) that lived only in a retired Herdr terminal`)
       if (parsed.some(hasUnknownRowSchema)) {
         this.writeBlocked = true
         console.error('[registry] registry contains an unknown row schema; refusing to overwrite it')
@@ -809,10 +896,11 @@ class Registry {
         const id = rowId(row)
         if (id) this.persistedBaseline.set(id, rowFingerprint(row))
       }
+      // The rollback copy is the file as found, retired runtimes and all — not the cleaned rows.
       if (arr.some((row) => row.schemaVersion !== 2)) {
-        atomicWriteJson(PRE_V2_BACKUP_FILE, arr, true)
+        atomicWriteJson(PRE_V2_BACKUP_FILE, stored, true)
       }
-      let changed = false
+      let changed = strippedRetired
       if (rebooted) {
         this.rebooted = true
         console.log(`[registry] machine rebooted since last run — ${arr.length} agent(s) kept with their process identity cleared (stale panes, restored on start)`)
@@ -890,6 +978,7 @@ class Registry {
           codexHome: typeof rawCodexHome === 'string' && rawCodexHome ? rawCodexHome : null,
           hermesHome: typeof raw?.hermesHome === 'string' && raw.hermesHome ? raw.hermesHome : null,
           dsh: normalizedDshId((raw as { dsh?: unknown }).dsh),
+          dshRuntime: typeof raw.dshRuntime === 'string' && raw.dshRuntime ? raw.dshRuntime : null,
           agent: normalizedAgentName((raw as { agent?: unknown }).agent),
           ...(rawGridLaunch !== undefined ? { gridLaunch: rawGridLaunch } : {}),
           ...(rawGridLaunch ? { gridWebSearch: normalizedGridWebSearch(raw?.gridWebSearch) } : {}),
@@ -921,9 +1010,12 @@ class Registry {
           model: modelString(raw.model),
           processIdentity: !rebooted && validProcessIdentity(raw.processIdentity) ? raw.processIdentity : null,
           registeredAt: typeof raw.registeredAt === 'number' ? raw.registeredAt : now,
-          updatedAt: typeof raw.updatedAt === 'number' ? raw.updatedAt : now,
-          lastHookAt: typeof raw.lastHookAt === 'number' ? raw.lastHookAt : (raw.updatedAt ?? now),
-          lastTranscriptAt: typeof raw.lastTranscriptAt === 'number' ? raw.lastTranscriptAt : (raw.updatedAt ?? now),
+          touchedAt: savedTouchedAt(raw) ?? now,
+          lastHookAt: typeof raw.lastHookAt === 'number' ? raw.lastHookAt : (savedTouchedAt(raw) ?? now),
+          lastTranscriptAt: typeof raw.lastTranscriptAt === 'number' ? raw.lastTranscriptAt : (savedTouchedAt(raw) ?? now),
+          // Rehydrated explicitly for the reason the ⚠️ above gives. A reboot keeps it: it is when a
+          // person last looked, which no reboot changes.
+          ...(normalizedOpenedAt(raw.lastOpenedAt) !== undefined ? { lastOpenedAt: normalizedOpenedAt(raw.lastOpenedAt) } : {}),
         }
         if (
           raw.engine !== engine
@@ -1046,7 +1138,16 @@ class Registry {
       if (!existing.sessionId || !existing.cwd) existing.cwd = input.cwd ?? existing.cwd
       existing.processIdentity = processIdentity
       existing.active = true
-      if (existing.launch && !existing.resumeOnly) existing.launch = { state: 'ready' }
+      // The same rule the discovery callback applies on its own door (`cli.ts`): a verified engine
+      // process in this row's pane is what "started" means. Resume-only rows used to be excluded
+      // here, waiting for a startup hook that a resume does not reliably send — which left one
+      // reading "Starting" for 19 hours over a pane its owner could type in. The wrong-conversation
+      // guard in `register` keys on `lastHookAt`, untouched by this method, so it stays armed.
+      if (existing.launch) {
+        const before = existing.launch
+        existing.launch = { state: 'ready' }
+        this.traceLaunch(existing.agentId, before, existing.launch, 'openProcessAgent re-observed')
+      }
       // Only a successful read speaks: an undefined probe (ps failed, /proc unreadable) keeps whatever
       // the last good one said rather than silently downgrading a gateway agent to a vendor one.
       if (input.gateway !== undefined) existing.gateway = input.gateway
@@ -1054,7 +1155,7 @@ class Registry {
       if (input.codexHome && !existing.codexHome) existing.codexHome = input.codexHome
       if (input.hermesHome && !existing.hermesHome) existing.hermesHome = input.hermesHome
       if (input.dsh && !existing.dsh) existing.dsh = input.dsh
-      existing.updatedAt = Date.now()
+      existing.touchedAt = Date.now()
       this.index(existing)
       this.terminalAvailableAgents.add(existing.agentId)
       this.save()
@@ -1113,7 +1214,7 @@ class Registry {
       cliVersion: null,
       processIdentity,
       registeredAt: now,
-      updatedAt: now,
+      touchedAt: now,
       lastHookAt: now,
       lastTranscriptAt: now,
     }
@@ -1134,6 +1235,7 @@ class Registry {
     gridLaunchRecord?: GridLaunchRecord | null
     codexHome?: string | null
     dsh?: string | null
+    dshRuntime?: string | null
     /** The engine's named agent the pane was opened as (`agent_create`'s `agent`), validated upstream. */
     agent?: string | null
     bypassPermission?: boolean
@@ -1169,6 +1271,7 @@ class Registry {
       // the row learns it from the session that lands in it. See RegisteredSession.hermesHome.
       hermesHome: null,
       dsh: input.dsh ?? null,
+      dshRuntime: input.dshRuntime ?? null,
       agent: normalizedAgentName(input.agent),
       ...(input.bypassPermission ? { bypassPermission: true } : {}),
       ...(permissionModeName(input.permissionMode) ? { permissionMode: input.permissionMode } : {}),
@@ -1186,7 +1289,7 @@ class Registry {
       cliVersion: null,
       processIdentity: null,
       registeredAt: now,
-      updatedAt: now,
+      touchedAt: now,
       lastHookAt: now,
       lastTranscriptAt: now,
     }
@@ -1214,7 +1317,7 @@ class Registry {
       runtimes: routes,
       primaryRuntimeKey: selectedRuntimeKey(routes, ''),
       tmuxPane: tmuxProjection(routes),
-      updatedAt: Date.now(),
+      touchedAt: Date.now(),
     }
     this.index(entry)
     this.terminalAvailableAgents.add(entry.agentId)
@@ -1246,7 +1349,7 @@ class Registry {
 
   /**
    * Upsert a session. Idempotent — a re-register (e.g. from the UserPromptSubmit catch hook) just
-   * refreshes `updatedAt`. Deduped by tmux pane: one session per pane, so a `/clear` rotation
+   * refreshes `touchedAt`. Deduped by tmux pane: one session per pane, so a `/clear` rotation
    * (SessionEnd of the old id → SessionStart of a new id, same pane) evicts the old one instead of
    * showing two tiles. Returns { entry, isNew, evicted } — isNew=false on a re-register (so callers
    * can skip re-announcing), evicted = the sessionId displaced from this pane (caller removes it).
@@ -1310,9 +1413,20 @@ class Registry {
 
     const now = Date.now()
     const existing = this.agents.get(agentId)
-    if (existing?.resumeOnly && existing.launch && existing.launch.state !== 'ready') {
-      // A native startup hook, carrying the verified process, must confirm this exact history.
-      if (sessionId !== existing.sessionId) {
+    // A resumed row that has not yet been told, by a hook, which conversation it actually reopened.
+    // Two ways to be in that state, and both have to count:
+    //  - `lastHookAt === 0` — a resume allocated by `resumePendingAgent` and not yet hooked. Its
+    //    `launch` may ALREADY read `ready`, because a resume is confirmed by its own live engine
+    //    process now (`resumeStoppedAgent.ts`) and that is usually earlier than the hook. Reading
+    //    only `launch` here disarmed this guard for exactly the resumes it exists to protect.
+    //  - a launch that is not `ready` — a row put back by the post-reboot restore, which relaunches
+    //    `--resume` against a row that kept `lastHookAt` from its previous life.
+    if (existing?.resumeOnly && (existing.lastHookAt === 0 || (existing.launch && existing.launch.state !== 'ready'))) {
+      // A native startup hook, carrying the verified process, must confirm this exact history —
+      // but only where an exact history was asked for. A resume that opened a NEW conversation (an
+      // engine with no resume argv, or a row with no id to reopen) reports a different id BECAUSE
+      // it did what it was told; failing it there would refuse the resume the caller requested.
+      if (sessionId !== existing.sessionId && resumesConversation(engine, existing.sessionId)) {
         this.setLaunch(agentId, { state: 'failed', error: 'RESUME_SESSION_MISMATCH', detail: 'The agent reported a different conversation. The requested conversation is still saved.' })
         return null
       }
@@ -1426,6 +1540,7 @@ class Registry {
       // would send the mirror back to the default store (openharness#191).
       hermesHome: input.hermesHome ?? existing?.hermesHome ?? null,
       dsh: existing?.dsh ?? null,
+      dshRuntime: existing?.dshRuntime ?? null,
       agent: existing?.agent ?? null,
       ...(existing?.bypassPermission ? { bypassPermission: true } : {}),
       ...(existing?.permissionMode ? { permissionMode: existing.permissionMode } : {}),
@@ -1433,12 +1548,20 @@ class Registry {
       ...(existing?.terminalHost ? { terminalHost: true } : {}),
       processIdentity: validProcessIdentity(input.processIdentity) ? input.processIdentity : existing?.processIdentity ?? null,
       registeredAt: existing?.registeredAt ?? now,
-      updatedAt: now,
+      touchedAt: now,
       lastHookAt: now,
       lastTranscriptAt: existing?.lastTranscriptAt ?? now,
+      // ⚠️ Carried forward, for the reason the ⚠️ on `subscriptionModel` gives: without this line
+      // the first hook after an open — the next prompt, a `/clear` — erases it from memory, the next
+      // save writes that to disk, and every app's "last used" order forgets the open ever happened.
+      ...(existing?.lastOpenedAt ? { lastOpenedAt: existing.lastOpenedAt } : {}),
     }
     entry.tmuxPane = tmuxProjection(entry.runtimes)
     entry.primaryRuntimeKey = selectedRuntimeKey(entry.runtimes, input.primaryRuntimeKey || existing?.primaryRuntimeKey)
+    // A bind REBUILDS the row, and the rebuild carries no `launch` unless the row is resume-only:
+    // an engine reporting for duty is the end of any launch. Traced like the setters, because this
+    // is the one that changes the state without naming it.
+    this.traceLaunch(agentId, existing?.launch, entry.launch, `register ${engine} (${isNew ? 'new session' : 're-register'})`)
     if (rebound) this.sessionIndex.delete(rebound)
     this.index(entry)
     this.save()
@@ -1459,7 +1582,7 @@ class Registry {
     const entry = this.bySession(sessionId)
     if (!entry) return false
     this.releaseBinding(entry)
-    entry.updatedAt = Date.now()
+    entry.touchedAt = Date.now()
     this.save()
     return true
   }
@@ -1522,10 +1645,11 @@ class Registry {
     this.drop(entry)
     entry.engine = engine
     entry.terminalHost = true
+    this.traceLaunch(entry.agentId, entry.launch, { state: 'ready' }, `adoptEngine ${engine}`)
     entry.launch = { state: 'ready' }
     entry.active = true
     if (validProcessIdentity(processIdentity)) entry.processIdentity = processIdentity
-    entry.updatedAt = Date.now()
+    entry.touchedAt = Date.now()
     this.index(entry)
     this.terminalAvailableAgents.add(entry.agentId)
     this.save()
@@ -1557,12 +1681,13 @@ class Registry {
     this.terminalAvailableAgents.delete(agentId)
     // The archived conversation owns the original Harness ID. Preserve the physical shell under
     // a new identity, without sending input, stopping processes or claiming its route twice.
-    const entry = separateShell ? { ...original, agentId: randomUUID(), dsh: null, agent: null, defaultName: this.automaticName('Terminal', new Date()) } : original
+    const entry = separateShell ? { ...original, agentId: randomUUID(), dsh: null, dshRuntime: null, agent: null, defaultName: this.automaticName('Terminal', new Date()) } : original
     this.releaseBinding(entry)
     delete entry.resumeOnly
     entry.engine = 'terminal'
     entry.terminalHost = true
     entry.processIdentity = null
+    this.traceLaunch(entry.agentId, entry.launch, { state: 'ready' }, 'releaseEngine')
     entry.launch = { state: 'ready' }
     entry.active = true
     entry.gateway = null
@@ -1570,7 +1695,7 @@ class Registry {
     entry.subscriptionModel = null
     entry.model = null
     entry.title = null
-    entry.updatedAt = Date.now()
+    entry.touchedAt = Date.now()
     this.index(entry)
     this.terminalAvailableAgents.add(entry.agentId)
     this.save()
@@ -1586,7 +1711,7 @@ class Registry {
     entry.tmuxPane = tmuxProjection(normalized)
     entry.primaryRuntimeKey = selectedRuntimeKey(normalized, primaryRuntimeKey)
     entry.active = true
-    entry.updatedAt = Date.now()
+    entry.touchedAt = Date.now()
     this.index(entry)
     this.terminalAvailableAgents.add(entry.agentId)
     this.save()
@@ -1597,17 +1722,35 @@ class Registry {
     const entry = this.agents.get(agentId)
     if (!entry || entry.active === active) return !!entry
     entry.active = active
-    entry.updatedAt = Date.now()
+    entry.touchedAt = Date.now()
     this.save()
     return true
+  }
+
+  /**
+   * Every change of a row's launch state, named by the door it came through.
+   *
+   * `launch` is what a desk reads as "Starting", and a row that does not leave that state looks stuck
+   * on a harness that is working — measured once at 9 minutes on a restored opencode agent whose
+   * engine the log had already confirmed up. The state is written from six places and no two of them
+   * see each other, so the only way to say which one is fighting which is to have each say so. Rare
+   * in a settled daemon (create, restore, an engine exiting); a row that oscillates prints the pair
+   * that is doing it, once per pass.
+   */
+  private traceLaunch(agentId: string, before: AgentLaunch | undefined, after: AgentLaunch | undefined, where: string): void {
+    const name = (launch: AgentLaunch | undefined): string => launch ? launch.state : 'none'
+    if (name(before) === name(after)) return
+    console.log(`[launch] ${agentId.slice(0, 8)} ${name(before)} → ${name(after)} · ${where}`)
   }
 
   setLaunch(agentId: string, launch: AgentLaunch): RegisteredSession | null {
     const entry = this.agents.get(agentId)
     if (!entry) return null
+    const before = entry.launch
     entry.launch = normalizedLaunch(launch)
     entry.active = launch.state !== 'failed'
-    entry.updatedAt = Date.now()
+    entry.touchedAt = Date.now()
+    this.traceLaunch(agentId, before, entry.launch, `setLaunch${launch.state === 'failed' ? ` (${launch.error})` : ''}`)
     this.save()
     return entry
   }
@@ -1650,7 +1793,7 @@ class Registry {
     // The grid is read from the same environment and follows the same rule. It matters most right
     // after a retarget: the respawned pane is a new pid, and this is where its new grid lands.
     if (grid !== undefined) session.grid = grid
-    session.updatedAt = Date.now()
+    session.touchedAt = Date.now()
     this.index(session)
     this.save()
     return true
@@ -1663,7 +1806,7 @@ class Registry {
     if (!session.processIdentity) return true
     this.drop(session)
     session.processIdentity = null
-    session.updatedAt = Date.now()
+    session.touchedAt = Date.now()
     this.index(session)
     this.save()
     return true
@@ -1675,7 +1818,7 @@ class Registry {
     if ((session.bypassPermission === true) === bypassPermission) return true
     if (bypassPermission) session.bypassPermission = true
     else delete session.bypassPermission
-    session.updatedAt = Date.now()
+    session.touchedAt = Date.now()
     this.save()
     return true
   }
@@ -1689,7 +1832,7 @@ class Registry {
     if (!session || !permissionModeName(permissionMode)) return false
     if (session.permissionMode) return session.permissionMode === permissionMode
     session.permissionMode = permissionMode
-    session.updatedAt = Date.now()
+    session.touchedAt = Date.now()
     this.save()
     return true
   }
@@ -1702,7 +1845,7 @@ class Registry {
     const session = this.agents.get(agentId)
     if (!session || session.cwd === cwd) return false
     session.cwd = cwd
-    session.updatedAt = Date.now()
+    session.touchedAt = Date.now()
     this.save()
     return true
   }
@@ -1711,7 +1854,7 @@ class Registry {
     const session = this.agents.get(agentId)
     if (!session || session.engine !== 'codex' || session.codexHome) return false
     session.codexHome = codexHome
-    session.updatedAt = Date.now()
+    session.touchedAt = Date.now()
     this.save()
     return true
   }
@@ -1723,7 +1866,7 @@ class Registry {
     const session = this.agents.get(agentId)
     if (!session || session.engine !== 'hermes' || session.hermesHome) return false
     session.hermesHome = hermesHome
-    session.updatedAt = Date.now()
+    session.touchedAt = Date.now()
     this.save()
     return true
   }
@@ -1734,7 +1877,7 @@ class Registry {
     const session = this.agents.get(agentId)
     if (!session || session.dsh || !DSH_ID_RE.test(dsh)) return false
     session.dsh = dsh
-    session.updatedAt = Date.now()
+    session.touchedAt = Date.now()
     this.save()
     return true
   }
@@ -1750,7 +1893,7 @@ class Registry {
     if (!session) return false
     session.gridLaunch = launch?.override ?? null
     session.gridWebSearch = launch?.webSearch ?? null
-    session.updatedAt = Date.now()
+    session.touchedAt = Date.now()
     this.save()
     return true
   }
@@ -1761,16 +1904,34 @@ class Registry {
     const session = this.agents.get(agentId)
     if (!session) return false
     session.subscriptionModel = model
-    session.updatedAt = Date.now()
+    session.touchedAt = Date.now()
     this.save()
     return true
+  }
+
+  /**
+   * An app opened this agent: stamp `lastOpenedAt` with THIS daemon's clock. Never takes a time from
+   * the caller — a phone and a laptop whose clocks disagree would otherwise order the same agents
+   * differently, which is the one thing this field exists to prevent.
+   *
+   * `updatedAt` is left alone on purpose. That is the row's bookkeeping (the webui's "when" column,
+   * `session_get`'s timestamp), and looking at an agent changes nothing about the agent. The save
+   * still happens: a row is written whenever its bytes differ from the last write, whichever field
+   * moved.
+   */
+  markOpened(agentId: string): RegisteredSession | null {
+    const session = this.agents.get(agentId)
+    if (!session) return null
+    session.lastOpenedAt = Date.now()
+    this.save()
+    return session
   }
 
   touchTranscript(sessionId: string, at = Date.now()): boolean {
     const session = this.bySession(sessionId)
     if (!session) return false
     session.lastTranscriptAt = at
-    session.updatedAt = Math.max(session.updatedAt, at)
+    session.touchedAt = Math.max(session.touchedAt, at)
     this.save()
     return true
   }
@@ -1782,7 +1943,7 @@ class Registry {
     const current = titleDisplayName(session.title)
     if (next === current) return session
     session.title = next
-    session.updatedAt = Date.now()
+    session.touchedAt = Date.now()
     this.save()
     return session
   }
@@ -1867,8 +2028,9 @@ class Registry {
         }))
         const latestValues: unknown[] = (() => {
           if (!existsSync(FILE)) return []
-          const parsed = JSON.parse(readPrivateStateFile(FILE)) as unknown
-          if (!Array.isArray(parsed)) throw new Error('registry root changed to a non-array value')
+          const stored = JSON.parse(readPrivateStateFile(FILE)) as unknown
+          if (!Array.isArray(stored)) throw new Error('registry root changed to a non-array value')
+          const parsed = withoutRetiredRows(stored).rows
           if (parsed.some(hasUnknownRowSchema)) {
             throw new Error('registry contains an unknown row schema')
           }

@@ -99,7 +99,7 @@ try {
         { timestamp, type: 'event_msg', payload: { type: 'agent_message', message: `Retained ${marker}`, phase: 'final_answer' } },
         { timestamp, type: 'event_msg', payload: { type: 'task_complete', turn_id: sessionId, last_agent_message: `Retained ${marker}` } },
       ].map(row => JSON.stringify(row)).join('\n') + '\n')
-      writeFileSync(join(profile, 'config.toml'), `model_provider = "fixture"\n[model_providers.fixture]\nname = "Local fixture"\nbase_url = "http://127.0.0.1:9/v1"\nwire_api = "responses"\nrequires_openai_auth = false\n[projects.${JSON.stringify(cwd)}]\ntrust_level = "trusted"\n[features]\nhooks = true\n`)
+      writeFileSync(join(profile, 'config.toml'), `model_provider = "fixture"\ncheck_for_update_on_startup = false\n[model_providers.fixture]\nname = "Local fixture"\nbase_url = "http://127.0.0.1:9/v1"\nwire_api = "responses"\nrequires_openai_auth = false\n[projects.${JSON.stringify(cwd)}]\ntrust_level = "trusted"\n[features]\nhooks = true\n`)
       installCodexHooks(server.port, profile)
 
     }
@@ -133,7 +133,7 @@ try {
     const stopJobs = new Map<string, Promise<void>>()
     socketBackend.onDeleteAgent = createStopAgentService({
       registry, stoppedAgents, restartJobs: jobs, stopJobs, tmuxBackend: backend,
-      agentReconciler: { suppress: () => {}, trigger: async () => {} },
+      agentReconciler: { suppress: () => {}, holdRoute: () => {}, releaseRoute: () => {}, trigger: async () => {} },
       forgetSession: id => registry.removeAgent(id), markDeleted: () => {}, clearDeleted: () => {},
     })
     socketBackend.onResumeAgent = createResumeAgentService({
@@ -145,23 +145,28 @@ try {
     const inventory = await rpc('agents_list', { includeStopped: true })
     assert(inventory.agents.some((a: any) => a.id === old.agentId && a.status === 'stopped'))
     const openSaved = async (creationId: string) => {
-      let settled = false, submitted = false
+      let settled = false, submitted = false, historyVisible = false
       const hookCount = hooks.length
+      const nativeHookSeen = () => hooks.some(h => h.engine === engine && h.sessionId === sessionId)
+      const needHook = !nativeHookSeen()
       const opening = rpc('agent_resume', { agentId: old.agentId, creationId }).finally(() => { settled = true })
       const deadline = Date.now() + 45000
-      while (!settled && Date.now() < deadline) {
+      // Readiness now uses the live process and can precede the first TUI paint or startup hook.
+      // Verify those independently; finishing the RPC must not stop this fixture from driving
+      // Codex's deferred hook through its loopback-only synthetic turn.
+      while ((!settled || !historyVisible || (needHook && !nativeHookSeen())) && Date.now() < deadline) {
         const row = registry.byAgent(old.agentId)
         if (row) {
           await tmux('resize-window', '-t', row.tmuxPane, '-x', '140', '-y', '45')
           const screen = await tmux('capture-pane', '-p', '-S', '-500', '-t', row.tmuxPane)
+          historyVisible ||= screen.includes(marker)
           writeFileSync(join(root, `${engine}-screen.txt`), screen)
           if (/Hooks need review/.test(screen)) await tmux('send-keys', '-t', row.tmuxPane, 'Down', 'Enter')
           if (/trust this folder|trust the files|Yes, I trust|confirm.*API key/i.test(screen)) await tmux('send-keys', '-t', row.tmuxPane, 'Enter')
           // Codex 0.154 defers SessionStart until the next submitted turn. First prove
           // that opening alone restored visible history, then simulate user input so
           // the real hook can confirm the receipt. Production never submits a prompt.
-          if (engine === 'codex' && row.launch?.state === 'starting' && !submitted && hooks.length === hookCount && screen.includes(marker) && /Ask Codex/.test(screen)) {
-            assert.equal(row.launch?.state, 'starting')
+          if (engine === 'codex' && needHook && !submitted && hooks.length === hookCount && screen.includes(marker) && /Ask Codex/.test(screen)) {
             submitted = true
             log('Codex history is visible before input; verifying its deferred native hook')
             await tmux('send-keys', '-t', row.tmuxPane, '-l', 'Fixture verification only. Do not use tools.')
@@ -172,6 +177,8 @@ try {
         await new Promise(r => setTimeout(r, 250))
       }
       assert(settled, `${engine} did not confirm: ${readFileSync(join(root, `${engine}-screen.txt`), 'utf8')}`)
+      assert(historyVisible, `${engine} did not render the saved conversation`)
+      assert(!needHook || nativeHookSeen(), `${engine} did not send its native SessionStart`)
       return opening
     }
     const creationId = randomUUID()
@@ -183,6 +190,8 @@ try {
     const screen = await tmux('capture-pane', '-p', '-S', '-500', '-t', live.tmuxPane)
     assert(screen.includes(marker), 'restored conversation text must be visible')
     const pid = live.processIdentity!.pid; const route = live.tmuxPane
+    const neighbour = (await tmux('split-window', '-d', '-P', '-F', '#{pane_id}', '-t', route, '/bin/sh')).trim()
+    const neighbourPid = (await tmux('display-message', '-p', '-t', neighbour, '#{pane_pid}')).trim()
     assert.equal((await checkSessionRuntime(live)).state, 'alive')
     assert.equal((await rpc('agent_resume', { agentId: old.agentId, creationId: randomUUID() })).resumed, true)
     assert.equal(registry.byAgent(old.agentId)!.processIdentity!.pid, pid); assert.equal(registry.byAgent(old.agentId)!.tmuxPane, route)
@@ -202,6 +211,8 @@ try {
     // Stop uses a known fixture-owned tmux session; its saved row survives a registry reload.
     assert.equal((await rpc('agent_delete', { agentId: live.agentId })).deleted, true)
     assert.equal((await checkPidRuntime(live)).state, 'gone')
+    assert.equal((await tmux('display-message', '-p', '-t', neighbour, '#{pane_pid}')).trim(), neighbourPid,
+      'Stop must preserve unrelated work in another pane of the same tmux session')
     registry.load(); assert(!registry.byAgent(old.agentId)); assert.equal(stoppedAgents.get(old.agentId)!.sessionId, sessionId)
     assert((await rpc('agents_list', { includeStopped: true })).agents.some((a: any) => a.id === old.agentId && a.status === 'stopped'))
     const reopened = await openSaved(randomUUID())
@@ -232,7 +243,15 @@ try {
     assert.equal((await tmux('display-message', '-p', '-t', exited.tmuxPane, '#{pane_pid}')).trim(), shellPid)
     assert((await tmux('capture-pane', '-p', '-t', exited.tmuxPane)).includes(shellMarker))
     assert.equal((await rpc('agent_delete', { agentId: old.agentId })).deleted, true)
-    log(`PASS ${engine}: native history + hook, new tmux runtime, same id, attach same PID, receipt replay, missing-ID recovery before Stop, stop persistence, surviving shell preserved`)
+    for (let cycle = 0; cycle < 3; cycle++) {
+      assert.equal((await openSaved(randomUUID())).state, 'created')
+      const current = registry.byAgent(old.agentId)!
+      assert.equal(current.sessionId, sessionId)
+      const paused = await rpc('agent_delete', { agentId: old.agentId })
+      assert.equal(paused.deleted, true, JSON.stringify(paused))
+      assert.equal((await checkPidRuntime(current)).state, 'gone')
+    }
+    log(`PASS ${engine}: native history + hook, three immediate pause/resume cycles, new tmux runtime, same id, attach same PID, receipt replay, missing-ID recovery before Stop, stop persistence, neighbouring pane and surviving shell preserved`)
   }
   if (process.argv.includes('--serve')) {
     // The desktop acceptance test uses the real local WS transport and terminal streams.
@@ -283,7 +302,12 @@ try {
     const stop = socketBackend.onDeleteAgent!
     socketBackend.onDeleteAgent = async id => {
       assert(fixtures.some(f => f.agentId === id), 'never stop the anchor or a non-fixture session')
-      await stop(id)
+      const before = JSON.stringify(registry.byAgent(id))
+      try { await stop(id) }
+      catch (error) {
+        console.error('[resume-native] native pause failed:', error, { before, after: JSON.stringify(registry.byAgent(id)) })
+        throw error
+      }
       socketBackend.send({ type: 'agent_deleted', payload: { agentId: id, retained: true } })
     }
     let finish!: () => void
@@ -303,6 +327,8 @@ try {
           assert.equal(row.sessionId, fixture.sessionId)
           const screen = await tmux('capture-pane', '-p', '-S', '-500', '-t', row.tmuxPane)
           assert(screen.includes(fixture.marker), 'native terminal must show original history')
+        } else {
+          assert.equal((await checkPidRuntime(saved!)).state, 'gone', 'Paused must mean the original process is gone')
         }
         const persisted = JSON.parse(readFileSync(join(root, 'data', 'registry.json'), 'utf8'))
         assert.equal(persisted.some((r: any) => r.agentId === id), !!row)
@@ -327,5 +353,15 @@ try {
   await socketBackend.stop()
   // Keep fixture diagnostics when requested; contains only synthetic history, no credentials.
   if (process.env.KEEP_RESUME_FIXTURE === '1') log(`fixture: ${root}`)
-  else rmSync(root, { recursive: true, force: true })
+  else {
+    // A shell can flush .zsh_history just after tmux exits. Retry the whole walk,
+    // not only rmdir, so a late-created file is discovered and removed as well.
+    for (let attempt = 0; ; attempt++) {
+      try { rmSync(root, { recursive: true, force: true }); break }
+      catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOTEMPTY' || attempt === 5) throw error
+        await new Promise(resolve => setTimeout(resolve, 100))
+      }
+    }
+  }
 }

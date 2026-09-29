@@ -1,3 +1,4 @@
+import 'support/open_harness.dart';
 import 'support/new_agent_project.dart';
 
 import 'dart:async';
@@ -90,7 +91,12 @@ Future<void> _timeOut(
 }
 
 void main() {
-  for (final entry in ['new pane', 'shortcut', 'search shortcut', 'new tab']) {
+  for (final entry in [
+    'new pane',
+    'shortcut',
+    'search shortcut',
+    'new swarm',
+  ]) {
     for (final dismissal in ['outside', 'escape']) {
       testWidgets('$entry creation dismisses once on $dismissal', (
         tester,
@@ -105,15 +111,16 @@ void main() {
         await runtime.mount(tester, app, keymap);
         switch (entry) {
           case 'new pane':
-            await chord(tester, LogicalKeyboardKey.keyO);
+            await openHarnessPicker(tester);
             await tester.pump();
             await tester.sendKeyEvent(LogicalKeyboardKey.enter);
-          case 'new tab':
+            expect(find.byType(AlertDialog), findsNothing);
+            await chord(tester, LogicalKeyboardKey.keyN);
+          case 'new swarm':
             await chord(tester, LogicalKeyboardKey.keyT);
-            await chord(tester, LogicalKeyboardKey.keyO);
-            await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+            await chord(tester, LogicalKeyboardKey.keyN);
           case 'search shortcut':
-            await chord(tester, LogicalKeyboardKey.keyO);
+            await openHarnessPicker(tester);
             await tester.enterText(
               find.byKey(const ValueKey('swarm-search-input')),
               'Agent 12',
@@ -134,7 +141,7 @@ void main() {
         await tester.pumpAndSettle();
         expect(find.byType(AlertDialog), findsNothing);
         expect(find.byType(SwarmSearchResults), findsNothing);
-        if (entry == 'new tab') {
+        if (entry == 'new swarm') {
           expect(app.swarms, hasLength(2));
           expect(app.panes, isEmpty);
           await chord(tester, LogicalKeyboardKey.keyW);
@@ -222,9 +229,9 @@ void main() {
         await mount(tester, app);
         final field = find.byKey(const ValueKey('swarm-search-input'));
         if (entry == 'Open') {
-          await chord(tester, LogicalKeyboardKey.keyO);
+          await openHarnessPicker(tester);
         } else {
-          await chord(tester, LogicalKeyboardKey.keyP);
+          await chord(tester, LogicalKeyboardKey.keyP, shift: true);
           await tester.enterText(field, '> $entry');
           await tester.pump();
           await tester.sendKeyEvent(LogicalKeyboardKey.enter);
@@ -282,7 +289,7 @@ void main() {
       final original = app.activeSwarm;
       await mount(tester, app);
       if (change == 'stale split') {
-        await chord(tester, LogicalKeyboardKey.keyP);
+        await chord(tester, LogicalKeyboardKey.keyP, shift: true);
         await tester.enterText(
           find.byKey(const ValueKey('swarm-search-input')),
           '> split right',
@@ -366,7 +373,7 @@ void main() {
     final input = <TerminalBinaryFrame>[];
     final pane = app.adoptSessionForTest(terminal('a0', input));
     await mount(tester, app);
-    await chord(tester, LogicalKeyboardKey.keyO);
+    await openHarnessPicker(tester);
     await chord(tester, LogicalKeyboardKey.keyN);
     await tester.pumpAndSettle();
     await browseNewAgentProject(tester);
@@ -392,7 +399,7 @@ void main() {
     await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
     await tester.pump();
     expect(input.single.bytes, [27, 91, 66]);
-    await chord(tester, LogicalKeyboardKey.keyO);
+    await openHarnessPicker(tester);
     expect(find.byType(SwarmSearchResults), findsOneWidget);
     expect(find.byKey(const ValueKey('create-agent-submit')), findsNothing);
     expect(connection.calls, hasLength(1));

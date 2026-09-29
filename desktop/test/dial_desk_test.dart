@@ -64,6 +64,59 @@ Future<AppNotifier> _withTiles(List<String> agentIds) async {
 }
 
 void main() {
+  test(
+    'preparation retries share one tab and attach its package viewer',
+    () async {
+      final app = _notifier();
+      final machine = _machine(app, 'm1', ['a1']);
+      machine.agents = [
+        Agent.fromJson({
+          'id': 'a1',
+          'name': 'a1',
+          'engine': 'claude',
+          'viewerUrl': 'http://127.0.0.1:12345',
+          'terminal': {
+            'runtimes': [
+              {'backend': 'tmux', 'paneId': '%1'},
+            ],
+          },
+        }),
+      ];
+      try {
+        final results = await Future.wait([
+          app.revealPreparedAgent('m1', 'a1', 'operation1'),
+          app.revealPreparedAgent('m1', 'a1', 'operation1'),
+          app.revealPreparedAgent('m1', 'a1', 'operation2'),
+        ]);
+        expect(results, everyElement(isTrue));
+        expect(app.allPanes.where((p) => p.agentId == 'a1'), hasLength(1));
+        expect(
+          app.allPanes.where((p) => p.isWeb && p.ownerAgentId == 'a1'),
+          hasLength(1),
+        );
+        final tabs = app.swarms.length;
+        await app.revealPreparedAgent('m1', 'a1', 'operation1');
+        expect(app.swarms, hasLength(tabs));
+      } finally {
+        app.dispose();
+      }
+    },
+  );
+  test(
+    'preparation reveals an existing agent tab without duplicating it',
+    () async {
+      final app = await _withTiles(['a1']);
+      try {
+        final tabs = app.swarms.length;
+        expect(await app.revealPreparedAgent('m1', 'a1', 'operation'), isTrue);
+        expect(app.swarms, hasLength(tabs));
+        expect(app.allPanes.where((p) => p.agentId == 'a1'), hasLength(1));
+      } finally {
+        app.dispose();
+      }
+    },
+  );
+
   test('the roster the daemon builds its ring from is in tile order', () {
     // The section in the rail, the tile order on screen and the dial's carousel
     // are one list. This is the end of it the window owns: what it reports is
@@ -88,6 +141,44 @@ void main() {
     expect(app.focusedPane?.agentId, 'a1');
     app.dispose();
   });
+
+  test(
+    'dial focus reveals another tab without adding its agents here',
+    () async {
+      final app = await _withTiles(['a1', 'a2']);
+      try {
+        final desktop = app.activeSwarm;
+        _machine(app, 'm2', ['a4']);
+        app.newSwarm();
+        final device = app.activeSwarm;
+        await app.addAgentToSwarm('m1', 'a3');
+        await app.addAgentToSwarm('m2', 'a4');
+        final devicePanes = device.panes.toList();
+
+        for (final (machineId, agentId) in [
+          ('m1', 'a3'),
+          ('m2', 'a4'),
+          ('m1', 'a3'),
+        ]) {
+          app.selectSwarm(desktop.id);
+          await app.handleEventForTest('m1', {
+            'type': 'dial_focus',
+            'payload': {'machineId': machineId, 'agentId': agentId},
+          });
+
+          expect(app.activeSwarmId, device.id);
+          expect(app.focusedPane?.machineId, machineId);
+          expect(app.focusedPane?.agentId, agentId);
+          expect(app.paneFocusByUser, isFalse);
+          expect(desktop.panes.map((p) => p.agentId), ['a1', 'a2']);
+          expect(device.panes, devicePanes);
+          expect(app.swarms, hasLength(2));
+        }
+      } finally {
+        app.dispose();
+      }
+    },
+  );
 
   test(
     'a dial-selected agent adds a view without replacing swarm membership',
@@ -395,6 +486,32 @@ void main() {
         reason: 'the band stays; only a hand on this app presses its button',
       );
     });
+
+    test(
+      'dial focus finds a taken pane in another tab without reopening',
+      () async {
+        final first = app.activeSwarm;
+        app.newSwarm();
+        final second = app.activeSwarm;
+        app.adoptSessionForTest(taken('a3'));
+        app.selectSwarm(first.id);
+
+        await dialFocus(app, 'a3');
+
+        expect(app.activeSwarmId, second.id);
+        expect(app.focusedPane?.agentId, 'a3');
+        expect(app.paneFocusByUser, isFalse);
+        expect(first.panes.map((p) => p.agentId), ['a1', 'a2']);
+        expect(second.panes.map((p) => p.agentId), ['a3']);
+        expect(
+          app.focusedPane?.session?.status,
+          TerminalSessionStatus.takenOver,
+        );
+        for (final id in ['a1', 'a2', 'a3']) {
+          expect(opens(id), isEmpty);
+        }
+      },
+    );
 
     test('a question shown on the dial only brings the pane forward', () async {
       await app.handleEventForTest('m1', {

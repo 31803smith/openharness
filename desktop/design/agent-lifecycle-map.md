@@ -35,7 +35,6 @@ three pushes discussed below run in the opposite direction.
 | `agents_list` | No mutation | None | Reads `registry.advertised()` (verified available terminal routes). `includeStopped: true` merges eligible archive records into the response without adding stale routes back to the live registry. |
 | `agent_create_status` | No mutation | None | Reads a separate durable operation receipt, optionally resolving its resulting live row. Does not launch or recreate a registry entry. |
 | `agent_recent` | No mutation | None | Resolves Harness ID to engine `sessionId` and reads stored recaps/recent user asks. Providers resolve through the live registry or the archive, so recaps and recent asks work before Open. |
-| `agent_files` | No mutation | None | Reads the live row's `cwd`, then lists project files. No registry change. |
 | `agent_read_file` | No mutation | None | Reads the live row's `cwd`, then a bounded project file/media chunk. No registry change. |
 | `agent_resume` **(this PR)** | Keep a verified running runtime; otherwise allocate a new session and pane for saved work | `claude --resume <savedSessionId>` / `codex resume <savedSessionId>`; no fresh fallback | Return a verified running engine. Otherwise reserve the operation, restore the **same Harness ID and conversation ID** on a new route with no stale PID and `launch: starting`, and await the exact conversation hook from the new process. Keep the saved record on failure. No fresh fallback. |
 
@@ -121,7 +120,7 @@ Evidence: [`notify.mjs`](../../cli/hook/notify.mjs),
 | `agent_deleted` | Remove the row/view from the receiving client's live inventory. The `retained` flag tells desktop to reload the stopped catalog. | None. It is not itself a kill command or proof that the engine exited; terminal unavailability can also produce it. |
 | `agent_renamed` | Update the Harness display name. | None; name/title mutation happened separately. |
 
-Natural engine exit sends `agent_synced` with `status: stopped` and no terminal route for the original identity. The separate shell is announced as a Terminal. Devices receive a deletion for the engine because they list live agents. Explicit Stop still sends `agent_deleted` with `retained: true`, so desktop closes its live views and refreshes the saved catalog.
+Natural engine exit ends the identity that ran the engine exactly as an explicit Stop does: `agent_deleted` with `retained: true`, so the desktop closes its live views and refreshes the saved catalog, followed by `agent_synced` with `status: stopped` and no terminal route for that identity. The separate shell is announced as a Terminal of its own, and the person opens it from the harness list if they want a view of it — a tile left pointing at the ended identity used to sit on "terminal unavailable" forever (#262). Devices receive the same deletion, because they list live agents.
 
 ## Cmd-P/T contract
 

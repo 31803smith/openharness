@@ -1,11 +1,12 @@
 import 'dart:async';
-import 'dart:ffi';
 import 'dart:io';
 
 import 'package:cryptography/cryptography.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 
+import '../core/runtime_architecture.dart';
+import '../core/runtime_platform.dart';
 import '../core/app_version.dart';
 
 /// Published by `scripts/upload-desktop.sh` (`make upload-desktop`) — see
@@ -18,6 +19,13 @@ const _defaultMetadataUrl =
 const _metadataUrlOverride = String.fromEnvironment(
   'DESKTOP_UPDATE_METADATA_URL',
 );
+
+/// Lets a DEBUG build check and install, so the update band and its percentage
+/// can be exercised without cutting a release. Off unless asked for
+/// (`--dart-define=DESKTOP_UPDATE_FORCE=true`), and pointless on its own: pair
+/// it with [_metadataUrlOverride] pointing at a scratch manifest, or the debug
+/// build will poll the real one and offer to replace itself with a release.
+const _forceUpdateChecks = bool.fromEnvironment('DESKTOP_UPDATE_FORCE');
 
 /// The macOS build every Mac can run, rendered on Skia: what an Intel Mac installs, what every install
 /// from before the Intel/Apple Silicon split polls on either CPU, and what the website download
@@ -32,13 +40,7 @@ const _otaKeyMacOSArm64 = 'desktop-macos-arm64';
 /// `arm64` or `x64` for the CPU this process runs on: which Linux artifact to fetch, and whether the
 /// Apple Silicon macOS build is on offer. An Apple Silicon Mac running this under Rosetta reports x64
 /// and is offered only the Skia build — harmless, since both macOS builds are universal.
-String _currentArchitecture() => switch (Abi.current()) {
-  Abi.linuxArm64 || Abi.macosArm64 || Abi.windowsArm64 => 'arm64',
-  Abi.linuxX64 || Abi.macosX64 || Abi.windowsX64 => 'x64',
-  _ => throw UnsupportedError(
-    'Harness updates do not support ${Abi.current()}',
-  ),
-};
+String _currentArchitecture() => runtimeArchitecture;
 
 String get _metadataUrl => _metadataUrlOverride.isNotEmpty
     ? _metadataUrlOverride
@@ -128,16 +130,16 @@ String _singleQuote(String value) => "'${value.replaceAll("'", "'\\''")}'";
 /// `scripts/upload-desktop-linux.sh`), and a running AppImage executes from a temporary FUSE mount,
 /// not from that file — so the file's own path comes from [appImagePath] (tests) or the `APPIMAGE`
 /// environment variable the AppImage runtime sets on launch (production), never from
-/// `Platform.resolvedExecutable`.
+/// `RuntimePlatform.resolvedExecutable`.
 String? currentBundlePath({
   String? executablePath,
   bool? isLinux,
   String? appImagePath,
 }) {
-  if (isLinux ?? Platform.isLinux) {
-    return appImagePath ?? Platform.environment['APPIMAGE'];
+  if (isLinux ?? RuntimePlatform.isLinux) {
+    return appImagePath ?? RuntimePlatform.environment['APPIMAGE'];
   }
-  final resolved = executablePath ?? Platform.resolvedExecutable;
+  final resolved = executablePath ?? RuntimePlatform.resolvedExecutable;
   var dir = File(resolved).parent;
   for (var i = 0; i < 6; i++) {
     if (dir.path.endsWith('.app')) return dir.path;
@@ -149,7 +151,7 @@ String? currentBundlePath({
 }
 
 Future<void> _defaultLaunchDetached(String command) async {
-  await Process.start(Platform.isLinux ? '/bin/bash' : '/bin/zsh', [
+  await Process.start(RuntimePlatform.isLinux ? '/bin/bash' : '/bin/zsh', [
     '-l',
     '-c',
     command,
@@ -170,9 +172,18 @@ class DesktopUpdater {
   final String _architecture;
   final _checksInFlight = <String?, Future<DesktopUpdateCheck>>{};
 
-  static const checkInterval = Duration(hours: 6);
+  /// How often the background poll asks the manifest.
+  ///
+  /// Five minutes, not the six hours this used to be, because the offer on
+  /// screen has to be close to the build Update will actually install: a person
+  /// who leaves a notice sitting for an afternoon should not be shown a version
+  /// that was superseded hours ago. The request is one small GET that GCS
+  /// serves `no-cache`, the overlap guard in [startChecking] and the in-flight
+  /// map above mean a slow answer never stacks up a second one, and the CLI's
+  /// own self-updater polls on the same order (`cli/src/lib/selfUpdate.ts`).
+  static const checkInterval = Duration(minutes: 5);
 
-  bool get canCheck => _enabled && _releaseMode;
+  bool get canCheck => !kIsWeb && _enabled && _releaseMode;
 
   DesktopUpdater({
     this._enabled = true,
@@ -202,8 +213,8 @@ class DesktopUpdater {
            ),
        _launchDetached = launchDetached ?? _defaultLaunchDetached,
        _metadataUrlForInstance = metadataUrl ?? _metadataUrl,
-       _releaseMode = releaseMode ?? kReleaseMode,
-       _isLinux = isLinux ?? Platform.isLinux,
+       _releaseMode = releaseMode ?? (kReleaseMode || _forceUpdateChecks),
+       _isLinux = isLinux ?? RuntimePlatform.isLinux,
        _architecture = architecture ?? _currentArchitecture();
 
   /// The manifest entries this build may install, most preferred first — [_newestEntry] takes the
@@ -326,13 +337,25 @@ class DesktopUpdater {
   /// single AppImage file), so the sha256 check already covers everything there is: it is made
   /// executable and staged as-is, with nothing to unpack or recheck.
   /// Returns null (and cleans up anything partially written) on any verification failure.
-  Future<StagedUpdate?> downloadAndStage(UpdateInfo info) async {
+  /// [onProgress] reports the DOWNLOAD only — bytes received out of
+  /// [UpdateInfo.size]. The manifest's size is the denominator rather than the
+  /// response's, because a CDN that omits `Content-Length` leaves Dio reporting
+  /// `-1` and the manifest is the authority the hash is checked against anyway.
+  /// Verifying and unpacking afterwards have no counter, so a caller showing a
+  /// percentage stops at 100 and keeps saying "installing" until this returns.
+  Future<StagedUpdate?> downloadAndStage(
+    UpdateInfo info, {
+    void Function(int received, int total)? onProgress,
+  }) async {
     if (!_enabled) return null;
     Directory? stagingDir;
     try {
       final response = await _dio.get<List<int>>(
         info.url,
         options: Options(responseType: ResponseType.bytes),
+        onReceiveProgress: onProgress == null
+            ? null
+            : (received, _) => onProgress(received, info.size),
       );
       final bytes = response.data;
       if (bytes == null || bytes.length != info.size) {

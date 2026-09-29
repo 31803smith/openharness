@@ -55,34 +55,31 @@ void main() {
   );
 
   for (final count in [1, 2]) {
-    test(
-      'History keeps the engine identity of $count-agent agents',
-      () async {
-        final app = createApp();
-        addTearDown(app.dispose);
-        app.machineStates['m']!.agents[0] = const Agent(
-          id: 'a0',
-          name: 'Architecture',
-          engine: 'claude',
-          terminalAvailable: true,
-        );
-        for (var i = 0; i < count; i++) {
-          app.adoptSessionForTest(terminal('a$i', []));
-        }
-        final history = SwarmNavigationHistory()..record(app);
-        final open = history
-            .menuDestinations(app)
-            .singleWhere((row) => row.isSwarm);
-        expect(open.members, hasLength(count));
-        expect(open.engine, count == 1 ? 'claude' : isNull);
-        await app.closeSwarm(app.activeSwarmId);
-        app.machineStates['m']!.agents = [];
-        final closed = closedWorkDestinations(app).single;
-        expect(closed.isSwarm, isTrue);
-        expect(closed.members, hasLength(count));
-        expect(closed.engine, count == 1 ? 'claude' : isNull);
-      },
-    );
+    test('History keeps the engine identity of $count-agent agents', () async {
+      final app = createApp();
+      addTearDown(app.dispose);
+      app.machineStates['m']!.agents[0] = const Agent(
+        id: 'a0',
+        name: 'Architecture',
+        engine: 'claude',
+        terminalAvailable: true,
+      );
+      for (var i = 0; i < count; i++) {
+        app.adoptSessionForTest(terminal('a$i', []));
+      }
+      final history = SwarmNavigationHistory()..record(app);
+      final open = history
+          .menuDestinations(app)
+          .singleWhere((row) => row.isSwarm);
+      expect(open.members, hasLength(count));
+      expect(open.engine, count == 1 ? 'claude' : isNull);
+      await app.closeSwarm(app.activeSwarmId);
+      app.machineStates['m']!.agents = [];
+      final closed = closedWorkDestinations(app).single;
+      expect(closed.isSwarm, isTrue);
+      expect(closed.members, hasLength(count));
+      expect(closed.engine, count == 1 ? 'claude' : isNull);
+    });
   }
 
   test('History does not format unopened agents during focus changes', () {
@@ -166,6 +163,7 @@ void main() {
           terminalAvailable: true,
         ),
       ];
+      final kept = app.adoptSessionForTest(terminal('a1', []));
       final pane = app.adoptSessionForTest(terminal('a0', []));
       final origin = app.activeSwarm;
       final projects = SwarmProjectStore();
@@ -205,7 +203,7 @@ void main() {
       await reply.future;
       await tester.pump();
       expect(app.activeSwarm, same(origin));
-      expect(app.panes.single.agentId, 'a0');
+      expect(app.panes.map((pane) => pane.agentId), [kept.agentId, 'a0']);
       expect(app.closedHistory, isEmpty);
       await app.closeSwarm(origin.id);
       await tester.pump();
@@ -509,7 +507,7 @@ void main() {
       final historyView = native('showHistory');
       await tester.pump();
       final historyField = find.byWidgetPredicate(
-        (w) => w is TextField && w.decoration?.hintText == 'Search history…',
+        (w) => w is TextField && w.decoration?.hintText == 'Search history',
       );
       expect(historyField, findsOneWidget);
       await tester.enterText(historyField, 'Agent 0');

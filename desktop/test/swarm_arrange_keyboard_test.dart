@@ -36,13 +36,15 @@ void main() {
         await tester.pump();
         final label = find.descendant(
           of: strip,
-          matching: find.text(app.activeSwarm.name),
+          matching: find.byKey(ValueKey(app.activeSwarmId)),
         );
         expect(label, findsOneWidget);
         final viewport = tester.getRect(strip);
         final bounds = tester.getRect(label);
-        expect(bounds.left, greaterThanOrEqualTo(viewport.left));
-        expect(bounds.right, lessThanOrEqualTo(viewport.right));
+        // Fractional context budgets can differ by floating-point roundoff;
+        // keep the selected tab inside the viewport to subpixel precision.
+        expect(bounds.left, greaterThanOrEqualTo(viewport.left - .001));
+        expect(bounds.right, lessThanOrEqualTo(viewport.right + .001));
       }
 
       await key(tester, LogicalKeyboardKey.digit9, cmd: true);
@@ -212,7 +214,7 @@ void main() {
     tester.view.physicalSize = const Size(2000, 1200);
     await tester.pump();
     Future<void> command(String query) async {
-      await key(tester, LogicalKeyboardKey.keyP, cmd: true);
+      await key(tester, LogicalKeyboardKey.keyP, cmd: true, shift: true);
       await tester.enterText(
         find.byKey(const ValueKey('swarm-search-input')),
         '> $query',

@@ -45,7 +45,14 @@ String? profileNeighborId(
 
 /// Tabs this window shows for [machineId]. The underlying list is not copied
 /// and is not filtered in place: the desk keeps every machine's tabs.
-List<Swarm> swarmsForMachineProfile(List<Swarm> swarms, String? machineId) => [
-  for (final swarm in swarms)
-    if (swarmMatchesMachineProfile(swarm, machineId)) swarm,
-];
+///
+/// A profile only hides. When it would hide every tab, this window shows them
+/// all rather than a tab being made to stand in: making one would add it to
+/// the account desk, on every computer.
+List<Swarm> swarmsForMachineProfile(List<Swarm> swarms, String? machineId) {
+  final shown = [
+    for (final swarm in swarms)
+      if (swarmMatchesMachineProfile(swarm, machineId)) swarm,
+  ];
+  return shown.isEmpty ? swarms : shown;
+}
