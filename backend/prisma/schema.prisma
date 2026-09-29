@@ -671,20 +671,6 @@ model ExperimentalSettings {
 /// (routes/zoo.ts): idempotent ops applied in order under `revision`, the draw made here and only
 /// here (lib/zoo.ts). `state` is validated shape by shape on every read; what does not parse is
 /// dropped rather than served.
-/// The account's trust-group board (lib/groupBoard.ts): member vouches, each signed by an existing
-/// member's E2EE identity key. The server keeps and relays them; it cannot mint one, and every device
-/// decides for itself which to believe (only vouches by keys it already trusts).
-model GroupBoard {
-  id        String   @id @default(auto()) @map("_id") @db.ObjectId
-  userId    String   @unique
-  revision  Int      @default(0)
-  entries   Json     @default("[]")
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  @@map("group_boards")
-}
-
 model Zoo {
   id        String   @id @default(auto()) @map("_id") @db.ObjectId
   userId    String   @unique
@@ -729,15 +715,8 @@ model HarnessSession {
   /// Slides forward on every refresh: a phone in use stays signed in, one left in a drawer does not.
   expiresAt   DateTime
   revokedAt   DateTime?
-  /// "viewer" (a phone, signed in by a handoff) or "daemon" (a machine, signed in by a phone approving
-  /// its QR). Only a daemon session may open `/api/adapter-ws`, and only for its own computer.
-  kind        String    @default("viewer")
-  /// Daemon sessions only: the machine the approval bound, and the computer it was approved for.
-  machineId   String?
-  computerId  String?
 
   @@index([userId])
-  @@index([machineId])
   @@map("harness_sessions")
 }
 

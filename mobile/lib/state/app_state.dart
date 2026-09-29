@@ -3624,6 +3624,7 @@ class AppNotifier extends ChangeNotifier {
     String? swarmId,
     AgentCreationAttempt? attempt,
     String? prompt,
+    String? name,
   }) {
     final creation = attempt ?? AgentCreationAttempt();
     final task = prompt?.trim();
@@ -3632,6 +3633,9 @@ class AppNotifier extends ChangeNotifier {
       // The harness's first task — the machine types it into the agent once it is up. Only
       // claude, codex and opencode take one (see `kFirstTaskEngines`); an empty one is left out.
       if (task != null && task.isNotEmpty) 'prompt': task,
+      // What the agent is called until its engine titles the session. Absent, the machine names it
+      // after the engine and the time ("Codex harness 9-17 15:26").
+      if (name != null && name.trim().isNotEmpty) 'name': name.trim(),
       if (projectFolder == null) 'cwd': folder,
       ...?projectFolder?.payload,
       'permissionMode': ?permissionMode,

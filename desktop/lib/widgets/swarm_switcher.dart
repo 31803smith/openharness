@@ -498,18 +498,32 @@ class _SwarmSearchResultsState extends State<SwarmSearchResults> {
   (Size, double)? _geometry;
   SwarmSearchController get search => widget.search;
 
-  List<({int? index, String? heading})> get _modelRows {
+  /// The model list as drawn: each section's heading, then its rows. [key] is the section's own
+  /// label, which stays put while a heading such as `Get for this Mac · 64 GB` follows its machine.
+  List<({int? index, String? heading, String? key})> get _modelRows {
     if (!search.isModelMode) return const [];
-    final items = <({int? index, String? heading})>[];
+    final items = <({int? index, String? heading, String? key})>[];
     for (final section in ModelSearchSection.values) {
       final indices = [
         for (final (index, row) in search.rows.indexed)
           if (search.modelSection(row) == section) index,
       ];
-      if (indices.isEmpty && search.matchQuery.trim().isNotEmpty) continue;
-      if (items.isNotEmpty) items.add((index: null, heading: null));
-      items.add((index: null, heading: section.label));
-      items.addAll(indices.map((index) => (index: index, heading: null)));
+      // An empty section still says it is there, so there is somewhere to add to — except the
+      // downloads, which a machine with the whole catalog, or none, has nothing under.
+      if (indices.isEmpty &&
+          (search.matchQuery.trim().isNotEmpty ||
+              section == ModelSearchSection.catalog)) {
+        continue;
+      }
+      if (items.isNotEmpty) items.add((index: null, heading: null, key: null));
+      items.add((
+        index: null,
+        heading: search.modelSectionLabel(section),
+        key: section.label,
+      ));
+      items.addAll(
+        indices.map((index) => (index: index, heading: null, key: null)),
+      );
     }
     return items;
   }
@@ -1052,9 +1066,7 @@ class _SwarmSearchResultsState extends State<SwarmSearchResults> {
                                 return Semantics(
                                   header: true,
                                   child: Padding(
-                                    key: ValueKey(
-                                      'model-section:${item.heading}',
-                                    ),
+                                    key: ValueKey('model-section:${item.key}'),
                                     padding: EdgeInsets.symmetric(
                                       horizontal: widget.bios
                                           ? cell.width * 3
@@ -1259,6 +1271,46 @@ class _SearchRowContent extends StatefulWidget {
 }
 
 class _SearchRowContentState extends State<_SearchRowContent> {
+  /// The widest word a model row of yours ends with (`Downloading`): the column is that wide, so
+  /// the size and speed columns ahead of it line up whatever each row says.
+  static const _modelWordColumns = 11;
+
+  /// A model row's last word. It is green only while something is live — running, in use, a
+  /// download under way; an action (Use, Get) is plain; a failure is a warning; a state is muted.
+  /// [row]'s size and speed columns, when a row [width] wide keeps room for the model's name.
+  String? _modelFacts(SwarmDestination row, double width, Size cell) =>
+      width >= cell.width * 58 ? widget.search.modelRowFacts(row) : null;
+
+  Widget _modelRowWord(
+    SwarmDestination row,
+    String status, {
+    required bool aligned,
+    required Color live,
+    required Color foreground,
+    required Color warning,
+    required Color muted,
+    required Size cell,
+  }) {
+    final search = widget.search;
+    final color = search.modelRowLive(row)
+        ? live
+        : search.modelRowFailed(row)
+        ? warning
+        : status == search.modelRowAction(row)
+        ? foreground
+        : muted;
+    final text = Text(
+      status,
+      key: ValueKey('model-row-status:${row.id}'),
+      maxLines: 1,
+      textAlign: TextAlign.right,
+      style: terminalContentStyle(color: color),
+    );
+    return aligned
+        ? SizedBox(width: cell.width * _modelWordColumns, child: text)
+        : text;
+  }
+
   late (String, bool, SessionContentHit?) _query;
 
   /// What this row draws from the search: its words, and what a machine's
@@ -1429,26 +1481,41 @@ class _SearchRowContentState extends State<_SearchRowContent> {
                         maxLines: 1,
                         style: terminalContentStyle(color: muted),
                       ),
-                    ] else if (widget.search.modelRowStatus(row)
-                        case final status?) ...[
-                      SizedBox(width: cell.width * 2),
-                      Text(
-                        status,
-                        key: ValueKey('model-row-status:${row.id}'),
-                        maxLines: 1,
-                        style: terminalContentStyle(
-                          color: underApi
-                              ? theme.foreground
-                              : widget.search.modelRowLive(row) ||
-                                    status == 'Suggested'
-                              // Pale green reads on a dark ground only; a
-                              // light one takes its scheme's own green.
-                              ? theme.background.computeLuminance() > .5
-                                    ? theme.green
-                                    : const Color(0xFF86E6A3)
-                              : muted,
+                    ] else if (row.isModel) ...[
+                      // A model of yours: its size and speed, in columns that line up down the list —
+                      // when the list is wide enough to keep its name readable beside them.
+                      if (_modelFacts(row, constraints.maxWidth, cell)
+                          case final facts?) ...[
+                        SizedBox(width: cell.width * 2),
+                        Text(
+                          facts,
+                          key: ValueKey('model-row-facts:${row.id}'),
+                          maxLines: 1,
+                          style: terminalContentStyle(color: muted),
                         ),
-                      ),
+                      ],
+                      if (widget.search.modelRowStatus(row)
+                          case final status?) ...[
+                        SizedBox(width: cell.width * 2),
+                        _modelRowWord(
+                          row,
+                          status,
+                          aligned:
+                              _modelFacts(row, constraints.maxWidth, cell) !=
+                              null,
+                          // Pale green reads on a dark ground only; a light one
+                          // takes its scheme's own green.
+                          live: theme.background.computeLuminance() > .5
+                              ? theme.green
+                              : const Color(0xFF86E6A3),
+                          foreground: theme.foreground,
+                          warning: theme.yellow,
+                          muted: muted,
+                          cell: cell,
+                        ),
+                      ] else if (_modelFacts(row, constraints.maxWidth, cell) !=
+                          null)
+                        SizedBox(width: cell.width * (2 + _modelWordColumns)),
                     ],
                     if (widget.unavailableReason case final reason?) ...[
                       SizedBox(width: cell.width * 2),
