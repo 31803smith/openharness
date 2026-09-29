@@ -414,17 +414,17 @@ class _SwarmResourcePreviewState extends State<SwarmResourcePreview> {
       for (final filter in SessionFilter.values)
         _ResourceAction(
           switch (filter) {
-            SessionFilter.all => 'Show all sessions',
-            SessionFilter.needsInput => 'Show sessions needing input',
-            SessionFilter.running => 'Show running sessions',
-            SessionFilter.paused => 'Show paused sessions',
+            SessionFilter.all => 'Show all harnesses',
+            SessionFilter.needsInput => 'Show harnesses needing input',
+            SessionFilter.running => 'Show running harnesses',
+            SessionFilter.paused => 'Show paused harnesses',
           },
           () => widget.search.setSessionFilter(filter),
           command: 'picker.filter.${filter.name}',
         ),
       for (final sort in SessionSort.values)
         _ResourceAction(
-          'Sort sessions: ${sort.label}',
+          'Sort harnesses: ${sort.label}',
           () => widget.search.setSessionSort(sort),
           command: 'picker.sort.${sort.name}',
         ),
@@ -685,9 +685,7 @@ class _SwarmResourcePreviewState extends State<SwarmResourcePreview> {
       child: Text(
         hints.join('  ·  '),
         key: const ValueKey('resource-control-hints'),
-        style: terminalContentStyle(
-          color: theme.foreground.withValues(alpha: .54),
-        ),
+        style: terminalContentStyle(color: theme.muted),
       ),
     );
   }
@@ -1096,8 +1094,9 @@ class _SwarmResourcePreviewState extends State<SwarmResourcePreview> {
     // The status word is the catalog's own [localStatus] so the pane and the
     // list row can never disagree (both come from the same [_refresh] snapshot);
     // no re-derivation from a possibly-stale operation on the pane side.
-    final statusWord =
-        local != null ? catalog.localStatus(local, controller: owner) : entry.status;
+    final statusWord = local != null
+        ? catalog.localStatus(local, controller: owner)
+        : entry.status;
 
     // Suitability against this machine's usable memory, per plan §5. Only local
     // models carry a "fits this machine" meaning; shared/api/subscription nodes
@@ -1141,10 +1140,7 @@ class _SwarmResourcePreviewState extends State<SwarmResourcePreview> {
     Widget errorLine(String text) {
       return Padding(
         padding: EdgeInsets.only(top: cell.height),
-        child: Text(
-          text,
-          style: terminalContentStyle(color: theme.yellow),
-        ),
+        child: Text(text, style: terminalContentStyle(color: theme.yellow)),
       );
     }
 
@@ -1161,10 +1157,7 @@ class _SwarmResourcePreviewState extends State<SwarmResourcePreview> {
               .copyWith(fontWeight: FontWeight.bold),
         ),
         SizedBox(height: cell.height),
-        Text(
-          statusWord,
-          style: terminalContentStyle(color: theme.foreground),
-        ),
+        Text(statusWord, style: terminalContentStyle(color: theme.foreground)),
         if (widget.search.modelUseErrorId == entry.id &&
             widget.search.modelUseError != null)
           errorLine(widget.search.modelUseError!),
@@ -1178,8 +1171,10 @@ class _SwarmResourcePreviewState extends State<SwarmResourcePreview> {
           labelValue('Size', bytesLabel(local.sizeBytes)),
           labelValue('Quant', local.quant ?? '—'),
           if (local.running && local.tokensPerSecond != null)
-            labelValue('Speed',
-                '${local.tokensPerSecond!.toStringAsFixed(1)} tok/s'),
+            labelValue(
+              'Speed',
+              '${local.tokensPerSecond!.toStringAsFixed(1)} tok/s',
+            ),
           if (local.running &&
               local.requests != null &&
               local.windowSeconds != null)
@@ -1187,14 +1182,16 @@ class _SwarmResourcePreviewState extends State<SwarmResourcePreview> {
               'Window',
               '${local.requests!.toInt()} req / ${windowLabel(local.windowSeconds)}',
             ),
-          if (local.resting) labelValue('State', 'Resting until your next message'),
+          if (local.resting)
+            labelValue('State', 'Resting until your next message'),
           if (!local.downloaded &&
               !owner.supportsDownload &&
               local.canStart &&
               !pending &&
               !opActive)
             errorLine(
-                'Downloads and starts on ${entry.node ?? 'this machine'}.'),
+              'Downloads and starts on ${entry.node ?? 'this machine'}.',
+            ),
         ],
         if (entry.api case final api?) ...[
           labelValue('Host', api.baseUrl),
@@ -1338,9 +1335,7 @@ class _SwarmResourcePreviewState extends State<SwarmResourcePreview> {
       grid.AppTheme.palette.value,
       terminalThemeStore.value,
     );
-    final muted = terminalContentStyle(
-      color: theme.foreground.withValues(alpha: .54),
-    );
+    final muted = terminalContentStyle(color: theme.muted);
     return ListView(
       controller: _scroll,
       padding: EdgeInsets.symmetric(
@@ -1409,7 +1404,7 @@ class _SwarmResourcePreviewState extends State<SwarmResourcePreview> {
                   widget.onRefocus();
                 },
                 style: TextButton.styleFrom(
-                  foregroundColor: theme.foreground.withValues(alpha: .54),
+                  foregroundColor: theme.muted,
                   textStyle: terminalContentStyle(),
                   padding: EdgeInsets.zero,
                   minimumSize: Size.zero,
@@ -1480,9 +1475,7 @@ class _SwarmResourcePreviewState extends State<SwarmResourcePreview> {
                 ),
                 child: Text(
                   'Working…',
-                  style: terminalContentStyle(
-                    color: theme.foreground.withValues(alpha: .54),
-                  ),
+                  style: terminalContentStyle(color: theme.muted),
                 ),
               ),
             if (_errors[row?.id] case final error?)
