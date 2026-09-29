@@ -136,13 +136,25 @@ muted text: `@ machines`, `# projects`, `: models`,
 Each hint is also a plain-text button: clicking it inserts the prefix into the
 same editor and keeps typing focus there. Selected harnesses open with Enter.
 Machines use Enter to **Manage**: focus moves to their controls without invoking
-one. Models use four sections: **Subscriptions**, **APIs**, **Your local AI
-models**, and **Shared with you**. Headers are plain muted text and never take
-selection. Put **[ Add ]** within APIs. Your local AI models puts downloaded
-models first, followed by models served on the user's machines. Keep the
-undownloaded catalog collapsed behind **[ Get models ]**; Enter expands it in
-place and selects the first catalog row. **[ Hide catalog ]** collapses it.
-Explicit searches also include matching catalog models. Shared rows show only
+one. Models use five sections: **Subscriptions**, **APIs**, **Your models**,
+the downloads, and **Shared with you**. Headers are plain muted text and never
+take selection. Put **[ Add ]** within APIs. Your models puts downloaded models
+first, followed by models served on the user's machines. The downloads are
+headed with the machine they are for and its memory (`Get for this Mac · 64 GB`),
+and a machine with nothing to download has no such heading. They are ordered
+for a coding agent on that machine: the ones the catalog estimates at 15 tok/s
+or more first, then bigger models first, then the catalog's own (popularity)
+order, with one version of each base model before any MTP, QAT or pruned
+variant; safety classifiers are never offered. The list shows the first five;
+the rest stay behind **[ More models (N) ]**, where Enter
+expands them in place and selects the first catalog row, and **[ Show fewer ]**
+collapses them. The catalog never offers another quantization of a model the
+machine already has. Explicit searches also include matching catalog models.
+A model row names its model alone; the quantization is in the preview, and on
+the row only when two versions of one model share a name. Ahead of its last
+word a model of yours lines up two columns, its size and its speed (measured
+while it runs, else the catalog's estimate, `~10 tok/s`); a list too narrow to
+keep the name readable drops them. Shared rows show only
 the model and sharing machine's label, separated by ` · `. An API heads its models:
 `▸`/`▾` before its name says whether they are listed, and the end of its row says
 how many (`378 models`) or `Tools` for one no harness can run on. Its models
@@ -153,7 +165,13 @@ harness on this computer. Filtering
 preserves the groups.
 
 A plain right-aligned **Use** identifies a model the current pane can use;
-**Get** identifies a model that can be downloaded. Other model rows are dimmed,
+**Get** identifies a model that can be downloaded. A model of yours says what
+Enter does unless something is happening to it (**Downloading**, **Starting**),
+and the one the pane is on says **● In use**. Only a live row's word is green —
+running, in use, or under way; an action is plain, a failure a warning. Get on
+a model the pane can run downloads it, starts it and moves the pane onto it in
+one step, with the hint following it (`Downloading 42%…`); closing the picker
+stops the switch, never the download. Other model rows are dimmed,
 remain selectable for inspection, and have no action badge. Enter does nothing
 on these rows; it must never silently become Manage. Show the reason in the
 preview when it helps. Subscription names include the account label; only an
