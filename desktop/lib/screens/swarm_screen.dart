@@ -6080,6 +6080,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
                                         child: PaneGrid(
                                           notifier: app,
                                           swarmMode: true,
+                                          soloFocused: _compact(context),
                                           empty:
                                               app.panes.isEmpty &&
                                                   !app.activeSwarm.isStore &&
@@ -6407,7 +6408,8 @@ class _SwarmScreenState extends State<SwarmScreen> {
       final shareWidth = _showShareButton
           ? math.min(WorkspaceShareButton.widthOf(context), available * .3)
           : 0.0;
-      final downloadWidth = kIsWeb ? available * .16 : 0.0;
+      final download = kIsWeb && !_compact(context);
+      final downloadWidth = download ? available * .16 : 0.0;
       final modelWidth =
           math.max(
             0.0,
@@ -6473,7 +6475,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
                         )
                       : paneContext,
                 ),
-                if (kIsWeb) ...[
+                if (download) ...[
                   SizedBox(width: cell.width),
                   ConstrainedBox(
                     constraints: BoxConstraints(maxWidth: downloadWidth),
@@ -6526,6 +6528,10 @@ class _SwarmScreenState extends State<SwarmScreen> {
         grid.AppTheme.palette.value,
         terminalThemeStore.value,
       );
+      final chrome = widget.chrome;
+      if (chrome != null && _compact(context)) {
+        return _compactTabStrip(chrome, theme);
+      }
       final names = workspaceTabNames(app);
       final activities = [for (final tab in app.swarms) tabActivity(app, tab)];
       final labels = [
@@ -6538,7 +6544,6 @@ class _SwarmScreenState extends State<SwarmScreen> {
         WorkspaceStoreButton.widthOf(context),
         math.max(0.0, constraints.maxWidth - cell.width * 14),
       );
-      final chrome = widget.chrome;
       final leadingWidth = chrome?.leadingWidth(context) ?? 0.0;
       final tabBudget = math.max(
         0.0,
@@ -6737,34 +6742,8 @@ class _SwarmScreenState extends State<SwarmScreen> {
                 tooltip: 'New Swarm ${_keymap.hint('swarm.new') ?? ''}',
               ),
               const Spacer(),
-              WorkspaceBarControl(
-                key: const ValueKey('swarm-search-button'),
-                label: 'Search harnesses',
-                tooltip:
-                    'Search harnesses ${_keymap.hint('harnesses.list') ?? ''}',
-                onPressed: _shortcutsEnabled ? _toggleSessions : null,
-                builder: (context, emphasized) => SizedBox(
-                  width: cell.width * 4,
-                  height: toolHeight,
-                  child: Icon(
-                    LucideIcons.search,
-                    size: 17,
-                    color: theme.foreground.withValues(
-                      alpha: !_shortcutsEnabled
-                          ? .28
-                          : emphasized
-                          ? 1
-                          : .75,
-                    ),
-                  ),
-                ),
-              ),
-              WorkspaceNotificationsButton(
-                key: const ValueKey('workspace-notifications-button'),
-                count: _unread,
-                foreground: theme.foreground,
-                onPressed: _shortcutsEnabled ? _showNotificationInbox : null,
-              ),
+              _searchButton(theme),
+              _notificationsButton(theme),
               WorkspaceStoreButton(
                 key: const ValueKey('swarm-store-button'),
                 width: storeWidth,
@@ -6778,6 +6757,75 @@ class _SwarmScreenState extends State<SwarmScreen> {
       );
     },
   );
+
+  /// A host's narrow layout (the web on a phone): one harness at a time, a tab
+  /// switcher, a quieter status bar. Never true without a host that asks.
+  bool _compact(BuildContext context) {
+    final chrome = widget.chrome;
+    return chrome?.compactTabs != null &&
+        MediaQuery.sizeOf(context).width < chrome!.compactBelow;
+  }
+
+  Widget _searchButton(TerminalTheme theme) => WorkspaceBarControl(
+    key: const ValueKey('swarm-search-button'),
+    label: 'Search harnesses',
+    tooltip: 'Search harnesses ${_keymap.hint('harnesses.list') ?? ''}',
+    onPressed: _shortcutsEnabled ? _toggleSessions : null,
+    builder: (context, emphasized) => SizedBox(
+      width: workspaceBarCellSizeOf(context).width * 4,
+      height: workspaceBarControlHeight(context),
+      child: Icon(
+        LucideIcons.search,
+        size: 17,
+        color: theme.foreground.withValues(
+          alpha: !_shortcutsEnabled
+              ? .28
+              : emphasized
+              ? 1
+              : .75,
+        ),
+      ),
+    ),
+  );
+
+  Widget _notificationsButton(TerminalTheme theme) =>
+      WorkspaceNotificationsButton(
+        key: const ValueKey('workspace-notifications-button'),
+        count: _unread,
+        foreground: theme.foreground,
+        onPressed: _shortcutsEnabled ? _showNotificationInbox : null,
+      );
+
+  /// A host's narrow bar (the web on a phone): its tab switcher in place of
+  /// the tab list, and no Store button, which the host's menu already offers.
+  Widget _compactTabStrip(WorkspaceChrome chrome, TerminalTheme theme) =>
+      Builder(
+        builder: (context) {
+          final cell = workspaceBarCellSizeOf(context);
+          return Material(
+            key: const ValueKey('workspace-tab-bar'),
+            color: grid.AppPalette.swarmTabBar,
+            child: SizedBox(
+              height: math.max(_tabBarHeight, cell.height * 2),
+              child: Row(
+                children: [
+                  SizedBox(width: cell.width),
+                  SizedBox(
+                    width: chrome.leadingWidth(context),
+                    child: chrome.leading(context, _workspaceCommands),
+                  ),
+                  Expanded(
+                    child: chrome.compactTabs!(context, _workspaceCommands),
+                  ),
+                  _searchButton(theme),
+                  _notificationsButton(theme),
+                  SizedBox(width: cell.width),
+                ],
+              ),
+            ),
+          );
+        },
+      );
 
   Widget _statusToolSymbol(
     String id,

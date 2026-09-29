@@ -44,6 +44,8 @@ class WorkspaceChrome {
     this.newHarnessMachine,
     this.pickerBar,
     this.showsKeyHints = true,
+    this.compactTabs,
+    this.compactBelow = 0,
   });
 
   final double Function(BuildContext context) leadingWidth;
@@ -60,4 +62,11 @@ class WorkspaceChrome {
 
   /// False hides keyboard hints inside the workspace's pickers ([KeyHints]).
   final bool showsKeyHints;
+
+  /// Below [compactBelow] of window width the workspace goes compact: this
+  /// replaces the tab list (the Store button steps aside), and only the focused
+  /// harness is drawn — a phone has room for neither a tab row nor a grid.
+  final Widget Function(BuildContext context, WorkspaceCommands commands)?
+  compactTabs;
+  final double compactBelow;
 }
