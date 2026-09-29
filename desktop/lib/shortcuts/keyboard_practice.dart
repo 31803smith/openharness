@@ -8,6 +8,7 @@ import 'package:harness/terminal/terminal_text.dart';
 import '../core/harness_file_store.dart';
 import '../core/local_key_value_store.dart';
 import '../core/test_run.dart';
+import '../shared/theme/app_theme.dart' as grid;
 import '../shared/theme/app_type.dart';
 import '../widgets/box_chrome.dart';
 import '../widgets/terminal_prompt.dart';
@@ -579,7 +580,7 @@ class _KeyboardPracticeState extends State<KeyboardPractice> {
                             onTap: () => _open(row),
                             child: ColoredBox(
                               color: i == _cursor.clamp(0, rows.length - 1)
-                                  ? Colors.white.withValues(alpha: .09)
+                                  ? boxInk(.09)
                                   : Colors.transparent,
                               child: Padding(
                                 padding: const EdgeInsets.symmetric(
@@ -675,7 +676,12 @@ class _KeyboardPracticeState extends State<KeyboardPractice> {
                         const SizedBox(height: 16),
                         Container(
                           padding: const EdgeInsets.all(14),
-                          color: Colors.black26,
+                          // A recessed well: black sinks a dark field, but
+                          // at 26% it turns a light one into a grey slab.
+                          color: grid.AppTheme.pick(
+                            boxInk(.06),
+                            Colors.black26,
+                          ),
                           child: Text(
                             _matched ? lesson.result : 'scratch workspace\n\n[harness 1] │ [harness 2]\n\n> ready',
                             key: const ValueKey('practice-preview'),

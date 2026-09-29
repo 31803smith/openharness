@@ -25,6 +25,7 @@ import 'api_picker_form.dart';
 import 'swarm_search_preview.dart';
 import 'swarm_preview_scroll.dart';
 import 'terminal_text_action.dart';
+import 'key_hints.dart';
 
 const resourcePickerCommands = {
   'picker.resource_toggle',
@@ -144,6 +145,19 @@ class _SwarmResourcePreviewState extends State<SwarmResourcePreview> {
     search.setQuery('@');
     final index = search.rows.indexWhere((row) => row.isCreate);
     if (index >= 0) search.move(index - search.cursor);
+    widget.onRefocus();
+  }
+
+  bool _isOnline(MachineState machine) =>
+      machine.nodeOnline != false &&
+      !machine.needsLink &&
+      machine.connectionStatus == ConnectionStatus.connected;
+
+  /// Scope the picker to this machine's harnesses — the same list Enter on
+  /// a project/machine group opens, so Rename/Delete are not the only doors.
+  void _viewMachine() {
+    final selected = row;
+    if (selected == null || !widget.search.scopeToGroup(selected.id)) return;
     widget.onRefocus();
   }
 
@@ -438,6 +452,7 @@ class _SwarmResourcePreviewState extends State<SwarmResourcePreview> {
           title:
               {
                     'picker.resource_toggle',
+                    'picker.resource_view',
                     'picker.resource_rename',
                     'picker.resource_settings',
                     'picker.resource_remove',
@@ -673,9 +688,7 @@ class _SwarmResourcePreviewState extends State<SwarmResourcePreview> {
       child: Text(
         hints.join('  ·  '),
         key: const ValueKey('resource-control-hints'),
-        style: terminalContentStyle(
-          color: theme.foreground.withValues(alpha: .54),
-        ),
+        style: terminalContentStyle(color: theme.muted),
       ),
     );
   }
@@ -832,6 +845,12 @@ class _SwarmResourcePreviewState extends State<SwarmResourcePreview> {
       if (machine == null) return [];
       final secondary = _secondaryActions();
       return [
+        if (_isOnline(machine))
+          _ResourceAction(
+            'View',
+            _viewMachine,
+            command: 'picker.resource_view',
+          ),
         ...secondary.where((a) => a.command == 'picker.resource_connect'),
         ...secondary.where((a) => a.command == 'picker.resource_settings'),
         if (!machine.machine.isShared)
@@ -1357,11 +1376,7 @@ class _SwarmResourcePreviewState extends State<SwarmResourcePreview> {
   Widget _machinePreview() {
     final machine = app.stateOf(row!.machineId!);
     if (machine == null) return _details([row!.title, 'Unavailable']);
-    final online =
-        machine.nodeOnline != false &&
-        !machine.needsLink &&
-        machine.connectionStatus == ConnectionStatus.connected;
-    final resources = online
+    final resources = _isOnline(machine)
         ? widget.search.machineResources[row!.machineId]
         : null;
     final status = machine.nodeOnline == false
@@ -1400,9 +1415,7 @@ class _SwarmResourcePreviewState extends State<SwarmResourcePreview> {
       grid.AppTheme.palette.value,
       terminalThemeStore.value,
     );
-    final muted = terminalContentStyle(
-      color: theme.foreground.withValues(alpha: .54),
-    );
+    final muted = terminalContentStyle(color: theme.muted);
     return ListView(
       controller: _scroll,
       padding: EdgeInsets.symmetric(
@@ -1471,7 +1484,7 @@ class _SwarmResourcePreviewState extends State<SwarmResourcePreview> {
                   widget.onRefocus();
                 },
                 style: TextButton.styleFrom(
-                  foregroundColor: theme.foreground.withValues(alpha: .54),
+                  foregroundColor: theme.muted,
                   textStyle: terminalContentStyle(),
                   padding: EdgeInsets.zero,
                   minimumSize: Size.zero,
@@ -1542,9 +1555,7 @@ class _SwarmResourcePreviewState extends State<SwarmResourcePreview> {
                 ),
                 child: Text(
                   'Working…',
-                  style: terminalContentStyle(
-                    color: theme.foreground.withValues(alpha: .54),
-                  ),
+                  style: terminalContentStyle(color: theme.muted),
                 ),
               ),
             if (_errors[row?.id] case final error?)
@@ -1622,7 +1633,7 @@ class _SwarmResourcePreviewState extends State<SwarmResourcePreview> {
                   ),
                   child: _actionButtons(),
                 ),
-              _controlHints(),
+              if (KeyHints.visibleOf(context)) _controlHints(),
             ],
           ],
         );

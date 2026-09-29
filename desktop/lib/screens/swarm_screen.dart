@@ -114,6 +114,8 @@ import '../orchestrator/orchestrator_workspace.dart';
 import '../teams/team_workspace.dart';
 import '../state/workspace_learning.dart';
 import '../state/workspace_onboarding.dart';
+import '../state/workspace_chrome.dart';
+import '../widgets/key_hints.dart';
 import '../daemons/daemon_brain.dart';
 import '../daemons/daemon_face.dart';
 import '../daemons/daemon_plate_client.dart';
@@ -151,6 +153,7 @@ class SwarmScreen extends StatefulWidget {
     this.daemonClock,
     this.daemonsPreview,
     this.experimentalFeatures,
+    this.chrome,
   });
   final AppNotifier notifier;
   final bool? nativeTabs;
@@ -175,6 +178,9 @@ class SwarmScreen extends StatefulWidget {
   /// uses a separate, window-only collection and never seeds an account.
   final ValueListenable<bool>? daemonsPreview;
   final ExperimentalFeaturesStore? experimentalFeatures;
+
+  /// Extra tab-bar controls from a host composition (the web build's menu).
+  final WorkspaceChrome? chrome;
   @override
   State<SwarmScreen> createState() => _SwarmScreenState();
 }
@@ -194,9 +200,24 @@ typedef _NewHarnessContext = ({
   String? projectName,
 });
 
-/// The command box's title line, a step quieter than the rows under it.
-TextStyle get _boxCaption =>
-    grid.AppType.monoLabel(color: kBoxFaint, fontWeight: FontWeight.w400);
+/// The command box's title line, a step quieter than the rows under it. The
+/// box is drawn on the terminal's ground, so its muted ink comes from there.
+TextStyle get _boxCaption => grid.AppType.monoLabel(
+  color: terminalThemeFor(
+    grid.AppTheme.palette.value,
+    terminalThemeStore.value,
+  ).muted,
+  fontWeight: FontWeight.w400,
+);
+
+/// The veil a workspace dialog drops over the panes behind it. Near-black on a
+/// dark palette; on a light one a near-black sheet would be the loudest thing
+/// on screen, so it is the workspace's own grey, which still sits a step below
+/// the dialog's lighter ground.
+Color get _workspaceVeil => grid.AppTheme.pick(
+  grid.AppPalette.swarmField,
+  Colors.black,
+).withValues(alpha: .94);
 
 class _SwarmScreenState extends State<SwarmScreen> {
   static const _channel = MethodChannel('harness/swarm_tabs');
@@ -866,6 +887,12 @@ class _SwarmScreenState extends State<SwarmScreen> {
       text: command['text'] as String?,
     );
   }
+
+  late final _workspaceCommands = WorkspaceCommands(
+    enabled: () => _shortcutsEnabled,
+    canRun: _canExecuteCommand,
+    run: _runShortcut,
+  );
 
   void _runShortcut(String id) {
     _closeDaemonHint();
@@ -2515,6 +2542,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
             .firstOrNull
             ?.machine
             .machineId ??
+        widget.chrome?.newHarnessMachine?.call() ??
         (newHarnessOpensInBox ? null : app.machineStates.keys.firstOrNull);
     final paneProject =
         projectName != null || agent == null || id != focused?.machineId
@@ -2796,9 +2824,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
                             }
                           },
                           // Keep the workspace quiet behind the focused pane.
-                          child: ColoredBox(
-                            color: Colors.black.withValues(alpha: .94),
-                          ),
+                          child: ColoredBox(color: _workspaceVeil),
                         ),
                       ),
                     ),
@@ -4961,6 +4987,22 @@ class _SwarmScreenState extends State<SwarmScreen> {
     // Search keeps keyboard focus while commands target the selected result.
     Widget ordered(double order, Widget child) =>
         FocusTraversalOrder(order: NumericFocusOrder(order), child: child);
+    final chrome = widget.chrome;
+    final bar = chrome?.pickerBar?.call(
+      context,
+      WorkspacePicker(
+        search: search,
+        focus: _focusSearch,
+        close: _dismissSearch,
+      ),
+    );
+    Widget withBar(Widget input) => bar == null
+        ? input
+        : Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [bar, input],
+          );
     final panel = Material(
       key: const ValueKey('swarm-search-results'),
       elevation: 0,
@@ -4985,30 +5027,33 @@ class _SwarmScreenState extends State<SwarmScreen> {
                   terminal: true,
                   bios: true,
                   previewBuilder: preview,
-                  header: Semantics(
-                    label: search.hint,
-                    child: ReadlineKeys(
-                      controller: _searchText,
-                      onChanged: search.setQuery,
-                      child: SwarmSearchInput(
-                        key: _searchInputKey,
-                        inputKey: const ValueKey('swarm-search-input'),
+                  header: withBar(
+                    Semantics(
+                      label: search.hint,
+                      child: ReadlineKeys(
                         controller: _searchText,
-                        focusNode: _searchFocus,
-                        search: search,
-                        onClose: _dismissSearch,
                         onChanged: search.setQuery,
-                        onOpen: _focusSearch,
-                        terminal: true,
-                        bios: true,
-                        cursorWidth: 2,
-                        hintText: search.hint,
+                        child: SwarmSearchInput(
+                          key: _searchInputKey,
+                          inputKey: const ValueKey('swarm-search-input'),
+                          controller: _searchText,
+                          focusNode: _searchFocus,
+                          search: search,
+                          onClose: _dismissSearch,
+                          onChanged: search.setQuery,
+                          onOpen: _focusSearch,
+                          terminal: true,
+                          bios: true,
+                          cursorWidth: 2,
+                          hintText: search.hint,
+                        ),
                       ),
                     ),
                   ),
                 )
               : Column(
                   children: [
+                    ?bar,
                     if (search.title != search.placement?.title)
                       Padding(
                         padding: const EdgeInsets.fromLTRB(14, 9, 14, 2),
@@ -5110,7 +5155,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
           selectionColor: terminalTheme.selection,
           selectionHandleColor: terminalTheme.cursor,
         ),
-        child: panel,
+        child: KeyHints(visible: chrome?.showsKeyHints ?? true, child: panel),
       ),
     );
     return Offstage(
@@ -5150,9 +5195,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
                       key: const ValueKey('swarm-search-dismiss'),
                       behavior: HitTestBehavior.opaque,
                       onTap: _dismissSearch,
-                      child: ColoredBox(
-                        color: Colors.black.withValues(alpha: .94),
-                      ),
+                      child: ColoredBox(color: _workspaceVeil),
                     ),
                   ),
                 ),
@@ -5975,10 +6018,14 @@ class _SwarmScreenState extends State<SwarmScreen> {
                           padding: const EdgeInsets.symmetric(horizontal: 16),
                           child: Row(
                             children: [
-                              const Icon(
+                              Icon(
                                 Icons.info_outline,
                                 size: 16,
-                                color: Colors.orangeAccent,
+                                // Orange is ~1.8:1 on a light panel.
+                                color: grid.AppTheme.pick(
+                                  grid.AppPalette.warn,
+                                  Colors.orangeAccent,
+                                ),
                               ),
                               const SizedBox(width: 10),
                               Expanded(
@@ -6504,9 +6551,15 @@ class _SwarmScreenState extends State<SwarmScreen> {
         WorkspaceStoreButton.widthOf(context),
         math.max(0.0, constraints.maxWidth - cell.width * 14),
       );
+      final chrome = widget.chrome;
+      final leadingWidth = chrome?.leadingWidth(context) ?? 0.0;
       final tabBudget = math.max(
         0.0,
-        constraints.maxWidth - cell.width * 6 - storeWidth - cell.width * 8,
+        constraints.maxWidth -
+            cell.width * 6 -
+            storeWidth -
+            cell.width * 8 -
+            leadingWidth,
       );
       _tabWidths = [
         for (var i = 0; i < labels.length; i++)
@@ -6535,6 +6588,11 @@ class _SwarmScreenState extends State<SwarmScreen> {
           child: Row(
             children: [
               SizedBox(width: cell.width),
+              if (chrome != null)
+                SizedBox(
+                  width: leadingWidth,
+                  child: chrome.leading(context, _workspaceCommands),
+                ),
               SizedBox(
                 width: tabsWidth,
                 child: ReorderableListView.builder(

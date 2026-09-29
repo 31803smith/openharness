@@ -851,6 +851,10 @@ private struct SwarmNativePalette: Equatable {
   let workspace: NSColor
   let search: NSColor
   let accent: NSColor
+  let foreground: NSColor
+  /// A dark palette. AppKit's own surfaces follow `NSApp.appearance`, which
+  /// [SwarmTitlebarStrip.updatePalette] sets from this.
+  let dark: Bool
 
   init(_ values: [String: Any] = [:]) {
     func color(_ name: String, _ fallback: UInt32) -> NSColor {
@@ -864,6 +868,8 @@ private struct SwarmNativePalette: Equatable {
     workspace = color("workspace", 0xff282828)
     search = color("search", 0xff2c2c2c)
     accent = color("accent", 0xffbdcbdc)
+    foreground = color("foreground", 0xfff5f5f5)
+    dark = (values["dark"] as? Int64).map { $0 != 0 } ?? true
   }
 }
 
@@ -906,12 +912,14 @@ private class SwarmIconButton: NSButton {
     return true
   }
   override func draw(_ dirtyRect: NSRect) {
+    // `labelColor`, not white: it is white under a dark palette and black under
+    // a light one (`NSApp.appearance`, set in `updatePalette`).
     if state == .on && isEnabled {
-      NSColor.white.withAlphaComponent(0.08).setFill()
+      NSColor.labelColor.withAlphaComponent(0.08).setFill()
       NSBezierPath(roundedRect: bounds.insetBy(dx: 1, dy: 1), xRadius: 7, yRadius: 7).fill()
     }
     if showsHoverFill && isEnabled && (hovered || hasKeyboardFocus || isHighlighted) {
-      NSColor.white.withAlphaComponent(isHighlighted ? 0.10 : 0.05).setFill()
+      NSColor.labelColor.withAlphaComponent(isHighlighted ? 0.10 : 0.05).setFill()
       NSBezierPath(roundedRect: bounds.insetBy(dx: 1, dy: 1), xRadius: 7, yRadius: 7).fill()
     }
     super.draw(dirtyRect)
@@ -1772,6 +1780,10 @@ private final class SwarmTabStrip: NSView {
     let nextPalette = SwarmNativePalette(values)
     guard nextPalette != palette else { return }
     palette = nextPalette
+    // Menus, the About panel, the traffic lights and every system color below
+    // (`labelColor` in the hover wells) follow the app's appearance, not the
+    // Flutter theme, so a light palette has to say so here.
+    NSApp.appearance = NSAppearance(named: palette.dark ? .darkAqua : .aqua)
     storeButton.palette = palette
     newButton.contentTintColor = palette.accent
     for tab in tabs { tab.palette = palette }

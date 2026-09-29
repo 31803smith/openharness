@@ -13,11 +13,13 @@ viewer after sign-in. The existing website root rewrite serves it without a new 
 Publish the browser build before the corresponding native hn release so the entry point
 recognizes the viewer destination.
 
-The browser target uses this same Flutter package and `lib/main.dart`: workspace,
-swarms, pickers, settings, state, and the patched xterm renderer are shared. Browser
-support is available as a public preview at
-[harness.autonomous.ai](https://harness.autonomous.ai); there is no separate web UI
-to keep in sync.
+The browser target uses this same Flutter package: swarms, pickers, settings, state and
+the patched xterm renderer are shared. `lib/main.dart` picks the browser's workspace at
+compile time (a conditional import of `lib/web/web_entry.dart`), composed for a mouse:
+every action desktop keeps in its native menus is clickable (keys still work, they are
+just not the way in). Browser-only UI lives in `lib/web/`, and desktop never imports it.
+Browser support is available as a public preview at
+[harness.autonomous.ai](https://harness.autonomous.ai).
 
 ## Web development
 
