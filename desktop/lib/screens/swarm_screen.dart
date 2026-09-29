@@ -4298,6 +4298,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
       focused.engine,
       app.gridPictures[focused.pane.machineId],
       machineId: focused.pane.machineId,
+      agentId: focused.agentId,
     );
     void selectCurrent() {
       if (search.query != ':' || search.managing) return;
@@ -4325,6 +4326,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
           focused.engine,
           choices,
           machineId: focused.pane.machineId,
+          agentId: focused.agentId,
         );
         if (search.selected?.id == initialSelection) selectCurrent();
       }),
@@ -4763,13 +4765,17 @@ class _SwarmScreenState extends State<SwarmScreen> {
     final placement = _search?.placement;
     final answering = _search?.sessionFilter == SessionFilter.needsInput;
     if (target == null) return;
+    // Get on a model the focused harness can run on downloads it, starts it and moves the harness
+    // onto it, below. With no such harness, Get only downloads.
     if (choice.destination.isModel &&
-        _search!.canGetModel(choice.destination)) {
+        _search!.canGetModel(choice.destination) &&
+        !_search!.canGetModelForUse(choice.destination)) {
       await _search!.getModel(choice.destination);
       return;
     }
     if (choice.destination.isModel &&
-        _search!.canSelectModel(choice.destination)) {
+        (_search!.canSelectModel(choice.destination) ||
+            _search!.canGetModelForUse(choice.destination))) {
       final search = _search!;
       if (search.usingModelId != null) return;
       final chosenFor = _modelSelectionTarget;
@@ -4806,7 +4812,14 @@ class _SwarmScreenState extends State<SwarmScreen> {
         return;
       }
       var selected = search.selectableGridModel(choice.destination);
-      if (selected == null && search.canStartModelForUse(choice.destination)) {
+      if (selected == null && search.canGetModelForUse(choice.destination)) {
+        selected = await search.getModelForUse(
+          choice.destination,
+          stillCurrent: current,
+        );
+        if (!mounted || !current() || selected == null) return;
+      } else if (selected == null &&
+          search.canStartModelForUse(choice.destination)) {
         selected = await search.startModelForUse(
           choice.destination,
           stillCurrent: current,
@@ -5247,8 +5260,13 @@ class _SwarmScreenState extends State<SwarmScreen> {
             )
             .firstOrNull;
         if (destination == null) return false;
-        final readToken = app.agentUnread.readTokenFor(row.machineId, row.agentId);
-        final questionId = app.questionFor(row.machineId, row.agentId)?.requestId;
+        final readToken = app.agentUnread.readTokenFor(
+          row.machineId,
+          row.agentId,
+        );
+        final questionId = app
+            .questionFor(row.machineId, row.agentId)
+            ?.requestId;
         final opened = await activateSwarmDestination(
           app,
           destination,
@@ -5257,9 +5275,15 @@ class _SwarmScreenState extends State<SwarmScreen> {
         // Opening acknowledges this notification. Its question stays pending
         // until the daemon confirms an answer, independently of unread state.
         if (opened &&
-            app.agentUnread.readTokenFor(row.machineId, row.agentId) == readToken &&
-            app.questionFor(row.machineId, row.agentId)?.requestId == questionId) {
-          app.readAgentNotification(row.machineId, row.agentId, readToken: readToken);
+            app.agentUnread.readTokenFor(row.machineId, row.agentId) ==
+                readToken &&
+            app.questionFor(row.machineId, row.agentId)?.requestId ==
+                questionId) {
+          app.readAgentNotification(
+            row.machineId,
+            row.agentId,
+            readToken: readToken,
+          );
         }
         return opened;
       },
