@@ -154,12 +154,17 @@ class _BackgroundCard extends StatelessWidget {
                       children: [
                         preview,
                         if (selected)
-                          const Positioned(
+                          Positioned(
                             right: 8,
                             bottom: 8,
+                            // White vanishes on a light palette's plain field
+                            // (1.25:1); its deep accent holds 5.1:1 or better.
                             child: Icon(
                               Icons.check_circle,
-                              color: Colors.white,
+                              color: grid.AppTheme.pick(
+                                grid.AppPalette.swarmAccent,
+                                Colors.white,
+                              ),
                               size: 20,
                             ),
                           ),

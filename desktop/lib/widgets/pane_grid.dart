@@ -628,7 +628,7 @@ class _SwarmCanvasState extends State<_SwarmCanvas> {
                           children: [
                             TextSpan(
                               text: '$key  ',
-                              style: const TextStyle(color: Colors.white70),
+                              style: TextStyle(color: boxText(.70)),
                             ),
                             TextSpan(text: action),
                           ],
@@ -1213,9 +1213,7 @@ class _PaneCell extends StatelessWidget {
         // decoration present even when clear: inserting/removing it would
         // reparent the terminal and lose its input, scroll and selection state.
         foregroundDecoration: BoxDecoration(
-          color: dimmed
-              ? const Color(0xFF9D9D9D).withValues(alpha: .30)
-              : null,
+          color: dimmed ? const Color(0xFF9D9D9D).withValues(alpha: .30) : null,
           border: blocked
               ? Border.all(color: grid.AppPalette.warn, width: 2)
               : null,

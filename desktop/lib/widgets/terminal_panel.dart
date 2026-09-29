@@ -1511,7 +1511,8 @@ class _TerminalPanelState extends State<TerminalPanel>
     final p = _passage;
     if (p != null && p.validate() && p.canHighlight) {
       final range = p.range;
-      final theme = terminalThemeFor(
+      // Laid on the screen itself, so the screen's own scheme.
+      final theme = terminalScreenThemeFor(
         grid.AppTheme.palette.value,
         terminalThemeStore.value,
       );
@@ -2068,8 +2069,13 @@ class _TerminalPanelState extends State<TerminalPanel>
                                       session.agentName,
                                       maxLines: 1,
                                       overflow: TextOverflow.ellipsis,
+                                      // The header's own ink, which this
+                                      // line stands in for while Find is open.
                                       style: grid.AppType.monoLabel(
-                                        color: Colors.white70,
+                                        color: terminalThemeFor(
+                                          grid.AppTheme.palette.value,
+                                          terminalThemeStore.value,
+                                        ).foreground.withValues(alpha: .70),
                                         fontWeight: FontWeight.w400,
                                       ),
                                     ),
@@ -2145,7 +2151,7 @@ class _TerminalPanelState extends State<TerminalPanel>
                             focusNode: _focusNode,
                             autofocus: widget.focused && !showComposer,
                             readOnly: widget.readOnly || !session.acceptsInput,
-                            theme: terminalThemeFor(
+                            theme: terminalScreenThemeFor(
                               grid.AppTheme.palette.value,
                               terminalThemeStore.value,
                             ),
@@ -3345,7 +3351,10 @@ class _PaneGhost extends StatelessWidget {
             border: Border.all(color: AppColors.accent, width: 1.5),
             boxShadow: [
               BoxShadow(
-                color: Colors.black.withValues(alpha: 0.45),
+                // A lifted tile: the dark shadow would smudge a light ground.
+                color: Colors.black.withValues(
+                  alpha: grid.AppTheme.pick(0.18, 0.45),
+                ),
                 blurRadius: 24,
                 offset: const Offset(0, 10),
               ),
