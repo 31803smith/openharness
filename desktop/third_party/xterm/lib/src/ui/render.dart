@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math' show max;
 import 'package:flutter/rendering.dart';
 import 'package:flutter/scheduler.dart';
@@ -27,6 +28,7 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
     required bool autoResize,
     bool resizeBuffer = true,
     bool renderingEnabled = true,
+    Duration? outputRepaintInterval,
     required TerminalStyle textStyle,
     required TextScaler textScaler,
     required TerminalTheme theme,
@@ -43,6 +45,7 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
         _autoResize = autoResize,
         _resizeBuffer = resizeBuffer,
         _renderingEnabled = renderingEnabled,
+        _outputRepaintInterval = outputRepaintInterval,
         _focusNode = focusNode,
         _cursorType = cursorType,
         _alwaysShowCursor = alwaysShowCursor,
@@ -112,6 +115,12 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
   set renderingEnabled(bool value) {
     if (value == _renderingEnabled) return;
     _renderingEnabled = value;
+    if (!value) {
+      _outputRepaintTimer?.cancel();
+      _outputRepaintTimer = null;
+      // A hidden tile draws nothing, so it holds no recorded lines either.
+      _painter.clearLineCache();
+    }
     if (attached) {
       if (value) {
         _terminal.addListener(_onTerminalChange);
@@ -122,6 +131,19 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
     // Catch up from the live buffer once, preserving follow-tail or the user's
     // scroll offset. Hidden output never queues a renderer layout or paint.
     if (value) markNeedsLayout();
+  }
+
+  Duration? _outputRepaintInterval;
+  Timer? _outputRepaintTimer;
+
+  set outputRepaintInterval(Duration? value) {
+    if (value == _outputRepaintInterval) return;
+    _outputRepaintInterval = value;
+    _outputRepaintTimer?.cancel();
+    _outputRepaintTimer = null;
+    // A focused tile resumes immediately even if its former background timer
+    // was waiting; there may be no later output chunk to wake it up.
+    if (value == null && attached && _renderingEnabled) markNeedsLayout();
   }
 
   set textStyle(TerminalStyle value) {
@@ -139,6 +161,12 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
   set theme(TerminalTheme value) {
     if (value == _painter.theme) return;
     _painter.theme = value;
+    markNeedsPaint();
+  }
+
+  set devicePixelRatio(double value) {
+    if (value == _painter.devicePixelRatio) return;
+    _painter.devicePixelRatio = value;
     markNeedsPaint();
   }
 
@@ -221,6 +249,17 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
   }
 
   void _onTerminalChange() {
+    final interval = _outputRepaintInterval;
+    if (interval != null && interval > Duration.zero) {
+      if (_outputRepaintTimer?.isActive ?? false) return;
+      _outputRepaintTimer = Timer(interval, () {
+        _outputRepaintTimer = null;
+        if (!attached || !_renderingEnabled) return;
+        markNeedsLayout();
+        _scheduleEditableRect();
+      });
+      return;
+    }
     markNeedsLayout();
     _scheduleEditableRect();
   }
@@ -243,6 +282,9 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
 
   @override
   void detach() {
+    _outputRepaintTimer?.cancel();
+    _outputRepaintTimer = null;
+    _painter.clearLineCache();
     super.detach();
     _offset.removeListener(_onScroll);
     _terminal.removeListener(_onTerminalChange);
@@ -502,6 +544,11 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
     return _painter.cellSize;
   }
 
+  /// The colour a cell's foreground word paints in under the current theme.
+  Color resolveForegroundColor(int cellColor) {
+    return _painter.resolveForegroundColor(cellColor);
+  }
+
   @override
   void paint(PaintingContext context, Offset offset) {
     _paint(context, offset);
@@ -538,13 +585,17 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
     final effectFirstLine = firstLine.clamp(0, lines.length - 1);
     final effectLastLine = lastLine.clamp(0, lines.length - 1);
 
+    // Unchanged lines replay their recorded drawing; only lines written since
+    // the last frame are drawn cell by cell (see LinePictureCache).
+    _painter.beginFrame();
     for (var i = effectFirstLine; i <= effectLastLine; i++) {
-      _painter.paintLine(
+      _painter.paintLineCached(
         canvas,
         offset.translate(0, (i * charHeight + _lineOffset).truncateToDouble()),
         lines[i],
       );
     }
+    _painter.endFrame();
 
     if (_terminal.buffer.absoluteCursorY >= effectFirstLine &&
         _terminal.buffer.absoluteCursorY <= effectLastLine) {

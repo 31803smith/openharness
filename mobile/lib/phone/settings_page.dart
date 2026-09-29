@@ -1,0 +1,673 @@
+import 'dart:async';
+
+import 'package:flutter/material.dart';
+import 'package:lucide_icons_flutter/lucide_icons.dart';
+import 'package:package_info_plus/package_info_plus.dart';
+
+import 'package:harness_mobile/core/app_version.dart';
+import 'package:harness_mobile/demo/sample_mode.dart'
+    show SampleMode, SampleSession, openSampleMode;
+import 'package:harness_mobile/core/device_name.dart';
+import 'package:harness_mobile/shared/widgets/app_dialog.dart';
+import 'package:harness_mobile/shared/theme/app_theme.dart';
+import 'package:harness_mobile/shared/theme/appearance_prefs_store.dart';
+import 'package:harness_mobile/shared/theme/color_palette.dart';
+import 'package:harness_mobile/state/app_state.dart';
+import 'package:harness_mobile/terminal/terminal_font_store.dart';
+import 'package:harness_mobile/terminal/terminal_theme_store.dart';
+
+import 'machines_tab.dart';
+import 'phone_navigation.dart' show phoneRoute;
+import 'phone_name_store.dart';
+import 'phone_sheet.dart';
+import 'settings_row.dart';
+import 'welcome/how_it_works.dart';
+import 'welcome/focus_hints.dart';
+import 'tty_controls.dart';
+import 'tty.dart';
+import 'usage_entry.dart';
+import 'voice_language.dart';
+import 'voice_language_store.dart';
+
+/// The phone's Settings tab.
+///
+/// DELIBERATELY not the desktop's eight sections. Three of them cannot work in a viewer build and
+/// would each be a screen that opens on nothing:
+///
+///  - **Autonomous devices** flashes an ESP32 over a serial port, through the CLI. A viewer has no
+///    CLI and a phone has no serial port.
+///  - **Keyboard shortcuts** is a list of ⌘ combinations for a keyboard that is not there.
+///  - **Check for updates** belongs to the desktop updater; a phone build is updated by its store.
+///
+/// **Usage** used to be on that list, for a reason that was true of the desktop reader and not of
+/// the setting: it counts by reading `~/.claude/projects`, `~/.codex` and OpenCode's SQLite file ON
+/// THIS DISK, and a phone has none of them. What a phone can do is ask the machine that does — so
+/// the section is kept, and its row comes from elsewhere: `usage_entry.dart` reads each linked
+/// machine's rate limits over `usage_read`.
+///
+/// What a phone shows that the desktop splits across panes:
+///
+///  - **Appearance** carries the [HarnessPalette] choices the desktop keeps in its own Customize
+///    pane — six dark, two light. They are not decoration here: the phone's tab bar, cards and
+///    terminal ground are all drawn from the chosen palette, a light one is how the phone goes
+///    light, and until now the phone shipped whichever one the desktop had last written to
+///    `~/.harness`.
+///  - **Terminal** carries the colour scheme beside the face and the size, because on a phone all
+///    three answer the same question — what the pane looks like at arm's length.
+///  - **Voice** carries the language the mic is transcribed in. A section of one row, and it earns
+///    it: on a phone the mic is a way of typing, not a decoration on the terminal, and a person
+///    whose words came back in the wrong language looks for the word "Voice".
+///
+/// The desktop's **Debug** screen has no counterpart here on purpose. It reads an in-memory ring
+/// that only a debug build fills, so on a shipped phone the row would open on an empty page — and
+/// the log files it mirrors are written either way, which is what a fault report actually needs.
+///
+/// What a phone adds instead is the account and the machine links, which the desktop keeps in its
+/// rail footer — on a phone there is no rail, so this is the only way to reach either.
+
+class SettingsPage extends StatelessWidget {
+  const SettingsPage({super.key, required this.notifier, this.large = true});
+
+  final AppNotifier notifier;
+
+  /// The tab's big title. Off when the page is pushed from a terminal's menu, where it needs the
+  /// back chevron a large header does not draw.
+  final bool large;
+
+  @override
+  Widget build(BuildContext context) => ListenableBuilder(
+    listenable: notifier,
+    builder: (context, _) {
+      AppTheme.watch(context);
+      final tty = Tty.of(context);
+      return Scaffold(
+        backgroundColor: tty.ground,
+        body: SafeArea(
+          bottom: false,
+          // The terminal's face for every row below, as on every other screen of the phone.
+          // Through the theme, not only a DefaultTextStyle: every Material in the rows resets the
+          // default text style from the theme's text theme.
+          child: Theme(
+            data: Theme.of(context).copyWith(
+              textTheme: Theme.of(context).textTheme.apply(
+                fontFamily: tty.fontFamily,
+                fontFamilyFallback: tty.fontFallback,
+              ),
+            ),
+            child: DefaultTextStyle.merge(
+              style: TextStyle(
+                fontFamily: tty.fontFamily,
+                fontFamilyFallback: tty.fontFallback,
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  if (!large)
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: TtyBackButton(
+                        onPressed: () => Navigator.of(context).maybePop(),
+                      ),
+                    ),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(
+                      Tty.origin,
+                      8,
+                      Tty.origin,
+                      0,
+                    ),
+                    child: TtyText(
+                      'Settings',
+                      size: TtySize.display,
+                      weight: FontWeight.w600,
+                    ),
+                  ),
+                  Expanded(child: _Body(notifier: notifier)),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+    },
+  );
+}
+
+class _Body extends StatelessWidget {
+  const _Body({required this.notifier});
+
+  final AppNotifier notifier;
+
+  @override
+  Widget build(BuildContext context) => ListView(
+    padding: EdgeInsets.fromLTRB(
+      Tty.origin,
+      // Zero: the first caption brings its own 22pt top, and any padding here would stack on it —
+      // the gap under the big "Settings" title would then be a header gap plus a between-groups
+      // gap, wider than every other gap on the screen.
+      0,
+      Tty.origin,
+      MediaQuery.paddingOf(context).bottom + 24,
+    ),
+    children: [
+      SettingsCaption(_sample(context) == null ? 'Account' : 'Sample'),
+      // Who you are, what you have used, the computers you reach and what they call this phone —
+      // one group, so no row stands alone under a heading that only repeats it.
+      SettingsGroup(
+        children: [
+          _accountRow(context),
+          // ⚠️ Usage sits right under the account, above everything that is set once and left
+          // alone, and that is deliberate: it is the only row here anybody opens twice.
+          // No Stats row: counters this app keeps about itself are nobody's daily question.
+          buildUsageSettingsRow(context, notifier),
+          // The computers this phone reaches — here rather than a menu of their own: linking one is
+          // a once-a-while errand, and Find already reaches every agent on them.
+          SettingsRow(
+            title: 'Computers',
+            onTap: () => Navigator.of(context).push(
+              phoneRoute((_) => MachinesTab(notifier: notifier, large: false)),
+            ),
+          ),
+          // The name those computers show when this phone takes a harness over — which makes it a
+          // fact about the account's computers, not about how the terminal looks.
+          _PhoneNameRow(notifier: notifier),
+        ],
+      ),
+      const SettingsCaption('Terminal'),
+      SettingsGroup(
+        children: [_FontPreview(), _FontRow(), _SizeRow(), _TerminalThemeRow()],
+      ),
+      // ⚠️ **Its own section, not a row under Terminal.** The rows above answer
+      // what the pane LOOKS like — face, size, colours. This one answers what the mic HEARS, which is
+      // the other half of the terminal and the one people go looking for when
+      // the transcript comes back in the wrong language. Under a Terminal
+      // caption it read as another thing about the type.
+      const SettingsCaption('Voice'),
+      SettingsGroup(children: [_VoiceLanguageRow()]),
+      const SettingsCaption('Appearance'),
+      SettingsGroup(children: [_PaletteRow(), _TextSizeRow()]),
+      const SettingsCaption('Help'),
+      SettingsGroup(
+        children: [
+          SettingsRow(
+            title: 'How Harness works',
+            onTap: () => unawaited(openHowItWorks(context)),
+          ),
+          // The offline sample, from inside the real app too — to show somebody, or to try a
+          // gesture without touching a real harness. Not offered inside the sample itself.
+          if (_sample(context) == null)
+            SettingsRow(
+              title: 'Try the sample',
+              onTap: () => unawaited(openSampleMode(context)),
+            ),
+          SettingsRow(
+            title: 'Show the tips again',
+            onTap: () {
+              unawaited(FocusHintsSeen.shared.forget());
+              ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+                const SnackBar(
+                  content: Text('The tips come back on the next harness.'),
+                ),
+              );
+            },
+          ),
+        ],
+      ),
+      const SettingsCaption('About'),
+      SettingsGroup(children: const [_VersionRow(), _BuildRow()]),
+    ],
+  );
+
+  /// The sample this page is in, or null in the real app — see `lib/demo/sample_mode.dart`.
+  SampleSession? _sample(BuildContext context) =>
+      SampleMode.maybeOf(context) ?? SampleMode.ofNotifier(notifier);
+
+  /// Who is signed in — or, in sample mode, which has no account to show or sign out of, the
+  /// way back out of it.
+  Widget _accountRow(BuildContext context) {
+    final sample = _sample(context);
+    if (sample != null) {
+      return SettingsRow(
+        key: const ValueKey('settings-leave-sample'),
+        title: 'Leave the sample',
+        onTap: () => sample.leave(),
+      );
+    }
+    return SettingsRow(
+      leading: _Avatar(notifier: notifier),
+      title: notifier.currentUser?.displayName ?? 'Signed in',
+      detail: notifier.currentUser?.email,
+      onTap: () => _showAccountSheet(context, notifier),
+    );
+  }
+
+  void _showAccountSheet(BuildContext context, AppNotifier notifier) {
+    showPhoneSheet(
+      context,
+      title: notifier.currentUser?.email ?? 'Signed in',
+      actions: [
+        PhoneSheetAction(
+          icon: LucideIcons.logOut300,
+          label: 'Sign out',
+          destructive: true,
+          onTap: () => unawaited(notifier.logout()),
+        ),
+      ],
+    );
+  }
+}
+
+class _Avatar extends StatelessWidget {
+  const _Avatar({required this.notifier});
+
+  final AppNotifier notifier;
+
+  @override
+  Widget build(BuildContext context) {
+    AppTheme.watch(context);
+    final user = notifier.currentUser;
+    final source = (user?.name?.trim().isNotEmpty ?? false)
+        ? user!.name!.trim()
+        : (user?.email ?? '');
+    // ⚠️ The first CHARACTER, not the first code unit: a name that opens with an emoji starts on
+    // half of a surrogate pair, and a lone half is a string the text engine refuses — it threw,
+    // and took the whole Settings page down with it.
+    final initial = source.isEmpty
+        ? '?'
+        : source.characters.first.toUpperCase();
+    return Container(
+      // 34, matching the stepper beside it two rows down: both are the tallest thing in their row,
+      // and at 38 this one alone pushed its row past [kSettingsRowHeight] while the others sat on
+      // it — one card with a taller first row.
+      width: 34,
+      height: 34,
+      decoration: BoxDecoration(
+        color: Tty.of(context).selected,
+        shape: BoxShape.circle,
+      ),
+      alignment: Alignment.center,
+      child: Text(
+        initial,
+        style: TextStyle(
+          color: Tty.of(context).text,
+          // Scaled with the disc: 15pt inside 34 left almost no ring around the letter, which
+          // reads as a cramped badge rather than an avatar.
+          fontSize: 14,
+          fontWeight: FontWeight.w600,
+        ),
+      ),
+    );
+  }
+}
+
+/// The language the mic under every terminal transcribes in.
+///
+/// ⚠️ **The mic's long press opens the same picker — but only in the build that taps to talk.**
+/// Hold-to-talk gives that gesture to the recording (`voice_mic_mode.dart`), so there this row is the
+/// whole of the setting: without it a phone transcribes in whatever language it guessed on first
+/// launch, for ever. It is drawn either way rather than only in the build that needs it — a setting
+/// that moves between releases is one nobody can be told where to find.
+class _VoiceLanguageRow extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) => ValueListenableBuilder(
+    valueListenable: voiceLanguageStore,
+    builder: (context, code, _) {
+      AppTheme.watch(context);
+      return SettingsRow(
+        // "Language", not "Voice language": the caption above the group
+        // already said Voice, and a row that repeats its own section reads as
+        // though there were a second kind of language further down.
+        title: 'Language',
+        value: voiceLanguageName(code),
+        onTap: () => unawaited(showVoiceLanguagePicker(context)),
+      );
+    },
+  );
+}
+
+/// What this phone is called on another screen's "took control" banner —
+/// the name the OS gives it until the person types their own here.
+class _PhoneNameRow extends StatelessWidget {
+  const _PhoneNameRow({required this.notifier});
+
+  final AppNotifier notifier;
+
+  @override
+  Widget build(BuildContext context) => ValueListenableBuilder(
+    valueListenable: phoneNameStore,
+    builder: (context, override, _) {
+      AppTheme.watch(context);
+      return SettingsRow(
+        key: const ValueKey('settings-phone-name'),
+        // What the row sets, not what it is about: "This phone · Phone" read as a heading.
+        title: 'Phone name',
+        value: notifier.phoneClientDescriptor().name,
+        onTap: () => unawaited(
+          showAppDialog<void>(
+            context: context,
+            builder: (_) => _PhoneNameDialog(
+              current: override ?? '',
+              placeholder: composePhoneName(
+                device: NativeDeviceInfo.cached,
+                userName: notifier.currentUser?.name,
+              ),
+            ),
+          ),
+        ),
+      );
+    },
+  );
+}
+
+/// Owns its controller for the reason `widgets/rename_agent_dialog.dart` gives:
+/// a controller disposed while the route is still animating out is a red screen.
+class _PhoneNameDialog extends StatefulWidget {
+  const _PhoneNameDialog({required this.current, required this.placeholder});
+
+  /// The override on file, or empty for "the OS's name".
+  final String current;
+
+  /// What the phone is called with no override — shown as the field's hint.
+  final String placeholder;
+
+  @override
+  State<_PhoneNameDialog> createState() => _PhoneNameDialogState();
+}
+
+class _PhoneNameDialogState extends State<_PhoneNameDialog> {
+  late final _controller = TextEditingController(text: widget.current);
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _submit() {
+    unawaited(phoneNameStore.rename(_controller.text));
+    Navigator.of(context).pop();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    AppTheme.watch(context);
+    return AlertDialog(
+      title: const Text('Phone name'),
+      content: SizedBox(
+        width: 360,
+        child: TextField(
+          key: const ValueKey('settings-phone-name-field'),
+          controller: _controller,
+          autofocus: true,
+          maxLength: phoneNameMax,
+          decoration: InputDecoration(
+            hintText: widget.placeholder,
+            helperText: 'Leave empty to use the name above.',
+          ),
+          onSubmitted: (_) => _submit(),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(onPressed: _submit, child: const Text('Save')),
+      ],
+    );
+  }
+}
+
+/// One terminal line in the chosen face and size — what Font and Size change, live, above them.
+class _FontPreview extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) => ValueListenableBuilder(
+    valueListenable: terminalFontStore,
+    builder: (context, font, _) {
+      AppTheme.watch(context);
+      final tty = Tty.of(context);
+      TextStyle ink(Color color) => TextStyle(
+        fontFamily: font.fontFamily,
+        fontFamilyFallback: font.fontFamilyFallback,
+        fontSize: font.fontSize,
+        height: 1.2,
+        color: color,
+      );
+      return ExcludeSemantics(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(13, 14, 13, 14),
+          child: Text.rich(
+            TextSpan(
+              children: [
+                TextSpan(text: '~/web ', style: ink(tty.faint)),
+                TextSpan(text: '❯ ', style: ink(tty.green)),
+                TextSpan(text: 'claude "fix the login"', style: ink(tty.text)),
+              ],
+            ),
+            maxLines: 1,
+            softWrap: false,
+            overflow: TextOverflow.clip,
+          ),
+        ),
+      );
+    },
+  );
+}
+
+/// The terminal typeface. A sheet rather than a dropdown: a phone has room for the whole list.
+class _FontRow extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) => ValueListenableBuilder(
+    valueListenable: terminalFontStore,
+    builder: (context, _, _) {
+      AppTheme.watch(context);
+      return SettingsRow(
+        title: 'Font',
+        value: terminalFontStore.family.label,
+        onTap: () => showPhoneSheet(
+          context,
+          title: 'Terminal font',
+          actions: [
+            for (final choice in TerminalFontChoice.available)
+              PhoneSheetAction(
+                icon: choice == terminalFontStore.family
+                    ? LucideIcons.check300
+                    : LucideIcons.type300,
+                label: choice.label,
+                onTap: () => unawaited(terminalFontStore.setFamily(choice)),
+              ),
+          ],
+        ),
+      );
+    },
+  );
+}
+
+/// Terminal text size, as a stepper rather than buried a screen deeper: on a phone this is the
+/// setting people actually reach for, because the same pane that reads fine indoors is unreadable
+/// at arm's length on a train.
+class _SizeRow extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) => ValueListenableBuilder(
+    valueListenable: terminalFontStore,
+    builder: (context, _, _) {
+      AppTheme.watch(context);
+      final size = terminalFontStore.size;
+      return SettingsRow(
+        title: 'Size',
+        trailing: SettingsStepper(
+          value: size.toStringAsFixed(0),
+          // The bounds are the store's own, so a lit + that does nothing is impossible.
+          onDecrease: size > TerminalFontStore.minSize
+              ? () => unawaited(terminalFontStore.decreaseSize())
+              : null,
+          onIncrease: size < TerminalFontStore.maxSize
+              ? () => unawaited(terminalFontStore.increaseSize())
+              : null,
+        ),
+      );
+    },
+  );
+}
+
+/// The terminal's colour scheme. Beside the face and the size rather than under Appearance, because
+/// all three describe the pane a remote program draws into — and [TerminalThemeChoice.matchApp],
+/// the default, is precisely the choice to follow Appearance instead.
+class _TerminalThemeRow extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) =>
+      ValueListenableBuilder<TerminalThemeChoice>(
+        valueListenable: terminalThemeStore,
+        builder: (context, choice, _) {
+          AppTheme.watch(context);
+          // "Same as the app" names a rule; the palette it resolves to names a colour.
+          String label(TerminalThemeChoice option) =>
+              option == TerminalThemeChoice.matchApp
+              ? appearancePrefsStore.value.palette.label
+              : option.label;
+          return SettingsRow(
+            title: 'Colors',
+            value: label(choice),
+            onTap: () => showPhoneSheet(
+              context,
+              title: 'Terminal colors',
+              actions: [
+                for (final option in TerminalThemeChoice.values)
+                  PhoneSheetAction(
+                    icon: option == choice
+                        ? LucideIcons.check300
+                        : LucideIcons.palette300,
+                    label: label(option),
+                    onTap: () => unawaited(terminalThemeStore.set(option)),
+                  ),
+              ],
+            ),
+          );
+        },
+      );
+}
+
+/// The app's palette — the [HarnessPalette] choices the desktop lays out as swatch cards.
+///
+/// A sheet of names rather than a grid of previews, and the difference is the screen: the desktop's
+/// cards each draw a miniature workspace, which needs the width of a settings pane to be legible at
+/// all. Shrunk to a phone's column they would be eight indistinguishable rectangles. The app
+/// repaints on the tap anyway — [AppearancePrefsStore.setPalette] moves the notifier before it
+/// writes — so the preview IS the app behind the sheet, at full size, which no swatch can beat.
+///
+/// Under Dark and Light captions, because a light palette is the whole of light mode: there is no
+/// other switch, and a person looking for one scans for the word.
+class _PaletteRow extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) => ValueListenableBuilder<AppearancePrefs>(
+    valueListenable: appearancePrefsStore,
+    builder: (context, prefs, _) {
+      AppTheme.watch(context);
+      PhoneSheetAction choice(HarnessPalette palette) => PhoneSheetAction(
+        icon: palette == prefs.palette
+            ? LucideIcons.check300
+            : LucideIcons.swatchBook300,
+        label: palette.label,
+        value: palette.description,
+        onTap: () => unawaited(appearancePrefsStore.setPalette(palette)),
+      );
+      return SettingsRow(
+        // "App colors", beside the terminal's own "Colors": both read Graphite by default, and
+        // two rows with one value looked like the same setting twice.
+        title: 'App colors',
+        value: prefs.palette.label,
+        onTap: () => showPhoneSheet(
+          context,
+          title: 'App colors',
+          sections: [
+            for (final (caption, dark) in const [
+              ('Dark', true),
+              ('Light', false),
+            ])
+              PhoneSheetSection(
+                caption: caption,
+                actions: [
+                  for (final palette in HarnessPalette.values)
+                    if (palette.isDark == dark) choice(palette),
+                ],
+              ),
+          ],
+        ),
+      );
+    },
+  );
+}
+
+/// The app's own text size — everything that is not the terminal.
+class _TextSizeRow extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) => ValueListenableBuilder(
+    valueListenable: appearancePrefsStore,
+    builder: (context, prefs, _) {
+      AppTheme.watch(context);
+      final size = prefs.uiSize;
+      return SettingsRow(
+        title: 'Text size',
+        trailing: SettingsStepper(
+          value: size.toStringAsFixed(0),
+          onDecrease: size > AppearancePrefs.uiSizeMin
+              ? () => unawaited(appearancePrefsStore.setUiSize(size - 1))
+              : null,
+          onIncrease: size < AppearancePrefs.uiSizeMax
+              ? () => unawaited(appearancePrefsStore.setUiSize(size + 1))
+              : null,
+        ),
+      );
+    },
+  );
+}
+
+/// The version, read from the bundle rather than from `pubspec.yaml` — see [appVersion].
+class _VersionRow extends StatelessWidget {
+  const _VersionRow();
+
+  @override
+  Widget build(BuildContext context) => FutureBuilder<String>(
+    future: runningAppVersion(),
+    builder: (context, snapshot) {
+      AppTheme.watch(context);
+      return SettingsRow(title: 'Version', value: snapshot.data ?? '');
+    },
+  );
+}
+
+/// The build behind the version — `buildNumber` from the bundle, and the store's own identifier.
+///
+/// Version alone is not enough to name a phone build. Two TestFlight builds and two Play internal
+/// tracks share one marketing version by design, and a bug report that says "1.0.0" names four
+/// binaries. The build number is what the store shows beside a submission and what a crash report
+/// is filed against, so it is the one figure support actually asks for — which is why it earns a
+/// row rather than being folded into the version's text and lost to its own ellipsis.
+///
+/// ⚠️ Read through [PackageInfo] rather than [runningAppVersion]: that one deliberately answers only
+/// the marketing version, with a Linux `version.txt` branch this platform never takes.
+class _BuildRow extends StatelessWidget {
+  const _BuildRow();
+
+  /// Resolved ONCE per process, not per build of this row.
+  ///
+  /// [PackageInfo.fromPlatform] is a platform-channel round trip, and the settings list rebuilds on
+  /// every [AppNotifier] notification — a socket frame, an agent's state change. A future created
+  /// inline would fire one channel call per frame and flash the em dash back in each time while it
+  /// resolved. The answer cannot change while the process lives, so caching it is exact rather than
+  /// merely cheap.
+  static final Future<PackageInfo> _info = PackageInfo.fromPlatform();
+
+  @override
+  Widget build(BuildContext context) => FutureBuilder<PackageInfo>(
+    future: _info,
+    builder: (context, snapshot) {
+      AppTheme.watch(context);
+      final info = snapshot.data;
+      // Empty on Linux/desktop dev builds, where nothing stamps it: the row says nothing rather
+      // than a dash.
+      final build = info?.buildNumber ?? '';
+      return SettingsRow(title: 'Build', value: build);
+    },
+  );
+}

@@ -3,24 +3,204 @@ import 'dart:io';
 import 'package:path/path.dart' as p;
 
 import 'repository_clone.dart';
+import 'git_worktree.dart';
 
 /// Folder preparation is explicit and runs only when New Agent is submitted.
 /// Existing folders continue to use the ordinary agent_create cwd payload.
 class ProjectFolderRequest {
-  const ProjectFolderRequest.newProject() : repository = null;
+  const ProjectFolderRequest.newProject({this.name})
+    : gitSource = null,
+      branchRef = null,
+      branchName = null,
+      existingBranch = false,
+      placeholder = false,
+      createsWorktree = false,
+      repository = null,
+      generatedLabel = null,
+      generatedAt = null,
+      generatedTask = null;
+
+  /// A suggested new project: named after the first [task] when it has words
+  /// to name it by (openharness#94 — five `solder-2026-…` folders said nothing
+  /// about which board was which), otherwise after [label] and the time.
+  ProjectFolderRequest.generated({
+    required String label,
+    required DateTime at,
+    String? task,
+    String? name,
+  }) : gitSource = null,
+       branchRef = null,
+       branchName = null,
+       existingBranch = false,
+       placeholder = false,
+       createsWorktree = false,
+       repository = null,
+       generatedLabel = label,
+       generatedAt = at,
+       generatedTask = taskProjectSlug(task ?? '') == null ? null : task,
+       name =
+           name ??
+           taskProjectSlug(task ?? '') ??
+           _suggestedFolderName(label, at);
   const ProjectFolderRequest.remote(GitHubRepository value)
-    : repository = value;
+    : gitSource = null,
+      branchRef = null,
+      branchName = null,
+      existingBranch = false,
+      placeholder = false,
+      createsWorktree = false,
+      repository = value,
+      name = null,
+      generatedLabel = null,
+      generatedAt = null,
+      generatedTask = null;
+
+  /// A new worktree on [branchName]: created from [branchRef], or with
+  /// [existingBranch] that local branch checked out as it is. Without a name
+  /// the machine makes one up.
+  const ProjectFolderRequest.worktree(
+    String source, {
+    this.branchRef,
+    this.branchName,
+    this.existingBranch = false,
+    this.placeholder = false,
+  }) : gitSource = source,
+       createsWorktree = true,
+       repository = null,
+       name = null,
+       generatedLabel = null,
+       generatedAt = null,
+       generatedTask = null;
+
+  /// The folder itself on [ref], or with [newBranch] on that new branch, made
+  /// where the folder is now. [ref] then names the new branch, so a daemon that
+  /// cannot make one refuses it rather than starting on the old one.
+  const ProjectFolderRequest.branch(
+    String source,
+    String ref, {
+    String? newBranch,
+  }) : gitSource = source,
+       branchRef = ref,
+       branchName = newBranch,
+       existingBranch = false,
+       placeholder = false,
+       createsWorktree = false,
+       repository = null,
+       name = null,
+       generatedLabel = null,
+       generatedAt = null,
+       generatedTask = null;
+
+  final String? gitSource, branchRef, branchName;
+
+  /// [branchName] was made up: the session's name replaces it once it has one.
+  final bool createsWorktree, existingBranch, placeholder;
 
   final GitHubRepository? repository;
 
+  /// What the person called the new project, or null to name it after the
+  /// harness and the time. The folder is [projectFolderSlug] of it.
+  final String? name;
+  final String? generatedLabel;
+  final DateTime? generatedAt;
+
+  /// The first task a suggested name was made from, or null for one made from
+  /// the label and the time.
+  final String? generatedTask;
+  bool get isGenerated => generatedAt != null;
+
+  /// What the agent is called before its engine titles the session: the
+  /// person's own name for the project, or the words of the task it was named
+  /// after. Null for a clock-named one, which the machine names itself.
+  String? get agentName => generatedTask != null
+      ? taskProjectTitle(generatedTask!)
+      : isGenerated
+      ? null
+      : name?.trim().isEmpty ?? true
+      ? null
+      : name!.trim();
+
+  /// The preview and Start share a frozen timestamp. Only an untouched
+  /// suggestion can advance to another name if its folder is taken.
+  String nextGeneratedName(String taken) {
+    // Named after the task: the same words again, numbered.
+    if (taskProjectSlug(generatedTask ?? '') case final base?) {
+      final suffix = int.tryParse(taken.split('-').last);
+      return taken.startsWith('$base-') && suffix != null && suffix >= 2
+          ? '$base-${suffix + 1}'
+          : '$base-2';
+    }
+    final precise = _suggestedFolderName(
+      generatedLabel!,
+      generatedAt!,
+      withSeconds: true,
+    );
+    String numbered(int suffix) => _suggestedFolderName(
+      generatedLabel!,
+      generatedAt!,
+      withSeconds: true,
+      suffix: suffix,
+    );
+    if (taken == precise) return numbered(2);
+    final suffix = int.tryParse(taken.split('-').last);
+    if (suffix != null && suffix >= 2 && taken == numbered(suffix)) {
+      return numbered(suffix + 1);
+    }
+    return precise;
+  }
+
+  String availableGeneratedName(Iterable<String> names) {
+    final occupied = names.map((name) => name.toLowerCase()).toSet();
+    var candidate = folderName!;
+    while (occupied.contains(candidate.toLowerCase())) {
+      candidate = nextGeneratedName(candidate);
+    }
+    return candidate;
+  }
+
+  ProjectFolderRequest withGeneratedName(String name) =>
+      ProjectFolderRequest.generated(
+        label: generatedLabel!,
+        at: generatedAt!,
+        task: generatedTask,
+        name: name,
+      );
+
+  /// The folder a named new project gets, or null when it is left to the clock.
+  String? get folderName => name == null ? null : projectFolderSlug(name!);
+
   Map<String, String> get payload => {
-    'projectSource': repository == null ? 'new' : 'remote',
+    'projectSource': gitSource != null
+        ? (createsWorktree ? 'worktree' : 'branch')
+        : repository == null
+        ? 'new'
+        : 'remote',
+    'gitSource': ?gitSource,
+    'branchRef': ?branchRef,
+    // A daemon that predates these names the worktree's branch itself.
+    'branchName': ?branchName,
+    if (existingBranch) 'branchMode': 'existing',
+    if (placeholder) 'branchMode': 'placeholder',
     if (repository != null) 'repositoryUrl': repository!.url,
+    // A daemon that predates the field ignores it and names the folder itself.
+    if (repository == null && folderName != null) 'projectName': folderName!,
+    // A suggestion the machine may number past a folder that exists (`-2`)
+    // rather than refuse; a name the person typed stays refused. A daemon that
+    // predates it treats every name as typed.
+    if (repository == null && folderName != null && isGenerated)
+      'projectNameMode': 'suggested',
   };
 
+  /// A new project is named after who it is for and when: [label] ("Codex", "Blender") and the
+  /// local time, `codex-2026-09-03-09-05`, every part two digits so a folder listing sorts in the
+  /// order harnesses were made. Nothing is counted — `harness-N` folders numbered apart from agent
+  /// names drifted from them. Two in the same minute take the seconds, then a suffix. The daemon
+  /// names remote projects the same way (cli/src/lib/agentNames.ts).
   Future<String> prepareLocal({
     String? projectHome,
     RepositoryClone Function()? createClone,
+    String label = 'harness',
+    DateTime Function()? now,
   }) async {
     final home =
         Platform.environment['HOME'] ?? Platform.environment['USERPROFILE'];
@@ -31,6 +211,17 @@ class ProjectFolderRequest {
     }
     final root = Directory(projectHome ?? p.join(home!, 'harnesses'));
     try {
+      if (gitSource case final source?) {
+        return await prepareGitProject(
+          source,
+          root.path,
+          worktree: createsWorktree,
+          branchRef: branchRef,
+          branchName: branchName,
+          existingBranch: existingBranch,
+          placeholder: placeholder,
+        );
+      }
       await root.create(recursive: true);
       if (repository case final repo?) {
         return await (createClone?.call() ?? RepositoryClone()).run(
@@ -38,17 +229,39 @@ class ProjectFolderRequest {
           root.path,
         );
       }
-      var next = BigInt.one;
-      await for (final entry in root.list(followLinks: false)) {
-        final match = RegExp(r'^agent-([1-9]\d*)$')
-            .firstMatch(p.basename(entry.path));
-        if (match == null) continue;
-        final number = BigInt.parse(match.group(1)!);
-        if (number >= next) next = number + BigInt.one;
+      if (folderName case final named?) {
+        // A name somebody chose is never quietly changed: an existing folder
+        // is theirs to pick as an existing project, as a clone's is.
+        var candidate = named;
+        while (true) {
+          final folder = p.join(root.path, candidate);
+          final result = await Process.run('mkdir', [folder]);
+          if (result.exitCode == 0) return folder;
+          if (await FileSystemEntity.type(folder, followLinks: false) !=
+              FileSystemEntityType.notFound) {
+            if (isGenerated) {
+              candidate = nextGeneratedName(candidate);
+              continue;
+            }
+            throw RepositoryCloneException(
+              '“$named” already exists. Choose it as an existing project.',
+            );
+          }
+          throw FileSystemException('Could not create folder', folder);
+        }
       }
-      for (;;) {
-        final folder = p.join(root.path, 'agent-$next');
-        next += BigInt.one;
+      final at = (now ?? DateTime.now)();
+      final base = projectFolderName(label, at);
+      final precise = projectFolderName(label, at, withSeconds: true);
+      for (var attempt = 0; ; attempt++) {
+        final folder = p.join(
+          root.path,
+          attempt == 0
+              ? base
+              : attempt == 1
+              ? precise
+              : '$precise-$attempt',
+        );
         // Directory.create accepts an existing directory. The platform mkdir
         // command reserves it exclusively, so concurrent creates never share
         // a workspace. Paths are arguments, never shell text.
@@ -70,3 +283,133 @@ class ProjectFolderRequest {
     }
   }
 }
+
+/// Suggested names travel through the daemon's 64-character named-project
+/// field. Shorten only a long label, preserving the date and collision suffix.
+String _suggestedFolderName(
+  String label,
+  DateTime at, {
+  bool withSeconds = false,
+  int? suffix,
+}) {
+  final name = projectFolderName(label, at, withSeconds: withSeconds);
+  final stamp = projectFolderName(
+    '',
+    at,
+    withSeconds: withSeconds,
+  ).substring('harness'.length);
+  final ending = '$stamp${suffix == null ? '' : '-$suffix'}';
+  var prefix = name.substring(0, name.length - stamp.length);
+  final room = 64 - ending.length;
+  if (prefix.length > room) prefix = prefix.substring(0, room);
+  return '$prefix$ending';
+}
+
+/// `codex-2026-09-03-09-05`: [label] in lowercase words, then the local date and time.
+String projectFolderName(
+  String label,
+  DateTime at, {
+  bool withSeconds = false,
+}) {
+  String two(int n) => n.toString().padLeft(2, '0');
+  final slug = label
+      .toLowerCase()
+      .replaceAll(RegExp(r'[^a-z0-9]+'), '-')
+      .replaceAll(RegExp(r'^-+|-+$'), '');
+  final time =
+      '${two(at.hour)}-${two(at.minute)}${withSeconds ? '-${two(at.second)}' : ''}';
+  return '${slug.isEmpty ? 'harness' : slug}-${at.year}-${two(at.month)}-${two(at.day)}-$time';
+}
+
+/// The folder for a project somebody named: their words with spaces as dashes
+/// and nothing a path or a shell reads specially. Null when nothing usable is
+/// left, which callers treat as "not named". Mirrors `projectFolderSlug` in
+/// cli/src/lib/agentNames.ts.
+///
+/// Accented letters keep their base letter (`nói` → `noi`, `đèn` → `den`)
+/// rather than being dropped, which turned "Robot nói chuyện" into
+/// `Robot-ni-chuyn`.
+String? projectFolderSlug(String name) {
+  final slug = foldDiacritics(name)
+      .trim()
+      .replaceAll(RegExp(r'\s+'), '-')
+      .replaceAll(RegExp(r'[^A-Za-z0-9._-]+'), '')
+      .replaceAll(RegExp(r'^[.-]+|[.-]+$'), '');
+  if (slug.isEmpty) return null;
+  return slug.length > 64 ? slug.substring(0, 64) : slug;
+}
+
+/// How many of a first task's words name the project and the agent.
+const _taskNameWords = 6;
+
+/// The first line of [task], cut to its first few words — what a project named
+/// after its task is called ("Robot nói chuyện với Gemini"). Null when the
+/// task has no letters or digits to name anything by.
+String? taskProjectTitle(String task) {
+  final line = task
+      .trim()
+      .split('\n')
+      .first
+      .split(RegExp(r'\s+'))
+      .where((word) => word.isNotEmpty)
+      .take(_taskNameWords)
+      .join(' ');
+  if (!RegExp(r'[\p{L}\p{N}]', unicode: true).hasMatch(line)) return null;
+  return line.length > 60 ? line.substring(0, 60).trimRight() : line;
+}
+
+/// The folder a project named after [task] gets: its [taskProjectTitle] in
+/// lowercase words joined by dashes, accents folded (`robot-noi-chuyen-voi-
+/// gemini`). Null when nothing usable is left.
+String? taskProjectSlug(String task) {
+  final title = taskProjectTitle(task);
+  if (title == null) return null;
+  final slug = foldDiacritics(title)
+      .toLowerCase()
+      .replaceAll(RegExp(r'[^a-z0-9]+'), '-')
+      .replaceAll(RegExp(r'^-+|-+$'), '');
+  if (slug.isEmpty) return null;
+  return slug.length > 48
+      ? slug.substring(0, 48).replaceAll(RegExp(r'-+$'), '')
+      : slug;
+}
+
+/// [text] with Latin letters' accents removed: Vietnamese (`đ` included),
+/// French, German, Spanish, Portuguese and the like. Other scripts pass
+/// through untouched. Mirrors `foldDiacritics` in cli/src/lib/agentNames.ts.
+String foldDiacritics(String text) {
+  final out = StringBuffer();
+  for (final rune in text.runes) {
+    final char = String.fromCharCode(rune);
+    out.write(_folds[char] ?? char);
+  }
+  return out.toString();
+}
+
+final Map<String, String> _folds = () {
+  const groups = {
+    'a': 'àáảãạăằắẳẵặâầấẩẫậäåā',
+    'A': 'ÀÁẢÃẠĂẰẮẲẴẶÂẦẤẨẪẬÄÅĀ',
+    'e': 'èéẻẽẹêềếểễệëē',
+    'E': 'ÈÉẺẼẸÊỀẾỂỄỆËĒ',
+    'i': 'ìíỉĩịïī',
+    'I': 'ÌÍỈĨỊÏĪ',
+    'o': 'òóỏõọôồốổỗộơờớởỡợöøō',
+    'O': 'ÒÓỎÕỌÔỒỐỔỖỘƠỜỚỞỠỢÖØŌ',
+    'u': 'ùúủũụưừứửữựüū',
+    'U': 'ÙÚỦŨỤƯỪỨỬỮỰÜŪ',
+    'y': 'ỳýỷỹỵÿ',
+    'Y': 'ỲÝỶỸỴŸ',
+    'd': 'đ',
+    'D': 'Đ',
+    'c': 'ç',
+    'C': 'Ç',
+    'n': 'ñ',
+    'N': 'Ñ',
+    'ss': 'ß',
+  };
+  return {
+    for (final MapEntry(key: base, value: letters) in groups.entries)
+      for (final letter in letters.runes) String.fromCharCode(letter): base,
+  };
+}();

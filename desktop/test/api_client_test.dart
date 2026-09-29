@@ -1,4 +1,3 @@
-import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -9,13 +8,68 @@ import 'package:harness/core/config.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test(
+    'account experiment writes include identity and the local proxy header',
+    () async {
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      final seen = <(String, String, String?, String)>[];
+      final snapshot = {
+        'accountId': 'account-a',
+        'revision': 1,
+        'features': {'focus_bar_creature': false, 'share_button': true},
+      };
+      final subscription = server.listen((request) async {
+        seen.add((
+          request.method,
+          request.uri.path,
+          request.headers.value('x-adapter-local'),
+          await utf8.decoder.bind(request).join(),
+        ));
+        request.response
+          ..headers.contentType = ContentType.json
+          ..write(jsonEncode({'success': true, 'data': snapshot}));
+        await request.response.close();
+      });
+      try {
+        final api = ApiClient(
+          config: AppConfig(
+            apiBaseUrl: 'http://unused.invalid',
+            localCliBaseUrl: 'http://127.0.0.1:${server.port}',
+          ),
+          session: AuthSession(),
+        );
+        expect(await api.experimentalSettings(), snapshot);
+        expect(
+          await api.setExperimentalSetting('account-a', 'share_button', true),
+          snapshot,
+        );
+        expect(seen, [
+          ('GET', '/api/experimental-settings', null, ''),
+          (
+            'PATCH',
+            '/api/experimental-settings',
+            '1',
+            jsonEncode({
+              'accountId': 'account-a',
+              'feature': 'share_button',
+              'enabled': true,
+            }),
+          ),
+        ]);
+      } finally {
+        await subscription.cancel();
+        await server.close(force: true);
+      }
+    },
+  );
+
   test('machine request hits the local CLI proxy, not the backend, with no credential', () async {
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
-    final path = Completer<String?>();
-    final hadAuthHeader = Completer<bool>();
+    final paths = <String>[];
+    final hadAuthHeaders = <bool>[];
     final subscription = server.listen((request) async {
-      path.complete(request.uri.path);
-      hadAuthHeader.complete(request.headers.value('authorization') != null);
+      paths.add(request.uri.path);
+      hadAuthHeaders.add(request.headers.value('authorization') != null);
       request.response
         ..statusCode = HttpStatus.ok
         ..headers.contentType = ContentType.json
@@ -47,12 +101,142 @@ void main() {
       );
       final machines = await api.machines();
 
-      expect(await path.future, '/api/machines');
-      expect(await hadAuthHeader.future, isFalse);
+      expect(paths, ['/api/machines', '/api/harness-shares']);
+      expect(hadAuthHeaders, [false, false]);
       expect(machines.single.machineId, 'machine-1');
       expect(machines.single.computerId, '0123456789abcdef0123456789abcdef');
     } finally {
       await subscription.cancel();
+      await server.close(force: true);
+    }
+  });
+
+  test('review writes carry the local header the CLI requires; reads do not need it', () async {
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    final seen = <(String, String, String?)>[];
+    final subscription = server.listen((request) async {
+      seen.add((
+        request.method,
+        request.uri.path,
+        request.headers.value('x-adapter-local'),
+      ));
+      await utf8.decoder.bind(request).join();
+      request.response
+        ..statusCode = HttpStatus.ok
+        ..headers.contentType = ContentType.json
+        ..write(
+          jsonEncode({
+            'success': true,
+            'data': {'ok': true},
+          }),
+        );
+      await request.response.close();
+    });
+    try {
+      final api = ApiClient(
+        config: AppConfig(
+          apiBaseUrl: 'http://unused.invalid',
+          localCliBaseUrl: 'http://127.0.0.1:${server.port}',
+        ),
+        session: AuthSession(),
+      );
+      await api.storeRatings();
+      await api.putStoreReview('autonomous/typst', rating: 5, title: ' Great ');
+      await api.deleteStoreReview('autonomous/typst');
+      expect(seen, [
+        ('GET', '/api/store/ratings', null),
+        ('PUT', '/api/store/harnesses/autonomous/typst/review', '1'),
+        ('DELETE', '/api/store/harnesses/autonomous/typst/review', '1'),
+      ]);
+    } finally {
+      await subscription.cancel();
+      await server.close(force: true);
+    }
+  });
+
+  test('shared discovery keeps offline grants through outages, clears revoked entries and supports older daemons', () async {
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    var shareStatus = 200;
+    var shares = <Map<String, dynamic>>[
+      {
+        'machineId': 'shared',
+        'shared': true,
+        'authMode': 'remote',
+        'status': 'offline',
+        'ownerName': 'D',
+        'name': 'Studio',
+        'shares': [
+          {
+            'id': 'grant',
+            'agentId': 'agent',
+            'name': 'Climate dashboard',
+            'engine': 'codex',
+            'expiresAt': '2027-01-01T00:00:00Z',
+          },
+        ],
+      },
+      {
+        'machineId': 'owned',
+        'shared': true,
+        'authMode': 'remote',
+        'shares': [],
+      },
+    ];
+    server.listen((request) async {
+      final sharing = request.uri.path == '/api/harness-shares';
+      request.response.statusCode = sharing ? shareStatus : 200;
+      request.response.headers.contentType = ContentType.json;
+      request.response.write(
+        jsonEncode({
+          'success': shareStatus == 200 || !sharing,
+          'data': {
+            'machines': sharing
+                ? shares
+                : [
+                    {
+                      'machineId': 'owned',
+                      'authMode': 'remote',
+                      'name': 'This computer',
+                    },
+                  ],
+          },
+          'error': {'code': 'UNAVAILABLE', 'message': 'Temporary outage'},
+        }),
+      );
+      await request.response.close();
+    });
+    try {
+      final api = ApiClient(
+        config: AppConfig(
+          apiBaseUrl: 'http://unused.invalid',
+          localCliBaseUrl: 'http://127.0.0.1:${server.port}',
+        ),
+        session: AuthSession(),
+      );
+      final first = await api.machines();
+      expect(first.map((m) => m.machineId), ['owned', 'shared']);
+      final shared = first.last;
+      expect(shared.isShared, isTrue);
+      expect(shared.status, 'offline');
+      expect(shared.ownerName, 'D');
+      expect(shared.sharedHarnesses.single.agentId, 'agent');
+      expect(
+        shared.copyWith(name: 'Updated').sharedHarnesses.single.id,
+        'grant',
+      );
+      shareStatus = 503;
+      expect((await api.machines()).last.machineId, 'shared');
+      expect(api.lastMachinesStale, isTrue);
+      shareStatus = 200;
+      shares = [];
+      expect((await api.machines()).map((m) => m.machineId), ['owned']);
+      expect(api.lastMachinesStale, isFalse);
+      shareStatus = 404;
+      expect((await api.machines()).single.machineId, 'owned');
+      expect(api.lastMachinesStale, isFalse);
+      shareStatus = 401;
+      await expectLater(api.machines(), throwsA(isA<ApiException>()));
+    } finally {
       await server.close(force: true);
     }
   });

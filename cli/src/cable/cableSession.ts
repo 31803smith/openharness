@@ -1,9 +1,8 @@
 // The message layer: what the daemon and the dial SAY to each other, on top of the bytes serial.ts moves.
 //
-// Written twice — here and in apps/esp32-circle/main/cable_client.c of the autonomous-code repository —
-// with no shared code, because the two halves ship from different repositories. The framing underneath
-// agrees by shared vectors; this layer agrees by docs/cable-protocol.md and by being small enough to read
-// in one sitting.
+// Written twice — here and in devices/harness-device/firmware/main/cable_client.c — with no shared code, because one half
+// is TypeScript on a laptop and the other is C on an MCU. The framing underneath agrees by shared vectors;
+// this layer agrees by docs/cable-protocol.md and by being small enough to read in one sitting.
 //
 // THE VOCABULARY IS THE PRODUCT'S: machine → agent → session. The machine is this computer, the agents
 // are what the registry holds, and a session is one conversation underneath an agent.
@@ -26,6 +25,10 @@ import { CableDecoder, CableType, encodeCableFrame } from './cableFrame.js'
 import { DialLog } from './dialLog.js'
 import { FirmwareTransfer } from './fwPush.js'
 import { SerialLink, findDialPort } from './serial.js'
+import { PassageCarry, withCarriedPassage, type CarryRead } from './passageCarry.js'
+import { VoiceDraft, type DraftPin } from './voiceDraft.js'
+import { QuestionInbox, type ReviewedAnswer, type AnswerReceipt, type QuestionSpeech } from './questionInbox.js'
+import { notificationReadToken, type UnreadNotification } from './notificationRead.js'
 
 /** Bumped when the VOCABULARY changes. Separate from the frame version, which is the envelope. */
 export const CABLE_PROTO_VERSION = 3   // 3: + question.close (a question answered on another client)
@@ -130,23 +133,11 @@ export interface CableAgent {
   model?: string
   effort?: string
   /**
-   * An agent the dial KNOWS but does not walk to.
-   *
-   * The carousel is built around the window's tiles, and an agent sitting
-   * between them in list order is off neither edge — see `deskRing`. It is
-   * still sent: the dial counts its agents on the overview and lists them in
-   * the pull-down switcher, and a dial that says "5 agents" to someone who has
-   * eleven is simply wrong. What it is left out of is the walk.
-   */
-  offRing?: boolean
-  /**
    * The machine this agent lives on, and that machine's name.
    *
-   * THE CAROUSEL IS NO LONGER ONE MACHINE'S. Every agent on every machine is on it at once, so an agent
-   * that does not say where it lives cannot be driven: the daemon routes each turn, stop and answer by
-   * this id, and the dial prints the name on the switcher's second line where the engine used to be.
-   *
-   * Optional because the WIRE is: a firmware that predates the field simply does not draw it.
+   * A tab can hold panes from several machines at once, so an agent that does not say where it lives
+   * cannot be driven: the daemon routes each turn, stop and answer by this id, and the dial prints the
+   * name under the agent's.
    */
   machineId?: string
   machine?: string
@@ -178,19 +169,56 @@ export interface CableSwarm {
   name: string
   /** How many agents it holds — the dial draws the count, never the members. */
   agents: number
+  /**
+   * How many TILES it holds, of any kind — agents, shells, viewers.
+   *
+   * Separate from `agents` because the two answer different questions, and the dial needs the second
+   * one: a tab holding only a terminal drives no agent, so `agents` is 0 for it exactly as it is for
+   * an untouched New Harness tab. Filtering the switcher on `agents` therefore hid a tab that had
+   * real content in it, with no way back to it from the dial. Nothing here ever becomes a roster
+   * entry — a shell is still never named to the dial.
+   */
+  panes: number
+}
+
+/**
+ * ONE TILE OF THE ACTIVE SWARM'S GRID, exactly where the window put it.
+ *
+ * Unit rectangle in THOUSANDTHS of the grid, so it crosses as integers and a device can scale it to
+ * whatever face it has. `agentId` is empty for a tile the device cannot drive — a shell, a viewer —
+ * which still holds its place, because a shape with a tile missing is not that shape.
+ *
+ * Relayed, never computed here. The window is the only side that knows whether this grid came from a
+ * preset, from `auto` (whose column count it measures against its own width) or from a hand-dragged
+ * resize, and the one rule `pane_preset.dart` asks of everybody is that the shape is described once.
+ */
+export interface CableTile {
+  x1: number
+  y1: number
+  x2: number
+  y2: number
+  agentId: string
 }
 
 /** The window's swarms as it last described them, or null while no window is connected. */
 export interface AppSwarms {
   active: string
-  swarms: Array<{ id: string; name: string; agentIds: string[] }>
+  swarms: Array<{ id: string; name: string; agentIds: string[]; panes: number }>
+  /** The ACTIVE swarm's grid. Empty from a window that predates the field, or one with no panes. */
+  tiles: CableTile[]
 }
 
 /** Why the list is as short as it is. The dial renders this, instead of drawing an empty wheel. */
 export type CableMachineSource = 'backend' | 'local' | 'signed-out'
+/** Why the dial sent an `agent.open`: a tap (absent) or a question screen that came up on its own. */
+export type OpenReason = 'question'
 
 export type { WindowRoute } from './windowRoute.js'
 import type { WindowRoute } from './windowRoute.js'
+import { withSelectedPassage, type SelectionCommand, type SelectionResult } from './windowSelection.js'
+import type { VisitCommand, VisitResult } from './windowVisit.js'
+import type { FormCommand, FormResult } from './windowForm.js'
+import { extendShortRecap } from '../lib/deviceRecap.js'
 
 export interface RouteDecision {
   agentId: string
@@ -217,13 +245,23 @@ export interface CableHost {
    */
   selectMachine(machineId: string): Promise<{ ok: true } | { ok: false; code: string; message: string }>
   /** The window's swarms and which is on screen. Empty with no window: the dial then draws no swarm line. */
-  listSwarms(): { selected: string; swarms: CableSwarm[] }
+  listSwarms(): { selected: string; swarms: CableSwarm[]; tiles: CableTile[] }
   /** The dial picked a swarm. Relayed to the window, which switches and re-describes its desk. */
   selectSwarm(swarmId: string): void
   appName(): string
   voiceLang(): string
+  /** The active tab's agents, in tile order — and nothing else. Empty with no window or an empty tab. */
   listAgents(): Promise<CableAgent[]>
-  sendTurn(agentId: string, text: string): void
+  /** Pane rows and workspace identity from the same desktop announcement. */
+  listAgentSnapshot?(): Promise<{ agents: CableAgent[]; tab: string; total: number }>
+  /** Every agent across the account — the overview's number. The dial gets the count, never the rows. */
+  agentTotal(): number
+  /** The active tab's id, or '' with no window: what lets the dial tell an empty tab from a shut app. */
+  activeSwarm(): string
+  /** Who an agent is, for a card about one the dial does not hold. Undefined for an id never listed. */
+  describe(agentId: string): { name: string; engine: string; machine: string } | undefined
+  activityText?(agentId: string): Promise<string | null>
+  sendTurn(agentId: string, text: string): void | { ok: true } | { ok: false; machine?: string; reason?: string }
   stopTurn(agentId: string): void
   /**
    * The user answered a `question`. `answers` is keyed by the QUESTION keys the daemon itself asked with
@@ -231,6 +269,8 @@ export interface CableHost {
    * becomes an answer nobody gave.
    */
   answer(agentId: string, requestId: string, answers: Record<string, string>): void
+  answerReviewed?(answer: ReviewedAnswer): Promise<AnswerReceipt>
+  canSpeakQuestion?(agentId: string): boolean
   focus(agentId: string): void
   /**
    * "Put this one in front of me" — a NOTIFICATION was tapped.
@@ -239,8 +279,15 @@ export interface CableHost {
    * says where the eye is and the window moves a tile to match, while this asks
    * for a tile of its own. A turn that just finished is a new thing to look at,
    * not a replacement for whatever the person was already watching.
+   *
+   * `reason` is why the dial sent it: absent for a person's tap; `'question'` when a question screen
+   * came up on its own — the window then only brings the agent forward if it is already on screen,
+   * because a reconnect re-shows every unanswered question and each used to open a tab.
    */
-  openAgent(agentId: string): void
+  openAgent(agentId: string, reason?: OpenReason): void
+  readNotification?(agentId: string, readToken: string): void
+  /** The dial asked for a fork of this agent — a second one with its history, opened in the window. */
+  forkAgent(agentId: string): Promise<{ ok: true; agentId: string } | { ok: false; error: string; detail?: string }>
   /**
    * Does this daemon's own agent list hold that id?
    *
@@ -266,15 +313,20 @@ export interface CableHost {
    * Optional: a host with no window to ask simply omits it, and voice behaves exactly as it always has.
    */
   routeInWindow?(text: string, cmd?: string): Promise<WindowRoute>
+  selectPassage?(command: SelectionCommand): Promise<SelectionResult>
+  visit?(command: VisitCommand): Promise<VisitResult>
+  form?(command: FormCommand): Promise<FormResult>
   /** The runtime model/effort catalog for one agent, as opaque profile ids the dial groups and shows. */
   listModels(agentId: string): Promise<string[]>
   /** One agent's last turn summaries, newest first — what a reattached dial needs to redraw its tiles. */
   recentSummaries(agentId: string): Promise<Array<{ recap: string; text: string }>>
+  /** What the window still has unread, newest first — replayed to a dial that has just attached. */
+  listUnread(): UnreadNotification[]
   /**
    * The image to offer a dial running `runningVersion`, or null for "nothing to do" — which covers a
    * dial that is current, a dev build that must not be touched, and an unreachable manifest.
    */
-  firmwareFor?(runningVersion: string): Promise<{ version: string; image: Buffer; sha256: string } | null>
+  firmwareFor?(runningVersion: string, hw?: string): Promise<{ version: string; image: Buffer; sha256: string } | null>
   /**
    * A dial greeted us, or the port went away.
    *
@@ -338,6 +390,8 @@ export class CableSession {
   private decoder = new CableDecoder()
   private timer: NodeJS.Timeout | null = null
   private greetedMac: string | null = null
+  /** The board this device says it is (`hello.hw`). Decides which firmware it may be offered. */
+  private greetedHw: string | undefined
   private greetedFw: string | null = null
   private lastRx = 0
   private stopped = false
@@ -383,6 +437,8 @@ export class CableSession {
   private lastMachinesKey = ''
   /** Throttle for the machine list, which costs an HTTP read where the agent list costs a map lookup. */
   private machinesAt = 0
+  /** A recap lookup must not replay an older inbox over a newer clear. */
+  private notificationReplay?: { seen: Set<string> }
   /**
    * Serialises every STREAMED push (begin / rows / end).
    *
@@ -410,7 +466,26 @@ export class CableSession {
   private offered = new Set<string>()
 
   /** Voice capture in flight: PCM chunks as they arrive, plus what `voice.begin` said about them. */
-  private voice: { agentId?: string; cmd?: string; lang: string; rate: number; chunks: Buffer[]; bytes: number } | null = null
+  private voice: { agentId?: string; cmd?: string; lang: string; rate: number; chunks: Buffer[]; bytes: number;
+    selectionId?: string; selection?: Promise<SelectionResult>;
+    carry?: CarryRead;
+    question?: { pin?: QuestionSpeech };
+    draft?: { pin?: DraftPin };
+    search?: { command?: SelectionCommand; pin: Promise<SelectionResult> };
+    form?: { command?: FormCommand; pin: Promise<FormResult> } } | null = null
+  private voiceSearch?: SelectionCommand
+  private voiceForm?: FormCommand
+  private voiceCarryId?: string
+  private readonly passageCarry = new PassageCarry({
+    select: command => this.host.selectPassage?.(command) ??
+      Promise.resolve({ ok: false, error: 'Update Harness to carry text.' }),
+    name: async id => (await this.host.listAgents()).find(a => a.id === id)?.name ?? 'Harness',
+  })
+  private readonly voiceDraft = new VoiceDraft()
+  private voiceDraftCreation?: { uploadId: string; id: string }
+  private readonly questionInbox = new QuestionInbox()
+  private voiceGeneration = 0
+  private voiceUploadId = ''
 
   constructor(
     private readonly host: CableHost,
@@ -507,6 +582,7 @@ export class CableSession {
       // the tab should not lag the tiles that belong to it.
       await this.syncSwarms()
       await this.syncAgents()
+      void this.refreshFocusedActivity()
     }
   }
 
@@ -580,6 +656,7 @@ export class CableSession {
       this.opening = false
     }
     if (!opened) return   // no dial plugged in — this daemon's resting state
+    if (this.stopped) { await opened.close('stopped while opening'); return }
     // Nothing reaches this line holding a live port — tick() only calls in when the link is closed — but
     // assigning over one would strand it exactly as above, and the cost of being sure is one branch.
     if (this.link) await this.link.close('replaced')
@@ -616,7 +693,17 @@ export class CableSession {
 
   private onClosed(why: string): void {
     this.log(`cable: closed (${why})`)
+    this.cancelFormVoice()
+    this.cancelSearchVoice()
+    this.passageCarry.clear()
+    this.voiceDraft.clear()
+    this.voiceDraftCreation = undefined
+    this.voiceCarryId = undefined
     this.host.onDialGone?.()
+    this.activityReads.clear()
+    this.activityRefreshAt = 0
+    this.activityRefreshAgent = ''
+    this.activityLabels.clear()
     this.host.onDialStatus?.({ attached: false })
     this.link = null
     this.greetedMac = null
@@ -627,6 +714,7 @@ export class CableSession {
     this.lastAgentsKey = ''
     this.lastMachinesKey = ''
     this.voice = null
+    this.voiceGeneration++
     // The dial keeps its running image; the half-written slot is erased again by the next accepted offer.
     this.transfer?.finish('interrupted by the port closing')
     this.transfer = null
@@ -702,6 +790,16 @@ export class CableSession {
           // matters after a dial reboot that lands mid-session on a remote selection.
           selected: this.host.selectedMachine(),
           voiceLang: this.host.voiceLang(),
+          // Optional controls must be advertised: a new dial can remain useful
+          // with an older daemon instead of waiting on commands it ignores.
+          features: [
+            'voice.draft',
+            'agents.refresh',
+            ...(this.host.form ? ['form'] : []),
+            ...(this.host.selectPassage ? ['selection'] : []),
+            ...(this.host.visit ? ['visit'] : []),
+            ...(this.host.answerReviewed ? ['question.review'] : []),
+          ],
         })
         // Log a dial that is new OR that came back running something else. The version half of that test
         // is not decoration: a dial reboots into its new image after an update and greets with the SAME
@@ -710,6 +808,7 @@ export class CableSession {
         // from the log on 2026-08-24.
         const fw = str('fw') ?? '?'
         const hw = str('hw')
+        this.greetedHw = hw || undefined
         if (mac !== this.greetedMac || fw !== this.greetedFw) {
           const returning = mac === this.greetedMac
           this.greetedMac = mac
@@ -735,6 +834,10 @@ export class CableSession {
         return
       case 'agents.list':
         await this.pushAgents()
+        return
+      case 'agents.refresh':
+        // A workspace receipt needs the roster, not machines, notices and history.
+        await this.syncAgents(true)
         return
       case 'machines.list':
         await this.syncMachines(true)
@@ -763,7 +866,15 @@ export class CableSession {
         }
         // Answered either way. An empty catalog closes the dial's picker cleanly; silence strands it on a
         // spinner until its own timeout, which reads as a hang rather than "this engine has no choices".
-        await this.send({ t: 'models', agentId, items: items.map((id) => ({ id })) })
+        // Additive correlation: older firmware ignores this and older hosts
+        // still identify replies by agentId. Never echo an unbounded value.
+        const serial = msg.request
+        const request = typeof serial === 'number' && Number.isInteger(serial)
+          && serial > 0 && serial <= 0x7fffffff ? serial : undefined
+        await this.send({
+          t: 'models', agentId, ...(request === undefined ? {} : { request }),
+          items: items.map((id) => ({ id })),
+        })
         return
       }
       case 'focus':
@@ -808,9 +919,26 @@ export class CableSession {
           this.host.focus(agentId)
         }
         return
-      case 'agent.open':
-        if (str('agentId')) this.host.openAgent(str('agentId')!)
+      case 'notif.read': {
+        const agentId = str('agentId')
+        const token = notificationReadToken(msg.readToken)
+        if (agentId && token) this.host.readNotification?.(agentId, token)
         return
+      }
+      case 'agent.open':
+        // Only the one reason the window knows; anything else reads as a tap, the older frame's meaning.
+        if (str('agentId')) this.host.openAgent(str('agentId')!, str('reason') === 'question' ? 'question' : undefined)
+        return
+      case 'agent.fork': {
+        // The dial's Fork action. The host opens the new agent in the window itself; the dial only needs
+        // to hear a refusal, as a toast, so a press that did nothing is not a press that was lost.
+        const id = str('agentId')
+        if (!id) return
+        void this.host.forkAgent(id).then((result) => {
+          if (!result.ok) return this.toast(result.detail ?? result.error)
+        }).catch((err) => this.toast((err as Error).message))
+        return
+      }
       case 'scroll': {
         // Forwarded verbatim, including the reports carrying no travel: the two ends of a stroke are the
         // whole point of the message. A `down` with nothing in it stops a fling still running, and an `up`
@@ -822,12 +950,96 @@ export class CableSession {
         this.host.scrolled(phase, dy, v)
         return
       }
+      case 'selection': {
+        const agentId = str('agentId')
+        const op = str('op')
+        const requestId = str('requestId')
+        if (!agentId || !requestId || requestId.length > 64 || !op || !['begin', 'step', 'extend', 'cancel', 'match', 'lines'].includes(op)) return
+        const command: SelectionCommand = { agentId, op: op as SelectionCommand['op'],
+          selectionId: str('selectionId'), revision: typeof msg.revision === 'number' ? msg.revision : undefined,
+          delta: typeof msg.delta === 'number' ? msg.delta : undefined, extend: typeof msg.extend === 'boolean' ? msg.extend : undefined }
+        const link = this.link
+        const result = await (this.host.selectPassage?.(command) ?? Promise.resolve({ ok: false as const, error: 'Update Harness to select text.' }))
+        if (this.link === link) await this.send({ t: 'selection.state', requestId, ...result })
+        return
+      }
+      case 'carry.prepare': {
+        const id = str('carryId') ?? '', requestId = str('requestId')
+        if (!requestId || requestId.length > 64) return
+        const link = this.link
+        const result = await this.passageCarry.prepare(id, { op: 'pin', agentId: str('agentId') ?? '',
+          selectionId: str('selectionId'), revision: typeof msg.revision === 'number' ? msg.revision : undefined })
+        if (this.link === link) await this.send({ t: 'carry.state', requestId, carryId: id, ...result })
+        return
+      }
+      case 'carry.cancel': {
+        const id = str('carryId')
+        if (!id) return
+        this.passageCarry.clear(id)
+        if (this.voiceCarryId === id) {
+          this.voiceGeneration++
+          this.voice = null
+          this.voiceCarryId = undefined
+        }
+        return
+      }
+      case 'form': {
+        const op = str('op'), formId = str('formId'), requestId = str('requestId')
+        if (!formId || !requestId || requestId.length > 64 || !op ||
+            !['open', 'state', 'move', 'activate', 'back', 'close'].includes(op)) return
+        const link = this.link
+        const result = await (this.host.form?.({ op: op as FormCommand['op'], formId,
+          ...(msg.surface !== undefined ? { surface: msg.surface as FormCommand['surface'] } : {}),
+          revision: typeof msg.revision === 'number' ? msg.revision : undefined,
+          delta: typeof msg.delta === 'number' ? msg.delta : undefined }) ??
+          Promise.resolve({ ok: false, active: false, error: 'Update Harness for New Harness.' }))
+        if (this.link === link) await this.send({ t: 'form.state', requestId, formId, ...result })
+        return
+      }
+      case 'visit': {
+        const op = str('op'), visitId = str('visitId'), requestId = str('requestId')
+        if (!visitId || !requestId || requestId.length > 64 || !op ||
+          !['open', 'latest', 'back', 'cancel'].includes(op)) return
+        const link = this.link
+        const result = await (this.host.visit?.({ op: op as VisitCommand['op'], visitId, agentId: str('agentId') }) ??
+          Promise.resolve({ ok: false, active: false, error: 'Update Harness to visit an alert.' }))
+        if (this.link === link) await this.send({ t: 'visit.state', requestId, visitId, ...result })
+        return
+      }
       case 'turn.send':
         if (str('agentId') && str('text')) this.host.sendTurn(str('agentId')!, str('text')!)
         return
       case 'turn.stop':
         if (str('agentId')) this.host.stopTurn(str('agentId')!)
         return
+      case 'draft.command': {
+        const id = str('draftId'), requestId = str('requestId'), op = str('op'), revision = msg.revision
+        if (!id || !requestId || requestId.length > 64 || !op || !Number.isSafeInteger(revision)) return
+        const link = this.link
+        const state = await this.voiceDraft.command(id, revision as number, op,
+          typeof msg.delta === 'number' ? msg.delta : 0)
+        if (this.link === link) await this.send({ t: 'draft.state', requestId, ...state })
+        return
+      }
+      case 'question.read': {
+        const agentId = str('agentId'), requestId = str('requestId')
+        if (!agentId || !requestId || requestId.length > 64) return
+        const state = this.questionInbox.read(agentId)
+        if (state.ok && !this.host.canSpeakQuestion?.(agentId))
+          state.questions = state.questions.map(q => ({ ...q, canText: false }))
+        await this.send({ t: 'question.state', agentId, requestId, ...this.whoIs(agentId), ...state })
+        return
+      }
+      case 'answer.reviewed': {
+        const agentId = str('agentId'), token = str('token'), requestId = str('requestId')
+        if (!agentId || !token || !requestId || requestId.length > 64) return
+        const link = this.link
+        const receipt = await this.questionInbox.submit(agentId, token, msg.choices,
+          answer => this.host.answerReviewed?.(answer) ?? Promise.resolve({ ok: false,
+            error: 'Update Harness to answer this question.' }), msg.drafts)
+        if (this.link === link) await this.send({ t: 'answer.receipt', agentId, token, requestId, ...receipt })
+        return
+      }
       case 'answer': {
         // `answers` is the dial's own object, one entry per question, keyed by the keys WE asked with. It
         // travels verbatim. Until proto 2 this case demanded `{id, optionId}` — a shape the dial has never
@@ -847,7 +1059,66 @@ export class CableSession {
       case 'agent.update':
         if (str('agentId')) this.host.updateAgent(str('agentId')!, str('model'), str('effort'))
         return
-      case 'voice.begin':
+      case 'voice.begin': {
+        this.cancelFormVoice()
+        this.cancelSearchVoice()
+        this.voiceDraftCreation = undefined
+        this.voiceGeneration++
+        this.voiceUploadId = str('uploadId') ?? ''
+        this.voiceCarryId = str('carryId')
+        // Presence, even malformed, selects this purpose. It can never fall back
+        // to task routing or an agent's terminal.
+        const formVoice = 'formId' in msg || 'formRevision' in msg
+        const searchVoice = 'searchId' in msg || 'searchRevision' in msg
+        const draftVoice = 'draftId' in msg || 'draftRevision' in msg || 'draftOp' in msg
+        const questionVoice = 'questionToken' in msg || 'questionIndex' in msg
+        const carryVoice = 'carryId' in msg
+        const carry: CarryRead | undefined = !formVoice && !questionVoice && !draftVoice && !searchVoice && carryVoice
+          ? (typeof msg.carryId === 'string' && str('agentId') && !('cmd' in msg) && !('selectionId' in msg)
+            ? this.passageCarry.read(msg.carryId)
+            : { ok: false, error: 'Choose the carried text and its recipient again.' }) : undefined
+        let draft: { pin?: DraftPin } | undefined
+        if (draftVoice) {
+          const id = str('draftId'), revision = msg.draftRevision
+          draft = { pin: id && Number.isSafeInteger(revision) &&
+            !formVoice && !questionVoice && !carryVoice && !searchVoice && !('agentId' in msg) && !('cmd' in msg) && !('selectionId' in msg)
+            ? this.voiceDraft.pin(id, revision as number, msg.draftOp) : undefined }
+        }
+        let question: { pin?: QuestionSpeech } | undefined
+        if (questionVoice) {
+          const agentId = str('agentId'), token = str('questionToken'), index = msg.questionIndex
+          const pin = agentId && token && Number.isInteger(index) &&
+            !formVoice && !carryVoice && !draftVoice && !searchVoice && !('cmd' in msg) && !('selectionId' in msg)
+            ? { agentId, token, index: index as number } : undefined
+          question = { pin: pin && this.host.canSpeakQuestion?.(pin.agentId) &&
+            this.questionInbox.canSpeak(pin) ? pin : undefined }
+        }
+        let form: { command?: FormCommand; pin: Promise<FormResult> } | undefined
+        if (formVoice) {
+          const formId = str('formId'), revision = msg.formRevision, queryId = this.voiceUploadId
+          const valid = formId && /^[a-zA-Z0-9-]{1,48}$/.test(formId) &&
+            /^[a-zA-Z0-9-]{1,64}$/.test(queryId) && Number.isSafeInteger(revision) &&
+            (revision as number) >= 0 && !('agentId' in msg) && !('selectionId' in msg) && !('cmd' in msg) && !carryVoice && !questionVoice && !draftVoice && !searchVoice
+          const command: FormCommand | undefined = valid
+            ? { formId, op: 'query.begin', revision: revision as number, queryId } : undefined
+          this.voiceForm = command
+          form = { command, pin: (command && this.host.form ? this.host.form(command)
+            : Promise.resolve({ ok: false, active: false, error: 'Open a field and say its name again.' }))
+            .catch(() => ({ ok: false, active: false, error: 'Could not open voice search. Try again.' })) }
+        }
+        let search: { command?: SelectionCommand; pin: Promise<SelectionResult> } | undefined
+        if (searchVoice) {
+          const selectionId = str('searchId'), revision = msg.searchRevision, agentId = str('agentId')
+          const valid = selectionId && /^[a-zA-Z0-9-]{1,48}$/.test(selectionId) && agentId && agentId.length <= 200 &&
+            /^[a-zA-Z0-9-]{1,64}$/.test(this.voiceUploadId) && Number.isSafeInteger(revision) &&
+            (revision as number) > 0 && (revision as number) <= 0x7fffffff &&
+            !formVoice && !questionVoice && !draftVoice && !carryVoice && !('selectionId' in msg) && !('cmd' in msg)
+          const command: SelectionCommand | undefined = valid ? { op: 'read', selectionId, revision: revision as number, agentId } : undefined
+          this.voiceSearch = command
+          search = { command, pin: (command && this.host.selectPassage ? this.host.selectPassage(command)
+            : Promise.resolve({ ok: false, error: 'Choose a passage before searching.' } as const))
+            .catch(() => ({ ok: false, error: 'Could not open output search. Try again.' })) }
+        }
         this.voice = {
           agentId: str('agentId'),
           cmd: str('cmd'),
@@ -858,13 +1129,40 @@ export class CableSession {
           rate: typeof msg.sr === 'number' && msg.sr > 0 ? msg.sr : DEFAULT_VOICE_RATE,
           chunks: [],
           bytes: 0,
+          form,
+          carry,
+          question,
+          draft,
+          search,
+          ...(!formVoice && !carryVoice && !questionVoice && !draftVoice && !searchVoice && str('selectionId') ? {
+            selectionId: str('selectionId'),
+            selection: (str('agentId') && this.host.selectPassage
+              ? this.host.selectPassage({ op: 'pin', agentId: str('agentId')!, selectionId: str('selectionId'),
+                  revision: typeof msg.selectionRevision === 'number' ? msg.selectionRevision : undefined })
+              : Promise.resolve({ ok: false as const, error: 'Choose the text again.' }))
+                .catch(() => ({ ok: false as const, error: 'Could not attach that text. Choose it again.' })),
+          } : {}),
         }
         return
+      }
       case 'voice.abort':
+        // An abort queued for the previous recording must not cancel its replacement.
+        if (str('uploadId') && str('uploadId') !== this.voiceUploadId) return
+        if (this.voiceDraftCreation?.uploadId === this.voiceUploadId) {
+          this.voiceDraft.cancelCreation(this.voiceDraftCreation.id)
+          this.voiceDraftCreation = undefined
+        }
+        this.cancelFormVoice()
+        this.cancelSearchVoice()
+        if (this.voice?.selectionId && this.voice.agentId) void this.host.selectPassage?.({
+          op: 'cancel', agentId: this.voice.agentId, selectionId: this.voice.selectionId })
+        this.voiceGeneration++
         this.voice = null
+        this.voiceCarryId = undefined
         return
       case 'voice.end':
-        await this.finishVoice()
+        if (str('uploadId') && str('uploadId') !== this.voiceUploadId) return
+        await this.finishVoice(msg.review === true)
         return
       case 'voice.confirm':
         if (str('routeId') && str('agentId')) this.host.focus(str('agentId')!)
@@ -937,7 +1235,9 @@ export class CableSession {
 
   private async maybeOfferFirmware(runningVersion: string): Promise<void> {
     if (!this.host.firmwareFor || this.transfer || !runningVersion) return
-    const candidate = await this.host.firmwareFor(runningVersion).catch(() => null)
+    // The BOARD goes with the version. Which manifest entry this device's image comes from is decided
+    // from its own hello, never defaulted — see otaKeyForBoard.
+    const candidate = await this.host.firmwareFor(runningVersion, this.greetedHw).catch(() => null)
     // Keyed by DIAL as well as version. Holding bare version strings made this a statement about the
     // image rather than about the board: offer 0.0.42 to one dial, swap in a second still on 0.0.41, and
     // the second was refused because that version had been offered — to someone else. It then sat on the
@@ -968,17 +1268,60 @@ export class CableSession {
     this.voice.bytes += chunk.length
     if (this.voice.bytes > VOICE_MAX_BYTES) {
       this.log('cable: voice over the length cap, dropped')
+      this.cancelFormVoice()
+      this.cancelSearchVoice()
       this.voice = null
       return
     }
     this.voice.chunks.push(chunk)
   }
 
-  private async finishVoice(): Promise<void> {
+  private async finishVoice(review = false): Promise<void> {
     const turn = this.voice
+    const generation = this.voiceGeneration
+    const uploadId = this.voiceUploadId
+    const current = () => generation === this.voiceGeneration
+    const reply = (message: Message) => current()
+      ? this.send({ ...message, ...(uploadId ? { uploadId } : {}) })
+      : Promise.resolve(false)
     this.voice = null
+    if (turn?.draft && (!turn.draft.pin || !this.voiceDraft.current(turn.draft.pin))) {
+      await reply({ t: 'voice.error', message: 'That draft changed. Review it again.' }); return
+    }
+    if (turn?.question && (!turn.question.pin || !this.questionInbox.canSpeak(turn.question.pin) ||
+        !this.host.canSpeakQuestion?.(turn.question.pin.agentId))) {
+      await reply({ t: 'voice.error', message: 'This question changed. Open it again.' })
+      return
+    }
+    if (turn?.carry && !turn.carry.ok) {
+      await reply({ t: 'voice.error', message: turn.carry.error })
+      return
+    }
+    const searchPin = await turn?.search?.pin
+    if (!current()) return
+    if (turn?.search && (!searchPin?.ok || !turn.search.command)) {
+      this.cancelSearchVoice()
+      await reply({ t: 'voice.error', message: searchPin && !searchPin.ok ? searchPin.error : 'Choose the passage again.' }); return
+    }
+    const formPin = await turn?.form?.pin
+    if (!current()) return
+    if (formPin && (!formPin.ok || !formPin.active || !formPin.canQuery)) {
+      this.cancelFormVoice()
+      await reply({ t: 'voice.error', message: formPin.error || 'Open the field and try again.' })
+      return
+    }
+    const selection = await turn?.selection
+    if (turn?.selectionId && turn.agentId) void this.host.selectPassage?.({
+      op: 'cancel', agentId: turn.agentId, selectionId: turn.selectionId })
+    if (!current()) return
+    if (selection && (!selection.ok || !selection.text)) {
+      await reply({ t: 'voice.error', message: selection.ok ? 'Choose the text again.' : selection.error })
+      return
+    }
     if (!turn || turn.bytes === 0) {
-      await this.send({ t: 'voice.error', message: "Didn't catch that" })
+      this.cancelFormVoice()
+      this.cancelSearchVoice()
+      await reply({ t: 'voice.error', message: "Didn't catch that" })
       return
     }
 
@@ -989,11 +1332,60 @@ export class CableSession {
     try {
       transcript = (await this.host.transcribe(Buffer.concat(turn.chunks), turn.rate, turn.lang)).trim()
     } catch (err) {
-      await this.send({ t: 'voice.error', message: (err as Error).message })
+      if (current()) { this.cancelFormVoice(); this.cancelSearchVoice() }
+      await reply({ t: 'voice.error', message: (err as Error).message })
       return
     }
+    if (!current()) return
     if (!transcript) {
-      await this.send({ t: 'voice.error', message: "Didn't catch that" })
+      this.cancelFormVoice()
+      this.cancelSearchVoice()
+      await reply({ t: 'voice.error', message: "Didn't catch that" })
+      return
+    }
+
+    if (turn.search) {
+      // Speech service punctuation is not part of a remembered phrase. Preserve
+      // all internal punctuation (paths, identifiers, and code) literally.
+      const query = transcript.replace(/[.!?]$/, '').trim()
+      if (!query || Buffer.byteLength(query, 'utf8') > 120 || /[\x00-\x1f\x7f-\x9f]/.test(query)) {
+        this.cancelSearchVoice()
+        await reply({ t: 'voice.error', message: 'Say a short phrase to find.' }); return
+      }
+      const result = await this.host.selectPassage!({ ...turn.search.command!, op: 'search', query })
+        .catch(() => ({ ok: false, error: 'Search did not finish. Try again.' } as const))
+      if (!current()) return
+      if (!result.ok) { this.cancelSearchVoice(); await reply({ t: 'voice.error', message: result.error }); return }
+      this.voiceSearch = undefined
+      await reply({ t: 'voice.search', agentId: turn.search.command!.agentId, ...result }); return
+    }
+    if (turn.draft) {
+      const state = this.voiceDraft.edit(turn.draft.pin!, transcript)
+      if (!state.ok) { await reply({ t: 'voice.error', message: state.error }); return }
+      await reply({ t: 'voice.draft', ...state }); return
+    }
+    if (turn.question) {
+      const pin = turn.question.pin!
+      const draft = this.host.canSpeakQuestion?.(pin.agentId) ? this.questionInbox.draft(pin, transcript)
+        : { ok: false as const, error: 'Use the terminal to answer this question.' }
+      if (!draft.ok) { await reply({ t: 'voice.error', message: draft.error }); return }
+      await reply({ t: 'voice.question', agentId: pin.agentId, token: pin.token,
+        questionIndex: pin.index, draftId: draft.draftId, text: draft.text })
+      return
+    }
+
+    if (turn.form) {
+      const command = turn.form.command
+      if (!command || transcript.length > 240) {
+        this.cancelFormVoice()
+        await reply({ t: 'voice.error', message: 'Say a short harness or project name.' })
+        return
+      }
+      const result = await this.host.form!({ ...command, op: 'query', text: transcript })
+        .catch(() => ({ ok: false, active: false, error: 'Search did not finish. Try again.' }))
+      if (!current()) return
+      this.cancelFormVoice()
+      await reply({ t: 'voice.form', formId: command.formId, ...result })
       return
     }
 
@@ -1001,6 +1393,10 @@ export class CableSession {
     let agentId = turn.agentId
     let agentName = ''
     const agents = await this.host.listAgents()
+    if (!current()) return
+    if (review && !agentId) {
+      await reply({ t: 'voice.error', message: 'Choose a recipient before drafting.' }); return
+    }
     if (!agentId) {
       // NOBODY NAMED, SO THE WINDOW DECIDES. It opens its palette with these words already in the field
       // and runs the route a typed task would have run — the same fifteen candidates, the same trimmed
@@ -1011,9 +1407,10 @@ export class CableSession {
       const inWindow = this.host.routeInWindow
         ? await this.host.routeInWindow(transcript, turn.cmd)
         : ({ t: 'unavailable' } as const)
+      if (!current()) return
       if (inWindow.t === 'sent') {
         this.log(`cable: the window routed the spoken task → ${inWindow.agentId.slice(0, 8)}`)
-        await this.send({
+        await reply({
           t: 'voice.transcript',
           routeId: '',
           text: transcript,
@@ -1029,33 +1426,88 @@ export class CableSession {
       if (inWindow.t === 'cancelled') {
         // A person closed the palette. Nothing was sent and nothing should be — but the dial is still
         // showing the sending overlay, so it has to be told, or it sits there until its own watchdog.
-        await this.send({ t: 'voice.error', message: 'Cancelled in the window' })
+        await reply({ t: 'voice.error', message: 'Cancelled in the window' })
         return
       }
       if (inWindow.t === 'abandoned') {
         // It took the words and went quiet. Routing here now would race a pick that may still be coming,
         // and two turns from one sentence is worse than none — so say where the words went instead.
-        await this.send({ t: 'voice.error', message: 'Still waiting on the window' })
+        await reply({ t: 'voice.error', message: 'Still waiting on the window' })
         return
       }
       try {
         const decision = await this.host.route(transcript, agents)
+        if (!current()) return
         agentId = decision.agentId
         this.log(`cable: routed → ${agentId} (${decision.reason})`)
       } catch (err) {
-        await this.send({ t: 'voice.error', message: (err as Error).message })
+        await reply({ t: 'voice.error', message: (err as Error).message })
         return
       }
     }
     agentName = agents.find((a) => a.id === agentId)?.name ?? ''
 
     if (!agentId) {
-      await this.send({ t: 'voice.error', message: 'No agent to send that to' })
+      await reply({ t: 'voice.error', message: 'No harness to send that to' })
       return
     }
-    const text = turn.cmd ? `/${turn.cmd} ${transcript}` : transcript
-    this.host.sendTurn(agentId, text)
-    await this.send({ t: 'voice.transcript', routeId: '', text: transcript, agentId, agentName, needsConfirm: false })
+    const instruction = turn.cmd ? `/${turn.cmd} ${transcript}` : transcript
+    const carried = turn.carry?.ok ? turn.carry.passage : undefined
+    // An explicit target that vanished never becomes an inferred recipient.
+    if (carried && !agents.some(a => a.id === agentId)) {
+      await reply({ t: 'voice.error', message: 'That recipient is no longer available. Choose it again.' })
+      return
+    }
+    if (review) {
+      const recipient = agentId
+      const state = this.voiceDraft.create({ agentId: recipient, name: agentName || 'Harness', text: transcript,
+        context: carried ? `With text from ${carried.sourceName}` : selection?.ok && selection.text ? 'With selected text' : '',
+        carryId: carried?.id,
+        submit: async words => {
+          const edited = turn.cmd ? `/${turn.cmd} ${words}` : words
+          const text = carried ? withCarriedPassage(edited, carried)
+            : selection?.ok && selection.text ? withSelectedPassage(edited, selection.text) : edited
+          const result = this.host.sendTurn(recipient, text)
+          if (result && !result.ok) return { ok: false, error: 'Could not reach that harness. Check its connection.' }
+          if (carried) this.passageCarry.clear(carried.id)
+          return { ok: true }
+        } })
+      if (!state.ok) { await reply({ t: 'voice.error', message: state.error }); return }
+      this.voiceDraftCreation = { uploadId, id: state.id }
+      await reply({ t: 'voice.draft', ...state }); return
+    }
+    const text = carried ? withCarriedPassage(instruction, carried)
+      : selection?.ok && selection.text ? withSelectedPassage(instruction, selection.text) : instruction
+    try {
+      const submitted = this.host.sendTurn(agentId, text)
+      if (submitted && !submitted.ok) {
+        await reply({ t: 'voice.error', message: carried
+          ? 'Could not reach that harness. Your carried text is still here.'
+          : 'Could not reach that harness. Check its connection and try again.' })
+        return
+      }
+    } catch (_) {
+      await reply({ t: 'voice.error', message: 'Could not send. Check the terminal before trying again.' })
+      return
+    }
+    if (carried) {
+      this.passageCarry.clear(carried.id)
+      this.voiceCarryId = undefined
+    }
+    await reply({ t: 'voice.transcript', routeId: '', text: transcript, agentId, agentName, needsConfirm: false,
+      ...(carried ? { carryId: carried.id } : {}) })
+  }
+
+  private cancelSearchVoice(): void {
+    const command = this.voiceSearch
+    this.voiceSearch = undefined
+    if (command) void this.host.selectPassage?.({ ...command, op: 'cancel' }).catch(() => {})
+  }
+
+  private cancelFormVoice(): void {
+    const command = this.voiceForm
+    this.voiceForm = undefined
+    if (command) void this.host.form?.({ ...command, op: 'query.cancel' }).catch(() => {})
   }
 
   // ── outbound ──────────────────────────────────────────────────────────────────────────────────────
@@ -1099,13 +1551,20 @@ export class CableSession {
   }
 
   private async syncAgentsNow(force: boolean): Promise<void> {
-    const agents = await this.host.listAgents()
-    const key = CableSession.agentsKey(agents)
+    const snapshot = this.host.listAgentSnapshot ? await this.host.listAgentSnapshot() : {
+      agents: await this.host.listAgents(), tab: this.host.activeSwarm(), total: this.host.agentTotal(),
+    }
+    const { agents, tab, total } = snapshot
+    // WHETHER there is a window is in the key, not WHICH tab: an empty tab after the window shut sends the
+    // same zero rows and draws a different screen, so that flip has to push. The tab's id does not — the
+    // dial names the tab from the `swarms` frame — and keying on it made every tab switch push twice,
+    // once when `app_swarms` named the new tab over the old panes and again when `app_panes` arrived.
+    const key = `${tab ? 'window' : ''}|${CableSession.agentsKey(agents)}`
     if (!force && key === this.lastAgentsKey) return
     this.lastAgentsKey = key
     // Every push, and only pushes. The dial showing a different number from the daemon is a question this
     // line answers in one look: either the daemon never said it, or it said it and the dial disagreed.
-    this.log(`cable: agents → ${agents.length}${force ? ' (attach)' : ''}`)
+    this.log(`cable: agents → ${agents.length} of ${total}${force ? ' (requested)' : ''}`)
 
     await this.send({ t: 'agents.begin' })
     for (const a of agents) {
@@ -1117,16 +1576,16 @@ export class CableSession {
         model: a.model ?? '',
         effort: a.effort ?? '',
         // Where it lives. The id is what the dial sends back for every action, the name is what it draws
-        // on the switcher's second line, and the id is also how a machine row finds its first agent.
+        // under the agent's, and the id is also how a machine row finds its first agent.
         machineId: a.machineId ?? '',
         machine: a.machine ?? '',
       })
 
     }
-    // How many of the agents just sent are on the CAROUSEL. They come first, so
-    // a count is enough, and a firmware that predates the field walks all of
-    // them exactly as it did before.
-    await this.send({ t: 'agents.end', ring: agents.filter((a) => !a.offRing).length })
+    // Every agent sent is walked. What travels beside them: `total`, the account-wide count the overview
+    // prints (the rows behind it stay here), and `tab`, the active tab's id — '' with no window, which is
+    // how the dial tells "the app is shut" from "this tab is empty" when both send zero agents.
+    await this.send({ t: 'agents.end', total, tab })
 
     // The list just changed shape under the dial, so say again which agent both screens are on.
     //
@@ -1134,11 +1593,20 @@ export class CableSession {
     // memory of it — see desiredFocus. A re-anchor after a push is silent by design (the dial reports
     // nothing it did not do itself), so without this a dial that landed on the wrong tile would sit there
     // with nobody to notice.
-    if (this.desiredFocus) {
+    //
+    // Only for an agent the list just sent. The record can name one on another tab — the window focused
+    // it there, then switched — and a focus the dial cannot land is a frame it holds for five seconds and
+    // a warning per push; the tab switch is what un-focused it, and the next click sets a new record.
+    if (this.desiredFocus && agents.some((a) => a.id === this.desiredFocus)) {
       this.expectedAppFocusEcho = this.desiredFocus
       this.expectedAppFocusEchoUntil = Date.now() + APP_FOCUS_SETTLE_MS
       await this.focusAgent(this.desiredFocus)
     }
+
+    // A tile that has just appeared has no history on the dial. The usual case is a remote machine: its
+    // agents reach the cache seconds after the greeting, long after the attach pushed everyone else's.
+    // Cheap to say on every change — [restored] makes it a no-op for every tile already carrying one.
+    this.restoreInBackground()
   }
 
   /**
@@ -1154,27 +1622,80 @@ export class CableSession {
    * Sent on attach only. The list is re-sent whenever it changes; the history behind it does not, or every
    * rename would replay a week of recaps.
    */
+  /**
+   * Agents whose history the dial has already been given.
+   *
+   * THE DIAL KEEPS WHAT IT IS TOLD. Re-sending a tile's recaps buys nothing and costs 55 frames down a
+   * cable that the `focus` somebody just clicked has to share — measured: a switch every second kept the
+   * link saturated, and the focus, written in 20 ms, reached the glass 1.7 s later.
+   *
+   * Cleared on attach, which is the one moment the dial genuinely has nothing: a replug, a reboot, an OTA.
+   */
+  private readonly restored = new Set<string>()
+
+  /** A background restore already walking the list, so a second trigger joins it rather than racing it. */
+  private restoring = false
+
   async pushRestores(): Promise<void> {
-    return this.queued(() => this.pushRestoresNow())
+    // READ FIRST, QUEUE SECOND, and the split is the whole point. A remote agent's history is a cloud
+    // round trip and there is one per agent; asking for them from INSIDE the push chain holds every frame
+    // behind them — including the `focus` the person who just clicked is waiting for. Measured on the
+    // desk: a click from a local agent to a remote one took 1.5 s, of which 0.7 s was this loop waiting
+    // on the first `agent_recent` while the dial sat on the old tile.
+    const rows: Array<{ id: string; past: Array<{ recap: string; text: string }> }> = []
+    for (const a of await this.host.listAgents()) {
+      // Marked as it is ASKED FOR, not as it is sent: the answer is a cloud round trip, and a tick
+      // arriving mid-loop would otherwise start a second walk over the same agents.
+      if (this.restored.has(a.id)) continue
+      this.restored.add(a.id)
+      rows.push({ id: a.id, past: await this.host.recentSummaries(a.id) })
+    }
+    if (!rows.length) return
+    return this.queued(async () => {
+      for (const row of rows) {
+        // Oldest first, so the newest ends up on top of the tile's stack.
+        for (const s of [...row.past].reverse()) {
+          if (!s.recap && !s.text) continue
+          await this.send({ t: 'summary', agentId: row.id, recap: s.recap, text: s.text, restore: true })
+        }
+      }
+    })
   }
 
-  private async pushRestoresNow(): Promise<void> {
-    for (const a of await this.host.listAgents()) {
-      const past = await this.host.recentSummaries(a.id)
-      // Oldest first, so the newest ends up on top of the tile's stack.
-      for (const s of [...past].reverse()) {
-        if (!s.recap && !s.text) continue
-        await this.send({ t: 'summary', agentId: a.id, recap: s.recap, text: s.text, restore: true })
-      }
-    }
+  /**
+   * The same history, off the critical path.
+   *
+   * A machine switch owes the person two things and they are not equally urgent: the tile they clicked,
+   * NOW, and what every tile was last doing, eventually. `restore: true` says the second one is history —
+   * no beep, no notification — so nothing about it is worth a second of staring at the old tile.
+   */
+  private restoreInBackground(): void {
+    if (this.restoring) return
+    this.restoring = true
+    void this.pushRestores()
+      .catch((err) => this.log(`cable: restores failed (${(err as Error).message})`))
+      .finally(() => { this.restoring = false })
   }
 
   /** Attach: tell the dial everything, whether or not any of it looks unchanged from here. */
   async pushAgents(): Promise<void> {
-    await this.syncMachines(true)
-    await this.syncSwarms(true)
-    await this.syncAgents(true)
+    // A dial that has just greeted us has no history at all — it rebooted, or the cable was out. This is
+    // the one place that says so; everywhere else, [restored] is what keeps the link quiet.
+    this.restored.clear()
+    // Attach owns this walk. Held across the list push so the trigger inside it does not start the same
+    // one from the other end and leave the caller awaiting a restore that has nothing left to send.
+    this.restoring = true
+    try {
+      await this.syncMachines(true)
+      await this.syncSwarms(true)
+      await this.syncAgents(true)
+    } finally {
+      this.restoring = false
+    }
     await this.pushRestores()
+    // …and the drawer, which is the one thing a dial that has just greeted us is KNOWN to have lost:
+    // its rows live in RAM. Last, because it names agents the pushes above put on the carousel.
+    await this.replaceNotifications(this.host.listUnread())
   }
 
   // ── swarms ────────────────────────────────────────────────────────────────────────────────────────
@@ -1188,14 +1709,28 @@ export class CableSession {
   }
 
   private async syncSwarmsNow(force: boolean): Promise<void> {
-    const { selected, swarms } = this.host.listSwarms()
-    const key = `${selected}|${swarms.map((s) => `${s.id}:${s.name}:${s.agents}`).join('|')}`
+    const { selected, swarms, tiles } = this.host.listSwarms()
+    // `panes` belongs in the key as much as `agents` does. Opening a terminal on a tab that holds no
+    // agent moves only the tile count, and a key blind to it would swallow that push and leave the
+    // dial showing a tab it still believes is empty — the very row this field exists to keep.
+    // The active tab's SHAPE belongs in the key too, and it is the only part of this that can change
+    // with no row changing at all: re-arranging four panes moves every tile and leaves the counts
+    // exactly where they were, which a key blind to it would swallow — leaving the device drawing the
+    // shape the tab used to have.
+    const shape = tiles.map((t) => `${t.x1},${t.y1},${t.x2},${t.y2},${t.agentId}`).join(';')
+    const key = `${selected}|${swarms.map((s) => `${s.id}:${s.name}:${s.agents}:${s.panes}`).join('|')}|${shape}`
     if (!force && key === this.lastSwarmsKey) return
     this.lastSwarmsKey = key
     this.log(`cable: swarms → ${swarms.length}${selected ? ` (on ${selected})` : ''}${force ? ' [push]' : ''}`)
     // ONE frame, not a begin/row/end stream: two dozen rows of an id, a name and a count fit in a
     // kilobyte, and the dial replaces the whole list on arrival either way.
-    await this.send({ t: 'swarms', selected, items: swarms.map((s) => ({ id: s.id, name: s.name, agents: s.agents })) })
+    await this.send({
+      t: 'swarms', selected,
+      items: swarms.map((s) => ({ id: s.id, name: s.name, agents: s.agents, panes: s.panes })),
+      // Flat quads plus an id, rather than objects: this is read by a C parser on a device, and four
+      // numbers in a row cost it nothing to walk.
+      tiles: tiles.map((t) => ({ x1: t.x1, y1: t.y1, x2: t.x2, y2: t.y2, a: t.agentId })),
+    })
   }
 
   // ── machines ──────────────────────────────────────────────────────────────────────────────────────
@@ -1246,8 +1781,8 @@ export class CableSession {
     if (!machineId) return
     if (machineId === this.host.selectedMachine()) {
       await this.send({ t: 'machine.selected', machineId })
-      await this.syncAgents(true)
-      await this.pushRestores()
+      await this.syncAgents()
+      this.restoreInBackground()
       return
     }
     const result = await this.host.selectMachine(machineId)
@@ -1257,13 +1792,20 @@ export class CableSession {
       return
     }
     this.log(`cable: machine.select → ${machineId}`)
-    // REQUIRED, not hygiene: two machines whose agents happen to share names and engines produce an equal
-    // agentsKey, and the new machine's list would then never be sent at all.
-    this.lastAgentsKey = ''
     await this.send({ t: 'machine.selected', machineId })
-    await this.syncAgents(true)
-    await this.pushRestores()
-    await this.syncMachines(true)   // the ✓ moved, and the agent counts with it
+    // NOT FORCED, and that is the fix for a switch that felt slow at random.
+    //
+    // Forcing both was right when the carousel showed ONE machine at a time: selecting another machine
+    // replaced every tile, so the list and its history had to be re-streamed. The carousel now spans every
+    // machine — `listAgentsFlat` reads the same 22 agents whichever row wears the ✓ — so a forced push
+    // re-sends a list and a history the dial already has, 55 frames of it, and the `focus` the person is
+    // waiting on queues behind them on the wire. Measured: 20 ms to write the focus, 1.7 s to land it.
+    //
+    // The diff still sends anything that GENUINELY changed, including a machine whose agents have only
+    // just arrived in the cache — and [restored] means those, and only those, bring their history along.
+    await this.syncAgents()
+    await this.syncMachines()   // the ✓ moved: `machinesKey` carries the selection, so this pushes
+    this.restoreInBackground()
   }
 
   /** One row changed — liveness, a rename, a count. Cheaper than re-streaming the wheel. */
@@ -1280,27 +1822,170 @@ export class CableSession {
    * a turn is live and shows the user nothing that says so.
    */
   async turnStarted(agentId: string, text = ''): Promise<void> {
+    this.activityEndedAt.delete(agentId)
+    const read = {}
+    this.activityReads.set(agentId, read)
     await this.send({ t: 'turn.started', agentId, text })
+    if (!this.link?.isOpen || !this.host.activityText) { this.activityReads.delete(agentId); return }
+    let activity: string | null = null
+    try { activity = await this.host.activityText(agentId) } catch { /* unavailable is not a status */ }
+    // A terminal capture must never revive a completed turn or overwrite a newer heartbeat.
+    if (this.activityReads.get(agentId) !== read) return
+    this.activityReads.delete(agentId)
+    await this.send({ t: 'turn.activity', agentId, text: activity ?? '' })
+  }
+  private readonly activityReads = new Map<string, object>()
+  private readonly activityEndedAt = new Map<string, number>()
+  private readonly activityLabels = new Map<string, string>()
+  private activityRefreshAt = 0
+  private activityRefreshAgent = ''
+  private activityRefreshPending = false
+
+  /** A turn may predate this bridge, or continue through a transcript compaction. */
+  private async refreshFocusedActivity(): Promise<void> {
+    const agentId = this.desiredFocus
+    const link = this.link
+    const now = Date.now()
+    if (this.stopped || !this.isConnected || !agentId || !this.host.activityText
+        || this.activityRefreshPending || this.activityReads.has(agentId)
+        || now - (this.activityEndedAt.get(agentId) ?? -Infinity) < 3_000
+        || (this.activityRefreshAgent === agentId && now - this.activityRefreshAt < 3_000)) return
+    this.activityRefreshAt = now
+    this.activityRefreshAgent = agentId
+    this.activityRefreshPending = true
+    const read = {}
+    this.activityReads.set(agentId, read)
+    const current = () => !this.stopped && this.isConnected && this.link === link
+      && this.desiredFocus === agentId && this.activityReads.get(agentId) === read
+    try {
+      const activity = await this.host.activityText(agentId)
+      if (!current()) return
+      // A visible engine footer is direct evidence of work. Recover liveness even
+      // when the transcript's turn.started happened before we attached.
+      if (activity) await this.send({ t: 'turn.started', agentId, text: activity })
+      if (!current()) return
+      await this.send({ t: 'turn.activity', agentId, text: activity ?? '' })
+      if (this.activityLabels.get(agentId) !== (activity ?? '')) {
+        this.activityLabels.set(agentId, activity ?? '')
+        this.log(`cable: terminal activity ${agentId}: ${activity || '(no live footer)'}`)
+      }
+    } catch { /* A capture failure says nothing about whether the turn ended. */ }
+    finally {
+      if (this.activityReads.get(agentId) === read) this.activityReads.delete(agentId)
+      this.activityRefreshPending = false
+    }
   }
   async turnDone(agentId: string): Promise<void> {
+    this.activityReads.delete(agentId)
+    this.activityEndedAt.set(agentId, Date.now())
     await this.send({ t: 'turn.done', agentId })
   }
   /**
    * A finished turn's recap.
    *
    * `quiet` means the window already has this agent on screen: draw the tile,
-   * skip the beep and the notification drawer. An extra field rather than a
-   * different frame, so firmware that predates it simply notifies as it always
-   * did instead of losing the recap.
+   * skip the notification drawer (the beep still sounds). `silent` means the
+   * turn was a sub-agent's: draw the tile, skip the beep AND the drawer — the
+   * main agent's own end is the one the person is waiting for. Extra fields
+   * rather than different frames, so firmware that predates them simply
+   * notifies as it always did instead of losing the recap.
    */
-  async summary(agentId: string, recap: string, text: string, quiet = false): Promise<void> {
-    await this.send(quiet ? { t: 'summary', agentId, recap, text, quiet: true } : { t: 'summary', agentId, recap, text })
+  async summary(agentId: string, recap: string, text: string, quiet = false, silent = false): Promise<void> {
+    this.activityReads.delete(agentId)
+    this.activityEndedAt.set(agentId, Date.now())
+    recap = extendShortRecap(recap, text)
+    const who = this.whoIs(agentId)
+    await this.send({ t: 'summary', agentId, ...who, recap, text, ...(quiet ? { quiet: true } : {}), ...(silent ? { silent: true } : {}) })
+  }
+
+  /**
+   * The name, engine and machine that ride on every `summary` and `question`.
+   *
+   * The dial holds ONE TAB's agents, and a turn can finish on any of them — the drawer row and the
+   * question card for an agent off this tab have nobody to ask but the frame. Sent on every card rather
+   * than only the off-tab ones: the dial then has one path, and a tab switch mid-flight cannot strand a
+   * card with an id and no name.
+   */
+  private whoIs(agentId: string): { name: string; engine: string; machine: string } {
+    return this.host.describe(agentId) ?? { name: '', engine: '', machine: '' }
+  }
+  /**
+   * Replace the dial's whole drawer with what the window still has unread.
+   *
+   * Sent once per attach, because that is the one moment the dial is known to have nothing: its rows
+   * live in RAM and an OTA, a replug or a flash takes them. Measured on a flash: a turn ended at
+   * 17:46:19, the dial came back at 17:46:26, a question arrived at 17:46:28 — and the pill read 1
+   * against the window's 2 from then on, with nothing to bring them back together.
+   *
+   * The window sends ids and kinds; the name, machine and recap are filled in HERE, from what this
+   * daemon already knows, so those never have a second source that can disagree.
+   */
+  async replaceNotifications(
+    items: UnreadNotification[],
+  ): Promise<void> {
+    const replay = { seen: new Set<string>() }
+    this.notificationReplay = replay
+    const link = this.link
+    const rows = await Promise.all(items.slice(0, 8).map(async (item) => {
+      const who = this.whoIs(item.agentId)
+      // A QUESTION BRINGS ITS OWN WORDS; a finished turn takes the recap this daemon summarised. The
+      // dial cannot supply either after a reboot, and a row with neither renders as the word its type
+      // used to assume — "done", on a question nobody has answered.
+      let summary = item.text
+      if (!item.question && summary.trim().length < 20) {
+        try {
+          const saved = (await this.host.recentSummaries(item.agentId))[0]
+          summary = summary ? extendShortRecap(summary, saved?.text ?? '') : saved?.recap ?? ''
+        } catch { /* keep the supplied text if history cannot be read */ }
+      }
+      return { agentId: item.agentId, name: who.name, machine: who.machine, summary, question: item.question,
+        ...(notificationReadToken(item.readToken) ? { readToken: item.readToken } : {}) }
+    }))
+    if (this.notificationReplay !== replay) return
+    this.notificationReplay = undefined
+    if (this.link !== link || this.stopped) return
+    // Reading clears the notice, not the underlying question. Versioned clears
+    // cannot eat a newer turn whose history happened to take longer to load.
+    await this.send({ t: 'notif.replace', items: rows.filter(row =>
+      (row.question || !replay.seen.has(row.agentId)) && !replay.seen.has(`${row.agentId}\0${row.readToken}`)) })
+  }
+
+  /**
+   * A harness the window has now looked at — drop its drawer row on the dial.
+   *
+   * The dial's own gesture is a tap, which already reaches the window as
+   * `agent.open`. This is the other direction, and without it the two counts
+   * separate the moment somebody switches to the tab a notification was about.
+   *
+   * Fire and forget, like every other card: a dial that predates the message
+   * counts it as unknown and drops it, which is the behaviour it has today.
+   */
+  async agentSeen(agentId: string, readToken?: string): Promise<void> {
+    if (!agentId) return
+    if (readToken !== undefined && !notificationReadToken(readToken)) return
+    this.notificationReplay?.seen.add(readToken ? `${agentId}\0${readToken}` : agentId)
+    await this.send({ t: 'notif.seen', agentId, ...(readToken ? { readToken } : {}) })
   }
   async turnError(agentId: string, message: string): Promise<void> {
+    this.activityReads.delete(agentId)
+    this.activityEndedAt.set(agentId, Date.now())
     await this.send({ t: 'turn.error', agentId, message })
   }
+  /**
+   * An agent stopped to ask.
+   *
+   * NO `quiet` HERE, and the reason is that a question is a job rather than news. A summary's `quiet`
+   * asks "is somebody looking at this right now" and that is the whole of what a finished turn needed.
+   * A question outlives the glance: it is answered or it is not, and until it is answered it is still
+   * owed (owner, 2026-09-24).
+   *
+   * Asking it anyway was self-defeating besides. Showing a question asks the window to bring that agent
+   * forward, so by the time anyone could answer "is it on screen" the answer was yes — every question
+   * came through quiet, no row was ever recorded, and looking away later left nothing behind.
+   */
   async question(agentId: string, id: string, questions: unknown): Promise<void> {
-    await this.send({ t: 'question', agentId, id, questions })
+    this.questionInbox.set(agentId, id, questions)
+    await this.send({ t: 'question', agentId, ...this.whoIs(agentId), id, questions })
   }
 
   /**
@@ -1311,6 +1996,7 @@ export class CableSession {
    * halfway through giving.
    */
   async questionClose(agentId: string, id: string): Promise<void> {
+    if (!this.questionInbox.close(agentId, id)) return
     await this.send({ t: 'question.close', agentId, id })
   }
 

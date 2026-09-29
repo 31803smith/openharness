@@ -64,17 +64,18 @@ SwarmAttentionEntry _entry(
           view?.detail ??
           [
             machine?.machine.displayName ?? question.machineId,
-            project?.name,
+            project?.label,
             project?.branch,
           ].whereType<String>().where((s) => s.isNotEmpty).join(' · '),
       swarmId: view?.swarmId,
       current: view?.current ?? false,
       machineId: question.machineId,
       agentId: question.agentId,
-      engine: view?.engine ?? agent?.engine,
+      engine: view?.engine ?? agent?.identityEngine,
       searchFields: [
         ...?view?.fields.skip(1),
         if (view == null) machine?.machine.displayName ?? question.machineId,
+        project?.label,
         project?.name,
         project?.branch,
         project?.cwd,

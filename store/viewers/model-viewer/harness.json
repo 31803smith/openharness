@@ -1,0 +1,18 @@
+{
+  "spec": 1,
+  "kind": "viewer",
+  "id": "autonomous/model-viewer",
+  "name": "3D Viewer",
+  "category": "3D",
+  "author": "Autonomous",
+  "description": "Inspect live glTF exports with Blender-style navigation, measured properties and shading. Explore authored Blender controls in Shape Lab and keep rebuildable design directions.",
+  "toolchain": {
+    "setup": "./setup.sh",
+    "doctor": "./doctor.sh"
+  },
+  "viewer": {
+    "command": "./viewer.sh",
+    "url": "http://127.0.0.1:${port}/?file=${artifact}",
+    "artifactExtensions": [".glb", ".gltf"]
+  }
+}

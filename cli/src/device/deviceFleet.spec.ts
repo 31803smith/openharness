@@ -30,6 +30,7 @@ function make(over: { rows?: Partial<Listed>[]; linked?: string[]; rpc?: (t: str
     detach: vi.fn(),
     release: vi.fn(),
     send: (f: DeviceFrame) => { sent.push(f) },
+    sendSealed: async (f: DeviceFrame) => { sent.push(f) },
     rpc: over.rpc ?? (async () => ({})),
     resetSession: vi.fn((machineId: string) => { resets.push(machineId); return true }),
   }
@@ -46,6 +47,29 @@ function make(over: { rows?: Partial<Listed>[]; linked?: string[]; rpc?: (t: str
 }
 
 describe('DeviceFleet', () => {
+  it('preserves reviewed question contents on the remote lane and forwards its matching close', async () => {
+    const { fleet, say, sent } = make()
+    const questions = [{ key: 'scope', q: 'Which scope?', options: ['File'], multi: false }]
+    fleet.answerReviewed('m1', { agentId: 'a1', requestId: 'r1', questions,
+      answers: { scope: 'File' }, selections: { scope: ['File'] } })
+    await vi.waitFor(() => expect(sent).toHaveLength(1))
+    expect(sent[0]).toMatchObject({ type: 'question_response', machineId: 'm1', payload: {
+      requestId: 'r1', expectedQuestions: questions, selectedLabels: { scope: ['File'] } } })
+    const seen: FleetEvent[] = []; fleet.onEvent(event => seen.push(event))
+    say({ type: 'commander_question_close', machineId: 'm1', agentId: 'a1', payload: { requestId: 'r1' } })
+    expect(seen).toEqual([{ machineId: 'm1', kind: 'questionClosed', agentId: 'a1', requestId: 'r1' }])
+  })
+
+  it('never lists another machine\'s terminal to the dial — the far daemon answers as to an app', async () => {
+    const { fleet } = make({
+      rpc: async () => ({ agents: [
+        { id: 't1', name: 'Terminal 1', engine: 'terminal' },
+        { id: 'c1', name: 'Claude 1', engine: 'claude' },
+      ] }),
+    })
+    expect((await fleet.listAgents('m1')).map((a) => a.id)).toEqual(['c1'])
+  })
+
   it('throws away the E2EE session after two missed round trips, and keeps the last verdict', async () => {
     // THE FAILURE THIS EXISTS FOR IS SILENT AND PERMANENT. A session outlives the machine that agreed to
     // it: establish() returns instantly for anything in the map, so once the far end stops answering,

@@ -7,13 +7,17 @@ import 'package:harness/core/models.dart';
 import 'package:harness/screens/swarm_screen.dart';
 import 'package:harness/settings/settings_screen.dart';
 import 'package:harness/state/app_state.dart';
+import 'package:harness/state/swarm.dart';
 import 'package:harness/state/swarm_catalog.dart';
 import 'package:harness/state/swarm_navigation.dart';
 import 'package:harness/state/terminal_pane.dart';
+import 'package:harness/store/store_mark.dart';
 import 'package:harness/terminal/terminal_binary.dart';
+import 'package:harness/widgets/swarm_icon.dart';
 import 'package:xterm/xterm.dart';
 
-import 'swarm_screen_test.dart' show terminal;
+import 'swarm_interactions_test.dart' show chord;
+import 'swarm_screen_test.dart' show mount, terminal;
 import 'swarm_state_test.dart' show createApp;
 import 'swarm_switcher_test.dart' show jumpField;
 
@@ -51,34 +55,31 @@ void main() {
   );
 
   for (final count in [1, 2]) {
-    test(
-      'History keeps the engine identity of $count-agent agents',
-      () async {
-        final app = createApp();
-        addTearDown(app.dispose);
-        app.machineStates['m']!.agents[0] = const Agent(
-          id: 'a0',
-          name: 'Architecture',
-          engine: 'claude',
-          terminalAvailable: true,
-        );
-        for (var i = 0; i < count; i++) {
-          app.adoptSessionForTest(terminal('a$i', []));
-        }
-        final history = SwarmNavigationHistory()..record(app);
-        final open = history
-            .menuDestinations(app)
-            .singleWhere((row) => row.isSwarm);
-        expect(open.members, hasLength(count));
-        expect(open.engine, count == 1 ? 'claude' : isNull);
-        await app.closeSwarm(app.activeSwarmId);
-        app.machineStates['m']!.agents = [];
-        final closed = closedWorkDestinations(app).single;
-        expect(closed.isSwarm, isTrue);
-        expect(closed.members, hasLength(count));
-        expect(closed.engine, count == 1 ? 'claude' : isNull);
-      },
-    );
+    test('History keeps the engine identity of $count-agent agents', () async {
+      final app = createApp();
+      addTearDown(app.dispose);
+      app.machineStates['m']!.agents[0] = const Agent(
+        id: 'a0',
+        name: 'Architecture',
+        engine: 'claude',
+        terminalAvailable: true,
+      );
+      for (var i = 0; i < count; i++) {
+        app.adoptSessionForTest(terminal('a$i', []));
+      }
+      final history = SwarmNavigationHistory()..record(app);
+      final open = history
+          .menuDestinations(app)
+          .singleWhere((row) => row.isSwarm);
+      expect(open.members, hasLength(count));
+      expect(open.engine, count == 1 ? 'claude' : isNull);
+      await app.closeSwarm(app.activeSwarmId);
+      app.machineStates['m']!.agents = [];
+      final closed = closedWorkDestinations(app).single;
+      expect(closed.isSwarm, isTrue);
+      expect(closed.members, hasLength(count));
+      expect(closed.engine, count == 1 ? 'claude' : isNull);
+    });
   }
 
   test('History does not format unopened agents during focus changes', () {
@@ -162,6 +163,7 @@ void main() {
           terminalAvailable: true,
         ),
       ];
+      final kept = app.adoptSessionForTest(terminal('a1', []));
       final pane = app.adoptSessionForTest(terminal('a0', []));
       final origin = app.activeSwarm;
       final projects = SwarmProjectStore();
@@ -201,7 +203,7 @@ void main() {
       await reply.future;
       await tester.pump();
       expect(app.activeSwarm, same(origin));
-      expect(app.panes.single.agentId, 'a0');
+      expect(app.panes.map((pane) => pane.agentId), [kept.agentId, 'a0']);
       expect(app.closedHistory, isEmpty);
       await app.closeSwarm(origin.id);
       await tester.pump();
@@ -220,6 +222,89 @@ void main() {
       projects.dispose();
     },
   );
+
+  for (final native in [false, true]) {
+    testWidgets(
+      'History lists the store tab by the app icon, visited and closed (native=$native)',
+      (tester) async {
+        const channel = MethodChannel('harness/swarm_tabs');
+        final messenger = tester.binding.defaultBinaryMessenger;
+        final updates = <Map>[];
+        messenger.setMockMethodCallHandler(channel, (call) async {
+          if (call.method == 'update') updates.add(call.arguments as Map);
+          return true;
+        });
+        addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
+        final app = createApp();
+        app.adoptSessionForTest(terminal('a0', []));
+        final work = app.activeSwarm;
+        await mount(tester, app, nativeTabs: native);
+        app.openStore();
+        await tester.pump();
+        final store = app.activeSwarm;
+        expect(store.isStore, isTrue);
+        app.selectSwarm(work.id);
+        await tester.pump();
+
+        // The mark a History row draws for the store, never the group grid.
+        Future<void> expectFlutterRow() async {
+          await chord(tester, LogicalKeyboardKey.keyY);
+          await tester.pump();
+          final row = find.ancestor(
+            of: find.text(Swarm.storeName),
+            matching: find.byType(ListTile),
+          );
+          expect(row, findsOneWidget);
+          expect(
+            find.descendant(of: row, matching: find.byType(SwarmIcon)),
+            findsNothing,
+          );
+          expect(
+            find.descendant(
+              of: row,
+              matching: find.byWidgetPredicate(
+                (w) =>
+                    w is Image &&
+                    w.image is AssetImage &&
+                    (w.image as AssetImage).assetName == kStoreMarkAsset,
+              ),
+            ),
+            findsOneWidget,
+          );
+          await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+          await tester.pump();
+          await tester.pump(const Duration(milliseconds: 100));
+        }
+
+        if (native) {
+          final visited = (updates.last['history'] as List)
+              .cast<Map>()
+              .firstWhere((row) => row['id'] == swarmDestinationId(store.id));
+          expect(visited['store'], isTrue);
+          expect(visited['engine'], 'store');
+          expect(visited['iconAsset'], kStoreMarkAsset);
+        } else {
+          await expectFlutterRow();
+        }
+
+        await app.closeSwarm(store.id);
+        await tester.pump();
+        if (native) {
+          final closed = (updates.last['closedHistory'] as List)
+              .cast<Map>()
+              .single;
+          expect(closed['title'], Swarm.storeName);
+          expect(closed['store'], isTrue);
+          expect(closed['engine'], 'store');
+          expect(closed['iconAsset'], kStoreMarkAsset);
+        } else {
+          await expectFlutterRow();
+        }
+        await tester.pumpWidget(const SizedBox());
+        app.dispose();
+      },
+    );
+  }
 
   test('Back and Forward retain exact pane locations and discard a branched future', () async {
     final app = createApp();
@@ -422,7 +507,7 @@ void main() {
       final historyView = native('showHistory');
       await tester.pump();
       final historyField = find.byWidgetPredicate(
-        (w) => w is TextField && w.decoration?.hintText == 'Search history…',
+        (w) => w is TextField && w.decoration?.hintText == 'Search history',
       );
       expect(historyField, findsOneWidget);
       await tester.enterText(historyField, 'Agent 0');

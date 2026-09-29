@@ -1,13 +1,18 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'dart:math';
 
 import 'package:flutter/foundation.dart';
+import 'package:web_socket_channel/io.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
 import '../logging/app_log.dart';
 import '../logging/redact.dart';
 import '../core/models.dart';
+import 'local_daemon_transport.dart';
+import 'relay_codec.dart';
+import 'terminal_transport_plugin.dart';
 
 typedef AccessTokenProvider = Future<String> Function(
   bool forceRefresh,
@@ -75,9 +80,35 @@ class WsConn {
   final WsTransportKind transportKind;
   final Uri? localWsUri;
 
+  /// How the local daemon is reached (see [LocalDaemonTransport]). When it
+  /// names a socket, a local connection dials [localWsUri]'s path over it and
+  /// falls back to [localWsUri] itself if the socket cannot be reached.
+  final LocalDaemonTransport? localTransport;
+
   /// Retained only for fixture constructor compatibility. Local transport ignores it.
   final String? localApiKey;
+  final String? observerShareId;
+  final bool observerLink;
+  bool get _directObserver => !isLocal && observerShareId != null;
   final int localProtocolVersion;
+
+  /// A flat delay between reconnect attempts instead of the exponential backoff (1s→30s). Set for
+  /// the socket to THIS computer's daemon: a refused connect on the loopback costs microseconds and
+  /// nothing on the wire, and the daemon comes back within a second or two of a restart or an
+  /// update handoff — waiting up to 30s to notice is what made a local terminal sit on
+  /// "reconnecting" long after the daemon was up. Null keeps the backoff, which the relayed
+  /// machines need: every one of their selects has the daemon dial the backend (15s handshake).
+  final Duration? fixedReconnectDelay;
+
+  /// A viewer build's end-to-end session with the machine, minted fresh on every connect — the
+  /// role the harness CLI plays everywhere else (see [RelayCodec]). Null leaves the relay's frames
+  /// as they are, which is right for the local transport and the dev fixture.
+  final RelayCodecFactory? relayCodecs;
+
+  /// A second wire beside the relay socket (a viewer's WebRTC data channel to the
+  /// machine), built per connect once the codec exists. Null — the desktop, the
+  /// local transport, the dev fixture — means every frame rides the socket.
+  final TerminalTransportPluginFactory? transportPlugins;
 
   Future<Map<String, dynamic>> Function(
     String type,
@@ -92,12 +123,15 @@ class WsConn {
   final void Function(ConnectionStatus status) onStatus;
 
   WebSocketChannel? _channel;
+  RelayCodec? _codec;
+  TerminalTransportPlugin? _plugin;
   StreamSubscription? _sub;
   bool _closing = false;
   bool _connecting = false;
   bool _ready = false;
   int _attempt = 0;
   Timer? _reconnectTimer;
+  Timer? _observerHandshakeTimer;
   String? _tokenUsed;
   bool _forceRelayReconnect = false;
   final _pending = <String, _PendingRpc>{};
@@ -139,8 +173,12 @@ class WsConn {
   /// local failure like NO_PEER_LINK) — [WsPool] must not hand a closed connection back out.
   bool get isClosed => _closing;
   bool get isLocal => transportKind == WsTransportKind.localPlaintext;
+
+  /// Must produce exactly what WsPool.connFor computes as its desired key — the pool reuses a
+  /// socket only when the two agree, and closes it otherwise. A key that could never match churned
+  /// every socket on every `_conn()` call (measured: `agents_list` failing "WS closed" in a loop).
   String get endpointKey => isLocal
-      ? 'local:${localWsUri.toString()}'
+      ? 'local:${localWsUri.toString()}:${fixedReconnectDelay?.inMilliseconds ?? 'backoff'}'
       : 'cloud:$wsBaseUrl:$autonomousEnv';
 
   WsConn({
@@ -154,9 +192,50 @@ class WsConn {
     required this.onStatus,
     this.transportKind = WsTransportKind.cloudE2ee,
     this.localWsUri,
+    this.localTransport,
     this.localApiKey,
+    this.observerShareId,
+    this.observerLink = false,
     this.localProtocolVersion = 1,
+    this.fixedReconnectDelay,
+    this.relayCodecs,
+    this.transportPlugins,
   });
+
+  /// The socket to dial, decided afresh on every connect: whether the file is
+  /// there now, not whether it was the last time something looked. A dial
+  /// that failed while the daemon restarted must not keep this connection on
+  /// the port for good once the daemon is back with its socket.
+  String? _localSocket() {
+    final transport = localTransport;
+    if (transport == null) return null;
+    if (transport.socketPresent) return transport.candidate;
+    transport.useTcp();
+    return null;
+  }
+
+  /// The local WebSocket over the daemon's Unix socket, or null when that
+  /// failed and the loopback port should be used instead. A socket that could
+  /// not be reached at all sends everything back to the port until discovery
+  /// finds it again.
+  Future<WebSocketChannel?> _connectLocalSocket(Uri uri, String socket) async {
+    final pending = WebSocket.connect(
+      Uri(scheme: 'ws', host: 'localhost', path: uri.path).toString(),
+      customClient: unixHttpClient(socket),
+    );
+    try {
+      return IOWebSocketChannel(
+        await pending.timeout(const Duration(seconds: 5)),
+      );
+    } on TimeoutException {
+      // The dial goes on after the timeout; a socket it opens late is nobody's.
+      unawaited(pending.then((ws) => ws.close(), onError: (_) {}));
+      return null;
+    } catch (error) {
+      if (isConnectionFailure(error)) localTransport?.useTcp();
+      return null;
+    }
+  }
 
   Future<void> connect() async {
     if (_closing || _connecting) return;
@@ -169,11 +248,35 @@ class WsConn {
     );
     try {
       final token = isLocal ? null : await accessTokenProvider(false, null);
-      if (!isLocal && (token == null || token.isEmpty)) {
+      if (!isLocal &&
+          !(_directObserver && observerLink) &&
+          (token == null || token.isEmpty)) {
         throw StateError('WebSocket credential is missing');
       }
       if (_closing) return;
       _tokenUsed = token;
+      final codecs = isLocal ? null : relayCodecs;
+      if (_directObserver && codecs == null) {
+        _refusePeer('Shared harnesses require a verified owner identity.');
+        return;
+      }
+      if (codecs != null) {
+        final codec = await codecs(machineId);
+        if (_closing) return;
+        if (codec == null) {
+          _refusePeer(
+            _directObserver
+                ? 'This invitation has no owner identity. Ask the owner to share it again.'
+                : 'NO_PEER_LINK',
+          );
+          return;
+        }
+        _codec = codec;
+        // A dial that failed past this point left one behind; this connect owns a new one.
+        _disposePlugin();
+        final plugins = transportPlugins;
+        if (plugins != null) _plugin = plugins(_PluginHost(this), machineId);
+      }
       final Uri uri;
       if (isLocal) {
         final local = localWsUri;
@@ -183,19 +286,47 @@ class WsConn {
         }
         uri = local;
       } else {
-        final base = Uri.parse('$wsBaseUrl/api/web-ws');
+        final base = Uri.parse(
+          '$wsBaseUrl/api/${_directObserver ? 'observer-ws' : 'web-ws'}',
+        );
         uri = base.replace(
           queryParameters: {
             ...base.queryParameters,
             'autonomousEnv': autonomousEnv,
+            if (_directObserver)
+              (observerLink ? 'link' : 'share'): observerShareId!,
           },
         );
       }
-      final channel = isLocal
-          ? WebSocketChannel.connect(uri)
-          : WebSocketChannel.connect(uri, protocols: [token!]);
+      final socket = isLocal ? _localSocket() : null;
+      final channel = !isLocal
+          ? WebSocketChannel.connect(
+              uri,
+              protocols: token == null || token.isEmpty ? null : [token],
+            )
+          : socket != null
+          ? await _connectLocalSocket(uri, socket) ??
+                WebSocketChannel.connect(uri)
+          : WebSocketChannel.connect(uri);
+      if (_closing) {
+        await channel.sink.close();
+        return;
+      }
       _channel = channel;
-      await channel.ready;
+      if (_directObserver) {
+        _observerHandshakeTimer?.cancel();
+        _observerHandshakeTimer = Timer(const Duration(seconds: 15), () {
+          if (!_closing && !_ready && identical(_channel, channel)) {
+            unawaited(channel.sink.close());
+            _onDone(channel);
+          }
+        });
+      }
+      if (_directObserver) {
+        await channel.ready.timeout(const Duration(seconds: 15));
+      } else {
+        await channel.ready;
+      }
       if (_closing || !identical(_channel, channel)) {
         await channel.sink.close();
         return;
@@ -207,15 +338,19 @@ class WsConn {
       );
       final forceRelayReconnect = _forceRelayReconnect;
       _forceRelayReconnect = false;
-      await sendFrame({
-        'type': 'machine_select',
-        'payload': {
-          'machineId': machineId,
-          if (isLocal) 'localProtocolVersion': localProtocolVersion,
-          if (isLocal && forceRelayReconnect) 'forceReconnect': true,
-        },
-      });
+      if (!_directObserver) {
+        await sendFrame({
+          'type': 'machine_select',
+          'payload': {
+            'machineId': machineId,
+            if (observerShareId != null) 'shareId': observerShareId,
+            if (isLocal) 'localProtocolVersion': localProtocolVersion,
+            if (isLocal && forceRelayReconnect) 'forceReconnect': true,
+          },
+        });
+      }
     } catch (_) {
+      _observerHandshakeTimer?.cancel();
       if (!_closing) _scheduleReconnect();
     } finally {
       _connecting = false;
@@ -223,10 +358,16 @@ class WsConn {
   }
 
   void _onRaw(dynamic raw) {
+    final codec = _codec;
     if (raw is List<int>) {
       final bytes = Uint8List.fromList(raw);
       _inboundTail = _inboundTail
-          .then((_) async => onBinaryFrame?.call(bytes))
+          .then((_) async {
+            final local = codec == null ? bytes : codec.decodeBinary(bytes);
+            if (local == null) return;
+            await _plugin?.observeWsBinary(local);
+            await onBinaryFrame?.call(local);
+          })
           .catchError((_) {
             // Binary E2EE/session code owns recovery for bad frames.
           });
@@ -238,17 +379,19 @@ class WsConn {
     } catch (_) {
       return;
     }
+    if (codec != null) {
+      _inboundTail = _inboundTail
+          .then((_) => _onRelayFrame(codec, message))
+          .catchError((_) {
+            // Keep the FIFO alive: a frame that will not open is dropped, never dispatched.
+          });
+      return;
+    }
     final type = message['type'] as String? ?? '';
     final payload = (message['payload'] as Map<String, dynamic>?) ?? {};
 
     if (type == 'connected') {
-      if (payload['machineId'] == machineId) {
-        _ready = true;
-        _attempt = 0;
-        onStatus(ConnectionStatus.connected);
-        _flushQueue();
-        _settleReadiness();
-      }
+      if (payload['machineId'] == machineId) _markReady();
       return;
     }
     final normalized = <String, dynamic>{...message, 'payload': payload};
@@ -266,6 +409,125 @@ class WsConn {
         .catchError((_) {
           // Keep the FIFO alive. E2EE/session code owns recovery for bad frames.
         });
+  }
+
+  void _markReady() {
+    _observerHandshakeTimer?.cancel();
+    _ready = true;
+    _attempt = 0;
+    onStatus(ConnectionStatus.connected);
+    _flushQueue();
+    _settleReadiness();
+  }
+
+  /// A frame on a relay connection whose E2EE session this app holds: relayClient.ts's dial
+  /// handshake, then open-and-dispatch. Nothing is ready — and nothing queued goes out — until the
+  /// machine's welcome proves it holds the identity this device pinned for it.
+  Future<void> _onRelayFrame(
+    RelayCodec codec,
+    Map<String, dynamic> message,
+  ) async {
+    if (_closing || !identical(_codec, codec)) return;
+    final payload = (message['payload'] as Map<String, dynamic>?) ?? {};
+    switch (message['type']) {
+      case 'observer_connected':
+        if (_directObserver) _channel?.sink.add(jsonEncode(codec.helloFrame()));
+        return;
+      case 'observer_welcome':
+        if (!_directObserver) return;
+        final verified = await codec.handleWelcome(payload);
+        if (_closing || !identical(_codec, codec)) return;
+        if (verified) {
+          _markReady();
+        } else {
+          _refusePeer('The shared harness identity could not be verified.');
+        }
+        return;
+      case 'observer_closed':
+        if (!_directObserver) return;
+        if (payload['retry'] == true) {
+          unawaited(_channel?.sink.close());
+        } else {
+          _refusePeer(payload['reason'] as String? ?? 'Sharing ended.');
+        }
+        return;
+      case 'connected':
+        if (_directObserver) return;
+        // The socket's first `connected` answers the socket itself (it names the user, not a
+        // machine); only the select's own ack starts the handshake.
+        if (payload['machineId'] == machineId) {
+          // The policy rides the ack; the plugin must have it before the welcome
+          // that decides whether to act on it.
+          _plugin?.onConnectedAck(payload);
+          _channel?.sink.add(jsonEncode(codec.helloFrame()));
+        }
+        return;
+      case 'e2e_welcome':
+        if (_directObserver) return;
+        final verified = await codec.handleWelcome(payload);
+        if (_closing || !identical(_codec, codec)) return;
+        if (verified) {
+          _markReady();
+          _plugin?.onSessionReady();
+        } else {
+          _refusePeer('E2EE_WELCOME_INVALID');
+        }
+        return;
+      case 'e2e_denied':
+        _refusePeer('E2E_DENIED');
+        return;
+      case 'e2e_rekey':
+        codec.handleRekey(payload);
+        return;
+    }
+    final clear = codec.decodeFrame(message);
+    if (clear == null) {
+      if (_directObserver && message['type'] == 'observer_frame') {
+        _refusePeer('Shared harness verification failed.');
+      }
+      return;
+    }
+    if (_directObserver && clear['type'] == 'observer_binary') {
+      final bytes = (clear['payload'] as Map?)?['bytes'];
+      if (bytes is String) await onBinaryFrame?.call(base64Decode(bytes));
+      return;
+    }
+    final plain = <String, dynamic>{
+      ...clear,
+      'payload': (clear['payload'] as Map<String, dynamic>?) ?? {},
+    };
+    final plugin = _plugin;
+    final type = plain['type'];
+    if (plugin != null && type is String && plugin.consumesInbound(type)) {
+      await plugin.handleInbound(
+        type,
+        plain['payload'] as Map<String, dynamic>,
+      );
+      return;
+    }
+    await _dispatch(plain);
+    // After, not before: for `terminal_ready` the session learns its streamId from
+    // the frame itself, and anything the plugin derives from it (its own
+    // `terminal_link_mode`) must land once that has happened.
+    await _plugin?.observeWsFrame(plain);
+  }
+
+  /// The machine is reachable but this device may not talk to it: never linked, the link revoked
+  /// on its side, or a welcome that did not prove the pinned identity. No retry can fix any of the
+  /// three — only a link can — so this stops and says so the way the CLI's own relay does, with
+  /// 4404.
+  void _refusePeer(String reason) {
+    _closing = true;
+    _ready = false;
+    _observerHandshakeTimer?.cancel();
+    _rejectPending(reason);
+    _disposePlugin();
+    // needsLink first: AppNotifier's onStatus handler reads machine.needsLink to decide whether a
+    // disconnect should be treated as the node going offline — it has to see it flipped before
+    // onStatus runs, or the very first 4404 for this machine reads as offline for one retry cycle.
+    onLocalFailure?.call(4404, reason);
+    onStatus(ConnectionStatus.disconnected);
+    unawaited(_channel?.sink.close());
   }
 
   Future<void> _dispatch(Map<String, dynamic> message) async {
@@ -316,17 +578,34 @@ class WsConn {
     'agent_read_file_result',
     'project_preview',
     'project_preview_result',
+    'git_project_info',
+    'git_project_info_result',
     'terminal_output',
     'terminal_input',
     'terminal_resize',
     'terminal_sync',
     'dial_scroll',
     'dial_focus',
+    'dial_selection',
+    'app_selection_result',
+    'dial_visit',
+    'app_visit_result',
+    'dial_form',
+    'app_form_result',
     'ping',
     'pong',
   };
 
-  static bool _worthLogging(String type) => !_unlogged.contains(type);
+  static bool _worthLogging(String type) =>
+      !_unlogged.contains(type) &&
+      !type.startsWith('phone_pair') &&
+      !type.startsWith('viewer_surface') &&
+      !type.startsWith('api_connections') &&
+      !type.startsWith('orchestrator') &&
+      !type.startsWith('command_bar') &&
+      !type.startsWith('route_') &&
+      !type.startsWith('harness_share_') &&
+      !type.startsWith('observer_');
 
   Future<Map<String, dynamic>> request(
     String type, {
@@ -374,13 +653,33 @@ class WsConn {
 
   /// Terminal input is best-effort: it is never queued across reconnect and
   /// the caller gets false if the socket stopped being ready before send.
-  Future<bool> sendTerminalFrame(String type, Map<String, dynamic> payload) =>
-      _enqueueFrame({'type': type, 'payload': payload}, requireReady: true);
+  Future<bool> sendTerminalFrame(
+    String type,
+    Map<String, dynamic> payload,
+  ) async {
+    // Outside the FIFO on purpose: the plugin may wait a bounded while for its wire
+    // before an open, and that wait must not hold up other panes' input.
+    var openViaPlugin = false;
+    final plugin = _plugin;
+    final requestId = payload['requestId'];
+    // Not worth the wait when the frame cannot go anyway.
+    if (plugin != null &&
+        isReady &&
+        type == 'terminal_open' &&
+        requestId is String) {
+      openViaPlugin = await plugin.prepareOpen(requestId);
+    }
+    return _enqueueFrame(
+      {'type': type, 'payload': payload},
+      requireReady: true,
+      openViaPlugin: openViaPlugin,
+    );
+  }
 
   Future<bool> sendTerminalBinary(Uint8List bytes) {
     final completer = Completer<bool>();
     _outboundTail = _outboundTail
-        .then((_) {
+        .then((_) async {
           if (!isReady) {
             completer.complete(false);
             return;
@@ -391,7 +690,19 @@ class WsConn {
             return;
           }
           try {
-            channel.sink.add(bytes);
+            // Sealed here, inside the outbound FIFO, so frames take their counters in send order.
+            final codec = _codec;
+            final wire = codec == null ? bytes : codec.encodeBinary(bytes);
+            if (wire == null) {
+              completer.complete(false);
+              return;
+            }
+            final plugin = _plugin;
+            if (plugin != null && await plugin.sendBinary(bytes, wire)) {
+              completer.complete(true);
+              return;
+            }
+            channel.sink.add(wire);
             completer.complete(true);
           } catch (_) {
             completer.complete(false);
@@ -410,6 +721,8 @@ class WsConn {
   Future<bool> _enqueueFrame(
     Map<String, dynamic> frame, {
     bool requireReady = false,
+    bool openViaPlugin = false,
+    TransportVia? force,
     void Function(Object error)? onFailure,
   }) {
     final completer = Completer<bool>();
@@ -420,7 +733,11 @@ class WsConn {
             return;
           }
           try {
-            await _sendFrameNow(frame);
+            await _sendFrameNow(
+              frame,
+              openViaPlugin: openViaPlugin,
+              force: force,
+            );
             completer.complete(true);
           } catch (error) {
             onFailure?.call(error);
@@ -455,13 +772,38 @@ class WsConn {
     }
   }
 
-  Future<void> _sendFrameNow(Map<String, dynamic> frame) async {
+  Future<void> _sendFrameNow(
+    Map<String, dynamic> frame, {
+    bool openViaPlugin = false,
+    TransportVia? force,
+  }) async {
     final type = frame['type'] as String;
     var payload = (frame['payload'] as Map<String, dynamic>?) ?? {};
     if (onOutgoing != null) payload = await onOutgoing!(type, payload);
     final channel = _channel;
     if (channel == null) throw StateError('WS is not connected');
-    channel.sink.add(jsonEncode({'type': type, 'payload': payload}));
+    final out = <String, dynamic>{'type': type, 'payload': payload};
+    final codec = _codec;
+    final wire = codec == null ? out : codec.encodeFrame(out);
+    if (wire == null) throw StateError('E2EE session is not ready for $type');
+    final encoded = jsonEncode(wire);
+    // Sealed first, then offered: the counter is taken in send order whichever
+    // wire ends up carrying the frame, which is what the peer's replay window needs.
+    // Only once the session is up: nothing before that (the select, the hello) is
+    // the plugin's to route.
+    final plugin = _plugin;
+    if (plugin != null &&
+        _ready &&
+        plugin.sendJson(
+          type,
+          payload,
+          encoded,
+          openViaPlugin: openViaPlugin,
+          force: force,
+        )) {
+      return;
+    }
+    channel.sink.add(encoded);
   }
 
   void _flushQueue() {
@@ -486,8 +828,11 @@ class WsConn {
 
   void _onDone(WebSocketChannel channel) {
     if (!identical(_channel, channel)) return;
+    _observerHandshakeTimer?.cancel();
     _channel = null;
     _sub = null;
+    _codec = null;
+    _disposePlugin();
     _ready = false;
     _rejectPending('WS disconnected');
     if (_closing) {
@@ -496,7 +841,7 @@ class WsConn {
     }
     final code = channel.closeCode;
     if (isLocal) {
-      if (code == 4404) {
+      if (code == 4404 || (observerShareId != null && code == 4403)) {
         _closing = true;
         // needsLink first: AppNotifier's onStatus handler reads machine.needsLink
         // to decide whether a disconnect should be treated as the node going
@@ -505,6 +850,15 @@ class WsConn {
         onLocalFailure?.call(code!, channel.closeReason ?? 'NO_PEER_LINK');
         onStatus(ConnectionStatus.disconnected);
         return;
+      }
+      if (code == 4403) {
+        // The daemon does not serve the machine id this socket selected ("machine mismatch",
+        // localWsServer.ts): it runs on another id now — a sign-out and sign-in gave the account a
+        // new machine, or a first start with no backend left it on the computer id. Retrying the
+        // same select every 30s used to be the whole response, silently and for good. Reported so
+        // the app can look up which id the daemon does serve; the retry stays, in case the answer
+        // is a re-key of this very row.
+        onLocalFailure?.call(code!, channel.closeReason ?? 'machine mismatch');
       }
       _scheduleReconnect();
       return;
@@ -516,6 +870,10 @@ class WsConn {
     if (code == 4403) {
       _closing = true;
       onStatus(ConnectionStatus.disconnected);
+      if (_directObserver) {
+        onLocalFailure?.call(4403, 'Sharing ended or invitation expired.');
+        return;
+      }
       onAuthFailure('SSO environment does not match this backend');
       return;
     }
@@ -540,7 +898,9 @@ class WsConn {
     onStatus(ConnectionStatus.reconnecting);
     _reconnectTimer?.cancel();
     final exponent = min(max(_attempt - 1, 0), 5);
-    final delay = Duration(milliseconds: min(30000, 1000 * (1 << exponent)));
+    final delay =
+        fixedReconnectDelay ??
+        Duration(milliseconds: min(30000, 1000 * (1 << exponent)));
     _reconnectTimer = Timer(delay, connect);
   }
 
@@ -558,7 +918,10 @@ class WsConn {
 
   Future<void> close() async {
     _closing = true;
+    _observerHandshakeTimer?.cancel();
     _ready = false;
+    _codec = null;
+    _disposePlugin();
     _reconnectTimer?.cancel();
     _reconnectTimer = null;
     _rejectPending('WS closed');
@@ -567,7 +930,13 @@ class WsConn {
     await sub?.cancel();
     final channel = _channel;
     _channel = null;
-    await channel?.sink.close();
+    // Bounded: a channel whose connect was refused (the daemon down, a 1s retry in flight) has a
+    // sink whose close never completes, and this used to wait on it for good — an app closing a
+    // machine while its daemon was down hung right here.
+    await channel?.sink.close().timeout(
+      const Duration(seconds: 2),
+      onTimeout: () => null,
+    );
     onStatus(ConnectionStatus.disconnected);
   }
 
@@ -579,10 +948,15 @@ class WsConn {
   /// immediately reconnects with a `forceReconnect` hint so the CLI daemon drops its cached relay entry
   /// instead of reusing it.
   Future<void> forceReconnect() async {
-    if (_closing || isLocal == false) return;
+    // A viewer's relay connection holds that session itself, so for it this is simply a fresh dial
+    // — and with it a fresh session.
+    if (_closing || (!isLocal && relayCodecs == null)) return;
+    _observerHandshakeTimer?.cancel();
     _forceRelayReconnect = true;
     _reconnectTimer?.cancel();
     _ready = false;
+    _codec = null;
+    _disposePlugin();
     _rejectPending('forcing relay reconnect');
     final sub = _sub;
     _sub = null;
@@ -613,10 +987,51 @@ class WsConn {
     await channel.sink.close(4000, 'integration test transport drop');
   }
 
+  void _disposePlugin() {
+    final plugin = _plugin;
+    _plugin = null;
+    plugin?.dispose();
+  }
+
   static String _newRequestId() {
     final random = Random.secure();
     final bytes = List<int>.generate(16, (_) => random.nextInt(256));
     return 'dsk_${bytes.map((b) => b.toRadixString(16).padLeft(2, '0')).join()}';
+  }
+}
+
+/// The connection as its plugin sees it — see [TerminalTransportHost].
+class _PluginHost implements TerminalTransportHost {
+  _PluginHost(this._conn);
+  final WsConn _conn;
+
+  @override
+  RelayCodec get codec {
+    final codec = _conn._codec;
+    if (codec == null) throw StateError('relay session is gone');
+    return codec;
+  }
+
+  @override
+  Future<bool> send(Map<String, dynamic> frame, {TransportVia? force}) =>
+      _conn._enqueueFrame(frame, requireReady: true, force: force);
+
+  @override
+  void enqueueInbound(Future<void> Function() task) {
+    _conn._inboundTail = _conn._inboundTail.then((_) => task()).catchError((_) {
+      // Keep the FIFO alive, as the socket's own handlers do.
+    });
+  }
+
+  @override
+  Future<void> dispatch(Map<String, dynamic> plain) => _conn._dispatch({
+    ...plain,
+    'payload': (plain['payload'] as Map<String, dynamic>?) ?? {},
+  });
+
+  @override
+  Future<void> deliverBinary(Uint8List localFrame) async {
+    await _conn.onBinaryFrame?.call(localFrame);
   }
 }
 

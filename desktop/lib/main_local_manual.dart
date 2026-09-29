@@ -1,10 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import 'app_shell.dart';
 import 'auth/auth_session.dart';
 import 'core/config.dart';
 import 'core/desktop_window.dart';
-import 'main.dart' show DesktopApp;
+import 'screens/swarm_screen.dart';
 import 'state/app_state.dart';
 
 /// Normal interactive macOS app wired to a disposable local test stack.
@@ -21,13 +22,11 @@ Future<void> main() async {
     'LOCAL_MANUAL_MACHINE_NAME',
     defaultValue: 'local-terminal-manual',
   );
-  const setupToken = String.fromEnvironment('LOCAL_MANUAL_SETUP_TOKEN');
 
   if (!enabled ||
       !apiBaseUrl.startsWith('http://127.0.0.1:') ||
       !RegExp(r'^[a-f0-9]{64}$').hasMatch(apiKey) ||
-      !RegExp(r'^[a-f0-9]{32}$').hasMatch(machineId) ||
-      setupToken.isEmpty) {
+      !RegExp(r'^[a-f0-9]{32}$').hasMatch(machineId)) {
     throw StateError(
       'Local manual mode requires its guarded loopback fixture configuration',
     );
@@ -41,7 +40,6 @@ Future<void> main() async {
       apiKey: apiKey,
       machineId: machineId,
       machineName: machineName,
-      setupToken: setupToken,
     ),
   );
   notifier.bootstrap();
@@ -49,7 +47,9 @@ Future<void> main() async {
   runApp(
     ProviderScope(
       overrides: [appStateProvider.overrideWithValue(notifier)],
-      child: const DesktopApp(),
+      child: HarnessApp(
+        authenticatedScreen: (app) => SwarmScreen(notifier: app),
+      ),
     ),
   );
 }

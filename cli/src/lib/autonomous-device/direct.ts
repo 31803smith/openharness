@@ -56,9 +56,13 @@ export class AutonomousDeviceDirect {
     this.pairing = true
     let success = false
     try {
+      // A single missed mDNS response must not erase the endpoint the user just selected.
+      // Fresh discovery wins when it has an address; pairing still authenticates the device.
+      const previous = this.candidates.get(device)
       await this.discover()
-      const candidate = this.candidates.get(device)
+      const candidate = this.candidates.get(device) ?? previous
       if (!candidate) throw Object.assign(new Error('Selected device is no longer discoverable'), { code: 'DEVICE_NOT_FOUND' })
+      this.candidates.set(device, candidate)
       const old = this.links.get(device); if (old) { old.ws.terminate(); this.links.delete(device) }
       await this.connect(candidate, true)
       const link = this.links.get(device)!
@@ -81,7 +85,8 @@ export class AutonomousDeviceDirect {
   revoked(fingerprint: string): void {
     const ids = this.associations.filter(a => a.fingerprint === fingerprint).map(a => a.discoveryId)
     this.associations = this.associations.filter(a => a.fingerprint !== fingerprint)
-    for (const id of ids) { this.links.get(id)?.ws.terminate(); this.links.delete(id) }
+    // close(), not terminate(): the pair.revoke frame just queued by the relay must flush before the socket goes.
+    for (const id of ids) { this.links.get(id)?.ws.close(1000); this.links.delete(id) }
     this.save()
   }
   private async reconnect(): Promise<void> {

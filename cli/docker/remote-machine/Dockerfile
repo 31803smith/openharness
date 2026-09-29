@@ -24,7 +24,26 @@
 # Runs as the unprivileged `node` user (uid 1000, already in the base image) rather than root, because
 # Claude Code refuses `--dangerously-skip-permissions` when it is root — and that flag is reachable
 # from the app's New agent dialog, so a root container would quietly take a testable option away.
-FROM node:22-bookworm-slim
+#
+# ⚠️ **Debian 13 (trixie), not 12 (bookworm), because of the grid.** The managed `grid` the CLI
+# downloads for linux-arm64 is linked against glibc 2.38; bookworm ships 2.36, so on this box grid
+# never ran at all — `GLIBC_2.38 not found`, a `.unrunnable` marker, and "no grid after 5 attempts" in
+# the daemon's log — and nothing grid-backed could be tested here. trixie ships 2.41.
+FROM node:22-trixie-slim
+
+# A UTF-8 locale, because the base image has none.
+#
+# `node:22-trixie-slim` sets no LANG, which leaves `LC_CTYPE=POSIX` — and a program that decides
+# what it may draw from the locale rather than from the terminal takes its ASCII path there. tmux
+# negotiates UTF-8 with the client either way (`client_utf8=1` on this box), so the damage is not the
+# box-drawing a terminal shows; it is every engine, and every tool an agent runs inside one, that
+# reads the locale first and quietly degrades. A real developer machine has a UTF-8 locale, and this
+# container stands in for one.
+#
+# `C.UTF-8` rather than `en_US.UTF-8`: Debian ships it built in, so this needs no `locales` package
+# and no `locale-gen` layer, and it imposes no language on an agent's output.
+ENV LANG=C.UTF-8
+ENV LC_ALL=C.UTF-8
 
 # tmux: the daemon discovers and drives agents through it, so there is no agent without it.
 # procps: `ps` — the CLI reads a live engine's environment to answer "which grid is this agent on?"
@@ -36,9 +55,11 @@ FROM node:22-bookworm-slim
 #   from the host can ever reach a loopback bind. socat bridges exactly that gap, on the container
 #   side, for the duration of a sign-in. Doing it here rather than teaching the CLI to bind 0.0.0.0
 #   keeps a real computer's SSO callback on its own loopback, where it belongs.
+# tini: pid 1. Every engine a stopped agent leaves behind is orphaned to pid 1, and only a real init
+#   reaps it — see the ENTRYPOINT below.
 RUN apt-get update \
   && apt-get install -y --no-install-recommends \
-       tmux procps git curl ca-certificates less socat \
+       tmux procps git curl ca-certificates less socat tini \
   && rm -rf /var/lib/apt/lists/*
 
 # The engine under test. Pinned by the build so a rebuild is reproducible; bump it deliberately.
@@ -86,6 +107,23 @@ RUN mkdir -p /home/node/work \
      > /home/node/.claude.json \
   && chown -R node:node /home/node/.claude.json /home/node/work
 
+# ── A global npm prefix the `node` user can actually write to ─────────────────────────────────────
+#
+# An engine the daemon cannot find is installed on the spot, in the agent's own terminal: see
+# `lib/engineInstall.ts`, which shells out to `npm install -g <pkg>` for codex, opencode, pi, kilo,
+# copilot and the rest. npm's prefix here is /usr/local, which belongs to root — and this image runs
+# as `node` (see the header), so every one of those installs died with EACCES and left the agent
+# staring at an npm stack trace instead of an engine. Pre-baking one package would fix codex and
+# nothing else; a writable prefix fixes the mechanism, for every engine the CLI knows how to install.
+#
+# Deliberately NOT under /home/node/.harness: that volume outlives an image rebuild, so an engine
+# cached there would survive the very rebuild meant to change it — the staleness note 1 exists to
+# prevent. Re-fetching an engine when the box is recreated is the correct cost. Claude Code above
+# stays in /usr/local, baked and pinned, untouched by this.
+ENV NPM_CONFIG_PREFIX=/home/node/.npm-global
+ENV PATH=/home/node/.npm-global/bin:$PATH
+RUN mkdir -p /home/node/.npm-global/bin && chown -R node:node /home/node/.npm-global
+
 COPY --chown=node:node docker/remote-machine/entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod 755 /usr/local/bin/entrypoint.sh
 
@@ -93,4 +131,10 @@ USER node
 WORKDIR /home/node
 VOLUME ["/home/node/.harness"]
 
-ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
+# ⚠️ **tini is pid 1, not the entrypoint, and a real computer's init is what it stands in for.** The
+# entrypoint used to `exec tail -f /dev/null` as pid 1, and tail never calls wait(): every engine
+# orphaned when its agent stopped stayed a zombie for the life of the box — with the pid, name and
+# start time of the engine it had been. The daemon's identity check read that as the engine still
+# running, and refused to resume the agent ("The previous process is still running"). tini reaps
+# them, and forwards `docker stop`'s SIGTERM to the entrypoint as tail's pid-1 role did.
+ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/entrypoint.sh"]

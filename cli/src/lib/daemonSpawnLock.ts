@@ -38,14 +38,17 @@ import {
 import { randomUUID } from 'crypto'
 import { join } from 'path'
 import { env } from '../config/env.js'
-import { lockOwnerAlive, processStartMarker } from './processLiveness.js'
+import { lockOwnerAlive, lockStartMarker, processLockIdentity } from './processLiveness.js'
 import { secureStateDirectory } from './secureState.js'
 
-export type SpawnLockPurpose = 'start' | 'update' | 'handoff' | 'stop'
+/** `login` is a forced sign-in: the daemon is stopped and the session on disk is about to change
+ *  hands, so nothing may start a daemon — on the OLD session — until the new one is written. */
+export type SpawnLockPurpose = 'start' | 'update' | 'handoff' | 'stop' | 'login'
 
 export interface SpawnLockOwner {
   pid: number
   startMarker: string
+  generationMarker?: string
   token: string
   purpose: SpawnLockPurpose
   since: number
@@ -85,9 +88,29 @@ export function describeSpawnLockFailure(error: unknown): string {
 export function describeSpawnLockOwner(owner: SpawnLockOwner): string {
   const verb: Record<SpawnLockPurpose, string> = {
     start: 'being started', update: 'being updated', handoff: 'restarting for an update', stop: 'being stopped',
+    login: 'being signed in',
   }
   const secs = Math.max(0, Math.round((Date.now() - owner.since) / 1000))
   return `${verb[owner.purpose]} by pid ${owner.pid} for ${secs}s`
+}
+
+/**
+ * The same failure for a person who is not debugging anything — the desktop's sign-in screen shows
+ * this verbatim. No pid, no lock, no seconds: what Harness is still doing on this computer, so that
+ * "try again in a moment" reads as advice rather than a shrug. Something that is not a lock at the
+ * lock path is not going to clear itself; that case sends them to the terminal, where the technical
+ * line (`describeSpawnLockFailure`) says what to remove.
+ */
+export function describeSpawnLockBusyPlainly(error: SpawnLockBusyError): string {
+  if (error.reason) return 'Harness cannot sign in on this computer right now. Run `harness login --force` in a terminal to see why.'
+  const still: Record<SpawnLockPurpose, string> = {
+    start: 'Harness is still starting on this computer',
+    update: 'Harness is still updating on this computer',
+    handoff: 'Harness is still restarting on this computer',
+    stop: 'Harness is still shutting down on this computer',
+    login: 'Another sign-in is already in progress on this computer',
+  }
+  return `${error.owner ? still[error.owner.purpose] : 'Harness is busy on this computer'}. Try again in a moment.`
 }
 
 let held: { token: string; purpose: SpawnLockPurpose; depth: number } | null = null
@@ -121,6 +144,7 @@ export function readSpawnLockOwner(): SpawnLockOwner | null {
     return {
       pid,
       startMarker: typeof raw.startMarker === 'string' ? raw.startMarker : '',
+      generationMarker: typeof raw.generationMarker === 'string' ? raw.generationMarker : undefined,
       token: raw.token,
       purpose: isPurpose(raw.purpose) ? raw.purpose : 'start',
       since: Number.isFinite(Number(raw.since)) ? Number(raw.since) : 0,
@@ -132,7 +156,7 @@ export function readSpawnLockOwner(): SpawnLockOwner | null {
 }
 
 function isPurpose(value: unknown): value is SpawnLockPurpose {
-  return value === 'start' || value === 'update' || value === 'handoff' || value === 'stop'
+  return value === 'start' || value === 'update' || value === 'handoff' || value === 'stop' || value === 'login'
 }
 
 /** Create the lock for this process. Returns the token, or null when someone else holds it. */
@@ -146,7 +170,7 @@ function tryCreate(purpose: SpawnLockPurpose): string | null {
     const fd = openSync(ownerPath(), constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600)
     try {
       const owner: SpawnLockOwner = {
-        pid: process.pid, startMarker: processStartMarker(process.pid) ?? '', token, purpose, since: Date.now(),
+        pid: process.pid, ...processLockIdentity(process.pid), token, purpose, since: Date.now(),
       }
       writeFileSync(fd, JSON.stringify(owner))
       fsyncSync(fd)
@@ -176,11 +200,11 @@ function releaseOwnedBy(token: string): void {
 
 /** Remove a lock whose owner is gone — re-read first so a lock that changed hands meanwhile survives. */
 function reclaimIfStale(owner: SpawnLockOwner): boolean {
-  if (lockOwnerAlive(owner.pid, owner.startMarker)) return false
+  if (lockOwnerAlive(owner.pid, lockStartMarker(owner))) return false
   try {
     const current = readSpawnLockOwner()
-    if (current && current.pid === owner.pid && current.startMarker === owner.startMarker
-      && current.token === owner.token && !lockOwnerAlive(owner.pid, owner.startMarker)) {
+    if (current && current.pid === owner.pid && lockStartMarker(current) === lockStartMarker(owner)
+      && current.token === owner.token && !lockOwnerAlive(owner.pid, lockStartMarker(owner))) {
       rmSync(SPAWN_LOCK_DIR, { recursive: true, force: true })
       return true
     }

@@ -7,11 +7,14 @@ import 'package:harness/auth/auth_session.dart';
 import 'package:harness/core/config.dart';
 import 'package:harness/core/models.dart';
 import 'package:harness/state/app_state.dart';
+import 'package:harness/state/harness_placement.dart';
 import 'package:harness/core/project_folder.dart';
 import 'package:harness/state/pane_arrangement.dart';
 import 'package:harness/shared/theme/app_theme.dart' as grid;
 import 'package:harness/widgets/new_agent_dialog.dart';
 import 'package:harness/widgets/remote_folder_picker.dart';
+
+import 'support/agent_picker.dart';
 
 class _Folders extends AppNotifier {
   _Folders()
@@ -43,15 +46,22 @@ class _Folders extends AppNotifier {
   Future<String?> createAgent(
     String machineId, {
     required String engine,
-    required String folder,
+    required String? folder,
     ProjectFolderRequest? projectFolder,
     bool bypassPermission = false,
+    String? permissionMode,
     String? codexHome,
+    String? dsh,
+    GridModel? model,
+    String? prompt,
+    String? name,
+    String? agent,
     String? swarmId,
     PaneSplitRequest? split,
     AgentCreationAttempt? attempt,
+    HarnessPlacement? placement,
   }) async {
-    launches.add((machine: machineId, engine: engine, folder: folder));
+    launches.add((machine: machineId, engine: engine, folder: folder!));
     return null;
   }
 
@@ -114,6 +124,45 @@ Future<void> _open(
 }
 
 void main() {
+  testWidgets(
+    'refresh keeps current folders usable and preserves a newer path draft',
+    (tester) async {
+      final app = _Folders();
+      await _open(tester, app);
+      app.requests.single.reply.complete(_listing('/home/dev', ['code']));
+      await tester.pumpAndSettle();
+      final field = find.byType(TextField);
+      await tester.enterText(field, '/home/dev/new-project');
+      await tester.tap(find.byTooltip('Refresh folders'));
+      await tester.pump();
+      expect(app.requests.last.path, '/home/dev');
+      expect(find.text('code'), findsOneWidget);
+      expect(
+        tester.widget<TextField>(field).controller!.text,
+        '/home/dev/new-project',
+      );
+      app.requests.last.reply.complete(
+        _listing('/home/dev', ['code', 'new-project']),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('new-project'), findsOneWidget);
+      expect(
+        tester.widget<TextField>(field).controller!.text,
+        '/home/dev/new-project',
+      );
+      final previous = app.requests.length;
+      await tester.tap(field);
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.metaLeft);
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyR);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.metaLeft);
+      await tester.pump();
+      expect(app.requests.length, previous + 1);
+      expect(app.requests.last.path, '/home/dev');
+      app.requests.last.reply.complete(_listing('/home/dev', ['code']));
+      await tester.pumpAndSettle();
+    },
+  );
+
   testWidgets('cannot select the old folder while opening another folder', (
     tester,
   ) async {
@@ -361,7 +410,7 @@ void main() {
   );
 
   testWidgets(
-    'remote selection returns to New Agent without launching or losing choices',
+    'remote selection returns to New Harness without launching or losing choices',
     (tester) async {
       final app = _Folders();
       addTearDown(app.dispose);
@@ -388,10 +437,7 @@ void main() {
       );
       await tester.tap(find.text('Open'));
       await tester.pumpAndSettle();
-      await tester.ensureVisible(
-        find.byKey(const ValueKey('new-agent-quick-codex')),
-      );
-      await tester.tap(find.byKey(const ValueKey('new-agent-quick-codex')));
+      await chooseAgent(tester, 'codex');
       await tester.ensureVisible(
         find.byKey(const Key('new-agent-project-browse')),
       );
@@ -426,7 +472,7 @@ void main() {
       expect(find.text('target'), findsOneWidget);
       expect(find.text('/home/dev/target'), findsNothing);
       expect(app.launches, isEmpty);
-      await tester.tap(find.widgetWithText(FilledButton, 'Create'));
+      await tester.tap(find.byKey(const ValueKey('create-agent-submit')));
       await tester.pumpAndSettle();
       expect(app.launches, [
         (machine: 'remote', engine: 'codex', folder: '/home/dev/target'),

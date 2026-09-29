@@ -9,14 +9,25 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 
 import 'package:harness/auth/auth_session.dart';
 import 'package:harness/core/config.dart';
 import 'package:harness/settings/settings_screen.dart';
+import 'package:harness/settings/settings_nav.dart';
+import 'package:harness/settings/settings_section.dart';
+import 'package:harness/settings/experimental_features.dart';
+import 'package:harness/settings/sections/shortcuts_section.dart';
 import 'package:harness/shared/theme/app_theme.dart';
+import 'package:harness/shortcuts/keyboard_practice.dart';
 import 'package:harness/state/app_state.dart';
+import 'package:harness/widgets/harness_customize_pane.dart';
+
+import 'support/experimental_settings.dart';
+
+import 'swarm_state_test.dart' show MemoryStore;
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -30,7 +41,10 @@ void main() {
   );
 
   /// Opens Settings over a bare host screen and settles the push transition.
-  Future<AppNotifier> openSettings(WidgetTester tester) async {
+  Future<AppNotifier> openSettings(
+    WidgetTester tester, {
+    ExperimentalFeaturesStore? experiments,
+  }) async {
     final notifier = AppNotifier(
       config: AppConfig.dev,
       authSession: AuthSession(),
@@ -59,31 +73,56 @@ void main() {
         tester.element(find.byType(Placeholder)),
         notifier,
         source: 'account_menu',
+        experimentalFeatures: experiments,
       ),
     );
     await tester.pumpAndSettle();
     return notifier;
   }
 
-  testWidgets(
-    'Settings lists its remaining sections after customization moves',
-    (tester) async {
-      await openSettings(tester);
-      expect(find.text('Preferences'), findsOneWidget);
-      expect(find.text('Help'), findsOneWidget);
-      expect(find.text('Usage'), findsNWidgets(2));
-      expect(find.text('Keyboard shortcuts'), findsOneWidget);
-      expect(find.text('About'), findsOneWidget);
-      expect(find.text('Back to app'), findsOneWidget);
-      expect(find.text('Appearance'), findsNothing);
-      expect(find.text('Terminal'), findsNothing);
-      expect(find.byKey(const Key('appearance-ui-size-field')), findsNothing);
-      expect(
-        find.byKey(const Key('terminal-font-family-dropdown')),
-        findsNothing,
-      );
-    },
-  );
+  testWidgets('Settings lists customization under Preferences', (tester) async {
+    await openSettings(tester);
+    expect(find.text('PREFERENCES'), findsOneWidget);
+    expect(find.text('HELP'), findsOneWidget);
+    expect(find.text('Usage'), findsNWidgets(2));
+    expect(find.text('Customize'), findsOneWidget);
+    expect(find.text('Experimental'), findsOneWidget);
+    expect(find.text('Keyboard shortcuts'), findsOneWidget);
+    expect(find.text('About'), findsOneWidget);
+    expect(find.text('Back to app'), findsOneWidget);
+    expect(find.text('Appearance'), findsNothing);
+    expect(find.text('Terminal'), findsNothing);
+    expect(find.byKey(const Key('appearance-ui-size-field')), findsNothing);
+    expect(
+      find.byKey(const Key('terminal-font-family-dropdown')),
+      findsNothing,
+    );
+    await tester.tap(find.text('Customize'));
+    await tester.pumpAndSettle();
+    expect(find.byType(SettingsScreen), findsNothing);
+    expect(find.byType(Placeholder), findsOneWidget);
+    expect(find.byType(HarnessCustomizePane), findsOneWidget);
+    for (final label in ['Status', 'Appearance', 'Terminal']) {
+      expect(find.text(label), findsOneWidget);
+    }
+    await tester.tap(find.byKey(const ValueKey('customize-appearance')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('appearance-ui-size-field')), findsNothing);
+    // Four tabs scroll at this window width; bring Terminal into view first.
+    final terminalTab = find.byKey(const ValueKey('customize-terminal'));
+    await tester.ensureVisible(terminalTab);
+    await tester.tap(terminalTab);
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const Key('terminal-font-family-dropdown')),
+      findsOneWidget,
+    );
+    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+    await tester.pumpAndSettle();
+    expect(find.byType(SettingsScreen), findsNothing);
+    expect(find.byType(HarnessCustomizePane), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
 
   testWidgets('About prints the running version', (tester) async {
     await openSettings(tester);
@@ -103,6 +142,66 @@ void main() {
     expect(find.text('1.0.0'), findsOneWidget);
   });
 
+  testWidgets(
+    'Experimental is searchable and its labelled switch works by keyboard',
+    (tester) async {
+      final storage = MemoryStore();
+      final experiments = MemoryExperimentalFeaturesStore(storage: storage);
+      addTearDown(experiments.dispose);
+      await openSettings(tester, experiments: experiments);
+      await tester.enterText(
+        find.byKey(const Key('settings-search-field')),
+        'experimental',
+      );
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pumpAndSettle();
+      final toggle = find.byKey(
+        const ValueKey('experimental-focus_bar_creature'),
+      );
+      expect(tester.widget<Switch>(toggle).value, isFalse);
+      final semantics = tester.ensureSemantics();
+      expect(
+        tester.getSemantics(toggle),
+        matchesSemantics(
+          label: 'Focus-bar creature',
+          hasToggledState: true,
+          hasEnabledState: true,
+          isEnabled: true,
+          isFocusable: true,
+          hasTapAction: true,
+          hasFocusAction: true,
+        ),
+      );
+      semantics.dispose();
+      // Search → matching nav row → switch.
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
+      await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+      await tester.pump();
+      await tester.sendKeyEvent(LogicalKeyboardKey.space);
+      await tester.pumpAndSettle();
+      expect(tester.widget<Switch>(toggle).value, isTrue);
+      expect(
+        storage.values[experimentFixtureKey(
+          ExperimentalFeature.focusBarCreature,
+        )],
+        'on',
+      );
+      await tester.sendKeyEvent(LogicalKeyboardKey.space);
+      await tester.pumpAndSettle();
+      expect(tester.widget<Switch>(toggle).value, isFalse);
+      expect(
+        storage.values[experimentFixtureKey(
+          ExperimentalFeature.focusBarCreature,
+        )],
+        'off',
+      );
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.pumpAndSettle();
+      expect(find.byType(SettingsScreen), findsNothing);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
   testWidgets('the rail filter narrows to matching rows, and says so when '
       'nothing matches', (tester) async {
     await openSettings(tester);
@@ -117,7 +216,7 @@ void main() {
     // Filtering the rail preserves the open pane.
     expect(find.text('Usage'), findsOneWidget);
     expect(find.text('Terminal'), findsNothing);
-    expect(find.text('Preferences'), findsNothing);
+    expect(find.text('PREFERENCES'), findsNothing);
 
     await tester.enterText(
       find.byKey(const Key('settings-search-field')),
@@ -137,5 +236,180 @@ void main() {
     expect(find.text('Back to app'), findsNothing);
     expect(find.text('Appearance'), findsNothing);
     expect(find.byType(Placeholder), findsOneWidget);
+  });
+
+  testWidgets(
+    'Settings opens ready to type, Enter selects a match and Escape returns',
+    (tester) async {
+      await openSettings(tester);
+      final field = find.byKey(const Key('settings-search-field'));
+      expect(
+        tester.widget<TextField>(field).focusNode!.hasPrimaryFocus,
+        isTrue,
+      );
+      final initial = tester
+          .widget<SettingsNav>(find.byType(SettingsNav))
+          .section;
+      await tester.enterText(field, 'keyboard');
+      await tester.pumpAndSettle();
+      expect(
+        tester.widget<SettingsNav>(find.byType(SettingsNav)).section,
+        initial,
+      );
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pumpAndSettle();
+      expect(
+        tester.widget<SettingsNav>(find.byType(SettingsNav)).section,
+        SettingsSection.shortcuts,
+      );
+      expect(
+        tester.widget<TextField>(field).focusNode!.hasPrimaryFocus,
+        isTrue,
+      );
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.pumpAndSettle();
+      expect(find.byType(SettingsScreen), findsNothing);
+      expect(find.byType(Placeholder), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'an empty or unmatched settings query does not change the section',
+    (tester) async {
+      await openSettings(tester);
+      final field = find.byKey(const Key('settings-search-field'));
+      final initial = tester
+          .widget<SettingsNav>(find.byType(SettingsNav))
+          .section;
+      for (final text in ['', 'nothing-matches-this']) {
+        await tester.enterText(field, text);
+        await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+        await tester.pumpAndSettle();
+        expect(
+          tester.widget<SettingsNav>(find.byType(SettingsNav)).section,
+          initial,
+        );
+        expect(
+          tester.widget<TextField>(field).focusNode!.hasPrimaryFocus,
+          isTrue,
+        );
+      }
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
+      expect(
+        tester.widget<TextField>(field).focusNode!.hasPrimaryFocus,
+        isTrue,
+      );
+    },
+  );
+
+  testWidgets('Down enters the matching section row and Enter opens it', (
+    tester,
+  ) async {
+    await openSettings(tester);
+    final field = find.byKey(const Key('settings-search-field'));
+    await tester.enterText(field, 'about');
+    await tester.pumpAndSettle();
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
+    await tester.pump();
+    expect(tester.widget<TextField>(field).focusNode!.hasPrimaryFocus, isFalse);
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+    await tester.pumpAndSettle();
+    expect(
+      tester.widget<SettingsNav>(find.byType(SettingsNav)).section,
+      SettingsSection.about,
+    );
+  });
+
+  testWidgets(
+    'shortcut help can be searched, paged and practiced by keyboard',
+    (tester) async {
+      await openSettings(tester);
+      await tester.enterText(
+        find.byKey(const Key('settings-search-field')),
+        'keyboard',
+      );
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pumpAndSettle();
+      final search = find.byKey(const ValueKey('shortcuts-search'));
+      for (
+        var i = 0;
+        i < 4 && !tester.widget<TextField>(search).focusNode!.hasFocus;
+        i++
+      ) {
+        await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+        await tester.pump();
+      }
+      expect(tester.widget<TextField>(search).focusNode!.hasFocus, isTrue);
+      final scroll = tester.state<ScrollableState>(
+        find
+            .descendant(
+              of: find.byType(ShortcutsSection),
+              matching: find.byType(Scrollable),
+            )
+            .last,
+      );
+      await tester.sendKeyEvent(LogicalKeyboardKey.pageDown);
+      await tester.pumpAndSettle();
+      expect(scroll.position.pixels, greaterThan(0));
+      await tester.sendKeyEvent(LogicalKeyboardKey.pageUp);
+      await tester.pumpAndSettle();
+      await tester.enterText(search, 'Clone');
+      await tester.pump();
+      expect(find.text('Clone Harness'), findsOneWidget);
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pumpAndSettle();
+      expect(find.byType(KeyboardPractice), findsOneWidget);
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.pump();
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.pumpAndSettle();
+      expect(find.byType(SettingsScreen), findsOneWidget);
+      expect(tester.widget<TextField>(search).focusNode!.hasFocus, isTrue);
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.pumpAndSettle();
+      expect(find.byType(SettingsScreen), findsNothing);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets('Escape belongs to composition before it can leave Settings', (
+    tester,
+  ) async {
+    await openSettings(tester);
+    final field = find.byKey(const Key('settings-search-field'));
+    tester.testTextInput.updateEditingValue(
+      const TextEditingValue(
+        text: 'keyboard',
+        selection: TextSelection.collapsed(offset: 8),
+        composing: TextRange(start: 0, end: 8),
+      ),
+    );
+    await tester.pump();
+    final section = tester
+        .widget<SettingsNav>(find.byType(SettingsNav))
+        .section;
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
+    await tester.pump();
+    expect(
+      tester.widget<SettingsNav>(find.byType(SettingsNav)).section,
+      section,
+    );
+    expect(tester.widget<TextField>(field).focusNode!.hasPrimaryFocus, isTrue);
+    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+    await tester.pumpAndSettle();
+    expect(find.byType(SettingsScreen), findsOneWidget);
+    expect(tester.widget<TextField>(field).focusNode!.hasPrimaryFocus, isTrue);
+    tester.testTextInput.updateEditingValue(
+      const TextEditingValue(
+        text: 'keyboard',
+        selection: TextSelection.collapsed(offset: 8),
+      ),
+    );
+    await tester.pump();
+    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+    await tester.pumpAndSettle();
+    expect(find.byType(SettingsScreen), findsNothing);
   });
 }

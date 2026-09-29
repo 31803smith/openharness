@@ -18,18 +18,22 @@ class AutonomousDeviceCliException implements Exception {
   final String code;
   final String message;
   String get userMessage => switch (code) {
-    'CODE_MISMATCH' => 'That code did not match. Generate a new code on your Autonomous device, then try again.',
-    'RATE_LIMITED' => 'Too many pairing attempts. Wait five minutes, then generate a new code on your Autonomous device and try again.',
-    'EXPIRED' => 'The pairing code expired. Generate a new code on your Autonomous device, then try again.',
+    'CODE_MISMATCH' => 'That code did not match. Generate a new code on your Autonomous robot, then try again.',
+    'RATE_LIMITED' => 'Too many pairing attempts. Wait five minutes, then generate a new code on your Autonomous robot and try again.',
+    'EXPIRED' => 'The pairing code expired. Generate a new code on your Autonomous robot, then try again.',
+    'LOCAL_NETWORK_BLOCKED' => 'Harness can’t see your local network, so it can’t find Autonomous robots. Allow Harness in System Settings › Privacy & Security › Local Network, then refresh.',
     _ => message,
   };
+
+  /// macOS refused the daemon's multicast: no robot can be found until the user allows it.
+  bool get localNetworkBlocked => code == 'LOCAL_NETWORK_BLOCKED';
   bool get unsupported =>
       const {'NOT_FOUND', 'UNSUPPORTED', 'UNKNOWN_COMMAND'}.contains(code);
   @override
   String toString() => message;
 }
 
-/// The CLI owns credentials and Autonomous device trust. Pair codes remain in memory only.
+/// The CLI owns credentials and Autonomous robot trust. Pair codes remain in memory only.
 class AutonomousDeviceCli {
   AutonomousDeviceCli({HarnessCliRunner? runner})
     : _runner = runner ?? HarnessCliRunner();
@@ -48,7 +52,7 @@ class AutonomousDeviceCli {
         deviceId.isEmpty) {
       throw const AutonomousDeviceCliException(
         'BAD_REQUEST',
-        'Enter the six-character code shown on your Autonomous device.',
+        'Enter the six-character code shown on your Autonomous robot.',
       );
     }
     return command(
@@ -93,7 +97,7 @@ class AutonomousDeviceCli {
       // A timed-out mutation may have succeeded. Read state before retrying it.
       throw const AutonomousDeviceCliException(
         'TIMEOUT',
-        'The command timed out. Refresh the Autonomous device status before trying again.',
+        'The command timed out. Refresh the Autonomous robot status before trying again.',
       );
     }
     final output = await stdout;
@@ -111,7 +115,7 @@ class AutonomousDeviceCli {
     if (error is Map) {
       throw AutonomousDeviceCliException(
         error['code']?.toString() ?? 'FAILED',
-        error['message']?.toString() ?? 'The Autonomous device command failed.',
+        error['message']?.toString() ?? 'The Autonomous robot command failed.',
       );
     }
     if (exitCode != 0 || result == null) {
@@ -121,7 +125,7 @@ class AutonomousDeviceCli {
       ).hasMatch('$output\n$errorOutput');
       throw AutonomousDeviceCliException(
         unsupported ? 'UNKNOWN_COMMAND' : 'FAILED',
-        unsupported ? 'This Harness CLI does not support Autonomous devices.' : 'The Autonomous device command failed. Check that Harness is running and the device is on the same network.',
+        unsupported ? 'This Harness CLI does not support Autonomous robots.' : 'The Autonomous robot command failed. Check that Harness is running and the device is on the same network.',
       );
     }
     return result;

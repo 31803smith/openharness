@@ -260,15 +260,14 @@ void main() {
 
     test('the terminal verbs tmux trained people on are all here', () {
       expect(chordsFor(ShortcutAction.zoomPane), contains('⌘⏎'));
-      expect(chordsFor(ShortcutAction.lastPane), contains('⌘;'));
+      // The previous-pane command remains available through remapping.
+      expect(chordsFor(ShortcutAction.lastPane), isEmpty);
       expect(chordsFor(ShortcutAction.newSwarm), ['⌘T']);
-      expect(chordsFor(ShortcutAction.showLayout), ['⌘S']);
-      expect(
-        appShortcuts().where((s) => describeShortcut(s.activator) == '⌘P'),
-        isEmpty,
-      );
-      expect(chordsFor(ShortcutAction.addAgent), ['⌘N']);
-      expect(chordsFor(ShortcutAction.newAgent), ['⇧⌘N']);
+      expect(chordsFor(ShortcutAction.showLayout), ['⇧⌘L']);
+      expect(chordsFor(ShortcutAction.orchestrate), isEmpty);
+      expect(chordsFor(ShortcutAction.routeTask), ['⌘B']);
+      expect(chordsFor(ShortcutAction.addAgent), ['⌘O']);
+      expect(chordsFor(ShortcutAction.newAgent), ['⌘N']);
       expect(chordsFor(ShortcutAction.showAttention), ['⇧⌘I']);
       expect(chordsFor(ShortcutAction.findTerminal), ['⌘F']);
       expect(chordsFor(ShortcutAction.findNext), ['⌘G']);
@@ -299,7 +298,7 @@ void main() {
         ['⌘', '→'],
       ]);
 
-      final next = rows.firstWhere((row) => row.label == 'Next Harness');
+      final next = rows.firstWhere((row) => row.label == 'Next Swarm');
       expect(next.chords, [
         ['⇧', '⌘', ']'],
         ['⌃', '⇥'],
@@ -320,7 +319,7 @@ void main() {
 
     test('the digits are one row, at the end of their own group', () {
       final rows = shortcutRows();
-      final digits = rows.indexWhere((row) => row.label == 'Select harnesses 1–9');
+      final digits = rows.indexWhere((row) => row.label == 'Select swarms 1–9');
       expect(digits, isNot(-1));
       expect(rows[digits].chords, [
         ['⌘', '1 – 9'],

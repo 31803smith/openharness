@@ -1,3 +1,5 @@
+import 'support/open_harness.dart';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -17,7 +19,7 @@ Finder get selectedRow =>
 void main() {
   for (final nativeTabs in [false, true]) {
     testWidgets(
-      'New Harness offers Open Agent and preserves the selected runtime (native=$nativeTabs)',
+      'New Tab offers Open Harness and preserves the selected runtime (native=$nativeTabs)',
       (tester) async {
         const channel = MethodChannel('harness/swarm_tabs');
         tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
@@ -30,8 +32,7 @@ void main() {
             null,
           ),
         );
-        final app = createApp();
-        app.machineStates['m']!.nodeOnline = true;
+        final app = createApp(connected: true);
         final frames = <TerminalBinaryFrame>[];
         final pane = app.adoptSessionForTest(terminal('a0', frames));
         final original = app.activeSwarm;
@@ -41,9 +42,12 @@ void main() {
           harnessCommandById.containsKey('navigation.quick_open'),
           isFalse,
         );
-        await chord(tester, LogicalKeyboardKey.keyP);
-        expect(jumpField, findsNothing);
+        await openHarnessPicker(tester);
+        expect(jumpField, findsOneWidget);
         expect(app.swarms, [original]);
+        await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+        await tester.pumpAndSettle();
+        expect(jumpField, findsNothing);
         if (nativeTabs) {
           await native(tester, 'jump');
           expect(jumpField, findsNothing);
@@ -54,19 +58,22 @@ void main() {
           await tester.tap(find.byKey(const ValueKey('swarm-new-tab-button')));
           await tester.pump();
         }
-        final opened = app.activeSwarm;
-        expect(opened, isNot(same(original)));
-        expect(opened.name, 'New Harness');
-        expect(opened.panes, isEmpty);
+        final draft = app.activeSwarm;
+        expect(draft, isNot(same(original)));
+        expect(draft.isBlankNewTab, isTrue);
+        expect(app.swarms, hasLength(2));
+        expect(original.panes, [pane]);
         expect(find.byType(AlertDialog), findsNothing);
-        await chord(tester, LogicalKeyboardKey.keyO);
         final field = find.byKey(const ValueKey('swarm-search-input'));
+        expect(field, findsNothing);
+        await openHarnessPicker(tester);
         expect(tester.widget<TextField>(field).focusNode!.hasFocus, isTrue);
         await tester.enterText(field, 'Agent 0');
         await tester.pump();
         await tester.sendKeyEvent(LogicalKeyboardKey.enter);
         await tester.pump();
-        expect(app.activeSwarm, same(opened));
+        final opened = app.activeSwarm;
+        expect(opened, same(draft));
         expect(opened.panes, [pane]);
         expect(original.panes, [pane]);
         expect(app.focusedPane, same(pane));
@@ -80,7 +87,7 @@ void main() {
     );
   }
 
-  testWidgets('command search stays commands-only and can open New Agent', (
+  testWidgets('command prefix switches lists and can open New Harness', (
     tester,
   ) async {
     final app = createApp();
@@ -89,7 +96,7 @@ void main() {
     await mount(tester, app);
     await chord(tester, LogicalKeyboardKey.keyP, shift: true);
     final field = find.byKey(const ValueKey('swarm-search-input'));
-    for (final query in ['', 'Agent 0', '> ', 'new']) {
+    for (final query in ['> ', '> Agent 0', '>', '> new']) {
       await tester.enterText(field, query);
       await tester.pump();
       final search = tester
@@ -102,15 +109,44 @@ void main() {
         find.byKey(const ValueKey('swarm-navigation-locations')),
         findsNothing,
       );
-      expect(find.byKey(const ValueKey('swarm-search-preview')), findsNothing);
+      final preview = find.byKey(const ValueKey('swarm-search-preview'));
+      expect(preview, findsOneWidget);
+      expect(
+        find.descendant(of: preview, matching: find.byType(Text)),
+        search.selected == null ? findsNothing : findsWidgets,
+      );
     }
-    expect(harnessCommandById['agent.new']!.label, 'New Agent');
+    await tester.enterText(field, '');
+    await tester.pump();
+    final agents = tester
+        .widget<SwarmSearchResults>(find.byType(SwarmSearchResults))
+        .search;
+    expect(agents.isCommandMode, isFalse);
+    expect(
+      agents.rows
+          .where((row) => !row.isCreate)
+          .every((row) => row.agentId != null),
+      isTrue,
+    );
+    expect(harnessCommandById['agent.new']!.label, 'New Harness');
+    await chord(tester, LogicalKeyboardKey.keyP, shift: true);
+    await tester.enterText(field, '> new');
+    await tester.pump();
     await tester.tap(find.byKey(const ValueKey('command:swarm.new')));
     await tester.pump();
-    expect(app.activeSwarm.name, 'New Harness');
+    expect(app.activeSwarm.isBlankNewTab, isTrue);
     expect(app.panes, isEmpty);
+    expect(app.swarms, hasLength(2));
     expect(app.allPanes, contains(pane));
-    expect(find.byKey(const ValueKey('harness-start-search')), findsOneWidget);
+    expect(jumpField, findsNothing);
+    await openHarnessPicker(tester);
+    expect(jumpField, findsOneWidget);
+    final search = tester
+        .widget<SwarmSearchResults>(find.byType(SwarmSearchResults))
+        .search;
+    expect(search.isCommandMode, isFalse);
+    expect(search.selected, isNull);
+    expect(search.rows.any((row) => row.isCreate), isFalse);
     expect(frames, isEmpty);
     await tester.pumpWidget(const SizedBox());
     app.dispose();

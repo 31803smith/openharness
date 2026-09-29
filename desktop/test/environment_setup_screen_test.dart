@@ -11,7 +11,9 @@ import 'package:harness/shared/theme/app_theme.dart' as grid;
 import 'package:harness/state/app_state.dart';
 import 'package:harness/widgets/environment_setup_screen.dart';
 
-const _review = EnvironmentReadiness(
+import 'support/guest_app.dart';
+
+const setupReview = EnvironmentReadiness(
   steps: {
     EnvironmentStep.clipboard: EnvironmentStepStatus.notApplicable,
     EnvironmentStep.tmux: EnvironmentStepStatus.failed,
@@ -22,14 +24,14 @@ const _review = EnvironmentReadiness(
   plan: [EnvironmentPlanItem.tmuxManaged, EnvironmentPlanItem.harnessCli],
 );
 
-class _Login extends CliLogin {
+class SetupLogin extends CliLogin {
   @override
   Future<CliAuthStatus> checkStatus() async =>
       const CliAuthStatus(loggedIn: false);
 }
 
-class _Attempt {
-  _Attempt(this.install, this.progress);
+class SetupAttempt {
+  SetupAttempt(this.install, this.progress);
   final bool install;
   final void Function(EnvironmentReadiness) progress;
   final result = Completer<EnvironmentReadiness>();
@@ -39,9 +41,9 @@ class _Attempt {
   }
 }
 
-class _Provisioner extends EnvironmentProvisioner {
-  _Provisioner() : super(isMacOS: true);
-  final attempts = <_Attempt>[];
+class SetupProvisioner extends EnvironmentProvisioner {
+  SetupProvisioner() : super(isMacOS: true);
+  final attempts = <SetupAttempt>[];
   @override
   Future<EnvironmentReadiness> ensureReady({
     required void Function(EnvironmentReadiness) onProgress,
@@ -49,10 +51,10 @@ class _Provisioner extends EnvironmentProvisioner {
     bool install = true,
     EnvironmentSetupMode? mode,
   }) {
-    final attempt = _Attempt(install, onProgress);
+    final attempt = SetupAttempt(install, onProgress);
     attempts.add(attempt);
     onProgress(
-      (resumeFrom ?? _review).copyWith(
+      (resumeFrom ?? setupReview).copyWith(
         phase: install
             ? EnvironmentSetupPhase.installing
             : EnvironmentSetupPhase.preflight,
@@ -84,8 +86,8 @@ Future<void> _mount(
       ),
       home: ListenableBuilder(
         listenable: app,
-        builder: (_, _) => app.status == AppStatus.unauthenticated
-            ? const Scaffold(body: Text('Sign-in reached'))
+        builder: (_, _) => app.status == AppStatus.authenticated
+            ? const Scaffold(body: Text('Guest workspace reached'))
             : EnvironmentSetupScreen(notifier: app),
       ),
     ),
@@ -93,22 +95,48 @@ Future<void> _mount(
   await tester.pump();
 }
 
-AppNotifier _app(_Provisioner provisioner) =>
-    AppNotifier(
+AppNotifier _app(SetupProvisioner provisioner) =>
+    GuestTestApp(
         config: AppConfig.dev,
         authSession: AuthSession(),
         configStore: null,
-        cliLogin: _Login(),
+        cliLogin: SetupLogin(),
         environmentProvisioner: provisioner,
       )
       ..status = AppStatus.preparingEnvironment
-      ..environmentReadiness = _review;
+      ..environmentReadiness = setupReview;
 
 void main() {
+  testWidgets('Retry after a launch check failure only checks the computer', (
+    tester,
+  ) async {
+    final provisioner = SetupProvisioner();
+    final app = _app(provisioner)
+      ..environmentReadiness = setupReview.copyWith(
+        phase: EnvironmentSetupPhase.failed,
+        mode: EnvironmentSetupMode.automatic,
+        failure: const EnvironmentFailure(
+          title: 'Checking this computer took too long',
+          detail: 'A required tool did not respond.',
+        ),
+      );
+    await _mount(tester, app);
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+    await tester.pump();
+    expect(provisioner.attempts, hasLength(1));
+    expect(provisioner.attempts.single.install, isFalse);
+    provisioner.attempts.single.finish(setupReview);
+    await tester.pump();
+    expect(find.text('Install 2 tools').hitTestable(), findsOneWidget);
+    expect(provisioner.attempts, hasLength(1));
+    await tester.pumpWidget(const SizedBox());
+    app.dispose();
+  });
+
   testWidgets('manual setup keeps keyboard focus and never starts an install', (
     tester,
   ) async {
-    final provisioner = _Provisioner();
+    final provisioner = SetupProvisioner();
     final app = _app(provisioner);
     await _mount(tester, app);
     await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
@@ -131,9 +159,9 @@ void main() {
   testWidgets('Retry after manual setup failure remains a read-only check', (
     tester,
   ) async {
-    final provisioner = _Provisioner();
+    final provisioner = SetupProvisioner();
     final app = _app(provisioner)
-      ..environmentReadiness = _review.copyWith(
+      ..environmentReadiness = setupReview.copyWith(
         phase: EnvironmentSetupPhase.failed,
         mode: EnvironmentSetupMode.manual,
       );
@@ -143,7 +171,7 @@ void main() {
     expect(provisioner.attempts, hasLength(1));
     expect(provisioner.attempts.single.install, isFalse);
     provisioner.attempts.single.finish(
-      _review.copyWith(mode: EnvironmentSetupMode.manual),
+      setupReview.copyWith(mode: EnvironmentSetupMode.manual),
     );
     await tester.pump();
     await tester.pump();
@@ -156,10 +184,10 @@ void main() {
   testWidgets('setup details can expand and copy without hiding Retry', (
     tester,
   ) async {
-    final provisioner = _Provisioner();
+    final provisioner = SetupProvisioner();
     final diagnostics = List.generate(40, (i) => 'Installer output line $i');
     final app = _app(provisioner)
-      ..environmentReadiness = _review.copyWith(
+      ..environmentReadiness = setupReview.copyWith(
         phase: EnvironmentSetupPhase.failed,
         failure: const EnvironmentFailure(
           title: 'Could not install Harness',
@@ -200,17 +228,118 @@ void main() {
     app.dispose();
   });
 
+  testWidgets('copy failure keeps setup recovery visible and can be retried', (
+    tester,
+  ) async {
+    final provisioner = SetupProvisioner();
+    final app = _app(provisioner)
+      ..environmentReadiness = setupReview.copyWith(
+        phase: EnvironmentSetupPhase.failed,
+        output: const ['A diagnostic to copy'],
+      );
+    addTearDown(app.dispose);
+    var rejectClipboard = true;
+    String? copied;
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      SystemChannels.platform,
+      (call) async {
+        if (call.method == 'Clipboard.setData') {
+          if (rejectClipboard) {
+            throw PlatformException(code: 'clipboard_unavailable');
+          }
+          copied = (call.arguments as Map)['text'] as String;
+        }
+        return null;
+      },
+    );
+    addTearDown(
+      () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        SystemChannels.platform,
+        null,
+      ),
+    );
+    await _mount(tester, app, textScale: 2);
+    await tester.ensureVisible(find.text('Copy diagnostics'));
+    await tester.tap(find.text('Copy diagnostics'));
+    await tester.pump();
+    expect(
+      find
+          .text('Could not copy. Select the text to copy it, or try again.')
+          .hitTestable(),
+      findsOneWidget,
+    );
+    expect(find.text('Retry').hitTestable(), findsOneWidget);
+    expect(find.text('Copied'), findsNothing);
+    expect(tester.takeException(), isNull);
+    expect(provisioner.attempts, isEmpty);
+    rejectClipboard = false;
+    await tester.ensureVisible(find.text('Copy diagnostics'));
+    await tester.tap(find.text('Copy diagnostics'));
+    await tester.pump();
+    expect(copied, 'A diagnostic to copy');
+    expect(find.text('Copied'), findsOneWidget);
+    expect(find.textContaining('Could not copy.'), findsNothing);
+    await tester.pump(const Duration(milliseconds: 1500));
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('an older clipboard failure cannot replace a newer copy result', (
+    tester,
+  ) async {
+    final app = _app(SetupProvisioner())
+      ..environmentReadiness = setupReview.copyWith(
+        phase: EnvironmentSetupPhase.failed,
+        output: const ['Diagnostics'],
+      );
+    addTearDown(app.dispose);
+    final writes = <Completer<void>>[];
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      SystemChannels.platform,
+      (call) async {
+        if (call.method == 'Clipboard.setData') {
+          final write = Completer<void>();
+          writes.add(write);
+          await write.future;
+        }
+        return null;
+      },
+    );
+    addTearDown(
+      () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        SystemChannels.platform,
+        null,
+      ),
+    );
+    await _mount(tester, app);
+    await tester.ensureVisible(find.text('Copy diagnostics'));
+    await tester.tap(find.text('Copy diagnostics'));
+    await tester.tap(find.text('Copy diagnostics'));
+    expect(writes, hasLength(2));
+    writes.last.complete();
+    await tester.pump();
+    expect(find.text('Copied'), findsOneWidget);
+    writes.first.completeError(
+      PlatformException(code: 'clipboard_unavailable'),
+    );
+    await tester.pump();
+    expect(find.text('Copied'), findsOneWidget);
+    expect(find.textContaining('Could not copy.'), findsNothing);
+    expect(tester.takeException(), isNull);
+    await tester.pump(const Duration(milliseconds: 1500));
+    await tester.pumpWidget(const SizedBox());
+  });
+
   for (final scale in [1.0, 2.0]) {
     testWidgets('setup actions stay visible at minimum size with $scale text', (
       tester,
     ) async {
-      final provisioner = _Provisioner();
+      final provisioner = SetupProvisioner();
       final app = _app(provisioner);
       addTearDown(app.dispose);
       await _mount(tester, app, textScale: scale);
       expect(find.text('Install 2 tools').hitTestable(), findsOneWidget);
       expect(provisioner.attempts, isEmpty);
-      app.environmentReadiness = _review.copyWith(
+      app.environmentReadiness = setupReview.copyWith(
         phase: EnvironmentSetupPhase.failed,
         failure: const EnvironmentFailure(
           title: 'Could not install Harness',
@@ -226,52 +355,53 @@ void main() {
     });
   }
 
-  testWidgets('Enter installs and retries once before reaching sign-in', (
-    tester,
-  ) async {
-    final provisioner = _Provisioner();
-    final app = _app(provisioner);
-    await _mount(tester, app);
-    expect(provisioner.attempts, isEmpty);
-    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
-    await tester.pump();
-    expect(provisioner.attempts, hasLength(1));
-    expect(provisioner.attempts.single.install, isTrue);
-    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
-    await tester.pump();
-    expect(provisioner.attempts, hasLength(1));
-    provisioner.attempts.single.finish(
-      _review.copyWith(
-        phase: EnvironmentSetupPhase.failed,
-        failure: const EnvironmentFailure(
-          title: 'Could not install Harness',
-          detail: 'Check your connection, then retry setup.',
+  testWidgets(
+    'Enter installs and retries once before reaching the guest workspace',
+    (tester) async {
+      final provisioner = SetupProvisioner();
+      final app = _app(provisioner);
+      await _mount(tester, app);
+      expect(provisioner.attempts, isEmpty);
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pump();
+      expect(provisioner.attempts, hasLength(1));
+      expect(provisioner.attempts.single.install, isTrue);
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pump();
+      expect(provisioner.attempts, hasLength(1));
+      provisioner.attempts.single.finish(
+        setupReview.copyWith(
+          phase: EnvironmentSetupPhase.failed,
+          failure: const EnvironmentFailure(
+            title: 'Could not install Harness',
+            detail: 'Check your connection, then retry setup.',
+          ),
         ),
-      ),
-    );
-    await tester.pump();
-    await tester.pump();
-    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
-    await tester.pump();
-    expect(provisioner.attempts, hasLength(2));
-    provisioner.attempts.last.finish(
-      const EnvironmentReadiness(
-        steps: {
-          EnvironmentStep.clipboard: EnvironmentStepStatus.notApplicable,
-          EnvironmentStep.tmux: EnvironmentStepStatus.ready,
-          EnvironmentStep.harness: EnvironmentStepStatus.ready,
-        },
-        phase: EnvironmentSetupPhase.ready,
-      ),
-    );
-    await tester.pump();
-    await tester.pump();
-    expect(find.text('Sign-in reached'), findsOneWidget);
-    expect(provisioner.attempts.map((attempt) => attempt.install), [
-      true,
-      true,
-    ]);
-    await tester.pumpWidget(const SizedBox());
-    app.dispose();
-  });
+      );
+      await tester.pump();
+      await tester.pump();
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pump();
+      expect(provisioner.attempts, hasLength(2));
+      provisioner.attempts.last.finish(
+        const EnvironmentReadiness(
+          steps: {
+            EnvironmentStep.clipboard: EnvironmentStepStatus.notApplicable,
+            EnvironmentStep.tmux: EnvironmentStepStatus.ready,
+            EnvironmentStep.harness: EnvironmentStepStatus.ready,
+          },
+          phase: EnvironmentSetupPhase.ready,
+        ),
+      );
+      await tester.pump();
+      await tester.pump();
+      expect(find.text('Guest workspace reached'), findsOneWidget);
+      expect(provisioner.attempts.map((attempt) => attempt.install), [
+        true,
+        true,
+      ]);
+      await tester.pumpWidget(const SizedBox());
+      app.dispose();
+    },
+  );
 }

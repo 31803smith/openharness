@@ -541,3 +541,206 @@ describe('RemoteRelayPool sendBinary backpressure handling', () => {
     expect(demoteP2p).not.toHaveBeenCalled()
   })
 })
+
+describe('RemoteRelayPool shares one upstream between every local client selected onto a machine', () => {
+  // `acquire` on an entry that already exists never dials: it attaches. So the pool is seeded with an
+  // entry the way a completed dial leaves one, and acquire/detach are driven from there.
+  function poolWithEntry() {
+    const pool = new RemoteRelayPool(
+      { accessToken: async () => 'unused' } as never,
+      'ws://unused',
+      { pub: new Uint8Array(), priv: new Uint8Array() } as never,
+      { pin: () => {}, get: () => null } as never,
+    )
+    const entry = fakeEntry({ attached: new Set(), sink: null, ws: { send: vi.fn(), close: vi.fn() }, viewers: { reset: vi.fn(), close: vi.fn() } }) as unknown as {
+      attached: Set<unknown>
+      sink: { sendFrame: (frame: unknown) => boolean; sendBinary: (frame: Uint8Array) => boolean } | null
+      onClosed: ((code: number, reason: string) => void) | null
+      lingerTimer: ReturnType<typeof setTimeout> | null
+      viewers: { reset: ReturnType<typeof vi.fn>; close: ReturnType<typeof vi.fn> }
+      ws: { send: ReturnType<typeof vi.fn> }
+      p2p: { isReady: boolean; send: ReturnType<typeof vi.fn> } | null
+    }
+    ;(pool as unknown as { entries: Map<string, unknown> }).entries.set('m1', entry)
+    return { pool, entry }
+  }
+  const sink = () => ({ sendFrame: vi.fn(() => true), sendBinary: vi.fn(() => true) })
+
+  it.each(['relay', 'p2p'])('preserves distinct view ownership on terminal opens over %s', async (transport) => {
+    const { pool, entry } = poolWithEntry()
+    if (transport === 'p2p') entry.p2p = { isReady: true, send: vi.fn(() => true) }
+    const a = await pool.acquire('m1', 'env', { type: 'machine_select', payload: {} }, sink(), vi.fn())
+    const b = await pool.acquire('m1', 'env', { type: 'machine_select', payload: {} }, sink(), vi.fn())
+    const open = { type: 'terminal_open', payload: { requestId: 'one', agentId: 'agent-1', takeover: false, viewId: 'caller-value' } }
+    await a.send(open)
+    await b.send(open)
+    await a.send({ ...open, payload: { ...open.payload, requestId: 'reopen' } })
+    const send = entry.p2p?.send ?? entry.ws.send
+    const frames = send.mock.calls.map(([raw]) => JSON.parse(raw as string))
+    expect(frames[0].payload).toMatchObject({ requestId: 'one', agentId: 'agent-1', takeover: false })
+    expect(frames[0].payload.viewId).toMatch(/^[a-f0-9-]{36}$/)
+    expect(frames[1].payload.viewId).not.toBe(frames[0].payload.viewId)
+    expect(frames[2].payload.viewId).toBe(frames[0].payload.viewId)
+    expect(open.payload.viewId).toBe('caller-value')
+    await a.send({ type: 'terminal_alive', payload: { streamId: 'stream-a' } })
+    expect(JSON.parse(entry.ws.send.mock.calls.at(-1)![0])).toEqual({ type: 'terminal_alive', payload: { streamId: 'stream-a' } })
+    a.detach(); b.detach()
+    clearTimeout(entry.lingerTimer!)
+  })
+
+  it('a second client joins the first, both get every frame, and detaching one leaves the other on', async () => {
+    const { pool, entry } = poolWithEntry()
+    const desktop = sink()
+    const cli = sink()
+    const desktopClosed = vi.fn()
+    const cliClosed = vi.fn()
+    const a = await pool.acquire('m1', 'env', { type: 'machine_select', payload: {} }, desktop, desktopClosed)
+    const b = await pool.acquire('m1', 'env', { type: 'machine_select', payload: {} }, cli, cliClosed)
+    expect(desktop.sendFrame).toHaveBeenCalledWith({ type: 'connected', payload: { machineId: 'm1', e2ee: false } })
+    expect(cli.sendFrame).toHaveBeenCalledWith({ type: 'connected', payload: { machineId: 'm1', e2ee: false } })
+
+    // What the machine sends comes to both.
+    entry.sink!.sendFrame({ type: 'agent_created', payload: {} })
+    expect(desktop.sendFrame).toHaveBeenLastCalledWith({ type: 'agent_created', payload: {} })
+    expect(cli.sendFrame).toHaveBeenLastCalledWith({ type: 'agent_created', payload: {} })
+
+    // The CLI leaves: the desktop is still attached, still hears, and nothing lingers or resets.
+    b.detach()
+    expect(entry.attached.size).toBe(1)
+    expect(entry.lingerTimer).toBeNull()
+    expect(entry.viewers.reset).not.toHaveBeenCalled()
+    entry.sink!.sendFrame({ type: 'agent_deleted', payload: {} })
+    expect(desktop.sendFrame).toHaveBeenLastCalledWith({ type: 'agent_deleted', payload: {} })
+    expect(cli.sendFrame).not.toHaveBeenCalledWith({ type: 'agent_deleted', payload: {} })
+
+    // A close from upstream reaches the one still attached.
+    entry.onClosed!(1006, 'gone')
+    expect(desktopClosed).toHaveBeenCalledWith(1006, 'gone')
+    expect(cliClosed).not.toHaveBeenCalled()
+
+    // The last one leaving is what starts the linger.
+    a.detach()
+    expect(entry.attached.size).toBe(0)
+    expect(entry.sink).toBeNull()
+    expect(entry.lingerTimer).not.toBeNull()
+    expect(entry.viewers.reset).toHaveBeenCalled()
+    clearTimeout(entry.lingerTimer!)
+  })
+
+  it('a client whose socket refuses a frame is dropped; the rest keep receiving', async () => {
+    const { pool, entry } = poolWithEntry()
+    const live = sink()
+    const dead = { sendFrame: vi.fn(() => false), sendBinary: vi.fn(() => false) }
+    await pool.acquire('m1', 'env', { type: 'machine_select', payload: {} }, live, vi.fn())
+    await pool.acquire('m1', 'env', { type: 'machine_select', payload: {} }, dead, vi.fn())
+    expect(entry.sink!.sendFrame({ type: 'x', payload: {} })).toBe(true)
+    expect(entry.attached.size).toBe(1)
+    expect(entry.sink!.sendBinary(new Uint8Array([1]))).toBe(true)
+    expect(live.sendBinary).toHaveBeenCalled()
+  })
+})
+
+describe('RemoteRelayPool keeps background (isolated) clients cheap', () => {
+  const ctorArgs = [
+    { accessToken: async () => 'unused' } as never,
+    'ws://unused',
+    { pub: new Uint8Array(), priv: new Uint8Array() } as never,
+    { pin: () => {}, get: () => null } as never,
+  ] as const
+  const sink = () => ({ sendFrame: vi.fn(() => true), sendBinary: vi.fn(() => true) })
+  const select = { type: 'machine_select', payload: { relayIsolation: true } }
+
+  it('a pool built with p2p off never starts a negotiation, even with a policy and on retry', () => {
+    const pool = new RemoteRelayPool(...ctorArgs, { p2p: false }) as unknown as {
+      startP2p: (machineId: string, entry: ReturnType<typeof fakeEntry>) => void
+    }
+    const entry = fakeEntry({ p2pPolicy: { enabled: true, protocolVersion: 1, stunUrls: [], openWaitMs: 1500 } })
+    pool.startP2p('m1', entry)
+    expect(entry.p2p).toBeNull()
+  })
+
+  it('a detached background session is shelved warm and handed to the next background client', async () => {
+    const pool = new RemoteRelayPool(...ctorArgs)
+    expect(pool.idleIsolatedCount('m1')).toBe(0)
+    // Every background pool's dial is stubbed to leave an entry the way a completed dial does; count
+    // how many dials happen across two sequential polls.
+    const made: Array<{ ws: { close: ReturnType<typeof vi.fn>; terminate: ReturnType<typeof vi.fn> }; lingerTimer: ReturnType<typeof setTimeout> | null }> = []
+    const dialSpy = vi.spyOn(RemoteRelayPool.prototype as unknown as { connect: (machineId: string) => Promise<unknown> }, 'connect')
+      .mockImplementation(async function (this: unknown, machineId: string) {
+        const entry = fakeEntry({ attached: new Set(), sink: null, ws: { send: vi.fn(), close: vi.fn(), terminate: vi.fn() }, viewers: { reset: vi.fn(), close: vi.fn() } })
+        made.push(entry as unknown as typeof made[number])
+        ;(this as { entries: Map<string, unknown> }).entries.set(machineId, entry)
+        return entry
+      })
+    try {
+      const first = sink()
+      const a = await pool.acquireIsolated('m1', 'env', select, first, vi.fn())
+      expect(first.sendFrame).toHaveBeenCalledWith({ type: 'connected', payload: { machineId: 'm1', e2ee: false, relayIsolation: true } })
+      a.detach()
+      // Detaching lingers the upstream and shelves the pool; nothing is terminated.
+      expect(made).toHaveLength(1)
+      expect(made[0].ws.terminate).not.toHaveBeenCalled()
+      expect(made[0].ws.close).not.toHaveBeenCalled()
+      expect(made[0].lingerTimer).not.toBeNull()
+      expect(pool.idleIsolatedCount('m1')).toBe(1)
+
+      const second = sink()
+      const b = await pool.acquireIsolated('m1', 'env', select, second, vi.fn())
+      expect(dialSpy).toHaveBeenCalledTimes(1) // the second poll took the warm session — no dial
+      expect(pool.idleIsolatedCount('m1')).toBe(0)
+      expect(made[0].lingerTimer).toBeNull()
+      expect(second.sendFrame).toHaveBeenCalledWith({ type: 'connected', payload: { machineId: 'm1', e2ee: false, relayIsolation: true } })
+
+      // Two background clients AT ONCE get distinct sessions: isolation between them is kept.
+      const third = sink()
+      const c = await pool.acquireIsolated('m1', 'env', select, third, vi.fn())
+      expect(dialSpy).toHaveBeenCalledTimes(2)
+      expect(made).toHaveLength(2)
+      b.detach(); c.detach()
+      expect(pool.idleIsolatedCount('m1')).toBe(2)
+      for (const entry of made) clearTimeout(entry.lingerTimer!)
+      // The window's own pool is untouched by any of this.
+      expect((pool as unknown as { entries: Map<string, unknown> }).entries.size).toBe(0)
+      // A background forceReconnect empties the shelf.
+      pool.invalidateIsolated('m1')
+      expect(pool.idleIsolatedCount('m1')).toBe(0)
+      expect(made.every((entry) => entry.ws.terminate.mock.calls.length === 1)).toBe(true)
+    } finally {
+      dialSpy.mockRestore()
+    }
+  })
+
+  it('a failed background dial is answered from the failure for the cooldown, not re-dialled per poll', async () => {
+    vi.useFakeTimers()
+    try {
+      const pool = new RemoteRelayPool(...ctorArgs, { dialCooldownMs: 30_000 }) as unknown as {
+        connect: (machineId: string, env: string, frame: unknown) => Promise<unknown>
+        dial: (...args: unknown[]) => Promise<unknown>
+      }
+      const dial = vi.spyOn(pool, 'dial').mockRejectedValue(new Error('NO_PEER_LINK'))
+      await expect(pool.connect('m1', 'env', select)).rejects.toThrow('NO_PEER_LINK')
+      expect(dial).toHaveBeenCalledTimes(1)
+      // Inside the cooldown: same rejection, no new dial.
+      vi.advanceTimersByTime(10_000)
+      await expect(pool.connect('m1', 'env', select)).rejects.toThrow('NO_PEER_LINK')
+      expect(dial).toHaveBeenCalledTimes(1)
+      // Past it: a fresh attempt.
+      vi.advanceTimersByTime(25_000)
+      await expect(pool.connect('m1', 'env', select)).rejects.toThrow('NO_PEER_LINK')
+      expect(dial).toHaveBeenCalledTimes(2)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('the window pool has no cooldown: a person clicking again always gets a fresh dial', async () => {
+    const pool = new RemoteRelayPool(...ctorArgs) as unknown as {
+      connect: (machineId: string, env: string, frame: unknown) => Promise<unknown>
+      dial: (...args: unknown[]) => Promise<unknown>
+    }
+    const dial = vi.spyOn(pool, 'dial').mockRejectedValue(new Error('relay connect timed out'))
+    await expect(pool.connect('m1', 'env', select)).rejects.toThrow()
+    await expect(pool.connect('m1', 'env', select)).rejects.toThrow()
+    expect(dial).toHaveBeenCalledTimes(2)
+  })
+})

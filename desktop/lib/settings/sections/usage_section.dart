@@ -9,7 +9,7 @@
 ///   agent CLIs' own logs. Off until switched on, per provider, because those
 ///   logs hold every prompt and path a session touched.
 ///
-/// Its sibling readout on the status rail (`widgets/status_rail/usage_panel.dart`)
+/// Its sibling readout in the native Models menu (`usage/models_menu_controller.dart`)
 /// answers a third question — *how much of your rate limit is left* — which is
 /// an account fact and a percentage. All three are true at once and none
 /// substitutes for another.
@@ -23,6 +23,7 @@ library;
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import '../../core/test_run.dart';
@@ -35,6 +36,7 @@ import '../../usage/ledger/usage_ledger_controller.dart';
 import '../../usage/ledger/usage_overview.dart';
 import '../../usage/ledger/usage_report.dart';
 import 'usage_panels.dart';
+import 'usage_header.dart';
 import 'usage_provider_pane.dart';
 
 /// What the overview opens on — the last 30 days, which is what Orca's default
@@ -105,24 +107,33 @@ class _UsageSectionState extends State<UsageSection> {
     // walks every transcript under a real `~/.claude`, and a test run must
     // depend on neither the machine it lands on nor whoever was working on it.
     // A test that wants figures injects a controller already holding them.
-    if (!kUnderTest) unawaited(_controller.load());
+    if (!kUnderTest && !kIsWeb) unawaited(_controller.load());
   }
 
   @override
   void dispose() {
-    if (_ownsController) _controller.dispose();
+    if (_ownsController && !kIsWeb) _controller.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
     AppTheme.watch(context);
+    if (kIsWeb) {
+      return SectionScaffold(
+        title: 'Usage',
+        subtitle: 'Activity in this browser. Local transcript usage is available in the desktop app.',
+        child: ListenableBuilder(
+          listenable: _stats,
+          builder: (context, _) => StatsSummaryCards(summary: _stats.summary),
+        ),
+      );
+    }
     return SectionScaffold(
       title: 'Usage',
       subtitle:
-          'What this app has done, and what the agent CLIs on this computer '
-          'have spent. Agents running on other machines are not included, and '
-          'nothing here is sent anywhere.',
+          'Activity and token usage on this computer. '
+          'Remote machines aren’t included.',
       child: ListenableBuilder(
         // Both halves, so the stats cards move as agents start and stop while
         // the screen is open.
@@ -133,11 +144,6 @@ class _UsageSectionState extends State<UsageSection> {
   }
 
   Widget _body(BuildContext context) {
-    final overview = _controller.overviewFor(_range);
-    final states = {
-      for (final state in _controller.scanStates) state.provider: state,
-    };
-
     return ListView(
       padding: EdgeInsets.zero,
       children: [
@@ -148,69 +154,114 @@ class _UsageSectionState extends State<UsageSection> {
           onLensChanged: (lens) => setState(() => _lens = lens),
         ),
         const SizedBox(height: 12),
-        if (_lens case final provider?)
+        if (_controller.loading)
+          const UsageLoadingState(message: 'Reading usage settings…')
+        else if (_lens case final provider?)
           UsageProviderPane(store: _controller.storeFor(provider))
-        else ...[
-          // One card around the whole overview, as Orca draws it: the heading,
-          // the four figures and the two panels are one answer, and the panels
-          // inside it are the parts of that answer rather than peers of it.
-          _OverviewCard(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                _OverviewHeader(
-                  overview: overview,
-                  range: _range,
-                  isScanning: _controller.isScanning,
-                  onRangeChanged: (range) => setState(() => _range = range),
-                  onRefresh: overview.enabledCount == 0
-                      ? null
-                      : () => unawaited(_controller.refresh(force: true)),
+        else
+          _overview(),
+      ],
+    );
+  }
+
+  Widget _overview() {
+    final overview = _controller.overviewFor(_range);
+    final states = {
+      for (final state in _controller.scanStates) state.provider: state,
+    };
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        // One card around the whole overview, as Orca draws it: the heading,
+        // the four figures and the two panels are one answer, and the panels
+        // inside it are the parts of that answer rather than peers of it.
+        _OverviewCard(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              _OverviewHeader(
+                overview: overview,
+                range: _range,
+                isScanning: _controller.isScanning,
+                onRangeChanged: (range) => setState(() => _range = range),
+                onRefresh: overview.enabledCount == 0
+                    ? null
+                    : () => unawaited(_controller.refresh(force: true)),
+              ),
+              const SizedBox(height: 14),
+              if (states.values.any((state) => state.hasIncompleteFigures)) ...[
+                Text(
+                  'Some usage could not be read. Totals are incomplete.',
+                  style: AppType.body(color: AppPalette.warn),
                 ),
-                const SizedBox(height: 14),
-                if (overview.enabledCount == 0)
-                  UsageEmptyState(onEnable: _enable)
-                else ...[
-                  _cards(overview),
-                  if (overview.hasUnpricedModel)
-                    Padding(
-                      padding: const EdgeInsets.only(top: 8),
-                      child: Text(
-                        'The cost is a lower bound because some model prices are unavailable.',
-                        style: TextStyle(
-                          fontSize: 11.5,
-                          color: AppPalette.textSecondary,
-                        ),
-                      ),
+                const SizedBox(height: 12),
+              ],
+              if (overview.enabledCount == 0)
+                UsageEmptyState(onEnable: _enable)
+              else if (_controller.isScanning && !overview.hasAnyData)
+                const UsageLoadingState(message: 'Scanning local logs…')
+              else if (!overview.hasAnyData &&
+                  states.values.any(
+                    (state) =>
+                        state.enabled &&
+                        (state.status == LedgerStatus.failed ||
+                            state.status == LedgerStatus.partial ||
+                            state.status == LedgerStatus.unavailable),
+                  ))
+                Text(
+                  'No figures available.',
+                  style: AppType.body(color: AppPalette.textSecondary),
+                )
+              else ...[
+                _cards(overview),
+                if (overview.hasUnpricedModel)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 8),
+                    child: Text(
+                      'The cost is a lower bound because some model prices are unavailable.',
+                      style: AppType.caption(color: AppPalette.textSecondary),
                     ),
-                  if (overview.hasAnyData) ...[
-                    const SizedBox(height: 12),
-                    _PanelPair(
-                      intensity: DailyIntensityGrid(
-                        days: recentDays(overview.days, _kGridDayCount),
-                        busiest: overview.bestDay,
-                      ),
-                      mix: TokenMixBar(totals: overview.totals),
+                  ),
+                if (overview.hasAnyData) ...[
+                  const SizedBox(height: 12),
+                  _PanelPair(
+                    intensity: DailyIntensityGrid(
+                      days: recentDays(overview.days, _kGridDayCount),
+                      busiest: overview.bestDay,
                     ),
-                  ],
+                    mix: TokenMixBar(totals: overview.totals),
+                  ),
                 ],
               ],
-            ),
+            ],
           ),
-          const SizedBox(height: 18),
-          _ProvidersHeading(overview: overview),
-          const SizedBox(height: 10),
-          for (final ledger in overview.providers) ...[
-            ProviderUsageRow(
-              ledger: ledger,
-              state:
-                  states[ledger.provider] ??
-                  LedgerScanState(provider: ledger.provider),
-              grandTotal: overview.totals.total,
-              onToggle: (enabled) => _toggle(ledger.provider, enabled),
-            ),
-            const SizedBox(height: 8),
-          ],
+        ),
+        const SizedBox(height: 18),
+        _ProvidersHeading(
+          overview: overview,
+          hasFigures:
+              overview.hasAnyData ||
+              states.values.any(
+                (state) =>
+                    state.enabled &&
+                    (state.status == LedgerStatus.ok ||
+                        (state.status == LedgerStatus.scanning &&
+                            state.lastScanAt != null &&
+                            !state.hasIncompleteFigures)),
+              ),
+        ),
+        const SizedBox(height: 10),
+        for (final ledger in overview.providers) ...[
+          ProviderUsageRow(
+            ledger: ledger,
+            state:
+                states[ledger.provider] ??
+                LedgerScanState(provider: ledger.provider),
+            grandTotal: overview.totals.total,
+            onToggle: (enabled) => _toggle(ledger.provider, enabled),
+          ),
+          const SizedBox(height: 8),
         ],
       ],
     );
@@ -311,24 +362,26 @@ class _PanelPair extends StatelessWidget {
   final Widget mix;
 
   @override
-  Widget build(BuildContext context) => LayoutBuilder(
-    builder: (context, constraints) {
-      if (constraints.maxWidth < 680) {
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [intensity, const SizedBox(height: 12), mix],
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        if (constraints.maxWidth < 680) {
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [intensity, const SizedBox(height: 12), mix],
+          );
+        }
+        return Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Expanded(flex: 12, child: intensity),
+            const SizedBox(width: 12),
+            Expanded(flex: 8, child: mix),
+          ],
         );
-      }
-      return Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Expanded(flex: 12, child: intensity),
-          const SizedBox(width: 12),
-          Expanded(flex: 8, child: mix),
-        ],
-      );
-    },
-  );
+      },
+    );
+  }
 }
 
 /// The "Usage analytics" caption and the lens picker beside it.
@@ -341,17 +394,12 @@ class _AnalyticsHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     AppTheme.watch(context);
-    return Row(
-      children: [
-        Expanded(
-          child: Text(
-            'Usage analytics',
-            style: Theme.of(context).textTheme.titleSmall,
-          ),
-        ),
+    return UsageHeader(
+      title: Text('Usage analytics', style: AppType.heading()),
+      controls: [
         AppSelectField<_Lens>(
           value: lens,
-          width: 168,
+          width: usageControlWidth(context, 168),
           options: [
             const SelectOption<_Lens>(value: null, label: 'Overview'),
             for (final provider in LedgerProvider.values)
@@ -386,42 +434,23 @@ class _OverviewHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     AppTheme.watch(context);
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'Usage overview',
-                style: Theme.of(context).textTheme.titleSmall,
-              ),
-              const SizedBox(height: 2),
-              Text(
-                _updatedLine(),
-                style: TextStyle(
-                  fontSize: 11.5,
-                  color: AppPalette.textSecondary,
-                ),
-              ),
-            ],
+    return UsageHeader(
+      title: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('Usage overview', style: AppType.heading()),
+          const SizedBox(height: 2),
+          Text(
+            _updatedLine(),
+            style: AppType.body(color: AppPalette.textSecondary),
           ),
-        ),
-        const SizedBox(width: 12),
+        ],
+      ),
+      controls: [
         // The same control a provider's pane carries, so the two ranges are
         // plainly the same kind of thing rather than one screen having a window
         // and the other a hidden constant.
-        AppSelectField<UsageRange>(
-          value: range,
-          width: 150,
-          options: [
-            for (final option in UsageRange.values)
-              SelectOption(value: option, label: option.label),
-          ],
-          onChanged: onRangeChanged,
-        ),
-        const SizedBox(width: 4),
+        UsageRangeField(value: range, onChanged: onRangeChanged),
         IconButton(
           onPressed: isScanning ? null : onRefresh,
           iconSize: 15,
@@ -440,8 +469,9 @@ class _OverviewHeader extends StatelessWidget {
 
   String _updatedLine() {
     if (overview.enabledCount == 0) return 'Nothing is being read yet.';
+    if (isScanning) return '${range.label} · Scanning local logs…';
     final at = overview.lastScanAt;
-    if (at == null) return 'Not scanned yet.';
+    if (at == null) return 'No scan available.';
     return '${range.label} · updated ${_stamp(at)}';
   }
 
@@ -456,9 +486,10 @@ class _OverviewHeader extends StatelessWidget {
 }
 
 class _ProvidersHeading extends StatelessWidget {
-  const _ProvidersHeading({required this.overview});
+  const _ProvidersHeading({required this.overview, required this.hasFigures});
 
   final UsageOverview overview;
+  final bool hasFigures;
 
   @override
   Widget build(BuildContext context) {
@@ -470,27 +501,25 @@ class _ProvidersHeading extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text('Providers', style: Theme.of(context).textTheme.titleSmall),
+              Text('Providers', style: AppType.heading()),
               const SizedBox(height: 2),
               Text(
                 // Two different counts on purpose: a provider can be on and have
                 // nothing to show, and collapsing the two is what makes an empty
                 // panel impossible to read.
-                '${overview.enabledCount} enabled · '
-                '${overview.dataProviderCount} with data',
-                style: TextStyle(
-                  fontSize: 11.5,
-                  color: AppPalette.textSecondary,
-                ),
+                '${overview.enabledCount} enabled'
+                '${hasFigures ? ' · ${overview.dataProviderCount} with data' : ''}',
+                style: AppType.body(color: AppPalette.textSecondary),
               ),
             ],
           ),
         ),
-        Text(
-          '${overview.sessionCount} '
-          '${overview.sessionCount == 1 ? 'session' : 'sessions'}',
-          style: TextStyle(fontSize: 11.5, color: AppPalette.textFaint),
-        ),
+        if (hasFigures)
+          Text(
+            '${overview.sessionCount} '
+            '${overview.sessionCount == 1 ? 'conversation' : 'conversations'}',
+            style: AppType.caption(color: AppPalette.textFaint),
+          ),
       ],
     );
   }

@@ -1,11 +1,12 @@
 import 'dart:async';
-import 'dart:ffi';
 import 'dart:io';
 
 import 'package:cryptography/cryptography.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 
+import '../core/runtime_architecture.dart';
+import '../core/runtime_platform.dart';
 import '../core/app_version.dart';
 
 /// Published by `scripts/upload-desktop.sh` (`make upload-desktop`) — see
@@ -18,6 +19,13 @@ const _defaultMetadataUrl =
 const _metadataUrlOverride = String.fromEnvironment(
   'DESKTOP_UPDATE_METADATA_URL',
 );
+
+/// Lets a DEBUG build check and install, so the update band and its percentage
+/// can be exercised without cutting a release. Off unless asked for
+/// (`--dart-define=DESKTOP_UPDATE_FORCE=true`), and pointless on its own: pair
+/// it with [_metadataUrlOverride] pointing at a scratch manifest, or the debug
+/// build will poll the real one and offer to replace itself with a release.
+const _forceUpdateChecks = bool.fromEnvironment('DESKTOP_UPDATE_FORCE');
 
 /// The macOS build every Mac can run, rendered on Skia: what an Intel Mac installs, what every install
 /// from before the Intel/Apple Silicon split polls on either CPU, and what the website download
@@ -32,13 +40,7 @@ const _otaKeyMacOSArm64 = 'desktop-macos-arm64';
 /// `arm64` or `x64` for the CPU this process runs on: which Linux artifact to fetch, and whether the
 /// Apple Silicon macOS build is on offer. An Apple Silicon Mac running this under Rosetta reports x64
 /// and is offered only the Skia build — harmless, since both macOS builds are universal.
-String _currentArchitecture() => switch (Abi.current()) {
-  Abi.linuxArm64 || Abi.macosArm64 || Abi.windowsArm64 => 'arm64',
-  Abi.linuxX64 || Abi.macosX64 || Abi.windowsX64 => 'x64',
-  _ => throw UnsupportedError(
-    'Harness Desktop updates do not support ${Abi.current()}',
-  ),
-};
+String _currentArchitecture() => runtimeArchitecture;
 
 String get _metadataUrl => _metadataUrlOverride.isNotEmpty
     ? _metadataUrlOverride
@@ -56,6 +58,26 @@ class UpdateInfo {
     required this.sha256,
     required this.size,
   });
+}
+
+enum DesktopUpdateCheckStatus { upToDate, available, disabled, failed }
+
+/// A failed or disabled check cannot establish that the installed app is current.
+class DesktopUpdateCheck {
+  final DesktopUpdateCheckStatus status;
+  final UpdateInfo? update;
+
+  const DesktopUpdateCheck.upToDate()
+    : status = DesktopUpdateCheckStatus.upToDate,
+      update = null;
+  const DesktopUpdateCheck.available(UpdateInfo this.update)
+    : status = DesktopUpdateCheckStatus.available;
+  const DesktopUpdateCheck.disabled()
+    : status = DesktopUpdateCheckStatus.disabled,
+      update = null;
+  const DesktopUpdateCheck.failed()
+    : status = DesktopUpdateCheckStatus.failed,
+      update = null;
 }
 
 /// A downloaded, sha256-verified build sitting in a temp directory, not yet swapped into place.
@@ -108,16 +130,16 @@ String _singleQuote(String value) => "'${value.replaceAll("'", "'\\''")}'";
 /// `scripts/upload-desktop-linux.sh`), and a running AppImage executes from a temporary FUSE mount,
 /// not from that file — so the file's own path comes from [appImagePath] (tests) or the `APPIMAGE`
 /// environment variable the AppImage runtime sets on launch (production), never from
-/// `Platform.resolvedExecutable`.
+/// `RuntimePlatform.resolvedExecutable`.
 String? currentBundlePath({
   String? executablePath,
   bool? isLinux,
   String? appImagePath,
 }) {
-  if (isLinux ?? Platform.isLinux) {
-    return appImagePath ?? Platform.environment['APPIMAGE'];
+  if (isLinux ?? RuntimePlatform.isLinux) {
+    return appImagePath ?? RuntimePlatform.environment['APPIMAGE'];
   }
-  final resolved = executablePath ?? Platform.resolvedExecutable;
+  final resolved = executablePath ?? RuntimePlatform.resolvedExecutable;
   var dir = File(resolved).parent;
   for (var i = 0; i < 6; i++) {
     if (dir.path.endsWith('.app')) return dir.path;
@@ -129,7 +151,7 @@ String? currentBundlePath({
 }
 
 Future<void> _defaultLaunchDetached(String command) async {
-  await Process.start(Platform.isLinux ? '/bin/bash' : '/bin/zsh', [
+  await Process.start(RuntimePlatform.isLinux ? '/bin/bash' : '/bin/zsh', [
     '-l',
     '-c',
     command,
@@ -148,6 +170,20 @@ class DesktopUpdater {
   final bool _enabled;
   final bool _isLinux;
   final String _architecture;
+  final _checksInFlight = <String?, Future<DesktopUpdateCheck>>{};
+
+  /// How often the background poll asks the manifest.
+  ///
+  /// Five minutes, not the six hours this used to be, because the offer on
+  /// screen has to be close to the build Update will actually install: a person
+  /// who leaves a notice sitting for an afternoon should not be shown a version
+  /// that was superseded hours ago. The request is one small GET that GCS
+  /// serves `no-cache`, the overlap guard in [startChecking] and the in-flight
+  /// map above mean a slow answer never stacks up a second one, and the CLI's
+  /// own self-updater polls on the same order (`cli/src/lib/selfUpdate.ts`).
+  static const checkInterval = Duration(minutes: 5);
+
+  bool get canCheck => !kIsWeb && _enabled && _releaseMode;
 
   DesktopUpdater({
     this._enabled = true,
@@ -177,8 +213,8 @@ class DesktopUpdater {
            ),
        _launchDetached = launchDetached ?? _defaultLaunchDetached,
        _metadataUrlForInstance = metadataUrl ?? _metadataUrl,
-       _releaseMode = releaseMode ?? kReleaseMode,
-       _isLinux = isLinux ?? Platform.isLinux,
+       _releaseMode = releaseMode ?? (kReleaseMode || _forceUpdateChecks),
+       _isLinux = isLinux ?? RuntimePlatform.isLinux,
        _architecture = architecture ?? _currentArchitecture();
 
   /// The manifest entries this build may install, most preferred first — [_newestEntry] takes the
@@ -191,26 +227,41 @@ class DesktopUpdater {
     return const [_otaKeyMacOSArm64, _otaKeyMacOS];
   }
 
-  /// Fetches the manifest and returns the newer entry, or null if this app is already current (or
-  /// the manifest/network is unavailable — treated the same as "nothing to do", never surfaced as an
-  /// error; this runs unattended in the background).
-  ///
-  /// A debug or profile build never reports an update — self-installing (swapping the running .app
-  /// bundle for a downloaded release build and relaunching, see [applyStaged]) makes no sense for a
-  /// local dev build and would silently clobber it mid-session.
-  Future<UpdateInfo?> checkOnce({String? currentVersion}) async {
-    if (!_enabled || !_releaseMode) return null;
+  /// Unattended callers only need an offer. Interactive callers use [check]
+  /// so an unreachable service is not presented as "up to date".
+  Future<UpdateInfo?> checkOnce({String? currentVersion}) async =>
+      (await check(currentVersion: currentVersion)).update;
+
+  /// Manual and background callers share an in-flight manifest request.
+  /// Debug/profile and explicitly disabled builds never offer a release that
+  /// could replace the local development build.
+  Future<DesktopUpdateCheck> check({String? currentVersion}) =>
+      _checksInFlight.putIfAbsent(currentVersion, () async {
+        try {
+          return await _check(currentVersion: currentVersion);
+        } finally {
+          _checksInFlight.remove(currentVersion);
+        }
+      });
+
+  Future<DesktopUpdateCheck> _check({String? currentVersion}) async {
+    if (!canCheck) return const DesktopUpdateCheck.disabled();
     try {
       final running = currentVersion ?? await runningAppVersion();
+      if (_parseSemverCore(running) == null) {
+        return const DesktopUpdateCheck.failed();
+      }
       final response = await _dio.get<Map<String, dynamic>>(
         _metadataUrlForInstance,
       );
       final newest = _newestEntry(response.data);
-      if (newest == null || !semverGt(newest.version, running)) return null;
-      return newest;
+      if (newest == null) return const DesktopUpdateCheck.failed();
+      return semverGt(newest.version, running)
+          ? DesktopUpdateCheck.available(newest)
+          : const DesktopUpdateCheck.upToDate();
     } catch (error) {
-      debugPrint('DesktopUpdater.checkOnce: $error');
-      return null;
+      debugPrint('DesktopUpdater.check: $error');
+      return const DesktopUpdateCheck.failed();
     }
   }
 
@@ -238,6 +289,7 @@ class DesktopUpdater {
     final sha256 = entry['sha256'];
     final size = entry['size'];
     if (version is! String ||
+        _parseSemverCore(version) == null ||
         url is! String ||
         sha256 is! String ||
         size is! int) {
@@ -250,23 +302,33 @@ class DesktopUpdater {
   /// build is found (re-finding the same version on a later tick is harmless; the caller is expected
   /// to no-op if it's already showing that version). Cancel the returned [Timer] to stop.
   Timer startChecking({
-    Duration interval = const Duration(minutes: 1),
-    required void Function(UpdateInfo info) onUpdateAvailable,
+    Duration interval = checkInterval,
+    void Function(UpdateInfo info)? onUpdateAvailable,
+    void Function(DesktopUpdateCheck result)? onCheckCompleted,
     // Forwarded to checkOnce() on every tick — tests pass this to avoid checkOnce()'s default
     // runningAppVersion() call, which (via PackageInfo.fromPlatform()) needs a platform method
     // channel real production code gets for free but a plain `test()` doesn't.
     String? currentVersion,
   }) {
-    void tick() {
-      unawaited(
-        checkOnce(currentVersion: currentVersion).then((info) {
-          if (info != null) onUpdateAvailable(info);
-        }),
-      );
+    var checking = false;
+    late final Timer timer;
+    Future<void> tick() async {
+      if (checking || !timer.isActive) return;
+      checking = true;
+      try {
+        final result = await check(currentVersion: currentVersion);
+        if (!timer.isActive) return;
+        onCheckCompleted?.call(result);
+        final info = result.update;
+        if (info != null) onUpdateAvailable?.call(info);
+      } finally {
+        checking = false;
+      }
     }
 
-    tick();
-    return Timer.periodic(interval, (_) => tick());
+    timer = Timer.periodic(interval, (_) => unawaited(tick()));
+    unawaited(tick());
+    return timer;
   }
 
   /// Downloads [info] and verifies its sha256 BEFORE trusting the bytes. On macOS, unpacks the zip
@@ -275,13 +337,25 @@ class DesktopUpdater {
   /// single AppImage file), so the sha256 check already covers everything there is: it is made
   /// executable and staged as-is, with nothing to unpack or recheck.
   /// Returns null (and cleans up anything partially written) on any verification failure.
-  Future<StagedUpdate?> downloadAndStage(UpdateInfo info) async {
+  /// [onProgress] reports the DOWNLOAD only — bytes received out of
+  /// [UpdateInfo.size]. The manifest's size is the denominator rather than the
+  /// response's, because a CDN that omits `Content-Length` leaves Dio reporting
+  /// `-1` and the manifest is the authority the hash is checked against anyway.
+  /// Verifying and unpacking afterwards have no counter, so a caller showing a
+  /// percentage stops at 100 and keeps saying "installing" until this returns.
+  Future<StagedUpdate?> downloadAndStage(
+    UpdateInfo info, {
+    void Function(int received, int total)? onProgress,
+  }) async {
     if (!_enabled) return null;
     Directory? stagingDir;
     try {
       final response = await _dio.get<List<int>>(
         info.url,
         options: Options(responseType: ResponseType.bytes),
+        onReceiveProgress: onProgress == null
+            ? null
+            : (received, _) => onProgress(received, info.size),
       );
       final bytes = response.data;
       if (bytes == null || bytes.length != info.size) {

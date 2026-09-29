@@ -1,0 +1,144 @@
+import 'package:dio/dio.dart';
+
+import '../core/config.dart';
+import '../logging/http_log.dart';
+
+/// A sign-in or refresh that produced no usable session.
+class DirectAuthException implements Exception {
+  const DirectAuthException(this.message, {this.signedOut = false});
+
+  final String message;
+
+  /// The session is gone for good: retrying cannot help, only signing in again.
+  final bool signedOut;
+
+  @override
+  String toString() => message;
+}
+
+/// What `/api/auth/refresh` and `/api/auth/handoff/redeem` hand back.
+class IssuedTokens {
+  const IssuedTokens({
+    required this.token,
+    this.refreshToken,
+    this.expiresIn,
+    this.autonomousEnv,
+  });
+
+  final String token;
+  final String? refreshToken;
+
+  /// Seconds.
+  final int? expiresIn;
+  final String? autonomousEnv;
+
+  static IssuedTokens? fromData(Object? data) {
+    if (data is! Map) return null;
+    final token = data['token'], refresh = data['refreshToken'];
+    final expiresIn = data['expiresIn'], env = data['autonomousEnv'];
+    if (token is! String || token.isEmpty) return null;
+    return IssuedTokens(
+      token: token,
+      refreshToken: refresh is String && refresh.isNotEmpty ? refresh : null,
+      expiresIn: expiresIn is int && expiresIn > 0 ? expiresIn : null,
+      autonomousEnv: env is String ? env : null,
+    );
+  }
+}
+
+/// The backend's auth endpoints, called by the app itself — in a desktop build the harness CLI
+/// calls them (cli.ts `loginCommand`, authSession.ts `refreshRequest`). No bearer rides these:
+/// they are how one is got.
+class DirectAuthApi {
+  DirectAuthApi({required this.config, Dio? dio})
+    : _dio =
+          dio ??
+          attachHttpLog(
+            Dio(
+              BaseOptions(
+                baseUrl: config.apiBaseUrl,
+                connectTimeout: const Duration(seconds: 15),
+                receiveTimeout: const Duration(seconds: 30),
+                validateStatus: (status) => status != null && status < 600,
+              ),
+            ),
+          );
+
+  final AppConfig config;
+  final Dio _dio;
+
+  static const _unavailable =
+      'Could not renew your sign-in. That is usually the sign-in service having a moment — '
+      'if it keeps happening, sign out and sign in again.';
+
+  /// Trade the one-time code in a signed-in computer's Add Phone QR for a
+  /// session of this phone's own — scan to sign in, no emailed code. [label]
+  /// is what the phone calls itself, for the account's list of devices.
+  ///
+  /// A spent or expired code is the backend's 401 and its own sentence.
+  Future<IssuedTokens> redeemHandoff(
+    String code, {
+    required String label,
+  }) async {
+    final Response<dynamic> res;
+    try {
+      res = await _dio.post(
+        '/api/auth/handoff/redeem',
+        data: {'code': code, 'label': label},
+      );
+    } on DioException {
+      throw const DirectAuthException(
+        'Could not reach Harness. Check your connection and scan again.',
+      );
+    }
+    final body = res.data is Map ? res.data as Map : const {};
+    final tokens = body['success'] == true
+        ? IssuedTokens.fromData(body['data'])
+        : null;
+    if (tokens != null) return tokens;
+    final error = body['error'] is Map ? body['error'] as Map : const {};
+    final message = error['message'];
+    throw DirectAuthException(
+      message is String && message.isNotEmpty
+          ? message
+          : 'That code didn’t work. Scan the new one.',
+    );
+  }
+
+  /// End a session the backend issued itself ([SessionIssuer.harness]).
+  /// Best effort: the caller clears this phone's copy whatever the answer.
+  Future<void> revoke(String refreshToken) async {
+    await _dio.post('/api/auth/revoke', data: {'refreshToken': refreshToken});
+  }
+
+  /// authSession.ts `refreshRequest`, down to its one subtle rule: only a 401 or
+  /// `REFRESH_TOKEN_INVALID` means the session is dead. An unusable refresh token and a real outage
+  /// both come back as the same 503, and reading that as dead would delete a refresh token nothing
+  /// can bring back — on a blip.
+  Future<IssuedTokens> refresh(
+    String refreshToken, {
+    required String autonomousEnv,
+  }) async {
+    final Response<dynamic> res;
+    try {
+      res = await _dio.post(
+        '/api/auth/refresh',
+        data: {'refreshToken': refreshToken, 'autonomousEnv': autonomousEnv},
+      );
+    } on DioException {
+      throw const DirectAuthException(_unavailable);
+    }
+    final body = res.data is Map ? res.data as Map : const {};
+    final error = body['error'] is Map ? body['error'] as Map : const {};
+    if (res.statusCode == 401 || error['code'] == 'REFRESH_TOKEN_INVALID') {
+      throw const DirectAuthException(
+        'Your sign-in expired. Sign in again.',
+        signedOut: true,
+      );
+    }
+    final tokens = body['success'] == false
+        ? null
+        : IssuedTokens.fromData(body['data']);
+    return tokens ?? (throw const DirectAuthException(_unavailable));
+  }
+}

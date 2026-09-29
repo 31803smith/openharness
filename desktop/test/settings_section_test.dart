@@ -3,6 +3,7 @@
 // shape worth guarding is the one no test build has. `settingsGroupsFor` takes the gate as an
 // argument for exactly this.
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 
 import 'package:harness/logging/debug_surface.dart';
 import 'package:harness/settings/settings_section.dart';
@@ -32,7 +33,10 @@ void main() {
       // files, and it reads nothing at all until a provider is switched on, so
       // there is nothing here for a shipped build to hide.
       SettingsSection.usage,
-      SettingsSection.devices,
+      SettingsSection.customize,
+      SettingsSection.notifications,
+      SettingsSection.experimental,
+      if (!kIsWeb) SettingsSection.devices,
       SettingsSection.account,
       SettingsSection.shortcuts,
       SettingsSection.about,

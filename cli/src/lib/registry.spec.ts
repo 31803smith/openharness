@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
+import { processStartMarker } from './processLiveness.js'
 import type { AgentEngine } from '../engines/types.js'
 import type { ProcessIdentity, RegisteredSession, RegisterInput } from './registry.js'
 
@@ -271,12 +272,17 @@ describe('registry remote display names', () => {
       tmuxPane: '%17',
       runtimes: [{ backend: 'tmux', paneId: '%17' }],
       schemaVersion: 2,
+      // Saved as `updatedAt` before the row's bookkeeping time was named for what it is.
+      touchedAt: 20,
     })
-    expect(JSON.parse(readFileSync(join(dataDir, 'registry.json'), 'utf8'))[0]).toMatchObject({
+    const saved = JSON.parse(readFileSync(join(dataDir, 'registry.json'), 'utf8'))[0]
+    expect(saved).toMatchObject({
       agentId: 'stable-agent',
       tmuxPane: '%17',
       runtimes: [{ backend: 'tmux', paneId: '%17' }],
+      touchedAt: 20,
     })
+    expect(saved).not.toHaveProperty('updatedAt')
     expect(JSON.parse(readFileSync(join(dataDir, 'registry.pre-v2.json'), 'utf8'))[0]).toMatchObject({
       agentId: 'stable-agent', sessionId: 'legacy-session', tmuxPane: '%17',
     })
@@ -359,7 +365,7 @@ describe('registry remote display names', () => {
     mkdirSync(lockDir, { mode: 0o700 })
     writeFileSync(join(lockDir, 'owner.json'), JSON.stringify({
       pid: process.pid,
-      startMarker: 'different-process-generation',
+      startMarker: '', generationMarker: `${processStartMarker(process.pid)}-earlier`,
       token: 'stale-owner',
     }), { mode: 0o600 })
 
@@ -372,66 +378,59 @@ describe('registry remote display names', () => {
     expect(registry.byAgent('after-reused-pid-lock')).toBeTruthy()
   })
 
-  it('deduplicates nested backends by process identity while scoping Herdr routes to endpoints', async () => {
+  it('deduplicates nested panes by process identity', async () => {
     const { registry } = await loadRegistryModule()
     registry.load()
     const identity = processIdentity(700)
-    const tmux = registry.openProcessAgent({
+    const outer = registry.openProcessAgent({
       agentId: 'nested-agent',
       engine: 'claude',
       tmuxPane: '%7',
       processIdentity: identity,
     })
-    const herdrRuntime = {
-      backend: 'herdr' as const,
-      endpointId: 'herdr:default:abc',
-      sessionName: 'default',
-      terminalId: 'terminal-a',
-      paneId: 'w1:p1',
-    }
     const nested = registry.openProcessAgent({
       engine: 'claude',
-      runtimes: [herdrRuntime],
+      runtimes: [{ backend: 'tmux', paneId: '%8' }],
       processIdentity: identity,
     })
     const other = registry.openProcessAgent({
-      agentId: 'other-endpoint-agent',
+      agentId: 'other-agent',
       engine: 'claude',
-      runtimes: [{ ...herdrRuntime, endpointId: 'herdr:work:def', sessionName: 'work', terminalId: 'terminal-b' }],
+      runtimes: [{ backend: 'tmux', paneId: '%9' }],
       processIdentity: processIdentity(701),
     })
 
-    expect(nested?.entry.agentId).toBe(tmux?.entry.agentId)
+    expect(nested?.entry.agentId).toBe(outer?.entry.agentId)
     expect(nested?.entry.runtimes).toHaveLength(2)
-    expect(other?.entry.agentId).toBe('other-endpoint-agent')
+    expect(other?.entry.agentId).toBe('other-agent')
     expect(registry.list()).toHaveLength(2)
   })
 
-  it('persists Herdr-only rows without a legacy tmuxPane projection', async () => {
+  it('drops runtimes a retired Herdr backend left on disk, and agents left with none', async () => {
     const { registry } = await loadRegistryModule()
     registry.load()
-    registry.openProcessAgent({
-      agentId: 'herdr-agent',
-      engine: 'codex',
-      runtimes: [{
-        backend: 'herdr',
-        endpointId: 'herdr:default:abc',
-        sessionName: 'default',
-        terminalId: 'terminal-1',
-        paneId: 'w1:p1',
-      }],
-      processIdentity: processIdentity(900),
-    })
+    registry.openProcessAgent({ agentId: 'mixed', engine: 'claude', tmuxPane: '%40', processIdentity: processIdentity(940) })
+    const [row] = JSON.parse(readFileSync(join(dataDir, 'registry.json'), 'utf8'))
+    const herdr = { backend: 'herdr', endpointId: 'herdr:default:abc', sessionName: 'default', terminalId: 'terminal-1', paneId: 'w1:p1' }
+    const herdrKey = 'herdr\u0000herdr:default:abc\u0000w1:p1'
+    const { tmuxPane: _pane, ...herdrOnly } = row
+    writeFileSync(join(dataDir, 'registry.json'), JSON.stringify([
+      { ...row, runtimes: [...row.runtimes, herdr], primaryRuntimeKey: herdrKey },
+      { ...herdrOnly, agentId: 'herdr-only', sessionId: '', processIdentity: null, runtimes: [herdr], primaryRuntimeKey: herdrKey },
+    ]), { mode: 0o600 })
 
-    const [persisted] = JSON.parse(readFileSync(join(dataDir, 'registry.json'), 'utf8'))
-    expect(persisted).not.toHaveProperty('tmuxPane')
-    expect(persisted).toMatchObject({
-      schemaVersion: 2,
-      agentId: 'herdr-agent',
-      runtimes: [{ backend: 'herdr', endpointId: 'herdr:default:abc', paneId: 'w1:p1' }],
-    })
-    registry.load()
-    expect(registry.byAgent('herdr-agent')?.runtimes[0]).toMatchObject({ backend: 'herdr', terminalId: 'terminal-1' })
+    const { registry: reloaded } = await loadRegistryModule()
+    reloaded.load()
+
+    expect(reloaded.byAgent('mixed')?.runtimes).toEqual([{ backend: 'tmux', paneId: '%40' }])
+    expect(reloaded.byAgent('mixed')?.primaryRuntimeKey).toBe('tmux\u0000%40')
+    expect(reloaded.byAgent('herdr-only')).toBeUndefined()
+    const persisted = JSON.parse(readFileSync(join(dataDir, 'registry.json'), 'utf8'))
+    expect(persisted.map((entry: { agentId: string }) => entry.agentId)).toEqual(['mixed'])
+    expect(JSON.stringify(persisted)).not.toContain('herdr')
+    // Still writable: nothing about the retired rows blocked the file.
+    reloaded.openProcessAgent({ agentId: 'after', engine: 'claude', tmuxPane: '%41', processIdentity: processIdentity(941) })
+    expect(JSON.parse(readFileSync(join(dataDir, 'registry.json'), 'utf8'))).toHaveLength(2)
   })
 
   it('repairs a Codex parent registry entry overwritten with a child rollout', async () => {
@@ -743,14 +742,56 @@ describe('agent identity: the process owns the agent, the session is bound to it
     expect(registry.resolve('agent-1')?.boundAt).toBe(Date.now())
   })
 
-  it('a re-register of the same session is not a rotation', async () => {
+  it('a re-register of the same session is not a rotation, and keeps the folder the row already has', async () => {
     const { registry } = await loadRegistryModule()
     registry.load()
     registerProcess(registry, { launcherId: 'agent-1', sessionId: 's1', transcriptPath: transcript('s1'), tmuxPane: '%1', cwd: '/tmp/demo' })
-    const again = registerProcess(registry, { launcherId: 'agent-1', sessionId: 's1', transcriptPath: transcript('s1'), tmuxPane: '%1', cwd: '/tmp/demo' })
+    // Claude's UserPromptSubmit carries the session's tracked SHELL directory, which follows every
+    // Bash `cd`; the row's folder — what a resume or restore `cd`s into — must not follow it.
+    const again = registerProcess(registry, { launcherId: 'agent-1', sessionId: 's1', transcriptPath: transcript('s1'), tmuxPane: '%1', cwd: '/tmp/demo/cli' })
     expect(again?.isNew).toBe(false)
     expect(again?.rebound).toBeNull()
     expect(registry.list()).toHaveLength(1)
+    expect(registry.byAgent('agent-1')?.cwd).toBe('/tmp/demo')
+    // A rotation is a new session and takes the folder it reports.
+    const rot = registerProcess(registry, { launcherId: 'agent-1', sessionId: 's2', transcriptPath: transcript('s2'), tmuxPane: '%1', cwd: '/tmp/demo/cli' })
+    expect(rot?.isNew).toBe(true)
+    expect(registry.byAgent('agent-1')?.cwd).toBe('/tmp/demo/cli')
+  })
+
+  it('a first bind whose cwd is not the transcript\'s project folder takes the folder from the transcript', async () => {
+    // A fork inherits its source's drifted cwd; `claude --resume` typed from a subfolder announces
+    // that subfolder. Claude never moves the transcript out of the project dir it was started in,
+    // so the file's own directory says which folder is the session's.
+    const { registry } = await loadRegistryModule()
+    registry.load()
+    const project = join(dataDir, 'repo')
+    const projectDir = join(dataDir, project.replace(/[^A-Za-z0-9]/g, '-'))
+    mkdirSync(projectDir, { recursive: true })
+    const path = join(projectDir, 's1.jsonl')
+    writeFileSync(path, [
+      JSON.stringify({ type: 'mode' }),
+      JSON.stringify({ type: 'user', cwd: join(project, 'cli') }),
+      JSON.stringify({ type: 'user', cwd: project }),
+    ].join('\n') + '\n')
+    const bound = registerProcess(registry, { launcherId: 'agent-1', sessionId: 's1', transcriptPath: path, tmuxPane: '%1', cwd: join(project, 'cli') })
+    expect(bound?.isNew).toBe(true)
+    expect(registry.byAgent('agent-1')?.cwd).toBe(project)
+    // The folder itself, spelled as given, is accepted as is.
+    const rot = registerProcess(registry, { launcherId: 'agent-1', sessionId: 's2', transcriptPath: (() => { const p2 = join(projectDir, 's2.jsonl'); writeFileSync(p2, JSON.stringify({ cwd: project }) + '\n'); return p2 })(), tmuxPane: '%1', cwd: project })
+    expect(rot?.isNew).toBe(true)
+    expect(registry.byAgent('agent-1')?.cwd).toBe(project)
+  })
+
+  it('re-observing a pane follows the shell until a session is bound, then leaves the folder alone', async () => {
+    const { registry } = await loadRegistryModule()
+    registry.load()
+    registry.openProcessAgent({ agentId: 'agent-1', engine: 'terminal', tmuxPane: '%1', cwd: '/tmp/demo', processIdentity: processIdentity(101) })
+    registry.openProcessAgent({ engine: 'terminal', tmuxPane: '%1', cwd: '/tmp/demo/cli', processIdentity: processIdentity(101) })
+    expect(registry.byAgent('agent-1')?.cwd).toBe('/tmp/demo/cli')
+    registerProcess(registry, { launcherId: 'agent-2', sessionId: 's1', transcriptPath: transcript('s1'), tmuxPane: '%2', cwd: '/tmp/demo' })
+    registry.openProcessAgent({ engine: 'claude', tmuxPane: '%2', cwd: '/tmp/demo/cli', processIdentity: processIdentity(102) })
+    expect(registry.byAgent('agent-2')?.cwd).toBe('/tmp/demo')
   })
 
   it('one engine session cannot belong to two agents', async () => {
@@ -1005,6 +1046,37 @@ describe('agent identity: the process owns the agent, the session is bound to it
     expect(reloaded.unbound()).toHaveLength(1)
   })
 
+  // A row that does not leave `starting` reads as "Starting" on the desk while its engine is working,
+  // and the state is written from six places that cannot see each other. Each one says so, and a
+  // settled row says nothing — so a log from a machine where it sticks names the pair doing it.
+  it('names every launch change by the door it came through, and is silent when nothing changed', async () => {
+    const { registry } = await loadRegistryModule()
+    registry.load()
+    const lines: string[] = []
+    const log = vi.spyOn(console, 'log').mockImplementation((message: unknown) => {
+      if (typeof message === 'string' && message.startsWith('[launch]')) lines.push(message)
+    })
+    try {
+      const pending = registry.openPendingAgent({ engine: 'claude', runtimes: [{ backend: 'tmux', paneId: '%7' }], cwd: '/tmp/demo' })!
+      registry.openProcessAgent({ engine: 'claude', tmuxPane: '%7', cwd: '/tmp/demo', processIdentity: processIdentity(707) })
+      registry.setLaunch(pending.agentId, { state: 'ready' })            // already ready — silent
+      registry.setLaunch(pending.agentId, { state: 'failed', error: 'START_TIMEOUT' })
+      const id = pending.agentId.slice(0, 8)
+      expect(lines).toEqual([
+        `[launch] ${id} starting → ready · openProcessAgent re-observed`,
+        `[launch] ${id} ready → failed · setLaunch (START_TIMEOUT)`,
+      ])
+
+      // A bind ends the launch without naming it: the rebuilt row carries none.
+      lines.length = 0
+      registry.setLaunch(pending.agentId, { state: 'starting' })
+      registerProcess(registry, { launcherId: pending.agentId, sessionId: 's1', transcriptPath: transcript('s1'), tmuxPane: '%7', cwd: '/tmp/demo' })
+      expect(lines.filter(line => line.includes('→ none'))).toHaveLength(1)
+    } finally {
+      log.mockRestore()
+    }
+  })
+
   it('opens a route-only pending agent and adopts the engine process without changing agentId', async () => {
     const { registry } = await loadRegistryModule()
     registry.load()
@@ -1024,25 +1096,117 @@ describe('agent identity: the process owns the agent, the session is bound to it
     expect(registry.list()).toHaveLength(1)
   })
 
-  it('gives new agents stable numbered names across binding and reload without changing custom names', async () => {
+  describe('the name Harness gives an agent: who it is and when it started', () => {
+    afterEach(() => { vi.useRealTimers() })
+    const at = (y: number, mo: number, d: number, h: number, mi: number, sec = 0) => {
+      vi.useFakeTimers({ toFake: ['Date'] })
+      vi.setSystemTime(new Date(y, mo - 1, d, h, mi, sec))
+    }
+
+    it('is the engine or DSH name and the local time, with no zero where it says nothing', async () => {
+      const { registry } = await loadRegistryModule()
+      registry.load()
+      at(2026, 9, 17, 15, 26)
+      const codex = registry.openPendingAgent({ engine: 'codex', runtimes: [{ backend: 'tmux', paneId: '%3' }], cwd: '/Users/u/harnesses/codex-2026-09-17-15-26' })!
+      expect(registry.displayName(codex)).toBe('Codex harness 9-17 15:26')
+      at(2026, 9, 3, 9, 5)
+      const blender = registry.openPendingAgent({ engine: 'claude', runtimes: [{ backend: 'tmux', paneId: '%4' }], cwd: '/tmp/b', dsh: 'autonomous/blender', label: ' Blender ' })!
+      expect(registry.displayName(blender)).toBe('Blender harness 9-3 9:05')
+      const claude = registry.openPendingAgent({ engine: 'claude', runtimes: [{ backend: 'tmux', paneId: '%5' }], cwd: '/tmp/c', label: '   ' })!
+      expect(registry.displayName(claude)).toBe('Claude harness 9-3 9:05')
+    })
+
+    it('takes the seconds when the same agent already has that minute, and counts nothing', async () => {
+      const { registry } = await loadRegistryModule()
+      registry.load()
+      at(2026, 12, 25, 15, 26, 8)
+      const first = registry.openPendingAgent({ engine: 'codex', runtimes: [{ backend: 'tmux', paneId: '%6' }], cwd: '/tmp/a' })!
+      const second = registry.openPendingAgent({ engine: 'codex', runtimes: [{ backend: 'tmux', paneId: '%7' }], cwd: '/tmp/a' })!
+      const other = registry.openPendingAgent({ engine: 'claude', runtimes: [{ backend: 'tmux', paneId: '%8' }], cwd: '/tmp/a' })!
+      expect([first, second, other].map((agent) => registry.displayName(agent)))
+        .toEqual(['Codex harness 12-25 15:26', 'Codex harness 12-25 15:26:08', 'Claude harness 12-25 15:26'])
+      expect(registry.agentNamesInUse()).toEqual(expect.arrayContaining(['Codex harness 12-25 15:26', 'Codex harness 12-25 15:26:08']))
+    })
+
+    it('gives way to the session’s title, which moves with it, until a rename fixes a name — and survives reload', async () => {
+      const { registry } = await loadRegistryModule()
+      registry.load()
+      at(2026, 9, 17, 15, 30)
+      const first = registry.openPendingAgent({ engine: 'opencode', runtimes: [{ backend: 'tmux', paneId: '%7' }], cwd: '/tmp/demo' })!
+      const second = registry.openPendingAgent({ engine: 'opencode', runtimes: [{ backend: 'tmux', paneId: '%8' }], cwd: '/tmp/demo' })!
+      expect(registry.displayName(first)).toBe('OpenCode harness 9-17 15:30')
+      const bound = registry.register({ engine: 'opencode', sessionId: 'session-named-by-time', tmuxPane: '%7', title: 'OC | Greeting' })!.entry
+      expect(registry.displayName(bound)).toBe('Greeting')
+      expect(bound.defaultName).toBe('OpenCode harness 9-17 15:30')
+      registry.updateTitle('session-named-by-time', 'OC | Plan the launch')
+      expect(registry.displayName(bound)).toBe('Plan the launch')
+      registry.rename(second.agentId, 'My project')
+      registry.updateTitle(second.agentId, 'OC | Something else')
+      expect(registry.displayName(registry.byAgent(second.agentId)!)).toBe('My project')
+      const { registry: reloaded } = await loadRegistryModule()
+      reloaded.load()
+      expect(reloaded.displayName(reloaded.byAgent(first.agentId)!)).toBe('Plan the launch')
+      expect(reloaded.displayName(reloaded.byAgent(second.agentId)!)).toBe('My project')
+    })
+
+    it('treats a harness-N from an earlier daemon as a name Harness gave, and a title replaces it', async () => {
+      const { registry } = await loadRegistryModule()
+      registry.load()
+      const legacy = registry.openPendingAgent({ engine: 'claude', runtimes: [{ backend: 'tmux', paneId: '%9' }], cwd: '/tmp/old', defaultName: 'harness-42' })!
+      expect(registry.displayName(legacy)).toBe('harness-42')
+      registry.updateTitle(legacy.agentId, '✳ Unitree Go2 squats and wave')
+      expect(registry.displayName(registry.byAgent(legacy.agentId)!)).toBe('Unitree Go2 squats and wave')
+    })
+
+    it('keeps a name the creator asked for through titles, binding and reload; blank means Harness names it', async () => {
+      const { registry } = await loadRegistryModule()
+      registry.load()
+      at(2026, 9, 17, 16, 0)
+      const named = registry.openPendingAgent({ engine: 'opencode', runtimes: [{ backend: 'tmux', paneId: '%10' }], cwd: '/tmp/demo', defaultName: ' Local model ' })!
+      expect(named.defaultName).toBe('Local model')
+      expect(registry.displayName(named)).toBe('Local model')
+      // The engine reporting a session title does not retitle a pane that was named at creation.
+      const bound = registry.register({ engine: 'opencode', sessionId: 'session-named', tmuxPane: '%10', title: 'OC | Greeting' })!.entry
+      expect(registry.displayName(bound)).toBe('Local model')
+      const unnamed = registry.openPendingAgent({ engine: 'opencode', runtimes: [{ backend: 'tmux', paneId: '%11' }], cwd: '/tmp/demo', defaultName: '  ' })!
+      expect(registry.displayName(unnamed)).toBe('OpenCode harness 9-17 16:00')
+      const { registry: reloaded } = await loadRegistryModule()
+      reloaded.load()
+      expect(reloaded.displayName(reloaded.byAgent(named.agentId)!)).toBe('Local model')
+      expect(reloaded.displayName(reloaded.byAgent(unnamed.agentId)!)).toBe('OpenCode harness 9-17 16:00')
+    })
+  })
+
+  it('keeps the named agent a pane was opened as through binding and reload, and drops one that is not an identifier', async () => {
     const { registry } = await loadRegistryModule()
     registry.load()
-    const first = registry.openPendingAgent({ engine: 'opencode', runtimes: [{ backend: 'tmux', paneId: '%7' }], cwd: '/tmp/demo' })!
-    const second = registry.openPendingAgent({ engine: 'opencode', runtimes: [{ backend: 'tmux', paneId: '%8' }], cwd: '/tmp/demo' })!
-    expect(registry.displayName(first)).toBe('agent-1')
-    expect(registry.displayName(second)).toBe('agent-2')
-    const bound = registry.register({ engine: 'opencode', sessionId: 'session-numbered', tmuxPane: '%7', title: 'OC | Greeting' })!.entry
-    expect(registry.displayName(bound)).toBe('agent-1')
-    registry.rename(second.agentId, 'My project')
+    const named = registry.openPendingAgent({ engine: 'opencode', runtimes: [{ backend: 'tmux', paneId: '%7' }], cwd: '/tmp/demo', agent: 'harness-compute', defaultName: 'Local model' })!
+    expect(named.agent).toBe('harness-compute')
+    // A hook-triggered bind carries it forward, like `dsh` and `codexHome`.
+    const bound = registry.register({ engine: 'opencode', sessionId: 'session-agent', tmuxPane: '%7', title: 'OC | Greeting' })!.entry
+    expect(bound.agent).toBe('harness-compute')
+    // Absent is a general session; a shape the engine could not look a file up by is not kept.
+    const plain = registry.openPendingAgent({ engine: 'opencode', runtimes: [{ backend: 'tmux', paneId: '%8' }], cwd: '/tmp/demo' })!
+    expect(plain.agent).toBeNull()
+    const odd = registry.openPendingAgent({ engine: 'opencode', runtimes: [{ backend: 'tmux', paneId: '%9' }], cwd: '/tmp/demo', agent: '../etc' })!
+    expect(odd.agent).toBeNull()
     const { registry: reloaded } = await loadRegistryModule()
     reloaded.load()
-    expect(reloaded.displayName(reloaded.byAgent(first.agentId)!)).toBe('agent-1')
-    expect(reloaded.displayName(reloaded.byAgent(second.agentId)!)).toBe('My project')
-    const third = reloaded.openPendingAgent({ engine: 'codex', runtimes: [{ backend: 'tmux', paneId: '%9' }], cwd: '/tmp/demo' })!
-    expect(reloaded.displayName(third)).toBe('agent-3')
-    reloaded.rename(third.agentId, 'agent-10')
-    const fourth = reloaded.openPendingAgent({ engine: 'claude', runtimes: [{ backend: 'tmux', paneId: '%10' }], cwd: '/tmp/demo' })!
-    expect(reloaded.displayName(fourth)).toBe('agent-11')
+    expect(reloaded.byAgent(named.agentId)!.agent).toBe('harness-compute')
+    expect(reloaded.byAgent(plain.agentId)!.agent).toBeNull()
+  })
+
+  it('keeps the selected harness runtime through process binding and disk reload', async () => {
+    const { registry } = await loadRegistryModule()
+    registry.load()
+    const pending = registry.openPendingAgent({ engine: 'opencode', runtimes: [{ backend: 'tmux', paneId: '%70' }],
+      cwd: '/tmp/drawing', dsh: 'acme/drawing', dshRuntime: 'harness-opencode-original' })!
+    expect(pending.dshRuntime).toBe('harness-opencode-original')
+    const bound = registry.register({ engine: 'opencode', sessionId: 'drawing-session', tmuxPane: '%70' })!.entry
+    expect(bound).toMatchObject({ engine: 'opencode', dsh: 'acme/drawing', dshRuntime: 'harness-opencode-original' })
+    const { registry: reloaded } = await loadRegistryModule()
+    reloaded.load()
+    expect(reloaded.byAgent(pending.agentId)).toMatchObject({ engine: 'opencode', dsh: 'acme/drawing', dshRuntime: 'harness-opencode-original' })
   })
 
   it('persists a failed launch for reconnect while keeping its terminal route', async () => {
@@ -1250,6 +1414,35 @@ describe('registry across a reboot and pane loss', () => {
     expect(registry.byProcess('claude', processIdentity(4242))?.agentId).toBe('agent-a')
   })
 
+  it('keeps the permission mode from agent_create through a bind and a reload', async () => {
+    const transcriptPath = join(dataDir, 'session-p.jsonl')
+    writeFileSync(transcriptPath, '{}\n')
+    const { registry } = await loadRegistryModule()
+    registry.load()
+
+    const pending = registry.openPendingAgent({
+      engine: 'claude',
+      runtimes: [{ backend: 'tmux', paneId: '%7' }],
+      cwd: '/tmp/demo',
+      permissionMode: 'plan',
+    })
+    expect(pending?.permissionMode).toBe('plan')
+    const bound = registry.register({ sessionId: 'session-p', transcriptPath, tmuxPane: '%7', cwd: '/tmp/demo' })
+    expect(bound?.entry.permissionMode).toBe('plan')
+
+    const again = await loadRegistryModule()
+    again.registry.load()
+    expect(again.registry.byAgent(pending!.agentId)?.permissionMode).toBe('plan')
+
+    const bogus = registry.openPendingAgent({
+      engine: 'claude',
+      runtimes: [{ backend: 'tmux', paneId: '%8' }],
+      cwd: '/tmp/demo',
+      permissionMode: '--dangerously-skip-permissions',
+    })
+    expect(bogus).not.toHaveProperty('permissionMode')
+  })
+
   it('carries bypassPermission from agent_create through the first hook bind', async () => {
     const transcriptPath = join(dataDir, 'session-b.jsonl')
     writeFileSync(transcriptPath, '{}\n')
@@ -1274,6 +1467,32 @@ describe('registry across a reboot and pane loss', () => {
     expect(saved[0]).not.toHaveProperty('bypassPermission')
   })
 
+  it('fills in the permission mode discovery read off a live argv, and keeps it across a reload', async () => {
+    const { registry } = await loadRegistryModule()
+    registry.load()
+    const pending = registry.openPendingAgent({
+      engine: 'claude',
+      runtimes: [{ backend: 'tmux', paneId: '%9' }],
+      cwd: '/tmp/demo',
+      bypassPermission: true,
+    })
+    expect(pending).not.toHaveProperty('permissionMode')
+
+    expect(registry.setPermissionMode(pending!.agentId, 'full')).toBe(true)
+    expect(registry.byAgent(pending!.agentId)?.permissionMode).toBe('full')
+    // Idempotent; fill-only, so the recorded mode is never re-derived into another; and a name that
+    // is not a mode is refused as it is on load.
+    expect(registry.setPermissionMode(pending!.agentId, 'full')).toBe(true)
+    expect(registry.setPermissionMode(pending!.agentId, 'plan')).toBe(false)
+    expect(registry.setPermissionMode(pending!.agentId, '--dangerously-skip-permissions')).toBe(false)
+    expect(registry.setPermissionMode('nope', 'full')).toBe(false)
+    expect(registry.byAgent(pending!.agentId)?.permissionMode).toBe('full')
+
+    const { registry: reloaded } = await loadRegistryModule()
+    reloaded.load()
+    expect(reloaded.byAgent(pending!.agentId)?.permissionMode).toBe('full')
+  })
+
   const GRID_LAUNCH = {
     networkId: 'grid-abc',
     networkName: 'Team grid',
@@ -1296,9 +1515,10 @@ describe('registry across a reboot and pane loss', () => {
       runtimes: [{ backend: 'tmux', paneId: '%9' }],
       cwd: '/tmp/demo',
       grid: { baseUrl: GRID_LAUNCH.baseUrl, model: 'gpt-5' },
-      gridLaunch: GRID_LAUNCH,
+      gridLaunchRecord: { override: GRID_LAUNCH, webSearch: 'on' },
     })!
     expect(pending.gridLaunch).toEqual(GRID_LAUNCH)
+    expect(pending.gridWebSearch).toBe('on')
     expect(pending.launch).toEqual({ state: 'starting' })
 
     const bound = registry.register({ sessionId: 'session-g', transcriptPath, tmuxPane: '%9', cwd: '/tmp/demo' })
@@ -1306,6 +1526,7 @@ describe('registry across a reboot and pane loss', () => {
     expect(bound?.entry).toMatchObject({
       grid: { baseUrl: GRID_LAUNCH.baseUrl, model: 'gpt-5' },
       gridLaunch: GRID_LAUNCH,
+      gridWebSearch: 'on',
       gateway: null,
     })
     // The hook is the engine reporting in: the launch is over and the frame reads ready.
@@ -1315,6 +1536,97 @@ describe('registry across a reboot and pane loss', () => {
     expect(registry.setGridLaunch(pending.agentId, null)).toBe(true)
     expect(registry.register({ sessionId: 'session-g', transcriptPath, tmuxPane: '%9', cwd: '/tmp/demo' })?.entry.gridLaunch).toBeNull()
     expect(registry.setGridLaunch('nobody', null)).toBe(false)
+  })
+
+  it('keeps the remembered subscription model across a reload', async () => {
+    // ⚠️ REGRESSION. A row is rebuilt from an explicit field list on load, so a field added to the
+    // type and the setter but NOT to that list is written to disk and silently dropped by the next
+    // load. It reads as "the setter never ran", which is where a day went — so what is pinned here
+    // is survival across a RELOAD, not merely that the setter returned true.
+    const { registry } = await loadRegistryModule()
+    registry.load()
+    const pending = registry.openPendingAgent({
+      engine: 'claude',
+      runtimes: [{ backend: 'tmux', paneId: '%21' }],
+      cwd: '/tmp/demo',
+    })!
+    expect(registry.setSubscriptionModel(pending.agentId, 'opus')).toBe(true)
+    expect(registry.setSubscriptionModel('nobody', 'opus')).toBe(false)
+
+    // The reload is the whole test: a field missing from the rehydration list survives the write and
+    // dies here.
+    const { registry: reloaded } = await loadRegistryModule()
+    reloaded.load()
+    expect(reloaded.byAgent(pending.agentId)?.subscriptionModel).toBe('opus')
+
+    // ...and the SECOND way it was lost: a hook bind rebuilds the row from named fields, so a field
+    // the rebuild does not name is still on disk while memory has already forgotten it.
+    const transcriptPath = join(dataDir, 'session-sub.jsonl')
+    writeFileSync(transcriptPath, '{}\n')
+    const bound = reloaded.register({ sessionId: 'session-sub', transcriptPath, tmuxPane: '%21', cwd: '/tmp/demo' })
+    expect(bound?.entry.agentId).toBe(pending.agentId)
+    expect(bound?.entry.subscriptionModel).toBe('opus')
+  })
+
+  it('keeps strict conversation resume after the engine binds and the daemon reloads', async () => {
+    const transcriptPath = join(dataDir, 'session-resumed.jsonl')
+    writeFileSync(transcriptPath, '{}\n')
+    const { registry } = await loadRegistryModule()
+    registry.load()
+    const original = registerProcess(registry, {
+      engine: 'claude', sessionId: 'session-resumed', transcriptPath, tmuxPane: '%21', cwd: '/tmp/demo',
+    })!.entry
+    registry.removeAgent(original.agentId)
+    registry.resumePendingAgent(original, [{ backend: 'tmux', paneId: '%22' }])
+
+    // SessionStart rebuilds the row. It must retain the policy that prevents a
+    // later daemon restore from silently replacing this saved conversation.
+    const bound = registry.register({
+      engine: 'claude', sessionId: original.sessionId, transcriptPath, tmuxPane: '%22', cwd: '/tmp/demo', processIdentity: processIdentity(122),
+    })
+    expect(bound?.entry.agentId).toBe(original.agentId)
+    expect(bound?.entry.resumeOnly).toBe(true)
+    const { registry: reloaded } = await loadRegistryModule()
+    reloaded.load()
+    expect(reloaded.byAgent(original.agentId)).toMatchObject({
+      sessionId: original.sessionId, tmuxPane: '%22', resumeOnly: true,
+    })
+  })
+
+  it('lets process discovery start a resumed row, and still refuses the wrong conversation', async () => {
+    const transcriptPath = join(dataDir, 'resume-target.jsonl')
+    writeFileSync(transcriptPath, '{}\n')
+    const { registry } = await loadRegistryModule()
+    const original = registerProcess(registry, { engine: 'claude', sessionId: 'resume-target', transcriptPath, tmuxPane: '%21' })!.entry
+    registry.removeAgent(original.agentId)
+    registry.resumePendingAgent(original, [{ backend: 'tmux', paneId: '%22' }])
+    registry.openProcessAgent({ engine: 'claude', runtimes: [{ backend: 'tmux', paneId: '%22' }], processIdentity: processIdentity(122) })
+    // The engine is running in the row's pane, so the row has started — it no longer waits for a
+    // hook a resume may never send. What it has NOT yet been told is which conversation reopened.
+    expect(registry.byAgent(original.agentId)?.launch?.state).toBe('ready')
+    expect(registry.byAgent(original.agentId)?.lastHookAt).toBe(0)
+    expect(registry.register({ engine: 'claude', sessionId: 'unexpected-new-session', transcriptPath, tmuxPane: '%22', processIdentity: processIdentity(122) })).toBeNull()
+    expect(registry.byAgent(original.agentId)).toMatchObject({ sessionId: 'resume-target', launch: { state: 'failed', error: 'RESUME_SESSION_MISMATCH' } })
+    const confirmed = registry.register({ engine: 'claude', sessionId: 'resume-target', transcriptPath, tmuxPane: '%22', processIdentity: processIdentity(122) })
+    expect(confirmed?.entry).toMatchObject({ agentId: original.agentId, sessionId: 'resume-target', launch: { state: 'ready' } })
+  })
+
+  // The guard reads `lastHookAt`, not `launch`. A resume is now confirmed by its own live engine
+  // process (`resumeStoppedAgent.ts`), which marks the row ready BEFORE any hook arrives — and a
+  // guard keyed on `launch` would have been disarmed for exactly the resumes it protects.
+  it('still refuses another conversation on the first hook after the row was marked ready', async () => {
+    const transcriptPath = join(dataDir, 'ready-first.jsonl')
+    writeFileSync(transcriptPath, '{}\n')
+    const { registry } = await loadRegistryModule()
+    const original = registerProcess(registry, { engine: 'claude', sessionId: 'ready-first', transcriptPath, tmuxPane: '%31' })!.entry
+    registry.removeAgent(original.agentId)
+    registry.resumePendingAgent(original, [{ backend: 'tmux', paneId: '%32' }])
+    // What the resume service does the moment it sees the engine process in the pane.
+    registry.setLaunch(original.agentId, { state: 'ready' })
+    expect(registry.byAgent(original.agentId)?.lastHookAt).toBe(0)
+
+    expect(registry.register({ engine: 'claude', sessionId: 'somebody-elses-session', transcriptPath, tmuxPane: '%32', processIdentity: processIdentity(132) })).toBeNull()
+    expect(registry.byAgent(original.agentId)).toMatchObject({ sessionId: 'ready-first', launch: { state: 'failed', error: 'RESUME_SESSION_MISMATCH' } })
   })
 
   it('drops any launch state on the hook that proves the engine is up', async () => {
@@ -1425,5 +1737,176 @@ describe('registry across a reboot and pane loss', () => {
     expect(adopted?.entry.agentId).toBe(agentId)
     expect(adopted?.entry.sessionId).toBe('session-c')
     expect(registry.list()).toHaveLength(1)
+  })
+})
+
+describe('a terminal: a pane that becomes an engine and back', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    dataDir = mkdtempSync(join(tmpdir(), 'adapter-registry-terminal-'))
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+    rmSync(dataDir, { recursive: true, force: true })
+    delete process.env.ADAPTER_DATA_DIR
+    delete process.env.CLAUDE_PROJECTS_DIR
+    delete process.env.CODEX_HOME
+    delete process.env.CURSOR_HOME
+  })
+
+  const pane = { backend: 'tmux' as const, paneId: '%9' }
+
+  it('opens as engine `terminal`, marked terminalHost, and survives a reload that way', async () => {
+    const { registry } = await loadRegistryModule()
+    registry.load()
+    const opened = registry.openPendingAgent({ engine: 'terminal', runtimes: [pane], cwd: '/tmp/work' })!
+    expect(opened).toMatchObject({ engine: 'terminal', terminalHost: true, sessionId: '', processIdentity: null })
+    expect(opened.defaultName).toMatch(/^Terminal /)
+    expect(registry.byRuntimeTerminal(pane)?.agentId).toBe(opened.agentId)
+
+    const { registry: reloaded } = await loadRegistryModule()
+    reloaded.load()
+    expect(reloaded.byAgent(opened.agentId)).toMatchObject({ engine: 'terminal', terminalHost: true })
+  })
+
+  it('adopts the engine started inside it — same agentId, process indexed under the engine — then a hook binds to it', async () => {
+    const transcriptPath = join(dataDir, 'session-t.jsonl')
+    writeFileSync(transcriptPath, '{}\n')
+    const { registry } = await loadRegistryModule()
+    registry.load()
+    const opened = registry.openPendingAgent({ engine: 'terminal', runtimes: [pane], cwd: '/tmp/work' })!
+
+    const adopted = registry.adoptEngine(opened.agentId, 'claude', processIdentity(909))!
+    expect(adopted.agentId).toBe(opened.agentId)
+    expect(adopted).toMatchObject({ engine: 'claude', terminalHost: true, launch: { state: 'ready' }, active: true })
+    expect(registry.byProcess('claude', processIdentity(909))?.agentId).toBe(opened.agentId)
+    expect(registry.byRuntimeTerminal(pane)).toBeUndefined()
+    expect(registry.byRuntimeEngine(pane, 'claude')?.agentId).toBe(opened.agentId)
+    // An agent already running an engine is never re-labelled.
+    expect(registry.adoptEngine(opened.agentId, 'codex', processIdentity(910))).toBeNull()
+
+    const bound = registry.register({ engine: 'claude', sessionId: 'session-t', transcriptPath, tmuxPane: '%9', processIdentity: processIdentity(909) })
+    expect(bound?.entry.agentId).toBe(opened.agentId)
+    expect(bound?.entry.terminalHost).toBe(true)
+    expect(registry.list()).toHaveLength(1)
+  })
+
+  it('a SessionStart hook that beats the reconciler adopts the terminal at its pane rather than minting nothing', async () => {
+    const transcriptPath = join(dataDir, 'session-h.jsonl')
+    writeFileSync(transcriptPath, '{}\n')
+    const { registry } = await loadRegistryModule()
+    registry.load()
+    const opened = registry.openPendingAgent({ engine: 'terminal', runtimes: [pane], cwd: '/tmp/work' })!
+    const bound = registry.register({ engine: 'claude', sessionId: 'session-h', transcriptPath, tmuxPane: '%9', processIdentity: processIdentity(911) })
+    expect(bound?.entry.agentId).toBe(opened.agentId)
+    expect(bound?.entry).toMatchObject({ engine: 'claude', terminalHost: true })
+    expect(registry.list()).toHaveLength(1)
+  })
+
+  it('releases the engine when it exits: a live terminal again, with nothing of the engine left on it', async () => {
+    const transcriptPath = join(dataDir, 'session-r.jsonl')
+    writeFileSync(transcriptPath, '{}\n')
+    const { registry } = await loadRegistryModule()
+    registry.load()
+    const opened = registry.openPendingAgent({ engine: 'terminal', runtimes: [pane], cwd: '/tmp/work' })!
+    registry.adoptEngine(opened.agentId, 'claude', processIdentity(912))
+    registry.register({ engine: 'claude', sessionId: 'session-r', transcriptPath, tmuxPane: '%9', processIdentity: processIdentity(912) })
+    registry.setBypassPermission(opened.agentId, true)
+
+    const released = registry.releaseEngine(opened.agentId)!
+    expect(released.agentId).toBe(opened.agentId)
+    expect(released).toMatchObject({ engine: 'terminal', terminalHost: true, active: true, launch: { state: 'ready' }, sessionId: '', processIdentity: null, transcriptPath: null, grid: null, model: null })
+    // The pane's launch shape survives the engine: the same flags come back with the next launch.
+    expect(released.bypassPermission).toBe(true)
+    expect(registry.bySession('session-r')).toBeUndefined()
+    expect(registry.byProcess('claude', processIdentity(912))).toBeUndefined()
+    expect(registry.byRuntimeTerminal(pane)?.agentId).toBe(opened.agentId)
+    expect(registry.terminalAvailable(opened.agentId)).toBe(true)
+    // Already a terminal? Nothing to release. A plain agent whose engine exited? A terminal from now on.
+    expect(registry.releaseEngine(opened.agentId)).toBeNull()
+    const plain = registry.openPendingAgent({ engine: 'codex', runtimes: [{ backend: 'tmux', paneId: '%10' }], cwd: '/tmp/x' })!
+    expect(plain.terminalHost).toBeUndefined()
+    expect(registry.releaseEngine(plain.agentId)).toMatchObject({ engine: 'terminal', terminalHost: true, active: true })
+    expect(registry.byRuntimeTerminal({ backend: 'tmux', paneId: '%10' })?.agentId).toBe(plain.agentId)
+
+    // And the next engine typed into the same shell is adopted just the same.
+    expect(registry.adoptEngine(opened.agentId, 'codex', processIdentity(913))).toMatchObject({ engine: 'codex' })
+  })
+})
+
+describe('lastOpenedAt: when an app last opened the agent, on the daemon clock', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    dataDir = mkdtempSync(join(tmpdir(), 'adapter-registry-opened-'))
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+    rmSync(dataDir, { recursive: true, force: true })
+    delete process.env.ADAPTER_DATA_DIR
+    delete process.env.CLAUDE_PROJECTS_DIR
+    delete process.env.CODEX_HOME
+    delete process.env.CURSOR_HOME
+  })
+
+  const OPENED = Date.UTC(2026, 8, 26, 9, 30)
+  const onDisk = () => JSON.parse(readFileSync(join(dataDir, 'registry.json'), 'utf-8')) as Array<Record<string, unknown>>
+
+  it('stamps the daemon’s own clock, persists it, and leaves the bookkeeping `touchedAt` alone', async () => {
+    const { registry } = await loadRegistryModule()
+    registry.load()
+    const pending = registry.openPendingAgent({ engine: 'claude', runtimes: [{ backend: 'tmux', paneId: '%41' }], cwd: '/tmp/demo' })!
+    expect(pending.lastOpenedAt).toBeUndefined()
+    expect(onDisk()[0]).not.toHaveProperty('lastOpenedAt')
+    const touchedAt = pending.touchedAt
+
+    vi.setSystemTime(OPENED)
+    const opened = registry.markOpened(pending.agentId)
+    expect(opened?.lastOpenedAt).toBe(OPENED)
+    expect(opened?.touchedAt).toBe(touchedAt)
+    expect(onDisk()[0]).toMatchObject({ agentId: pending.agentId, lastOpenedAt: OPENED, touchedAt })
+    expect(registry.markOpened('nobody')).toBeNull()
+
+    // The load rebuilds every row from a named list: a field missing there is written and then lost.
+    const { registry: reloaded } = await loadRegistryModule()
+    reloaded.load()
+    expect(reloaded.byAgent(pending.agentId)?.lastOpenedAt).toBe(OPENED)
+  })
+
+  it('survives the hook that rebuilds the row — the first prompt after an open must not erase it', async () => {
+    const transcriptPath = join(dataDir, 'session-opened.jsonl')
+    writeFileSync(transcriptPath, '{}\n')
+    const { registry } = await loadRegistryModule()
+    registry.load()
+    const pending = registry.openPendingAgent({ engine: 'claude', runtimes: [{ backend: 'tmux', paneId: '%42' }], cwd: '/tmp/demo' })!
+    vi.setSystemTime(OPENED)
+    registry.markOpened(pending.agentId)
+
+    vi.setSystemTime(OPENED + 60_000)
+    const bound = registry.register({ sessionId: 'session-opened', transcriptPath, tmuxPane: '%42', cwd: '/tmp/demo' })
+    expect(bound?.entry.agentId).toBe(pending.agentId)
+    expect(bound?.entry.lastOpenedAt).toBe(OPENED)
+    // ...and again on a re-register of the same session, then on disk.
+    const again = registry.register({ sessionId: 'session-opened', transcriptPath, tmuxPane: '%42', cwd: '/tmp/demo' })
+    expect(again?.entry.lastOpenedAt).toBe(OPENED)
+    expect(onDisk()[0]).toMatchObject({ agentId: pending.agentId, lastOpenedAt: OPENED })
+  })
+
+  it('never lets a hand-edited or nonsensical stamp reach the frame', async () => {
+    const { registry, strictPersistedRow } = await loadRegistryModule()
+    registry.load()
+    const pending = registry.openPendingAgent({ engine: 'claude', runtimes: [{ backend: 'tmux', paneId: '%43' }], cwd: '/tmp/demo' })!
+    const row = onDisk()[0]
+    expect(strictPersistedRow({ ...row, lastOpenedAt: OPENED })?.lastOpenedAt).toBe(OPENED)
+    for (const bad of ['yesterday', -5, 0, 1.5, Number.NaN, null]) {
+      expect(strictPersistedRow({ ...row, lastOpenedAt: bad })).not.toHaveProperty('lastOpenedAt')
+    }
+
+    writeFileSync(join(dataDir, 'registry.json'), JSON.stringify([{ ...row, lastOpenedAt: 'yesterday' }]), { mode: 0o600 })
+    const { registry: reloaded } = await loadRegistryModule()
+    reloaded.load()
+    expect(reloaded.byAgent(pending.agentId)).toBeTruthy()
+    expect(reloaded.byAgent(pending.agentId)).not.toHaveProperty('lastOpenedAt')
   })
 })

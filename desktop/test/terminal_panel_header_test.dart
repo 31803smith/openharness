@@ -14,6 +14,25 @@ import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import 'support/real_fonts.dart';
 
+class _PrNotifier extends AppNotifier {
+  _PrNotifier()
+    : super(
+        config: AppConfig.dev,
+        authSession: AuthSession(),
+        configStore: null,
+      );
+  @override
+  Future<Map<String, dynamic>> readAgentPullRequest(
+    String machineId,
+    String agentId,
+  ) async => {
+    'status': 'found',
+    'number': 260,
+    'state': 'Draft',
+    'url': 'https://github.com/autonomous-ai/openharness/pull/260',
+  };
+}
+
 void main() {
   setUpAll(loadRealFonts);
   TerminalSession sessionNamed(String name) {
@@ -30,17 +49,24 @@ void main() {
     return session;
   }
 
-  Future<void> pump(WidgetTester tester, TerminalSession session) async {
+  Future<void> pump(
+    WidgetTester tester,
+    TerminalSession session, {
+    double width = 900,
+    bool withPr = false,
+  }) async {
     // Wider than the pane, and stated: the default test window is 800px, and a
     // `SizedBox(width: 900)` inside it is silently clamped to 800.
     tester.view.physicalSize = const Size(1200, 800);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.reset);
-    final notifier = AppNotifier(
-      config: AppConfig.dev,
-      authSession: AuthSession(),
-      configStore: null,
-    );
+    final notifier = withPr
+        ? _PrNotifier()
+        : AppNotifier(
+            config: AppConfig.dev,
+            authSession: AuthSession(),
+            configStore: null,
+          );
     notifier.machineStates['local'] =
         MachineState(
             const Machine(
@@ -66,7 +92,7 @@ void main() {
       MaterialApp(
         home: Scaffold(
           body: SizedBox(
-            width: 900,
+            width: width,
             height: 320,
             child: TerminalPanel(
               notifier: notifier,
@@ -78,6 +104,19 @@ void main() {
       ),
     );
     await tester.pump();
+  }
+
+  for (final width in [420.0, 600.0, 720.0, 900.0]) {
+    testWidgets('PR badge remains visible at pane width $width', (
+      tester,
+    ) async {
+      final session = sessionNamed('Desktop');
+      addTearDown(session.dispose);
+      await pump(tester, session, width: width, withPr: true);
+      expect(find.text('#260 Draft'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox());
+    });
   }
 
   // Each shape describes the path topology, not an assumed speed: direct link, intermediate hop,
@@ -99,7 +138,9 @@ void main() {
         session.status = status;
         await pump(tester, session);
         final nameRect = tester.getRect(find.text('Desktop'));
-        final statusRect = tester.getRect(find.text(label));
+        final statusRect = tester.getRect(
+          find.widgetWithText(TextButton, label),
+        );
         expect(statusRect.left, greaterThan(nameRect.right));
         expect(statusRect.right, lessThan(projectRect.left));
         expect(tester.getRect(project), projectRect);
@@ -196,4 +237,96 @@ void main() {
     expect(find.byIcon(LucideIcons.server), findsOneWidget);
     expect(tester.getCenter(find.byIcon(LucideIcons.server)), position);
   });
+
+  // ── the harness verdict chip ─────────────────────────────────────────────
+
+  Future<AppNotifier> pumpWithAgent(
+    WidgetTester tester,
+    TerminalSession session,
+    Agent agent, {
+    AppNotifier? app,
+  }) async {
+    tester.view.physicalSize = const Size(1200, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final notifier =
+        app ??
+        AppNotifier(
+          config: AppConfig.dev,
+          authSession: AuthSession(),
+          configStore: null,
+        );
+    if (app == null) addTearDown(notifier.dispose);
+    notifier.machineStates['local'] = MachineState(
+      const Machine(
+        machineId: 'local',
+        authMode: MachineAuthMode.remote,
+        name: 'This Mac',
+      ),
+    )..agents = [agent];
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SizedBox(
+            width: 900,
+            height: 320,
+            child: TerminalPanel(
+              notifier: notifier,
+              session: session,
+              focused: true,
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+    return notifier;
+  }
+
+  Agent agentWith(AgentVerdict? verdict) => Agent(
+    id: 'agent-1',
+    name: 'a',
+    engine: 'claude',
+    dsh: 'autonomous/autonomous-circuit',
+    dshName: 'Autonomous Circuit',
+    terminalAvailable: true,
+    verdict: verdict,
+  );
+
+  testWidgets(
+    'a harness agent is drawn as its harness, with no chip of its own',
+    (tester) async {
+      final chip = find.byKey(const ValueKey('pane-verdict-chip'));
+      final session = sessionNamed('a');
+      addTearDown(session.dispose);
+      final notifier = await pumpWithAgent(
+        tester,
+        session,
+        agentWith(
+          const AgentVerdict(ready: true, summary: 'Board is fab-ready'),
+        ),
+      );
+      // Its harness — icon and name, like every other pane; no second mark
+      // for the engine underneath (owner, 2026-09-15).
+      expect(
+        find.byKey(const ValueKey('engine-icon-autonomous/autonomous-circuit')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('pane-header-base-engine')),
+        findsNothing,
+      );
+      // The verdict is the viewer pane's to show (owner, 2026-09-15): the
+      // terminal header carries none, before or after a verdict arrives.
+      expect(chip, findsNothing);
+      await pumpWithAgent(
+        tester,
+        session,
+        agentWith(const AgentVerdict(ready: false, errors: 2)),
+        app: notifier,
+      );
+      expect(chip, findsNothing);
+      expect(find.text('2 errors'), findsNothing);
+    },
+  );
 }

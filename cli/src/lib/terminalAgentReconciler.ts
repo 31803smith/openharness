@@ -1,4 +1,4 @@
-import type { AgentEngine } from '../engines/types.js'
+import { isTerminalEngine, type AgentEngine } from '../engines/types.js'
 import type { RegisteredSession } from './registry.js'
 import {
   probeTerminalAgents,
@@ -7,7 +7,7 @@ import {
   type TerminalAgentProbe,
 } from './terminalAgentDiscovery.js'
 import type { TerminalBackend } from './terminalBackend.js'
-import { mergeTerminalRuntimes, processIdentityKey, terminalPlacementKey, terminalRouteKey } from './terminalRuntime.js'
+import { mergeTerminalRuntimes, processIdentityKey, terminalInstanceId, terminalPlacementKey, terminalRouteKey } from './terminalRuntime.js'
 import type { TerminalRuntimeRef } from './terminalTypes.js'
 
 const MISS_LIMIT = 2
@@ -16,7 +16,6 @@ export interface TerminalAgentReconcilerDeps {
   current: () => RegisteredSession[]
   backends: readonly TerminalBackend[]
   backendOrder: readonly string[]
-  herdrSessionOrder: readonly string[]
   onDiscovered: (agent: DiscoveredTerminalAgent) => void | Promise<void>
   onObserved: (agent: DiscoveredTerminalAgent, current: RegisteredSession) => void | Promise<void>
   onDormant: (current: RegisteredSession, reason: string) => void | Promise<void>
@@ -24,8 +23,6 @@ export interface TerminalAgentReconcilerDeps {
   onTerminalAvailability?: (current: RegisteredSession, available: boolean) => void | Promise<void>
   onProbeStatus?: (status: { ready: true; error: string | null }) => void
   transaction?: <T>(apply: () => T | Promise<T>) => Promise<T>
-  /** Refresh configured backend instances before each immutable probe cycle. */
-  beforeProbe?: () => void | Promise<void>
   probe?: (hints: ReadonlyMap<string, AgentEngine>) => Promise<TerminalAgentProbe>
   daemonPid?: number
 }
@@ -48,25 +45,51 @@ function sharesPlacement(
  * a first-run prompt (Claude folder trust is the common case). Once a session binds, process identity is
  * authoritative again so a different process in the same pane cannot inherit an existing transcript.
  */
+/**
+ * Whether a row may own an observed engine process at its own route. The same engine, or a
+ * terminal — a shell somebody typed `claude` into: the process is what the terminal is running now,
+ * and the row adopts the engine (cli.ts `onObserved` → `registry.adoptEngine`) rather than a second
+ * agent being minted for the same pane.
+ */
+function routeEngineMatches(current: Pick<RegisteredSession, 'engine'>, observed: Pick<DiscoveredTerminalAgent, 'engine'>): boolean {
+  return current.engine === observed.engine || isTerminalEngine(current.engine)
+}
+
 function unboundRouteOwner(
   current: readonly RegisteredSession[],
   observed: DiscoveredTerminalAgent,
 ): RegisteredSession | undefined {
   const matches = current.filter((candidate) => (
     !candidate.sessionId
-    && candidate.engine === observed.engine
+    && routeEngineMatches(candidate, observed)
     && sharesPlacement(candidate, observed)
   ))
   return matches.length === 1 ? matches[0] : undefined
 }
 
+/**
+ * The observation for a row that cannot be matched by process identity, because it does not have one
+ * yet. Its terminal route is the only identity it has.
+ *
+ * ⚠️ `!sessionId` is NOT the test, and that was a real bug. A RESUMED row keeps the archived session
+ * id while `resumePendingAgent` clears its `processIdentity` — so it has an id and no process, and
+ * the old test made exactly the row that is waiting to be confirmed invisible to every scan. Nothing
+ * else looks at it either: `bindObservedAgent` keys on `byProcess`, and the dormancy branch below
+ * skips it because a failed launch already cleared `active`. A resume whose engine never sent a
+ * startup hook therefore sat at "Starting" — measured at 19 hours over a pane its owner could type
+ * in (openharness#189) — with the heal in cli.ts's `onObserved` (`if (wasLaunching) setLaunch(ready)`)
+ * never reached.
+ *
+ * A row with BOTH an id and a process keeps the stricter rule: process identity is authoritative
+ * again, so a different process in the same pane cannot inherit its transcript.
+ */
 function unboundRouteObservation(
   current: RegisteredSession,
   observed: readonly DiscoveredTerminalAgent[],
 ): DiscoveredTerminalAgent | undefined {
-  if (current.sessionId) return undefined
+  if (current.sessionId && current.processIdentity) return undefined
   const matches = observed.filter((candidate) => (
-    candidate.engine === current.engine && sharesPlacement(current, candidate)
+    routeEngineMatches(current, candidate) && sharesPlacement(current, candidate)
   ))
   return matches.length === 1 ? matches[0] : undefined
 }
@@ -88,10 +111,20 @@ export class TerminalAgentReconciler {
 
   constructor(private readonly deps: TerminalAgentReconcilerDeps) {}
 
+  /**
+   * Arm the interval FIRST, then run the opening pass.
+   *
+   * The other way round — await, then schedule — meant a first pass that threw left discovery
+   * unscheduled for the life of the daemon: no new agents, no liveness, `discoveryReady` never true,
+   * and the caller's own start-up rejected on top of it. Neither is worth one bad probe. The opening
+   * pass is reported and dropped; the interval retries it a few seconds later.
+   */
   async start(intervalMs: number): Promise<void> {
-    await this.trigger()
     this.timer = setInterval(() => { void this.trigger() }, intervalMs)
     this.timer.unref?.()
+    await this.trigger().catch((error) => {
+      console.warn(`[discovery] first pass failed, retrying on the interval · ${error instanceof Error ? error.message : error}`)
+    })
   }
 
   stop(): void {
@@ -181,14 +214,12 @@ export class TerminalAgentReconciler {
   }
 
   private async reconcileOnce(): Promise<void> {
-    await this.deps.beforeProbe?.()
     const hints = new Map(this.hints)
     const probe = await (this.deps.probe
       ? this.deps.probe(hints)
       : probeTerminalAgents(
         this.deps.backends,
         this.deps.backendOrder,
-        this.deps.herdrSessionOrder,
         this.deps.daemonPid ?? process.pid,
         hints,
       ))
@@ -304,8 +335,13 @@ export class TerminalAgentReconciler {
         if (terminalVerified) await this.deps.onTerminalAvailability?.(current, true)
         if (observed) {
           this.engineMisses.delete(current.agentId)
-        } else if (current.active && terminalVerified && !current.runtimes.some((runtime) =>
+        } else if (current.active && terminalVerified && !isTerminalEngine(current.engine) && !current.runtimes.some((runtime) =>
           probe.ambiguousPlacements.has(terminalPlacementKey(runtime)))) {
+          // A live pane with no engine process in it. For an agent that is a dormant engine; for a
+          // terminal (`engine === 'terminal'`) it is simply a shell at its prompt, which is why the
+          // branch is skipped for one. A terminal that ADOPTED an engine (`terminalHost`, engine no
+          // longer `terminal`) does come through here when that engine exits — the handler turns it
+          // back into a terminal rather than marking it dormant (cli.ts `onDormant`).
           const misses = (this.engineMisses.get(current.agentId) ?? 0) + 1
           if (misses >= MISS_LIMIT) {
             this.engineMisses.delete(current.agentId)
@@ -320,7 +356,7 @@ export class TerminalAgentReconciler {
             .filter((target) => target.result.state === 'available')
             .map((target) => target.instanceId))
           const unknownRuntimes = current.runtimes.filter((runtime) => !availableInstances.has(
-            runtime.backend === 'tmux' ? 'tmux:default' : `herdr:${runtime.endpointId}`,
+            terminalInstanceId(runtime),
           ))
           const merged: DiscoveredTerminalAgent = {
             ...observed,

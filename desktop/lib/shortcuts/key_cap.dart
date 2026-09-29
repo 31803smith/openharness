@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 
 import '../shared/theme/app_theme.dart' as grid;
@@ -14,9 +16,10 @@ import 'app_shortcuts.dart';
 /// [grid.AppSurface.wellFill] is an overlay, so a cap keeps its edge on a
 /// raised card and on a recessed one without being picked for either.
 class KeyCap extends StatelessWidget {
-  const KeyCap(this.label, {super.key});
+  const KeyCap(this.label, {super.key, this.textStyle});
 
   final String label;
+  final TextStyle? textStyle;
 
   /// Square at a single glyph, so ⌘ and W sit in caps of the same size and the
   /// column stays a column. A longer label ("esc", "1 – 9") grows past it.
@@ -26,10 +29,17 @@ class KeyCap extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     grid.AppTheme.watch(context);
+    final style = textStyle ?? grid.AppType.monoMeta();
+    final iconSize = MediaQuery.textScalerOf(context).scale(style.fontSize!);
+    final minEdge = math.max(height, iconSize + 8);
     return Container(
-      constraints: const BoxConstraints(minWidth: _minWidth),
-      height: height,
-      padding: const EdgeInsets.symmetric(horizontal: 6),
+      // A minimum, not a fixed height: large text and a multi-stroke custom
+      // binding must be able to grow without clipping their glyphs.
+      constraints: BoxConstraints(
+        minWidth: math.max(_minWidth, minEdge),
+        minHeight: minEdge,
+      ),
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
       decoration: BoxDecoration(
         color: grid.AppSurface.wellFill,
         borderRadius: BorderRadius.circular(6),
@@ -42,20 +52,20 @@ class KeyCap extends StatelessWidget {
       // and a label squeezed to a character per line beside it.
       child: Center(
         widthFactor: 1,
+        heightFactor: 1,
         child: label == '⇥' || label == '↵' || label == '⏎'
             ? Semantics(
                 label: label == '⇥' ? 'Tab' : 'Return',
                 child: Icon(
                   label == '⇥' ? Icons.keyboard_tab : Icons.keyboard_return,
-                  size: 14,
+                  size: iconSize,
                   color: grid.AppPalette.textPrimary,
                 ),
               )
             : Text(
                 label,
-                style: TextStyle(
+                style: style.copyWith(
                   color: grid.AppPalette.textPrimary,
-                  fontSize: 11.5,
                   height: 1,
                   // Tabular so ⌘1 – ⌘9 and ⌘W keep the same cap width.
                   fontFeatures: const [FontFeature.tabularFigures()],
@@ -73,9 +83,12 @@ class KeyCap extends StatelessWidget {
 /// arrive already knowing, and a screen that only lists `⌘]` teaches them the
 /// app doesn't have the key they are about to press.
 class KeyChordView extends StatelessWidget {
-  const KeyChordView({super.key, required this.chords});
+  const KeyChordView({super.key, required this.chords, this.textStyle});
 
   final List<KeyChord> chords;
+
+  /// Shortcut help can follow the terminal while other app hints keep their scale.
+  final TextStyle? textStyle;
 
   @override
   Widget build(BuildContext context) {
@@ -91,13 +104,12 @@ class KeyChordView extends StatelessWidget {
               padding: const EdgeInsets.symmetric(horizontal: 2),
               child: Text(
                 'or',
-                style: TextStyle(
+                style: (textStyle ?? grid.AppType.caption()).copyWith(
                   color: grid.AppPalette.textFaint,
-                  fontSize: 10.5,
                 ),
               ),
             ),
-          for (final key in chords[i]) KeyCap(key),
+          for (final key in chords[i]) KeyCap(key, textStyle: textStyle),
         ],
       ],
     );

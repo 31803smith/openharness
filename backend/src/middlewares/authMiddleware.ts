@@ -3,6 +3,7 @@ import { authenticateAccessToken, bearerToken, SsoAuthError } from '../lib/ssoAu
 import type { AuthUser } from '../lib/ssoAuth.js'
 import { ForbiddenError } from '../errors/index.js'
 import { parseAutonomousEnvironment, type AutonomousEnvironment } from '../lib/autonomousEnvironment.js'
+import { countryCodeFromHeaders, stampUserCountry } from '../lib/clientGeo.js'
 
 /**
  * Public local routes (no user access token). Data-plane requests never reach Fastify — they're
@@ -19,6 +20,11 @@ export function shouldSkipAuth(url: string): boolean {
     path === '/api/auth/authorize-native' ||
     path === '/api/auth/exchange' ||
     path === '/api/auth/refresh' ||
+    // Scan to sign in: the phone has no token yet, and the one-time code it carries IS the credential
+    // (lib/harnessSession.ts). Revoke takes the refresh token, the same authority /refresh does.
+    // `/api/auth/handoff` itself is NOT listed: minting a code needs the computer's sign-in.
+    path === '/api/auth/handoff/redeem' ||
+    path === '/api/auth/revoke' ||
     path === '/api/auth/logout-url' ||
     // Public app-deploy registration — agent-key gated (x-api-key), self-validated in its
     // own preHandler (agentAuth). Called by the agent-node's domain MCP, not the web SSO token.
@@ -58,6 +64,9 @@ export function registerAuthMiddleware(
   app.addHook('onRequest', async (request: FastifyRequest, reply: FastifyReply) => {
     if (shouldSkipAuth(request.url)) return
     const token = bearerToken(request.headers['authorization'])
+    // Anonymous public-link discovery only. With a token, authenticate normally so private links
+    // and commenting use the real account. Never exempt a mutation or the invitation inventory.
+    if (!token && request.method === 'GET' && /^\/api\/shared-agents\/[a-f0-9-]{36}$/.test(request.url.split('?')[0])) return
     if (!token) {
       return reply.code(401).send({ success: false, error: { code: 'UNAUTHORIZED', message: 'Unauthorized' } })
     }
@@ -70,6 +79,11 @@ export function registerAuthMiddleware(
     const auth = await resolveSsoAuth(token, authenticate, autonomousEnv)
     if ('user' in auth) {
       request.user = auth.user
+      // Where the person is, per Cloudflare (`CF-IPCountry`, absent off-Cloudflare). Every control-plane
+      // call comes from their own computer, which is what makes this — and not the daemon's socket —
+      // the "user country" signal. Fire-and-forget and rate-floored inside; never on the request path.
+      const countryCode = countryCodeFromHeaders(request.headers)
+      if (countryCode) void stampUserCountry(auth.user.sub, countryCode)
       return
     }
     return reply.code(auth.status).send({

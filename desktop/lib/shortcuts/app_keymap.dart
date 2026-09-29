@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/widgets.dart';
 
 import 'app_shortcuts.dart';
@@ -55,7 +56,6 @@ class AppKeymap extends ChangeNotifier {
     final reserved = {
       for (final chord in [
         'cmd+q',
-        'cmd+m',
         'cmd+alt+h',
         'cmd+ctrl+f',
         'cmd+c',
@@ -193,19 +193,24 @@ List<ShortcutRow> effectiveShortcutRows(
   }
   final bindings = (map ?? harnessDefaultKeymap).bindingsFor(contextKind);
   final defaultDigits =
-      contextKind != KeymapContext.picker &&
+      !contextKind.isPicker &&
       List.generate(kTabDigitCount, (i) {
         final matches = bindings
             .where((b) => b.command == 'swarm.select_${i + 1}')
             .toList();
         return matches.length == 1 &&
             matches.single.keys.length == 1 &&
-            matches.single.keys.single == KeyStroke.parse('cmd+${i + 1}');
+            matches.single.keys.single ==
+                KeyStroke.parse(platformWorkspaceBinding('cmd+${i + 1}'));
       }).every((value) => value);
   final shortcuts = appShortcuts();
   return [
     for (final command in harnessCommands)
-      if ((command.context == KeymapContext.workspace ||
+      if (!command.hidden &&
+          harnessCommandActive(command.id) &&
+          (command.context == KeymapContext.workspace ||
+              (contextKind == KeymapContext.project &&
+                  command.context == KeymapContext.picker) ||
               command.context == contextKind) &&
           (!defaultDigits ||
               !RegExp(r'^swarm\.select_[1-9]$').hasMatch(command.id)))
@@ -234,9 +239,9 @@ List<ShortcutRow> effectiveShortcutRows(
           ),
     if (defaultDigits)
       const ShortcutRow(
-        label: 'Select harnesses 1–9',
+        label: 'Select swarms 1–9',
         chords: [
-          ['⌘', '1 – 9'],
+          [kIsWeb ? 'Alt' : '⌘', '1 – 9'],
         ],
         group: ShortcutGroup.navigate,
       ),

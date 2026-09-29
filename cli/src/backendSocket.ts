@@ -1,4 +1,8 @@
+import { readSessionGitPullRequest } from './lib/sessionGitPullRequest.js'
+import type { HarnessShareOwner } from './sharing/owner.js'
+import { SHARE_REQUEST_TYPES } from './sharing/protocol.js'
 import { AutonomousDeviceRelay } from './lib/autonomous-device/relay.js'
+import { deviceDump } from './lib/autonomous-device/dump.js'
 import type { AutonomousDeviceService, AutonomousDeviceFrame } from './lib/autonomous-device/service.js'
 /**
  * BackendSocket — the CLI's dial-out connection to the backend's `/api/adapter-ws`.
@@ -16,34 +20,78 @@ import type { AutonomousDeviceService, AutonomousDeviceFrame } from './lib/auton
  */
 
 import { WebSocket } from 'ws'
-import { watchSocketLiveness, type LivenessWatch } from './lib/wsLiveness.js'
-import { stat, readFile } from 'fs/promises'
-import { isAbsolute, join } from 'path'
-import { hostname } from 'os'
+import { BACKEND_IDLE_DEADLINE_MS, watchSocketLiveness, type LivenessWatch } from './lib/wsLiveness.js'
+import { stat, readFile, readdir } from 'fs/promises'
+import { existsSync } from 'node:fs'
+import { dirname, isAbsolute, join } from 'path'
+import { hostname, homedir } from 'os'
 import { env } from './config/env.js'
 import { AuthSessionManager, AuthSessionError } from './lib/authSession.js'
 import { VERSION } from './version.js'
 import { registry, projectDisplayName, type RegisteredSession } from './lib/registry.js'
-import { ENGINES, type AgentEngine } from './engines/types.js'
+import { AgentStopError } from './lib/stopAgentService.js'
+import { isHiddenBuiltin } from './dsh/builtins.js'
+import { ENGINES, PROCESS_ENGINES, isTerminalEngine, type AgentEngine, type ProcessEngine } from './engines/types.js'
 import { listDir } from './lib/fsBrowse.js'
 import { linkCodexProfile, listCodexProfiles } from './lib/codexProfiles.js'
-import { parseGridLaunchOverride, type GridLaunchOverride } from './lib/gridLaunch.js'
+import { gridCliPresence } from './lib/gridExec.js'
+import { GridFleetRpc, GRID_FLEET_PROTOCOL, GRID_FLEET_MAX_TIMEOUT_MS, parseGridFleetRequest } from './lib/gridFleetRpc.js'
+import { LocalModels } from './lib/localModels.js'
+import { ApiConnectionError, ApiConnections, apiConnectionsRequest } from './lib/apiConnections.js'
+import { apiModelsRequest, rememberSavedApis, resolveApiTarget } from './lib/apiModels.js'
+import { gridCapableEngines, isApiLaunch, parseGridLaunchOverride, type GridLaunchOverride } from './lib/gridLaunch.js'
+import {
+  forgetGridModels, gridInventory, listAllGridModels, onGridModelsChanged, presentGridSections, retargetPrewarm, type GridSection,
+} from './lib/gridModels.js'
+import { resolveGridTarget } from './lib/gridTarget.js'
+import { parseNewAgentModel, resolveNewAgentModel } from './lib/newAgentModel.js'
+import { deriveHarnessGridName } from './lib/gridDerive.js'
+import { AGENT_NAME_RE, FirstPromptUnsupportedError, MAX_FIRST_PROMPT_CHARS, NamedAgentUnsupportedError, permissionModeApproves, permissionModeFlags, supportsFirstPrompt, supportsNamedAgent } from './lib/engineLaunch.js'
 import { readAccountUsage, type AccountUsageReading } from './lib/accountUsage.js'
 import { probeEngines } from './lib/engineProbe.js'
+import { readMachineResources } from './lib/machineResources.js'
 import { AgentCreationReceipts, AgentCreationReceiptError, creationFingerprint, validCreationId, type AgentCreationStatus } from './lib/agentCreationReceipt.js'
 import { engineInstallRecipe } from './lib/engineInstall.js'
-import { parseProjectFolder, prepareProjectFolder, ProjectFolderError } from './lib/projectFolder.js'
+import { parseProjectFolder, prepareProjectFolder, projectsRoot, ProjectFolderError } from './lib/projectFolder.js'
+import { claudeTrusts, codexTrusts, preTrustClaudeProject, preTrustCodexProject } from './lib/claudeTrust.js'
 import { projectPreview } from './lib/projectPreview.js'
-import { agentFrame, type AgentFrame } from './lib/agentFrame.js'
+import { readGitProject } from './lib/gitProject.js'
+import { agentFrame, lastActivityAt, type AgentDshContext, type AgentFrame } from './lib/agentFrame.js'
+import { agentTokenUsage } from './lib/agentTokenUsage.js'
+import { installedDsh, listInstalledDsh } from './dsh/installed.js'
+import { OrchestratorService } from './orchestrator/service.js'
+import { OrchestratorError } from './orchestrator/model.js'
+import { orchestratorRequest } from './orchestrator/wire.js'
+import { TeamService } from './teams/service.js'
+import { SwarmPromptScopes } from './teams/promptScope.js'
+import { ChannelDirectory } from './teams/channels.js'
+import { TeamMailbox } from './teams/mailbox.js'
+import { teamRequest, teamDeliveryRequest, TEAM_REQUEST_TYPES, teamFailure } from './teams/wire.js'
+import { teamRpc } from './teams/client.js'
+import { Address, Id, OperationId, Receipt, TeamError, type MemberRuntime } from './teams/model.js'
+import { shellQuote } from './orchestrator/prompts.js'
+import type { SessionInputDelivery } from './lib/sessionInput.js'
+import type { QuestionAnswerResult } from './lib/askQuestion.js'
+import { engineLabel } from './lib/agentNames.js'
+import { DSH_ID_RE, dshSupportedEngines } from './dsh/manifest.js'
+import { refreshDshRegistry } from './dsh/catalog.js'
+import type { DshInstallProgress } from './dsh/install.js'
+import { dshInstallReply, dshInstallRequest, dshInstallStatus, dshListRows, dshRemoveId, dshRemoveReply } from './dsh/wire.js'
+import { terminalHandoffRequest } from './lib/terminalHandoff.js'
 import { routeVoiceTask } from './lib/voiceRouter.js'
 import { tailFile } from './lib/sessions.js'
+import { stoppedAgents } from './lib/stoppedAgents.js'
 import { messagesToEvents, windowRawLines, subagentStatsFromRawLines, type SessionEvent } from './lib/normalize.js'
-import { listFileTree, readProjectFile } from './lib/files.js'
 import { MediaPreviewError, readMediaPreviewChunk } from './lib/mediaPreview.js'
+import { ViewerForwarder } from './lib/viewerForwarder.js'
+import { InteractiveViewers } from './lib/interactiveViewer.js'
+import { OwnerCommands, OWNER_COMMAND_TYPES } from './lib/ownerCommands.js'
+import { VIEWER_DOWN_TYPES } from './lib/viewerWire.js'
 import { codexMessagesToEvents, windowCodexLines } from './engines/codex/normalizer.js'
 import { codexSubagentResolverFor } from './engines/codex/subagent.js'
 import { parseHostTheme, type HostTheme } from './lib/hostTheme.js'
 import { cursorMessagesToEvents, windowCursorLines } from './engines/cursor/normalizer.js'
+import { cursorConfigDir, cursorDataDir } from './engines/cursor/home.js'
 import { loadCursorReplayTaskLinks } from './engines/cursor/subagent.js'
 import { opencodeMessagesToEvents, windowOpencodeMessages } from './engines/opencode/normalizer.js'
 import { kiloMessagesToEvents, windowKiloMessages } from './engines/kilo/normalizer.js'
@@ -58,10 +106,12 @@ import { commandcodeMessagesToEvents, windowCommandCodeLines } from './engines/c
 import { hermesMessagesToEvents, windowHermesMessages } from './engines/hermes/normalizer.js'
 import { devinMessagesToEvents, windowDevinMessages } from './engines/devin/normalizer.js'
 import { readHermesMessages } from './engines/hermes/reader.js'
+import { hermesDbForSession } from './lib/hermesHome.js'
 import { readDevinMessages } from './engines/devin/reader.js'
 import { readOpencodeMessages } from './engines/opencode/reader.js'
 import { readKiloMessages } from './engines/kilo/reader.js'
-import { E2eeManager, type PairResult } from './lib/e2ee/manager.js'
+import { E2eeManager, type LinkedPeer, type PairResult } from './lib/e2ee/manager.js'
+import { MachinePeerStore } from './lib/e2ee/machinePeers.js'
 import type { TerminalStreamManager } from './lib/terminalStreamManager.js'
 import {
   decodeTerminalHop,
@@ -70,12 +120,17 @@ import {
   TerminalHopDirection,
   type TerminalBinaryClear,
 } from './lib/terminalBinary.js'
-import { b64d, fingerprint, ENCRYPTED_RPC_RESULT_TYPES, isEncryptedDownType, isWrapped } from './lib/e2ee/core.js'
+import { b64d, fingerprint, isWrapped } from './lib/e2ee/core.js'
+import { encryptRpcResult, PAIR_REQUESTS, PLATE_REQUEST, rpcResultType } from './lib/e2ee/applicationFrames.js'
+import type { PairEvent, PairService } from './pair/protocol.js'
+import { tmuxPaneInfo } from './lib/tmux.js'
 import { DEVICE_RECENT_SAFE_FRAME_BYTES, fitRecentReplyPayloadForDevice } from './lib/deviceRecentTrim.js'
 import { shouldReplayCommander } from './lib/commanderReplay.js'
 import { RuntimeProfileControlError, type RuntimeProfileErrorCode } from './lib/runtimeProfileController.js'
 import { parseRuntimeProfile, type RuntimeModelOption } from './lib/runtimeProfile.js'
 import { sid, preview, logFrame } from './lib/log.js'
+import type { SessionSearchResult } from './lib/sessionSearch/indexer.js'
+import type { SessionTail } from './lib/sessionSearch/store.js'
 import {
   TerminalP2pResponderPool,
   TERMINAL_P2P_DOWN_TYPES,
@@ -89,20 +144,33 @@ const OPENCODE_DB = join(env.OPENCODE_DATA_DIR, 'opencode.db')
 // Kilo keeps history the same way opencode does, in its own store.
 const KILO_DB = join(env.KILO_DATA_DIR, 'kilo.db')
 const DEVIN_DB = join(env.DEVIN_HOME, 'sessions.db')
-// Hermes history likewise comes from a SQLite store, not a per-session file.
-const HERMES_DB = join(env.HERMES_HOME, 'state.db')
+// Hermes history likewise comes from a SQLite store, not a per-session file — one per HOME, so the
+// path is the session's own (`hermesDbForSession`) rather than this machine's default.
 
 /** Answers the device `project_recent` RPC — set by cli.ts to the CommanderMirror's `recent`. */
 export type RecentProvider = (sessionId: string, n: number) => Array<{ kind: string; text: string; recap?: string }>
 
 
 const APP_PING_MS = 15_000
+// Floor between two `app_presence` up-frames while a window is attached. Rides the 15s app-ping
+// tick; the backend only needs to hear about it about once a minute (it floors its own Mongo write
+// at five). `open` is never held back — it is the one that counts as a session in
+// `user_daily_presence`.
+const APP_PRESENCE_UP_MS = 60_000
 // How long the opening handshake may take before the attempt is abandoned and retried. `ws` waits
 // forever by default, and the heartbeat below only starts on 'open' — so a TCP connection that came
 // up while the network was flapping but never got its upgrade answered sat in CONNECTING for hours,
 // `this.ws` set, every later connect() returning early, and the daemon reporting "cloud
 // reconnecting…" until someone restarted it.
 const HANDSHAKE_TIMEOUT_MS = 15_000
+/** How long `resolveGridName` waits for a grid reconcile still in flight before answering with
+ *  whatever is resolved. Well under the app's 12s `grid_models_list` timeout, leaving that RPC room
+ *  for its own `grid` spawns; a reconcile slower than this lands by the next open. */
+const GRID_ATTACH_WAIT_MS = 6_000
+/** An `agent_update {opened: true}` for an agent opened less than this long ago is answered but not
+ *  stamped or broadcast: a person flicking between two tabs, or two apps opening the same agent at
+ *  once, would otherwise push a frame to every client for each flick. Exported for the spec. */
+export const AGENT_OPENED_THROTTLE_MS = 3_000
 const BASE_DELAY_MS = 1_000
 const MAX_DELAY_MS = 30_000
 const QUEUE_MAX = 2_000
@@ -119,8 +187,42 @@ export interface LocalClientSink {
   sendBinary: (frame: Uint8Array) => boolean
 }
 
-function isLocalClientId(connId: string): boolean {
+/** A loopback desktop connection (localWsServer.ts), as opposed to a cloud/relay one. */
+export function isLocalClientId(connId: string): boolean {
   return connId.startsWith('local:')
+}
+
+/**
+ * Where a down-frame came from, carried with it to `dispatchDown`.
+ *
+ * `relay` is the backend link and ONLY the backend link; `local` is a process on this machine
+ * talking to the daemon's local socket; `p2p` is a paired device over its own channel. The
+ * distinction is a trust boundary, not bookkeeping: a handful of frames are the backend's alone to
+ * send, and before `local` existed they were accepted from anything that could open the local port.
+ */
+export type DownTransport = 'relay' | 'local' | 'p2p'
+
+/**
+ * Down-frames only the BACKEND may send, refused from every other transport.
+ *
+ * Each one hands the daemon an instruction no client is entitled to give:
+ *   - `machine_meta` names the account's private grid — the inference endpoint every agent on this
+ *     computer is then pointed at. Forged, it redirects the account's work to a grid of the
+ *     sender's choosing. A leftover test script did exactly this by accident once.
+ *   - `machine_revoked` clears the stored SSO session and exits the daemon. Forged, it is a
+ *     one-frame forced sign-out and denial of service.
+ *
+ * Neither is sent by any client in this repository — only by `backend/src/lib/adapterWs.ts` and
+ * `backend/src/services/MachineService.ts` — so there is nothing to stay compatible with. The
+ * backend blocks its OWN `__`-prefixed control frames from web clients for the same reason; these
+ * two escaped that rule because they are not `__`-prefixed.
+ */
+const BACKEND_ONLY_DOWN_TYPES = new Set(['machine_meta', 'machine_revoked', 'desk_changed', 'zoo_changed', 'machines_changed'])
+
+/** A frame type as the sender spelled it, fit for one log line: the relay chooses it, so it is bounded
+ *  and escaped rather than trusted not to carry a newline that forges the next line. */
+function logSafeType(type: string): string {
+  return JSON.stringify(type.length > 64 ? `${type.slice(0, 64)}…` : type)
 }
 
 interface QueueItem {
@@ -198,14 +300,27 @@ export function copilotHistoryPage(lines: string[], paginated: boolean):
 
 export function deviceAgentListItem(
   raw: unknown,
-): { id: unknown; name?: string; engine?: 'claude' | 'codex' | 'cursor' | 'opencode' | 'pi' | 'hermes' | 'commandcode' | 'devin' | 'muse' | 'amp' | 'kilo' | 'grok' | 'agy' | 'copilot'; selectedModel?: string | null } {
+): { id: unknown; name?: string; engine?: ProcessEngine; selectedModel?: string | null } {
   const o = (raw ?? {}) as Record<string, unknown>
-  const item: { id: unknown; name?: string; engine?: 'claude' | 'codex' | 'cursor' | 'opencode' | 'pi' | 'hermes' | 'commandcode' | 'devin' | 'muse' | 'amp' | 'kilo' | 'grok' | 'agy' | 'copilot'; selectedModel?: string | null } = { id: o.id }
+  const item: { id: unknown; name?: string; engine?: ProcessEngine; selectedModel?: string | null } = { id: o.id }
   if (typeof o.name === 'string') item.name = clipDeviceAgentName(o.name)
-  if (o.engine === 'claude' || o.engine === 'codex' || o.engine === 'cursor' || o.engine === 'opencode' || o.engine === 'pi' || o.engine === 'hermes' || o.engine === 'commandcode' || o.engine === 'devin' || o.engine === 'muse' || o.engine === 'amp' || o.engine === 'kilo' || o.engine === 'grok' || o.engine === 'agy' || o.engine === 'copilot') item.engine = o.engine
+  // The dial only ever meets process engines — a terminal never reaches it (see `deviceAgentRow`),
+  // and the union here says so rather than repeating fourteen string literals.
+  if (typeof o.engine === 'string' && (PROCESS_ENGINES as readonly string[]).includes(o.engine)) item.engine = o.engine as ProcessEngine
   // Runtime model/effort profile (opaque runtime-v1:...) — lets the device render + change model/effort.
   if (typeof o.selectedModel === 'string' || o.selectedModel === null) item.selectedModel = o.selectedModel
   return item
+}
+
+/**
+ * Whether an agent row belongs on a device at all. The dial drives agents — a terminal with nobody
+ * running in it has no turn to watch, no question to answer and no model to switch, so it is not
+ * listed there; the same row becomes listable the moment an engine is started inside it and its
+ * `engine` flips (registry `adoptEngine`).
+ */
+export function deviceAgentRow(raw: unknown): boolean {
+  const o = (raw ?? {}) as Record<string, unknown>
+  return !isTerminalEngine(typeof o.engine === 'string' ? o.engine : undefined)
 }
 
 /**
@@ -282,7 +397,53 @@ async function enrichSubagentStats(events: SessionEvent[], transcriptPath: strin
   }
 }
 
+/** Sections one `grid_models_list` may ask to wake — a person presses one "Show models" at a time. */
+const MAX_WAKES_PER_ASK = 8
+
+/** What `grid_models_list` answers and `grid_models_changed` pushes — one shape, so a window parses both
+ *  with one reader. `gridName` and `models` keep naming the own grid alone, for an app that predates
+ *  `grids`; each section's `state`, `seenAt`, `lastKnownAge` and `wakeOutcome` are additive, and a row's
+ *  offline label is `unavailable` for a window that asked for row state, its node text for one that did
+ *  not (`presentGridSections`). */
+function gridModelsPayload(gridName: string | null, sections: GridSection[], rowState: boolean): Record<string, unknown> {
+  const grids = presentGridSections(sections, { rowState })
+  return {
+    gridName,
+    models: grids.find((g) => g.own)?.models ?? [],
+    grids,
+    // Which engines a Local model can be offered to at all. Static per CLI version — it is
+    // the set of launch contracts in `gridLaunch.ts` — and answered here, beside the list,
+    // so the picker can say "Cursor runs only on its own login" instead of offering a row
+    // whose retarget the daemon would refuse. An older app ignores the field; an older
+    // daemon omits it, which the app reads as "offer everything", as before.
+    localModelEngines: gridCapableEngines(),
+    supportsModelLaunch: true,
+    // Whether this MACHINE has a `grid` to run at all — `managed`, `path` or `missing` —
+    // as distinct from `gridName`, which is about the account. The Local model dialog was
+    // gating on the account alone and starting an agent whose second step is `grid`; this
+    // is what lets it, and the picker, say so first. An older app ignores the field.
+    gridCli: gridCliPresence(),
+  }
+}
+
 export class BackendSocket {
+  private readonly gridFleet = new GridFleetRpc()
+  // The Model Manager reads the grid it runs on through the same credential-less reader as every picker
+  // (never `grid engines`, which carries the grid credential and so wakes a sleeping grid on every tick),
+  // and a start or stop it finishes makes every list read again — pushed to the window when it changes.
+  private readonly localModels = new LocalModels({
+    stateDir: join(env.ADAPTER_DATA_DIR, 'local-models'),
+    machineName: () => this.machineDisplayName,
+    inventory: gridInventory,
+    onChanged: () => { forgetGridModels(); void this.pushGridModels() },
+  })
+  /** This machine's name as Harness shows it (Machines), from the backend's `machine_meta`. Null
+   *  until the first one arrives. */
+  private machineDisplayName: string | null = null
+  /** A read the window did not ask for changed what a picker would show: tell the window
+   *  (`grid_models_changed`), so its one picture stays current without polling. */
+  private readonly stopGridModelsPush = onGridModelsChanged(() => { void this.pushGridModels() })
+  private readonly apiConnections = new ApiConnections(env.ADAPTER_DATA_DIR)
   private ws: WebSocket | null = null
   private connecting = false
   /** A 401 on the upgrade is being answered with a token refresh; that refresh owns the next connect. */
@@ -299,8 +460,19 @@ export class BackendSocket {
   private droppedSinceLog = 0
   private heartbeat: LivenessWatch | null = null
   private appPing: NodeJS.Timeout | null = null
+  private lastAppPresenceUpAt = 0
+  // A window attached while there was no link to tell (cold start: the app dials this daemon before
+  // the daemon has dialed the backend; or a daemon restart under an open window). The session is
+  // real and must be counted once, so it is owed to the next link — not turned into a `ping`.
+  private appOpenOwed = false
   private readonly downChains = new Map<string, Promise<void>>()
   private readonly localClients = new Map<string, LocalClientSink>()
+  /**
+   * Loopback clients that are TOOLS, not windows (`machine_select { tool: true }`): `harness pair`, the
+   * `harnessd` MCP server. They get their RPC replies like any local client, but they are not a person at
+   * this computer — not presence, not a window to push to, and never what wakes the pair brain.
+   */
+  private readonly toolClients = new Set<string>()
   private terminalStreams: TerminalStreamManager | null = null
   private readonly terminalP2p: TerminalP2pResponderPool
   private readonly p2pPendingOpens = new Map<string, Set<string>>()
@@ -321,7 +493,7 @@ export class BackendSocket {
   onCancel: ((sessionId: string) => void) | null = null
   /** Called when the web deletes an agent (`agent_delete`) — cli.ts signals only the validated engine
    *  process and forgets the session. Keeps recap + agent name. */
-  onDeleteAgent: ((sessionId: string) => void) | null = null
+  onDeleteAgent: ((sessionId: string) => void | Promise<void>) | null = null
   /** Called on `agent_create` — cli.ts spawns a fresh tmux session running the requested engine in the
    *  requested folder and returns its process-agent. Session metadata may bind later through hooks. */
   onCreateAgent: ((input: {
@@ -332,11 +504,191 @@ export class BackendSocket {
     grid: GridLaunchOverride | null
     /** A Codex CODEX_HOME folder to launch this agent against instead of `~/.codex`; codex only. */
     codexHome: string | null
+    /** The domain-specific harness to create this agent as (installed here, base engine = `engine`). */
+    dsh: string | null
+    /** The message the session opens with, already submitted (`FIRST_PROMPT_ARGS` in engineLaunch.ts);
+     *  null when the pane opens on an empty input. Validated here — length, and that the engine has a
+     *  contract for it — so cli.ts never sees one it cannot hand over. Never logged. */
+    prompt: string | null
+    /** The name the pane opens under, instead of the next `agent-N`; null to number it. */
+    name: string | null
+    /** The engine's named agent the pane opens AS (`NAMED_AGENT_ARGS` in engineLaunch.ts; opencode
+     *  `--agent <name>`); null for a general session. Validated here — shape, and that the engine has
+     *  a contract for it. Unlike `prompt`, kept on the row so a relaunch opens as it again. */
+    agent: string | null
+    /** A mode from `PERMISSION_MODES` for this engine; null when the client sent only
+     *  `bypassPermission`, which then decides. Validated here (`INVALID_PERMISSION_MODE`). */
+    permissionMode: string | null
+    /** A conversation Harness did not start, to open this harness ON: the engine resumes it, in its own
+     *  folder (lib/sessionSearch/external.ts). Null for a new conversation. Shape-checked here; cli.ts
+     *  checks it is one it found, not open elsewhere, and not already a harness. */
+    resumeSessionId?: string | null
+    /** A conversation open in a terminal, taken over from it: `idle` stops that terminal's process
+     *  only between turns, `now` whatever it is doing (then tells it to continue), `wait` when its
+     *  turn ends. Absent, one open elsewhere is refused and the refusal says whether it is busy. */
+    takeOver?: 'idle' | 'now' | 'wait' | null
   }) =>
     Promise<{ ok: true; session: RegisteredSession } | { ok: false; error: string; detail?: string }>) | null = null
+  /** Called on `dsh_install` — cli.ts clones/sets up/doctors the harness and reports each phase. */
+  onDshInstall: ((input: { id?: string; url?: string; ref?: string }, progress: (p: DshInstallProgress) => void) =>
+    Promise<{ ok: true; id: string } | { ok: false; error: string; detail: string }>) | null = null
+  /** An explicit update follows the installed source and retains the previous package on failure. */
+  onDshUpdate: ((id: string, progress: (p: DshInstallProgress) => void) =>
+    Promise<{ ok: true; id: string } | { ok: false; error: string; detail: string }>) | null = null
+  /** Called on `dsh_remove` — cli.ts uninstalls the harness from this machine. */
+  onDshRemove: ((id: string) => { ok: true } | { ok: false; error: string; detail: string }) | null = null
+  /** Called on `remote_terminal_handoff` — cli.ts names the agent whose tile is that tmux pane, or null. */
+  onTerminalHandoff: ((tmuxPane: string) => string | null) | null = null
+  /** What the daemon knows about an agent's DSH companions (viewer URL, verdict); null when nothing. */
+  harnessSharing: HarnessShareOwner | null = null
+  /** Answers the trust group's roster exchange (`group_sync`); null until the daemon wires it. */
+  groupSync: { handle: (peerPub: string, payload: Record<string, unknown>) => Record<string, unknown> } | null = null
+  dshFrameProvider: ((session: RegisteredSession) => AgentDshContext | null) | null = null
+  viewerTargetProvider: ((agentId: string) => string | null) | null = null
+  readonly interactiveViewers = new InteractiveViewers(agentId => this.viewerTargetProvider?.(agentId) ?? null)
+  readonly viewerForwarder = new ViewerForwarder({
+    target: (agentId) => this.viewerTargetProvider?.(agentId) ?? null,
+    send: (connId, type, payload) => {
+      if (this.localClients.has(connId)) { this.sendTo(connId, { type, payload }); return true }
+      if (!this.isConnected()) return false
+      const frame = this.e2ee.wrapTarget(connId, type, payload)
+      if (!frame) return false
+      this.sendTo(connId, frame)
+      return true
+    },
+  })
   private readonly agentCreations = new AgentCreationReceipts(join(env.ADAPTER_DATA_DIR, 'agent-creations'))
   /** Injectable for queue-isolation tests; production uses the machine-local probe. */
   engineProbeProvider: typeof probeEngines = probeEngines
+  /** Entrypoint override for isolated integration fixtures; never a wire option. */
+  orchestratorCommand: string | null = null
+  readonly ownerCommands = new OwnerCommands()
+  onCancelOrchestratorMessage: ((deliveryId: string) => boolean) | null = null
+  orchestratorDelivery(event: SessionInputDelivery): void {
+    this.orchestratorService?.delivery(event)
+  }
+  private orchestratorService: OrchestratorService | null = null
+  /** Isolated daemon fixtures can override these without touching installed state. */
+  teamStateDir = join(env.ADAPTER_DATA_DIR, 'teams')
+  teamCommand: string | null = null
+  private teamService: TeamService | null = null
+  readonly swarmPromptScopes = new SwarmPromptScopes()
+  private teamMailboxService: TeamMailbox | null = null
+  readChannelDesk: (() => Promise<unknown>) | null = null
+  writeChannelSettings: ((enabled: boolean) => Promise<unknown>) | null = null
+  private channelsEnabled = false
+  private channelDirectory: ChannelDirectory | null = null
+  private channels(): ChannelDirectory {
+    if (!this.readChannelDesk) throw new TeamError('CHANNELS_UNSUPPORTED', 'Tab channels are not available on this daemon.')
+    return this.channelDirectory ??= new ChannelDirectory({
+      machineId: this.machineId, service: this.teams(), readDesk: () => this.readChannelDesk!(),
+      writeSettings: async enabled => {
+        if (!this.writeChannelSettings) throw new TeamError('CHANNELS_UNSUPPORTED', 'Update Harness to configure swarm collaboration.')
+        return this.writeChannelSettings(enabled)
+      },
+      enabledChanged: enabled => { this.channelsEnabled = enabled; this.teamMailboxService?.pump() },
+      forward: (machineId, payload) => teamRpc({ port: env.PORT, machineId, dataDir: env.ADAPTER_DATA_DIR }, 'team', payload),
+    })
+  }
+  refreshChannels(): void { if (this.readChannelDesk) void this.channels().refresh(true).catch(() => {}) }
+  teamDelivery(event: SessionInputDelivery): void { this.teamMailboxService?.observe(event) }
+  teamCanWrite(deliveryId: string): boolean { return this.teamMailboxService?.canWrite(deliveryId) ?? false }
+  private localTeamRuntime(agentId: string): MemberRuntime | null {
+    const agent = registry.byAgent(agentId)
+    return agent ? { name: projectDisplayName(agent), engine: agent.engine, cwd: agent.cwd ?? undefined,
+      available: agent.active && registry.terminalAvailable(agentId),
+      ...(!agent.active ? { reason: 'Session is paused or offline.' } : {}) } : null
+  }
+  private teamMailbox(): TeamMailbox {
+    return this.teamMailboxService ??= new TeamMailbox({
+      stateDir: join(this.teamStateDir, 'mailboxes'),
+      channelsEnabled: () => this.channelsEnabled,
+      runtime: id => this.localTeamRuntime(id),
+      send: (id, text, deliveryId) => {
+        if (!this.onMessage) throw new TeamError('UNAVAILABLE', 'Agent input is not ready.')
+        this.onMessage(id, text, deliveryId)
+      },
+      cancel: id => this.onCancelOrchestratorMessage?.(id) ?? false,
+    })
+  }
+  private teams(): TeamService {
+    return this.teamService ??= new TeamService({
+      stateDir: join(this.teamStateDir, 'ledgers'), machineId: this.machineId,
+      taskScope: async address => {
+        if (address.machineId === this.machineId) return this.swarmPromptScopes.current(address.agentId)
+        const result = await teamRpc({ port: env.PORT, machineId: address.machineId, dataDir: env.ADAPTER_DATA_DIR },
+          'team_delivery', { action: 'prompt_scope', agentId: address.agentId })
+        return typeof result.teamId === 'string' ? result.teamId : null
+      },
+      questionReplied: async (address, teamId, questionId) => {
+        if (address.machineId === this.machineId) this.swarmPromptScopes.replied(address.agentId, teamId, questionId)
+        else await teamRpc({ port: env.PORT, machineId: address.machineId, dataDir: env.ADAPTER_DATA_DIR },
+          'team_delivery', { action: 'prompt_replied', agentId: address.agentId, teamId, questionId })
+      },
+      command: address => address.machineId === this.machineId
+        ? this.teamCommand ?? `${[process.execPath, ...process.execArgv, process.argv[1]].map(shellQuote).join(' ')} team --port ${env.PORT}`
+        : 'harness team',
+      runtime: async address => {
+        Address.parse(address)
+        if (address.machineId === this.machineId) return this.localTeamRuntime(address.agentId)
+        const result = await teamRpc({ port: env.PORT, machineId: address.machineId, dataDir: env.ADAPTER_DATA_DIR }, 'team_delivery', { action: 'runtime', agentId: address.agentId })
+        return result.runtime as MemberRuntime | null
+      },
+      delivery: async (address, action, delivery) => {
+        if (address.machineId === this.machineId) {
+          const mailbox = this.teamMailbox()
+          return action === 'send' ? mailbox.accept(delivery) : action === 'status' ? mailbox.status(delivery.id)
+            : action === 'hold' || action === 'release' ? mailbox.hold(delivery.id, action === 'hold') : mailbox.cancel(delivery.id, action === 'consume')
+        }
+        const result = await teamRpc({ port: env.PORT, machineId: address.machineId, dataDir: env.ADAPTER_DATA_DIR }, 'team_delivery', { action, delivery })
+        return result.receipt == null ? null : Receipt.parse(result.receipt)
+      },
+      changed: (id, revision) => this.sendLocal({ type: 'team_changed', payload: { id, revision } }),
+    })
+  }
+  /** Resume persisted queues after input wiring is ready, even with no UI attached. */
+  startTeams(): void {
+    if (this.readChannelDesk) this.channels().start()
+    if (!existsSync(this.teamStateDir)) return
+    try { this.teamMailbox().start(); this.teams().start() }
+    catch { console.warn('[teams] preserved unreadable team state; inspect Team for recovery') }
+  }
+  /** The commander asks this for every turn that ends — see OrchestratorService.roleOf. */
+  orchestratorRoleOf(agentId: string): ReturnType<OrchestratorService['roleOf']> {
+    return this.orchestration().roleOf(agentId)
+  }
+  private orchestration(): OrchestratorService {
+    return this.orchestratorService ??= new OrchestratorService({
+      stateDir: join(env.ADAPTER_DATA_DIR, 'orchestrator'),
+      workspaceDir: join(homedir(), 'harnesses', 'orchestrated'),
+      command: this.orchestratorCommand ?? `${[process.execPath, ...process.execArgv, process.argv[1]].map(shellQuote).join(' ')} orchestrator --port ${env.PORT} --machine ${shellQuote(this.machineId)}`,
+      catalog: () => listInstalledDsh().filter(d => d.manifest.kind !== 'viewer' && !isHiddenBuiltin(d) && !!d.manifest.engine && supportsFirstPrompt(d.manifest.engine)).map(d => ({
+        id: d.id, name: d.manifest.name, description: d.manifest.description ?? '', engine: d.manifest.engine!, viewer: !!d.manifest.viewer,
+      })),
+      supportsEngine: engine => ENGINES.includes(engine as AgentEngine) && supportsFirstPrompt(engine as AgentEngine),
+      create: async input => {
+        if (!this.onCreateAgent) throw new OrchestratorError('UNSUPPORTED', 'This daemon cannot create agents.')
+        const available = await this.engineProbeProvider([input.engine])
+        if (!available.some(e => e.engine === input.engine && e.installed)) throw new OrchestratorError('ENGINE_NOT_INSTALLED', `${input.engine} must be installed before starting this specialist.`)
+        const result = await this.onCreateAgent({ ...input, grid: null, codexHome: null, agent: null, permissionMode: null })
+        if (!result.ok) throw new OrchestratorError(result.error, result.detail ?? result.error)
+        return { agentId: result.session.agentId }
+      },
+      send: (id, text, deliveryId) => {
+        if (!this.onMessage || !registry.resolve(id)) throw new OrchestratorError('AGENT_UNAVAILABLE', 'The agent is not available to receive a message.')
+        this.onMessage(id, text, deliveryId)
+      },
+      cancelDelivery: id => this.onCancelOrchestratorMessage?.(id) ?? false,
+      cancel: id => this.onCancel?.(id),
+      agent: id => {
+        const agent = registry.resolve(id)
+        if (!agent) return null
+        const context = this.dshFrameProvider?.(agent)
+        return { viewerUrl: context?.viewerUrl, viewerName: context?.viewerName, error: agent.launch?.state === 'failed' ? agent.launch.detail ?? agent.launch.error : null }
+      },
+      changed: (id, revision) => this.sendLocal({ type: 'orchestrator_changed', payload: { id, revision } }),
+    })
+  }
   /**
    * Called on `agent_retarget` — cli.ts re-execs an EXISTING agent's pane against a different grid,
    * or, when `grid` is null, back onto its own login.
@@ -359,14 +711,25 @@ export class BackendSocket {
       { ok: true; session: RegisteredSession; resumed: boolean }
       | { ok: false; error: string; detail?: string }
     >) | null = null
+  /** Resume stopped work directly, or attach if it is already running. Never replaces a live
+   * process and never falls back to a fresh conversation. */
+  onResumeAgent: BackendSocket['onRestartAgent'] = null
+  /** Called on `agent_fork` — cli.ts opens a NEW agent that starts with `agentId`'s whole history
+   *  (lib/forkAgent.ts) and returns its process-agent, exactly as `agent_create` does. `level` says
+   *  what the new agent actually got: the engine's own fork, or a handoff message. */
+  onForkAgent: ((input: { agentId: string; name: string | null; prompt: string | null }) =>
+    Promise<
+      { ok: true; session: RegisteredSession; level: 'native' | 'handoff' }
+      | { ok: false; error: string; detail?: string }
+    >) | null = null
   /** Called when the web/device sends chat input to an agent terminal. */
-  onMessage: ((sessionId: string, content: string) => void) | null = null
+  onMessage: ((sessionId: string, content: string, deliveryId?: string, tabId?: string) => void) | null = null
   /** Best-effort terminal-native title sync after a user renames an agent. */
   onAgentRename: ((session: RegisteredSession, name: string) => void) | null = null
   /** Called when a device answers an AskUserQuestion (`question_response`) — cli.ts drives the CLI's own
    *  terminal dialog (option digit / free text), since a remote machine has no
    *  programmatic answer channel the way the hosted runtime’s brain does. */
-  onQuestionAnswer: ((payload: { requestId?: string; sessionId?: string; agentId?: string; answers?: Record<string, string> }) => void) | null = null
+  onQuestionAnswer: ((payload: { requestId?: string; sessionId?: string; agentId?: string; answers?: Record<string, string> }) => Promise<QuestionAnswerResult> | void) | null = null
   /** Called when this machine was deleted/revoked (a `machine_revoked` down-frame, or a 401/403 on the
    *  upgrade) — CLI clears the saved SSO session and shuts down instead of retrying forever. */
   onRevoked: (() => void) | null = null
@@ -380,14 +743,46 @@ export class BackendSocket {
   recentProvider: RecentProvider | null = null
   /** The person's own last questions for an agent, newest first. See the `agent_recent` case. */
   recentAsksProvider: ((agentId: string, n: number) => string[]) | null = null
+  /** Answers `session_search` from this machine's transcript index (lib/sessionSearch/). Null when
+   *  this Node has no `node:sqlite`. */
+  sessionSearchProvider: ((query: string, options: { limit?: number; from?: number; to?: number }) => SessionSearchResult) | null = null
+  /** The end of one session from the same index, for Cmd-P's preview (`session_tail`). */
+  sessionTailProvider: ((sessionId: string, options: { beforeTurn?: number; maxChars?: number }) => Promise<SessionTail | null>) | null = null
   /** Runtime Model/Effort integration, wired by cli.ts for registered tmux sessions. */
   runtimeModelsProvider: ((sessionId?: string) => Promise<RuntimeModelOption[]>) | null = null
   /** Answers `usage_read` — this machine's own agent-account usage (lib/accountUsage.ts). A field
    *  rather than a direct call so a spec answers it without a real home, Keychain or network. */
   accountUsageReader: () => Promise<AccountUsageReading[]> = readAccountUsage
+  /** The grid listing currently out, shared by every `grid_models_list` for the same own grid
+   *  that lands meanwhile. */
+  private gridModelsInFlight: { gridName: string | null; grids: ReturnType<typeof listAllGridModels> } | null = null
+  /** The windows on this computer that draw row state (`grid_models_list` with `rowState: true`) and so
+   *  are pushed labels as `unavailable` rather than in the node text. */
+  private readonly rowStateWindows = new Set<string>()
   /** Receives `theme_set` — the desktop's pane colours, to become this machine's tmux
    *  `window-style` (lib/hostTheme.ts). Wired by cli.ts; null answers with UNSUPPORTED. */
   hostThemeSink: ((theme: HostTheme) => void) | null = null
+  /**
+   * The pair brain's sensor (pair/sensor.ts): answers the sealed `pair_*` RPCs another machine's brain
+   * sends, and the loopback-only `pair` request. Null answers UNSUPPORTED, like an older daemon.
+   */
+  pairService: PairService | null = null
+  /** The owning machine's reads and writes for the pair (pair/owner.ts). Null: those answer UNSUPPORTED. */
+  pairOwner: { handle: (type: string, payload: Record<string, unknown>, from: { connId: string; label?: string | null }) => Promise<Record<string, unknown>> } | null = null
+  /** The control interface (pair/control.ts) behind the loopback `pair` request: the verbs it answers. */
+  pairControl: { verbs: ReadonlySet<string>; local: (payload: Record<string, unknown>, connId: string) => Promise<Record<string, unknown>> } | null = null
+  /** The account's zoo changed (a `zoo_changed` from the backend) — cli.ts re-reads which daemon is paired. */
+  onZooChanged: ((revision: number) => void) | null = null
+  /**
+   * Whether daemons run at all (lib/daemonsSwitch.ts). Off, the loopback `pair` request (`harness pair`, the
+   * MCP server) is answered DAEMONS_OFF before any verb runs. Null: always on, as before the switch.
+   */
+  daemonsOn: (() => boolean) | null = null
+  /**
+   * An individual's art (pair/plateService.ts), for the phone's sealed `pair_plate_get` → `pair_plate`. Null
+   * answers UNSUPPORTED, like an older daemon. The service answers DAEMONS_OFF itself while daemons are off.
+   */
+  plateService: { get: (payload: Record<string, unknown>) => Promise<Record<string, unknown>> } | null = null
   runtimeProfileProvider: ((session: RegisteredSession) => string | null) | null = null
   onRuntimeProfileUpdate: ((sessionId: string, selectedModel: string) => Promise<void>) | null = null
   /** Web↔adapter E2EE: group-encrypts user events, runs the CPace pairing, holds per-conn sessions. */
@@ -430,7 +825,7 @@ export class BackendSocket {
    *  polling a pane for a dialog is pointless with nobody rendering it, but "nobody" used to mean
    *  "no device", which left the window unable to learn that an agent was blocked. */
   hasLocalClient(): boolean {
-    return this.localClients.size > 0
+    return this.localClients.size > this.toolClients.size
   }
 
   /** True after a paired device has completed the E2EE hello/welcome session. */
@@ -441,12 +836,22 @@ export class BackendSocket {
   private readonly directDeviceSinks = new Map<string, (frame: Record<string, unknown>) => void>()
   private readonly directDevicePins = new Map<string, string>()
   onDirectDeviceRevoked?: (fingerprint: string) => void
+  /** A peer linked here over the remote password (after it is trusted and, for a machine, pinned back). */
+  onPeerLinked?: (peer: LinkedPeer) => void
+  /** A person unpaired this identity here (not the trust group removing it). */
+  onUnpaired?: (identityPub: string) => void
+  /** A connection that is, or is pairing as, an Autonomous device — what the device dump records. */
+  private isDeviceConn(connId: string): boolean {
+    return this.directDeviceSinks.has(connId) || this.e2ee.sessionRole(connId) === 'device'
+      || (this.e2ee.pendingConnection() === connId && this.e2ee.pendingPair()?.role === 'device')
+  }
   attachDirectDevice(connId: string, send: (frame: Record<string, unknown>) => void): void { this.directDeviceSinks.set(connId, send) }
   detachDirectDevice(connId: string): void { this.directDeviceSinks.delete(connId); this.directDevicePins.delete(connId); this.e2ee.dropSession(connId); this.autonomousDeviceRelay?.drop(connId); this.onCommanderPresenceChanged?.(this.hasCommander()) }
   pairedDirectFingerprint(connId: string): string | null { const pub = this.directDevicePins.get(connId); return pub ? fingerprint(b64d(pub)) : null }
   async receiveDirectDevice(connId: string, frame: Record<string, unknown>, pairingAllowed: boolean): Promise<void> {
     if (!this.directDeviceSinks.has(connId)) return
     const type = frame.type
+    if (type !== 'autonomous_device_request') deviceDump.record('in', 'wire', connId, frame) // requests: decrypted in the relay
     if (type === 'machine_selected') return
     if (type === 'autonomous_device_request') { await this.autonomousDeviceRelay?.handle(connId, frame); return }
     const controls = pairingAllowed ? ['e2e_pair_intent', 'e2e_pair_cancel', 'e2e_pake', 'e2e_hello', 'e2e_status'] : ['e2e_hello', 'e2e_status']
@@ -466,7 +871,7 @@ export class BackendSocket {
   }
   directAutonomousDeviceSessions(): number { return this.autonomousDeviceRelay?.count(id => this.directDeviceSinks.has(id)) ?? 0 }
   autonomousDeviceConnected(): boolean { return this.autonomousDeviceRelay?.connected() ?? false }
-  emitAutonomousDeviceEvent(frame: AutonomousDeviceFrame): void { this.autonomousDeviceRelay?.emit(frame) }
+  emitAutonomousDeviceEvent(frame: AutonomousDeviceFrame, deviceId?: string): void { this.autonomousDeviceRelay?.emit(frame, deviceId) }
 
   /** Live backend link state (local dashboard + E2EE gating). */
   isConnected(): boolean {
@@ -506,6 +911,16 @@ export class BackendSocket {
       isConnectionAvailable: connId => this.directDeviceSinks.has(connId) || this.isConnected(),
       onIdentityPaired: (connId, pub) => { if (this.directDeviceSinks.has(connId)) this.directDevicePins.set(connId, pub) },
       onIdentityRevoked: identity => { this.autonomousDeviceRelay?.revoke(identity); this.onDirectDeviceRevoked?.(fingerprint(b64d(identity))) },
+      onSessionDropped: (connId) => { this.viewerForwarder.closeConnection(connId); this.interactiveViewers.closeConnection(connId); this.ownerCommands.closeConnection(connId) },
+      onPeerLinked: (peer) => {
+        // The mutual half of a password link: a machine that proved this one's password is pinned back,
+        // so this machine can dial it without that machine's own password.
+        if (peer.kind === 'machine' && peer.machineId && peer.machineId !== this.machineId) {
+          new MachinePeerStore().pin(peer.machineId, peer.pub, peer.label)
+        }
+        this.onPeerLinked?.(peer)
+      },
+      onUnpaired: (pub) => this.onUnpaired?.(pub),
     })
     this.terminalP2p = new TerminalP2pResponderPool({
       sendSignal: (connId, type, payload) => this.sendP2pSignal(connId, type, payload),
@@ -524,9 +939,6 @@ export class BackendSocket {
   }
   e2eeFingerprint(): string {
     return this.e2ee.fingerprint()
-  }
-  createSetupToken(): ReturnType<E2eeManager['createSetupToken']> {
-    return this.e2ee.createSetupToken()
   }
   /** `harness pairings` — list paired clients. */
   listPairs(): ReturnType<E2eeManager['listPaired']> {
@@ -548,9 +960,83 @@ export class BackendSocket {
   clearRemotePassword(): void {
     this.e2ee.clearRemotePassword()
   }
+  /** `harness link connect` — trust the machine this one just linked as a client too (mutual link). */
+  trustPeer(peer: LinkedPeer): void {
+    this.e2ee.trustPeer(peer)
+  }
+  /** Stop trusting `pub` here (unlink / trust-group removal); true when it was trusted. */
+  untrustPeer(pub: string): boolean {
+    return this.e2ee.untrustPeer(pub)
+  }
+  pairedPeers(): ReturnType<E2eeManager['pairedPeers']> {
+    return this.e2ee.pairedPeers()
+  }
   /** `harness remote-password status` — whether one is set, and its fingerprint. */
   remotePasswordStatus(): ReturnType<E2eeManager['remotePasswordStatus']> {
     return this.e2ee.remotePasswordStatus()
+  }
+
+  /** The account's private harness grid name, as the backend last reported it. Null until the first
+   *  `machine_meta` lands, or when this account has none yet. */
+  private harnessGridName: string | null = null
+  /** Injected so the derivation (a `grid` spawn) is a seam in tests; see `lib/gridDerive.ts`. */
+  deriveGridName: () => Promise<string | null> = deriveHarnessGridName
+  /** The daemon-start grid reconcile (`lib/gridAttach.ts`), while it is running — so the first
+   *  `grid_models_list` / retarget after an update waits for the sign-in it may still be arranging
+   *  rather than answering "no grid". Set by `cli.ts`; returns null when nothing is in flight. */
+  gridReadyProbe: (() => Promise<unknown> | null) | null = null
+
+  /** Set the account's private grid name from the reconcile that just confirmed it, so the RPCs
+   *  answer with it at once rather than waiting for the next `machine_meta` (`lib/gridAttach.ts`). */
+  setHarnessGridName(name: string | null): void { this.harnessGridName = name }
+
+  /** Which grid this machine's agents can be pointed at — for `harness status` and the models RPC. */
+  gridName(): string | null { return this.harnessGridName }
+
+  /** This machine's name as the Machines list shows it — what a model it serves is labelled with. */
+  machineName(): string | null { return this.machineDisplayName }
+
+  /** The account's private grid, resolved the way the models RPC resolves it — for a harness
+   *  workspace that must be told which grid is "yours" rather than work it out or ask. */
+  privateGridName(): Promise<string | null> { return this.resolveGridName() }
+
+  /** `grid_models_changed` to the windows on this computer: the same payload `grid_models_list` answers,
+   *  built from the pictures as they stand — no read is started to build it, so a push never causes one. */
+  private async pushGridModels(): Promise<void> {
+    if (this.closed || this.localClients.size === 0) return
+    try {
+      const gridName = await this.resolveGridName()
+      const grids = await listAllGridModels(gridName, { refresh: false })
+      // Each window in the form it asked for — see `gridModelsPayload`.
+      const plain: Frame = { type: 'grid_models_changed', payload: gridModelsPayload(gridName, grids, false) }
+      const withRowState: Frame = { type: 'grid_models_changed', payload: gridModelsPayload(gridName, grids, true) }
+      this.sendLocal((connId) => this.rowStateWindows.has(connId) ? withRowState : plain)
+    } catch { /* the next ask answers the same thing */ }
+  }
+
+  /**
+   * The account's private grid: the backend's word when it gave one, else what this machine can
+   * work out for itself (`lib/gridDerive.ts`). A backend that predates `machine_meta.gridName`
+   * left every picker empty while `grid models` listed the model fine; the derivation is the
+   * skill's own rule, so the daemon and the agent it opens agree on which grid is "yours".
+   *
+   * Waits, once and briefly, for a grid reconcile still in flight — the machine that just updated is
+   * signing in to grid in the background, and a picker opened in that window would otherwise read
+   * "no grid" for the one moment the answer is about to arrive. Bounded so a slow reconcile (a fresh
+   * sign-in and a grid create) never holds the RPC past the app's own timeout; whatever is resolved
+   * by then is answered, and the next open — after the reconcile has landed — is correct regardless.
+   */
+  private async resolveGridName(): Promise<string | null> {
+    const inFlight = this.gridReadyProbe?.()
+    if (inFlight) {
+      let timer: ReturnType<typeof setTimeout> | undefined
+      await Promise.race([
+        inFlight.catch(() => {}),
+        new Promise<void>((resolve) => { timer = setTimeout(resolve, GRID_ATTACH_WAIT_MS) }),
+      ])
+      if (timer) clearTimeout(timer)
+    }
+    return this.harnessGridName ?? await this.deriveGridName()
   }
 
   connect(): void {
@@ -585,10 +1071,18 @@ export class BackendSocket {
 
       this.heartbeat = watchSocketLiveness(ws, {
         onIdle: (idleMs) => console.log(`[backend] no traffic for ${Math.round(idleMs / 1000)}s — terminating the link`),
+        onWake: (sleptMs, hungUp) => console.log(`[backend] woke after ${Math.round(sleptMs / 1000)}s asleep — ${hungUp ? 'the backend has hung up, redialing' : 're-probing the link'}`),
+        peerGivesUpAfterMs: BACKEND_IDLE_DEADLINE_MS,
       })
 
-      // App-level ping refreshes the backend's presence key (TTL 30s).
-      this.appPing = setInterval(() => this.sendBestEffort({ t: 'ping' }), APP_PING_MS)
+      // App-level ping refreshes the backend's presence key (TTL 30s). The window's presence rides
+      // the same tick — a fresh socket knows nothing about the window, so its first tick goes through.
+      this.lastAppPresenceUpAt = 0
+      if (this.appOpenOwed && this.localClients.size > 0) this.sendAppPresence('open')
+      this.appPing = setInterval(() => {
+        this.sendBestEffort({ t: 'ping' })
+        if (this.localClients.size > 0) this.sendAppPresence('ping')
+      }, APP_PING_MS)
     })
 
     ws.on('message', (raw, isBinary) => {
@@ -617,7 +1111,10 @@ export class BackendSocket {
       // default the recap gate to OFF (safe value) instead of holding a stale count — otherwise a turn
       // completing during the gap burns a `claude -p` recap that goes nowhere. attachAdapter always
       // re-pushes the true count via recomputeAndSendClients on reconnect (and 0→N re-fires the replay).
+      this.harnessSharing?.closeAll()
       this.setCommanderCount(0, null) // active count is unknown until the next __clients snapshot
+      this.viewerForwarder.closeAll()
+      this.interactiveViewers.closeAll(); this.ownerCommands.closeAll()
       void this.terminalStreams?.closeConnectionsWhere(
         (connId) => !isLocalClientId(connId),
         'backend disconnected',
@@ -687,17 +1184,28 @@ export class BackendSocket {
 
   async stop(): Promise<void> {
     this.closed = true
+    this.stopGridModelsPush()
+    this.orchestratorService?.stop()
+    this.teamService?.stop()
+    this.teamMailboxService?.stop()
+    this.channelDirectory?.stop()
+    this.viewerForwarder.closeAll()
+    this.interactiveViewers.closeAll(); this.ownerCommands.closeAll()
     if (this.heartbeat) this.heartbeat.stop()
     if (this.appPing) clearInterval(this.appPing)
     await this.terminalStreams?.stop()
     await this.terminalP2p.stop()
     try { this.ws?.close() } catch { /* ignore */ }
     this.ws = null
+    await this.harnessSharing?.stop()
   }
 
   /** Send an up-frame (event or RPC reply) to the WEB audience. Queued while disconnected.
    *  User-content events are group-encrypted (E2EE) here; system frames pass through as plaintext. */
   send(frame: Frame): void {
+    // Only an already-open orchestration service observes events; ordinary sessions
+    // do not create project state or incur disk work. Project payloads stay local.
+    this.orchestratorService?.ingest(frame)
     if (env.LOG_FRAMES) logFrame('→', 'web', frame)
     for (const [connId, sink] of this.localClients) {
       if (!sink.sendFrame(frame)) void this.unregisterLocalClient(connId)
@@ -711,16 +1219,30 @@ export class BackendSocket {
    *  dial is a physical object on one table, and a finger moving on its glass is meaningful to the window
    *  in front of it and to nothing else. `send()` fans out to the web audience as well, which would scroll
    *  a window on a computer the user is not sitting at. */
-  sendLocal(frame: Frame): void {
-    if (env.LOG_FRAMES) logFrame('→', 'local', frame)
+  /** One frame to every window on this computer — or, given a function, each window its own. */
+  sendLocal(frame: Frame | ((connId: string) => Frame)): void {
     for (const [connId, sink] of this.localClients) {
-      if (!sink.sendFrame(frame)) void this.unregisterLocalClient(connId)
+      if (this.toolClients.has(connId)) continue
+      const sent = typeof frame === 'function' ? frame(connId) : frame
+      if (env.LOG_FRAMES) logFrame('→', 'local', sent)
+      if (!sink.sendFrame(sent)) void this.unregisterLocalClient(connId)
     }
+  }
+
+  /** One frame to ONE window on this computer, if it is one. Never queued, never to the cloud. */
+  sendLocalTo(connId: string, frame: Frame): boolean {
+    const sink = this.localClients.get(connId)
+    if (!sink) return false
+    if (env.LOG_FRAMES) logFrame('→', 'local', frame)
+    if (sink.sendFrame(frame)) return true
+    void this.unregisterLocalClient(connId)
+    return false
   }
 
   /** Ask one local desktop to select focus, without opening panes in every window. */
   sendFirstLocal(frame: Frame): boolean {
     for (const [connId, sink] of this.localClients) {
+      if (this.toolClients.has(connId)) continue
       if (sink.sendFrame(frame)) return true
       void this.unregisterLocalClient(connId)
     }
@@ -728,7 +1250,13 @@ export class BackendSocket {
   }
 
   /** Send an up-frame to exactly ONE web connection (E2EE pairing/welcome + targeted RPC replies). */
+  sendObserver(connId: string, type: string, payload: Record<string, unknown>): boolean {
+    return this.sendBestEffort({ t: 'up', targetConnId: connId, webEligible: false, commanderEligible: false, frame: { type, payload } })
+  }
+
   sendTo(connId: string, frame: Frame): void {
+    // Handshake frames only: device RPC, legacy replies and broadcasts are recorded in the clear where built.
+    if (typeof frame.type === 'string' && frame.type.startsWith('e2e_') && deviceDump.enabled && this.isDeviceConn(connId)) deviceDump.record('out', 'wire', connId, frame)
     const direct = this.directDeviceSinks.get(connId)
     if (direct) { direct(frame); return }
     const local = this.localClients.get(connId)
@@ -800,27 +1328,82 @@ export class BackendSocket {
   sendCommander(frame: Frame): void {
     this.onOutboundCommander?.(frame)
     if (env.LOG_FRAMES) logFrame('→', 'device', frame)
+    deviceDump.record('out', 'commander', undefined, frame)
     this.enqueue({ t: 'up', webEligible: false, commanderEligible: true, frame: this.e2ee.wrapCommander(frame) })
   }
 
+  /**
+   * The desktop window is open on this computer: tell the backend, which turns it into the person's
+   * `user_daily_presence` row. The window itself says nothing — its loopback socket IS the fact, so
+   * this daemon reports it: `open` the moment a window registers (registerLocalClient), `ping` on the
+   * app-ping tick while any window is attached, at most once per APP_PRESENCE_UP_MS. Best-effort and
+   * plaintext on purpose: it is bookkeeping about the person, not data, and a daemon that is signed
+   * out (no backend dial) or between reconnects simply drops it rather than queueing a stale "was
+   * open" behind real frames. Returns whether a frame went up.
+   */
+  sendAppPresence(kind: 'open' | 'ping'): boolean {
+    const now = Date.now()
+    if (kind === 'ping' && now - this.lastAppPresenceUpAt < APP_PRESENCE_UP_MS) return false
+    const sent = this.sendBestEffort({
+      t: 'up',
+      webEligible: false,
+      commanderEligible: false,
+      frame: { type: 'app_presence', payload: { kind } },
+    })
+    if (sent) this.lastAppPresenceUpAt = now
+    if (kind === 'open') this.appOpenOwed = !sent
+    return sent
+  }
+
   /** Attach one authenticated loopback desktop client to the same RPC and event plane as cloud web. */
-  registerLocalClient(connId: string, sink: LocalClientSink): boolean {
+  registerLocalClient(connId: string, sink: LocalClientSink, opts: { tool?: boolean } = {}): boolean {
     if (!isLocalClientId(connId) || this.localClients.has(connId)) return false
     this.localClients.set(connId, sink)
+    if (opts.tool) { this.toolClients.add(connId); return true }
+    this.sendAppPresence('open')
+    this.onLocalClient?.(connId, true)
     return true
   }
+
+  /** A loopback client that said it is a tool (`harness pair`, the MCP server), not a window. */
+  isToolClient(connId: string): boolean { return this.toolClients.has(connId) }
+
+  /** The windows attached right now — for a listener that arrives after some of them did. */
+  localClientIds(): string[] { return [...this.localClients.keys()].filter((connId) => !this.toolClients.has(connId)) }
+
+  /** A window (or `hn`) on this computer attached or went away — the pair brain thinks only while one is here. */
+  onLocalClient: ((connId: string, attached: boolean) => void) | null = null
 
   /** Release all connection-scoped state when the loopback WebSocket closes. */
   async unregisterLocalClient(connId: string): Promise<void> {
     if (!this.localClients.delete(connId)) return
+    if (!this.toolClients.delete(connId)) this.onLocalClient?.(connId, false)
+    this.rowStateWindows.delete(connId)
+    this.viewerForwarder.closeConnection(connId)
+    this.pairService?.unwatch(connId)
+    this.interactiveViewers.closeConnection(connId); this.ownerCommands.closeConnection(connId)
+    // The window left before any link could hear it attach: nothing happened, as far as the backend
+    // is concerned, and a later link must not be told otherwise.
+    if (this.localClients.size === 0) this.appOpenOwed = false
     this.downChains.delete(connId)
     await this.terminalStreams?.closeConnection(connId, 'local client disconnected', false)
   }
 
-  /** Route an authenticated local JSON frame through the existing per-client FIFO. */
+  /** Route an authenticated local JSON frame through the existing per-client FIFO.
+   *
+   *  ⚠️ Tagged `'local'`, not left to default to `'relay'`. These frames come from a process on THIS
+   *  machine over the local socket, and until they were tagged they arrived at `dispatchDown`
+   *  indistinguishable from the backend's own — which let any local process send a frame only the
+   *  backend is entitled to send. See the `machine_meta` branch there. */
   handleLocalFrame(connId: string, frame: Frame): void {
     if (!this.localClients.has(connId)) return
-    this.enqueueDown(frame, connId)
+    this.enqueueDown(frame, connId, 'local')
+  }
+
+  /** The window's focused agent on this local connection — its terminal gets the short output window. */
+  setLocalTerminalFocus(connId: string, agentId: string | null): void {
+    if (!this.localClients.has(connId)) return
+    this.terminalStreams?.setFocusedAgent(connId, agentId)
   }
 
   /** Route an authenticated local terminal frame without applying cloud E2EE. */
@@ -871,7 +1454,7 @@ export class BackendSocket {
     connId: string,
     type: string,
     payload: Record<string, unknown>,
-    transport: 'relay' | 'p2p',
+    transport: DownTransport,
   ): void {
     if (type === 'terminal_open' && typeof payload.requestId === 'string') {
       let pending = this.p2pPendingOpens.get(connId)
@@ -893,7 +1476,7 @@ export class BackendSocket {
       streams.add(streamId)
       return
     }
-    if (transport === 'relay' && streamId) this.p2pStreams.get(connId)?.delete(streamId)
+    if (transport !== 'p2p' && streamId) this.p2pStreams.get(connId)?.delete(streamId)
   }
 
   private routeTerminalOutputToP2p(connId: string, type: string, payload: Record<string, unknown>): boolean {
@@ -925,7 +1508,7 @@ export class BackendSocket {
     console.warn(`[terminal-p2p] conn=${sid(connId)} fallback=relay reason=${reason}`)
   }
 
-  private enqueueDown(frame: Frame, connId: string, transport: 'relay' | 'p2p' = 'relay'): void {
+  private enqueueDown(frame: Frame, connId: string, transport: DownTransport = 'relay'): void {
     const key = connId || '__backend__'
     const previous = this.downChains.get(key) ?? Promise.resolve()
     const next = previous
@@ -1007,16 +1590,21 @@ export class BackendSocket {
    *  encrypted with that connection's session key and delivered ONLY to it. Content-bearing adapter data
    *  is never returned plaintext: even legacy backend nodeRequest (`connId === ''`) gets only an error. */
   private emitReply(connId: string, type: string, requestId: unknown, payload: Record<string, unknown>): void {
-    const resultType = `${type}_result`
+    const resultType = rpcResultType(type)
+    if (connId && deviceDump.enabled && this.e2ee.sessionRole(connId) === 'device') deviceDump.record('out', 'legacy', connId, { type: resultType, payload: { requestId, ...payload } })
     // Before the E2EE wrap: an RPC reply is only readable here.
-    if (env.LOG_FRAMES && type !== 'agent_read_file' && type !== 'project_preview') logFrame('→', connId ? `conn:${sid(connId)}` : 'backend', { type: resultType, payload: { requestId, ...payload } })
+    if (env.LOG_FRAMES && !TEAM_REQUEST_TYPES.has(type) && !OWNER_COMMAND_TYPES.has(type) && !type.startsWith('viewer_') && type !== 'phone_pair' && type !== 'api_connections' && type !== 'orchestrator' && !type.startsWith('grid_fleet_') && type !== 'agent_read_file' && type !== 'project_preview' && type !== 'git_project_info' && type !== 'git_pull_request' && !SHARE_REQUEST_TYPES.has(type) && !type.startsWith('pair')) logFrame('→', connId ? `conn:${sid(connId)}` : 'backend', { type: resultType, payload: { requestId, ...payload } })
     if (this.localClients.has(connId)) {
       this.sendTo(connId, { type: resultType, payload: { requestId, ...payload } })
       return
     }
-    if (connId && this.e2ee.hasSession(connId) && ENCRYPTED_RPC_RESULT_TYPES.has(resultType)) {
+    if (connId && this.e2ee.hasSession(connId) && encryptRpcResult(resultType)) {
       let replyPayload = payload
-      if (resultType === 'agent_recent_result') {
+      // ⚠️ The DIAL's frame budget, so only a dial's reply is fitted to it. The phone app and a remote
+      // desktop are `web` sessions and search this reply for the agent's latest answer: fitted, a reply
+      // over ~15KB dropped to one event without its `fullText`, so any agent doing real work — long
+      // answers — could not be found by what it had just said.
+      if (resultType === 'agent_recent_result' && this.e2ee.sessionRole(connId) === 'device') {
         const trim = fitRecentReplyPayloadForDevice(
           payload,
           (candidate) => this.e2ee.rpcReplyFrameBytes(connId, resultType, requestId, candidate),
@@ -1037,7 +1625,7 @@ export class BackendSocket {
     // adapter plaintext. A real client gets a targeted error; the legacy backend nodeRequest awaiter
     // (`connId === ''`) gets a broadcast error with the same requestId so it fails closed without data.
     // 
-    if (ENCRYPTED_RPC_RESULT_TYPES.has(resultType)) {
+    if (encryptRpcResult(resultType)) {
       const errorFrame = { type: resultType, payload: { requestId, error: 'E2EE_REQUIRED' } }
       if (connId) this.sendTo(connId, errorFrame)
       else this.send(errorFrame)
@@ -1046,35 +1634,148 @@ export class BackendSocket {
     this.send({ type: resultType, payload: { requestId, ...payload } })
   }
 
-  private async dispatchDown(frame: Frame, connId: string, transport: 'relay' | 'p2p' = 'relay'): Promise<void> {
+  /**
+   * The pair brain's requests (daemons/BRAIN.md):
+   *   - `pair_watch` / `pair_journal` from another machine's brain, answered by the sensor;
+   *   - `pair_list`, `pair_read` and the writes (`pair_answer`, `pair_send`, `pair_stop`, `pair_start`,
+   *     `pair_pause`, `pair_resume`), answered by the owning machine's PairOwner (pair/owner.ts), which
+   *     re-checks the floor and journals every action;
+   *   - the loopback-only `pair`: the control interface's verbs (pair/control.ts) when it is wired, the
+   *     sensor's own read verbs otherwise.
+   * An older daemon answers every one of them UNSUPPORTED, which a brain already handles.
+   */
+  private handlePair(connId: string, type: string, payload: Record<string, unknown>, local: boolean,
+    reply: (t: string, rid: unknown, p: Record<string, unknown>) => void): void {
+    const requestId = payload.requestId
+    const service = this.pairService
+    const detached = (work: Promise<Record<string, unknown>>): void => {
+      void work.then((result) => reply(type, requestId, result)).catch(() => reply(type, requestId, { error: 'PAIR_FAILED' }))
+    }
+    if (type === 'pair') {
+      if (!local) { reply(type, requestId, { error: 'LOCAL_ONLY', detail: 'Ask the pair brain on this computer.' }); return }
+      if (this.daemonsOn && !this.daemonsOn()) { reply(type, requestId, { error: 'DAEMONS_OFF', detail: 'Daemons are off for this account or on this computer.' }); return }
+      const verb = typeof payload.verb === 'string' ? payload.verb : ''
+      const control = this.pairControl
+      if (control && control.verbs.has(verb)) { detached(control.local(payload, connId)); return }
+      if (!service) { reply(type, requestId, { error: 'UNSUPPORTED' }); return }
+      detached(service.local(payload))
+      return
+    }
+    // The machine-to-machine requests come from ANOTHER machine, sealed. This computer's own processes use
+    // `pair` (a tool) or the window's daemon_* frames; a loopback `pair_*` would be a local process
+    // claiming to be a remote brain — and the owner treats a remote request as one (daemons/BRAIN.md).
+    if (local) { reply(type, requestId, { error: 'REMOTE_ONLY', detail: 'pair_* requests come from another machine.' }); return }
+    if (!service) { reply(type, requestId, { error: 'UNSUPPORTED' }); return }
+    if (!service.enabled()) { reply(type, requestId, { error: 'PAIR_OFF' }); return }
+    if (type === 'pair_watch') {
+      if (payload.off === true) { service.unwatch(connId); reply(type, requestId, { ok: true }); return }
+      const snapshot = service.watch(connId, (event) => this.sendPairEvent(connId, event))
+      reply(type, requestId, { snapshot })
+      return
+    }
+    if (type === 'pair_journal') { reply(type, requestId, { ...service.journal(payload) }); return }
+    const owner = this.pairOwner
+    if (!owner) {
+      reply(type, requestId, type === 'pair_read' ? service.read(payload) : { error: 'UNSUPPORTED' })
+      return
+    }
+    // Detached: an answer keys a dialog and a pause saves a conversation, both seconds of work that must
+    // not hold the watch's pushes behind them on this connection.
+    detached(owner.handle(type, payload, { connId, label: this.e2ee.sessionLabel(connId) }))
+  }
+
+  /** One `pair_event` to one watcher: plaintext over loopback, sealed pairwise (`wrapTarget`) otherwise.
+   *  Through the same ordered queue as the watch's reply, and only while the link is up — a push for a
+   *  connection the backend has forgotten is dropped there anyway. False = stop pushing to it. */
+  private sendPairEvent(connId: string, event: PairEvent): boolean {
+    const payload = event as unknown as Record<string, unknown>
+    const local = this.localClients.get(connId)
+    if (local) return local.sendFrame({ type: 'pair_event', payload })
+    if (!this.isConnected()) return false
+    const frame = this.e2ee.wrapTarget(connId, 'pair_event', payload)
+    if (!frame) return false
+    this.sendTo(connId, frame)
+    return true
+  }
+
+  private async dispatchDown(frame: Frame, connId: string, transport: DownTransport = 'relay'): Promise<void> {
     const type = frame.type as string | undefined
     if (!type) return
-    const local = this.localClients.has(connId)
+    // Whether this frame came from a process on THIS machine — the trust boundary the gates below
+    // turn on. The membership half is a dispatch-time question about a connection that may already
+    // be gone: frames run through a per-connId queue, so a local client that disconnects between
+    // sending and being dispatched used to leave `localClients.has()` false, and its already-queued
+    // frames were then read as the BACKEND's. The transport half closes that, because it is stamped
+    // at enqueue by the caller that had just verified membership. Either one being true is local.
+    const local = transport === 'local' || this.localClients.has(connId)
+    // ⚠️ The backend's own instructions, refused from anywhere else. See BACKEND_ONLY_DOWN_TYPES.
+    // `transport === 'relay'` rather than `!local`, so this keeps holding if the p2p allowlist
+    // (`TERMINAL_P2P_DOWN_TYPES`) ever widens; "not local" would quietly start admitting p2p.
+    //
+    // Deliberately ABOVE the observer hand-off below. A genuine observer frame is `relay`, so this
+    // never intercepts one; but placed after it, a forged `observer:` connId on a local or p2p frame
+    // would be swallowed by `harnessSharing.receive` and returned without ever reaching this line —
+    // silently, with no warning — and the invariant would then rest on three facts in other files
+    // (the `local:` prefix rule, `registerLocalClient`'s check, the p2p-signal ordering) instead of
+    // on this one. The grid-name incident was exactly a bypass nobody could see.
+    if (transport !== 'relay' && BACKEND_ONLY_DOWN_TYPES.has(type)) {
+      console.warn(`[backend] ignoring ${type} from ${transport} (${connId}) — only the backend may send it`)
+      return
+    }
+    if (connId.startsWith('observer:')) {
+      await this.harnessSharing?.receive(connId, type, (frame.payload ?? {}) as Record<string, unknown>)
+      return
+    }
+    if (type.startsWith('observer_')) return
     // E2EE control frames (pairing/handshake) are handled by the manager, never as node RPCs.
     if (type.startsWith('e2e_')) {
       if (local) {
         this.sendTo(connId, { type: 'local_protocol_error', payload: { error: 'LOCAL_E2EE_UNSUPPORTED' } })
         return
       }
+      const deviceBefore = deviceDump.enabled && (this.isDeviceConn(connId) || (type === 'e2e_pair_intent' && (frame.payload as { role?: unknown } | undefined)?.role === 'device'))
+      if (deviceBefore) deviceDump.record('in', 'wire', connId, frame)
       this.e2ee.handleFrame(connId, frame)
+      // A reconnecting device is only known as one once its hello has been accepted.
+      if (!deviceBefore && deviceDump.enabled && this.isDeviceConn(connId)) deviceDump.record('in', 'wire', connId, frame)
       return
     }
     if (type === 'autonomous_device_request') {
       if (!local) await this.autonomousDeviceRelay?.handle(connId, frame)
       return
     }
-    // Client→adapter encrypted frames: chat messages plus trusted web control actions. Plaintext
-    // passes through for legacy/device transition paths; undecryptable ciphertext is dropped.
-    if (!local && isEncryptedDownType(type)) {
-      if (type !== 'message' && type !== 'question_response' && !isWrapped(frame.payload)) {
+    // ⚠️ Default-deny: the relay is NOT trusted. A non-local frame is acted on only if it opens under
+    // this connId's E2EE session — whatever its type — or is one of the backend's own plaintext frames.
+    // A list of "sensitive" types to check instead fails open: every type missing from it, including
+    // ones added later, would be taken in the clear.
+    //
+    // The backend's own control frames are the mirror image: only ever plaintext, because the backend
+    // holds no key — so one that arrives SEALED was sealed by a paired client, and opening it would let
+    // that client speak as the backend (`machine_meta` repoints this computer's grid).
+    if (!local) {
+      const from = `${transport} (${connId ? `conn:${sid(connId)}` : 'backend'})`
+      const wrapped = isWrapped(frame.payload)
+      if (type.startsWith('__') || BACKEND_ONLY_DOWN_TYPES.has(type)) {
+        // And only on the backend's OWN address: it sends these with `connId: ''`, while every frame a
+        // client sends arrives stamped with that client's connId — so a client-shaped one was relayed, not
+        // written by the backend, whichever socket let it through. `__client_disconnected` is the one the
+        // hub addresses to a client's own connId; it only tears down that connection's state.
+        if (transport !== 'relay' || wrapped || (connId !== '' && type !== '__client_disconnected')) {
+          console.warn(`[backend] ignoring ${logSafeType(type)} from ${from} — only the backend sends it, and only in the clear`)
+          return
+        }
+      } else if (wrapped) {
+        const dec = this.e2ee.unwrapDown(connId, frame)
+        if (!dec) return
+        frame = dec
+      } else {
+        console.warn(`[backend] refusing plaintext ${logSafeType(type)} from ${from} — E2EE required`)
         const requestId = (frame.payload as { requestId?: unknown } | undefined)?.requestId
         if (requestId !== undefined) this.emitReply(connId, type, requestId, { error: 'E2EE_REQUIRED' })
         return
       }
-      const dec = this.e2ee.unwrapDown(connId, frame)
-      if (!dec) return
-      frame = dec
     }
+    if (!local && deviceDump.enabled && this.e2ee.sessionRole(connId) === 'device') deviceDump.record('in', 'legacy', connId, frame)
     if (!local && TERMINAL_P2P_SIGNAL_TYPES.has(type)) {
       await this.terminalP2p.handleSignal(connId, type, frame.payload)
       return
@@ -1083,10 +1784,16 @@ export class BackendSocket {
     // than as an opaque __e2e envelope.
     // Terminal frames contain raw keystrokes, paste text and screen bytes after
     // unwrap. Never pass them to the frame logger, even in diagnostic mode.
-    if (env.LOG_FRAMES && !type.startsWith('terminal_') && type !== 'agent_read_file' && type !== 'project_preview') {
+    if (env.LOG_FRAMES && !TEAM_REQUEST_TYPES.has(type) && !OWNER_COMMAND_TYPES.has(type) && !type.startsWith('terminal_') && !type.startsWith('viewer_') && !type.startsWith('grid_fleet_') && type !== 'agent_read_file' && type !== 'project_preview' && type !== 'git_project_info' && type !== 'git_pull_request' && type !== 'orchestrator' && type !== 'api_connections' && type !== 'phone_pair' && !SHARE_REQUEST_TYPES.has(type) && !type.startsWith('pair')) {
       logFrame('←', connId ? `conn:${sid(connId)}` : 'backend', frame)
     }
     const reply = (t: string, rid: unknown, p: Record<string, unknown>): void => this.emitReply(connId, t, rid, p)
+    if (SHARE_REQUEST_TYPES.has(type)) {
+      const p = (frame.payload ?? {}) as Record<string, unknown>
+      const result = await this.harnessSharing?.manage(type, p).catch(() => ({ error: 'SHARING_UNAVAILABLE', detail: 'Sharing is temporarily unavailable. Try again.' }))
+      reply(type, p.requestId, result ?? { error: 'UNSUPPORTED' })
+      return
+    }
     // Cross-instance client snapshot. Generation detects leave/join cycles that coalesce to the same
     // count; count rise remains the compatibility fallback for older backends.
     if (type === '__clients') {
@@ -1117,6 +1824,9 @@ export class BackendSocket {
       // terminal controller lease until the 30-second heartbeat timeout.
       this.autonomousDeviceRelay?.drop(connId)
       this.e2ee.dropSession(connId)
+      this.viewerForwarder.closeConnection(connId)
+      this.pairService?.unwatch(connId)
+      this.interactiveViewers.closeConnection(connId); this.ownerCommands.closeConnection(connId)
       await this.terminalP2p.closeConnection(connId, 'client_disconnected', false)
       this.p2pPendingOpens.delete(connId)
       this.p2pStreams.delete(connId)
@@ -1134,15 +1844,166 @@ export class BackendSocket {
     // clear the saved token. `closed` blocks the reconnect that would otherwise fire on socket drop.
     if (type === 'machine_revoked') { this.closed = true; this.onRevoked?.(); return }
 
+    // The account's tabs changed on another computer (or in another window of this one): hand the
+    // window the revision and let it fetch `/api/desk` through this daemon. Backend-only, like
+    // machine_meta — a local client cannot make the window re-read anything by sending this.
+    if (type === 'desk_changed') {
+      this.refreshChannels()
+      const revision = (typeof frame.payload === 'object' && frame.payload !== null ? (frame.payload as { revision?: unknown }).revision : undefined)
+      this.sendLocal({ type: 'desk_changed', payload: { revision: typeof revision === 'number' ? revision : 0 } })
+      return
+    }
+
+    // The account's zoo — its daemons and eggs — changed on another client: the same hand-off as the
+    // desk, on its own frame, so the window re-reads `/api/zoo` and never the desk (or the other way
+    // round). Backend-only for the same reason as desk_changed.
+    if (type === 'zoo_changed') {
+      const revision = (typeof frame.payload === 'object' && frame.payload !== null ? (frame.payload as { revision?: unknown }).revision : undefined)
+      this.sendLocal({ type: 'zoo_changed', payload: { revision: typeof revision === 'number' ? revision : 0 } })
+      this.onZooChanged?.(typeof revision === 'number' ? revision : 0)
+      return
+    }
+
+    // The account's machine list changed on some worker — a machine created / renamed / deleted, or a
+    // shared harness invited / taken back. The window re-reads `/api/machines` through this daemon; this
+    // push is why it does not have to poll for that. Backend-only for the same reason as desk_changed.
+    if (type === 'machines_changed') {
+      const reason = (typeof frame.payload === 'object' && frame.payload !== null ? (frame.payload as { reason?: unknown }).reason : undefined)
+      this.sendLocal({ type: 'machines_changed', payload: { reason: typeof reason === 'string' ? reason : 'updated' } })
+      return
+    }
+
     // Machine display name (seed on connect + web renames) — mirrored locally for `harness status`.
     if (type === 'machine_meta') {
-      const name = (frame.payload as { name?: unknown } | undefined)?.name
+      // ⚠️ The BACKEND's frame and nobody else's. It carries this machine's display name and, more
+      // to the point, the account's private grid — the grid every agent on this computer is then
+      // pointed at. Accepted from any transport, it let a process that could open the daemon's local
+      // port redirect the account's inference somewhere of its choosing, and a leftover test script
+      // doing exactly that by accident cost hours to find. No client sends this frame; there is
+      // nothing to be compatible with.
+      // The source check is above, with the other frames only the backend may send.
+      //
+      // A malformed/hostile frame's payload need not be an object; `'gridName' in meta` would throw
+      // on a primitive (and drop the whole frame via enqueueDown's catch). Guard the type first, the
+      // way the plain property reads elsewhere in this dispatcher tolerate one.
+      const meta = (typeof frame.payload === 'object' && frame.payload !== null ? frame.payload : {}) as { name?: unknown; gridName?: unknown }
+      const name = meta.name
+      // The account's private grid, pushed on connect. Held in memory only: it is the backend's
+      // value, and a daemon that cached it on disk would keep answering with a stale one after the
+      // account's grid changed. Only ACT on the key when it is present: the connect frame always
+      // carries it (a string or null), but a rename pushes `{name}` alone — and treating that
+      // absence as null used to WIPE a grid name a moment after it was set, leaving the picker
+      // empty. Absent ⇒ unchanged; null ⇒ this account has none; a string ⇒ that grid.
+      if ('gridName' in meta) {
+        this.harnessGridName = typeof meta.gridName === 'string' && meta.gridName.trim() ? meta.gridName.trim() : null
+      }
+      // The same rule for the name: a frame that does not carry it leaves it as it was.
+      if ('name' in meta) this.machineDisplayName = typeof name === 'string' && name.trim() ? name.trim() : null
       this.onMachineMeta?.(typeof name === 'string' && name.trim() ? name.trim() : null)
       return
     }
 
     const payload = (frame.payload ?? {}) as Record<string, unknown>
     const requestId = payload.requestId
+
+    if (TEAM_REQUEST_TYPES.has(type)) {
+      // Observers were handled above; only the owner or a paired owner client reaches this route.
+      if (!local && this.e2ee.sessionRole(connId) !== 'web') {
+        reply(type, requestId, { error: 'OWNER_REQUIRED', detail: 'Team communication requires an owner connection.' })
+        return
+      }
+      void Promise.resolve().then(async () => {
+        if (type === 'team') {
+          if (payload.action === 'context') {
+            const agentId = Id.parse(payload.agentId)
+            return this.channels().taskContext(agentId, this.swarmPromptScopes.current(agentId))
+          }
+          if (String(payload.action).startsWith('channel_')) return this.channels().request(payload)
+          if (typeof payload.teamId === 'string' && this.teams().isChannel(payload.teamId)
+              && ['ask', 'get', 'members'].includes(String(payload.action))) await this.channels().refresh(payload.action === 'ask')
+          return teamRequest(this.teams(), payload)
+        }
+        if (payload.action === 'runtime') return { runtime: this.localTeamRuntime(Id.parse(payload.agentId)) }
+        if (payload.action === 'prompt_scope') return { teamId: this.swarmPromptScopes.current(Id.parse(payload.agentId)) }
+        if (payload.action === 'prompt_replied') {
+          this.swarmPromptScopes.replied(Id.parse(payload.agentId), OperationId.parse(payload.teamId), OperationId.parse(payload.questionId))
+          return { ok: true }
+        }
+        return teamDeliveryRequest(this.teamMailbox(), payload)
+      }).then(result => reply(type, requestId, result)).catch(error => reply(type, requestId, teamFailure(error)))
+      return
+    }
+
+    if (type === 'api_connections') {
+      if (!local && this.e2ee.sessionRole(connId) !== 'web') { reply(type, requestId, { error: 'OWNER_REQUIRED' }); return }
+      if (payload.action === 'models') {
+        reply(type, requestId, await apiModelsRequest(this.apiConnections, payload))
+        return
+      }
+      reply(type, requestId, apiConnectionsRequest(this.apiConnections, payload))
+      if (payload.action === 'save') rememberSavedApis(this.apiConnections)
+      return
+    }
+
+    // A paired owner can run the machine's orchestrator; observers and device sessions cannot.
+    // Both requests and replies are encrypted, including project artifacts.
+    if (OWNER_COMMAND_TYPES.has(type)) {
+      if (!local && this.e2ee.sessionRole(connId) !== 'web') { reply(type, requestId, { error: 'OWNER_REQUIRED' }); return }
+      void this.ownerCommands.request(connId, type, payload).then(result => reply(type, requestId, result))
+      return
+    }
+
+    if (type === 'orchestrator') {
+      if (!local && this.e2ee.sessionRole(connId) !== 'web') { reply(type, requestId, { error: 'OWNER_REQUIRED' }); return }
+      // Detached: a large artifact snapshot must not block cancel/status on this connection.
+      void orchestratorRequest(this.orchestration(), payload)
+        .then(result => reply(type, requestId, result))
+        .catch(() => reply(type, requestId, { error: 'ORCHESTRATOR_FAILED' }))
+      return
+    }
+
+    // The pair brain (daemons/BRAIN.md). `pair_*` come from another machine's brain and reach here only
+    // sealed — the default-deny above already refused them in the clear. `pair` is this computer's own.
+    if (PAIR_REQUESTS.has(type) || type === 'pair') {
+      this.handlePair(connId, type, payload, local, reply)
+      return
+    }
+    // An individual's art for the phone, sealed (the default-deny above refused it in the clear). A window
+    // on this computer asks `daemon_plate_get` over the Unix socket instead; the same request over loopback
+    // would let a TCP client past that, so it is refused like a loopback `pair_*`.
+    if (type === PLATE_REQUEST) {
+      if (local) { reply(type, requestId, { error: 'REMOTE_ONLY', detail: 'On this computer, ask daemon_plate_get over the daemon\'s socket.' }); return }
+      const plates = this.plateService
+      if (!plates) { reply(type, requestId, { error: 'UNSUPPORTED' }); return }
+      // Detached: a plate not drawn yet takes seconds, and this connection's other requests must not wait.
+      void plates.get(payload).then((result) => reply(type, requestId, result)).catch(() => reply(type, requestId, { error: 'RENDER_FAILED' }))
+      return
+    }
+
+    if (type === 'viewer_surface') {
+      if (!local && this.e2ee.sessionRole(connId) !== 'web') return
+      // Rendering and input never hold up terminal traffic on the ordered machine queue.
+      void this.interactiveViewers.request(connId, payload)
+        .then(result => reply(type, requestId, result))
+        .catch(() => reply(type, requestId, { error: 'VIEWER_UNAVAILABLE' }))
+      return
+    }
+
+    // Trust-group roster exchange: only over an E2EE session, from the identity that session proved —
+    // the roster carries the keys this machine trusts, and the peer's own entry must be that identity.
+    if (type === 'group_sync') {
+      const peerPub = local ? null : this.e2ee.sessionIdentity(connId)
+      if (!peerPub || this.e2ee.sessionRole(connId) !== 'web' || !this.groupSync) { reply(type, requestId, { error: 'UNSUPPORTED' }); return }
+      try { reply(type, requestId, this.groupSync.handle(peerPub, payload)) } catch { reply(type, requestId, { error: 'GROUP_SYNC_FAILED' }) }
+      return
+    }
+
+    if (type.startsWith('viewer_')) {
+      if (VIEWER_DOWN_TYPES.has(type) && (local || this.e2ee.sessionRole(connId) === 'web')) {
+        this.viewerForwarder.handle(connId, type, payload)
+      }
+      return
+    }
 
     if (type.startsWith('terminal_')) {
       this.noteTerminalInputRoute(connId, type, payload, transport)
@@ -1152,8 +2013,46 @@ export class BackendSocket {
 
     try {
       switch (type) {
+        case 'machine_resources':
+          // Sampling CPU must not hold up typing or other machine requests.
+          void readMachineResources()
+            .then(resources => reply(type, requestId, { ...resources }))
+            .catch(() => reply(type, requestId, { error: 'UNAVAILABLE' }))
+          return
+        case 'grid_fleet_models_list':
+        case 'grid_fleet_model_download':
+        case 'grid_fleet_model_start':
+        case 'grid_fleet_model_stop': {
+          // A daemon-owned operation survives panel closure and a lost reply.
+          // Keep hardware/catalog/network reads off the ordered terminal queue.
+          void this.resolveGridName().then(async grid => type === 'grid_fleet_models_list'
+            ? this.localModels.list(grid, payload.refresh === true)
+            : this.localModels.act(grid, payload.modelId, type === 'grid_fleet_model_download' ? 'download' : type === 'grid_fleet_model_start' ? 'start' : 'stop'))
+            .then(result => reply(type, requestId, { ...result }))
+            .catch(() => reply(type, requestId, { error: 'Models are unavailable. Try again.' }))
+          return
+        }
+        case 'grid_fleet_capabilities':
+          reply(type, requestId, { protocol: GRID_FLEET_PROTOCOL, gridCli: gridCliPresence(), maxTimeoutMs: GRID_FLEET_MAX_TIMEOUT_MS, thinkingControl: true })
+          return
+        case 'grid_fleet_run': {
+          const request = parseGridFleetRequest(payload)
+          if (!request || typeof requestId !== 'string') { reply(type, requestId, { error: 'INVALID_GRID_COMMAND' }); return }
+          // Detached: pulls/builds can take minutes. Keep typing, cancellation, and telemetry responsive.
+          void this.gridFleet.run(connId, requestId, request)
+            .then(result => reply(type, requestId, { ...result }))
+            .catch(() => reply(type, requestId, { ok: false, code: 1, error: 'Grid command failed unexpectedly.' }))
+          return
+        }
+        case 'grid_fleet_cancel':
+          reply(type, requestId, { cancelled: typeof payload.commandId === 'string' && this.gridFleet.cancel(connId, payload.commandId) })
+          return
         case 'device_e2ee_pair':
           await this.e2ee.pairDeviceFromTrustedWeb(connId, payload)
+          return
+        case 'phone_pair':
+          // CPace waits for another connection. Do not block this browser's terminal queue.
+          void this.e2ee.pairPhoneFromTrustedWeb(connId, payload)
           return
 
         case 'e2ee_pairings_list':
@@ -1168,14 +2067,13 @@ export class BackendSocket {
           this.e2ee.revokeAllFromTrustedWeb(connId, requestId)
           return
 
-        case 'e2ee_browser_link_create': {
-          const setup = this.e2ee.createSetupToken()
-          reply(type, requestId, setup)
-          return
-        }
-
         case 'agents_list': {
           const projects = await Promise.all(registry.advertised().map((s) => this.toProject(s)))
+          // Older clients/devices keep their live-only contract. The desktop picker
+          // explicitly asks for stopped work and receives no stale terminal routes.
+          if (payload.includeStopped === true && this.e2ee.sessionRole(connId) !== 'device') {
+            projects.push(...await Promise.all(stoppedAgents.available(registry.advertised()).map(s => this.toStoppedProject(s))))
+          }
           // Ordered by creation time, oldest → newest — a stable tab order that doesn't reshuffle as
           // sessions become active (createdAt = the session's registeredAt). The id breaks a tie so the
           // order is TOTAL: without it two agents registered in the same millisecond fall through to array
@@ -1184,7 +2082,7 @@ export class BackendSocket {
           // sorts by the same rule; the two must stay identical.
           projects.sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt) || a.id.localeCompare(b.id))
           if (this.e2ee.sessionRole(connId) === 'device') {
-            reply(type, requestId, { agents: projects.slice(0, DEVICE_AGENT_LIST_LIMIT).map(deviceAgentListItem) })
+            reply(type, requestId, { agents: projects.filter(deviceAgentRow).slice(0, DEVICE_AGENT_LIST_LIMIT).map(deviceAgentListItem) })
             return
           }
           reply(type, requestId, { agents: projects })
@@ -1200,14 +2098,13 @@ export class BackendSocket {
           // lands, instead of pinning `currentSessionId` to an id no event will ever carry.
           if (!s || !s.sessionId) { reply(type, requestId, { sessions: [] }); return }
           const lines = s.transcriptPath ? await tailFile(s.transcriptPath, Infinity) : []
-          const st = s.transcriptPath ? await stat(s.transcriptPath).catch(() => null) : null
           reply(type, requestId, {
             sessions: [{
               id: s.sessionId,
               title: projectDisplayName(s),
               timestamp: new Date(s.registeredAt).toISOString(),
               messageCount: lines.length,
-              lastActivity: new Date(st?.mtimeMs ?? s.updatedAt).toISOString(),
+              lastActivity: new Date(await lastActivityAt(s)).toISOString(),
               participants: [],
             }],
           })
@@ -1228,7 +2125,7 @@ export class BackendSocket {
             const limit = typeof rawLimit === 'number' && rawLimit > 0 ? Math.min(Math.floor(rawLimit), 500) : undefined
             const before = typeof payload.before === 'string' ? payload.before : undefined
             const messages = await readDevinMessages(DEVIN_DB, sessionId)
-            const timestamp = new Date(s.updatedAt).toISOString()
+            const timestamp = new Date(s.touchedAt).toISOString()
             if (!limit) {
               reply(type, requestId, { id: sessionId, title: projectDisplayName(s), events: devinMessagesToEvents(messages), timestamp, engine: s.engine })
               return
@@ -1248,8 +2145,8 @@ export class BackendSocket {
             const rawLimit = payload.limit
             const limit = typeof rawLimit === 'number' && rawLimit > 0 ? Math.min(Math.floor(rawLimit), 500) : undefined
             const before = typeof payload.before === 'string' ? payload.before : undefined
-            const messages = await readHermesMessages(HERMES_DB, sessionId)
-            const timestamp = new Date(s.updatedAt).toISOString()
+            const messages = await readHermesMessages(await hermesDbForSession(s), sessionId)
+            const timestamp = new Date(s.touchedAt).toISOString()
             if (!limit) {
               reply(type, requestId, { id: sessionId, title: projectDisplayName(s), events: hermesMessagesToEvents(messages), timestamp, engine: s.engine })
               return
@@ -1270,7 +2167,7 @@ export class BackendSocket {
             const limit = typeof rawLimit === 'number' && rawLimit > 0 ? Math.min(Math.floor(rawLimit), 500) : undefined
             const before = typeof payload.before === 'string' ? payload.before : undefined
             const messages = await readOpencodeMessages(OPENCODE_DB, sessionId)
-            const timestamp = new Date(s.updatedAt).toISOString()
+            const timestamp = new Date(s.touchedAt).toISOString()
             if (!limit) {
               reply(type, requestId, { id: sessionId, title: projectDisplayName(s), events: opencodeMessagesToEvents(messages), timestamp, engine: s.engine })
               return
@@ -1295,7 +2192,7 @@ export class BackendSocket {
             const limit = typeof rawLimit === 'number' && rawLimit > 0 ? Math.min(Math.floor(rawLimit), 500) : undefined
             const before = typeof payload.before === 'string' ? payload.before : undefined
             const messages = await readKiloMessages(KILO_DB, sessionId)
-            const timestamp = new Date(s.updatedAt).toISOString()
+            const timestamp = new Date(s.touchedAt).toISOString()
             if (!limit) {
               reply(type, requestId, { id: sessionId, title: projectDisplayName(s), events: kiloMessagesToEvents(messages), timestamp, engine: s.engine })
               return
@@ -1315,7 +2212,7 @@ export class BackendSocket {
               id: sessionId,
               title: projectDisplayName(s),
               events: [],
-              timestamp: new Date(s.updatedAt).toISOString(),
+              timestamp: new Date(s.touchedAt).toISOString(),
               engine: s.engine,
               hasMore: false,
               oldestCursor: null,
@@ -1335,7 +2232,7 @@ export class BackendSocket {
             const fullEvents = s.engine === 'codex'
               ? codexMessagesToEvents(lines, codexSubagentResolverFor(s.codexHome))
               : s.engine === 'cursor'
-                ? cursorMessagesToEvents(lines, sessionId, await loadCursorReplayTaskLinks(env.CURSOR_HOME, sessionId))
+                ? cursorMessagesToEvents(lines, sessionId, await loadCursorReplayTaskLinks(cursorConfigDir(), sessionId, cursorDataDir()))
                 : s.engine === 'muse'
                   ? museMessagesToEvents(lines)
                   : s.engine === 'amp'
@@ -1411,7 +2308,7 @@ export class BackendSocket {
               ? cursorMessagesToEvents(
                   w.window,
                   sessionId,
-                  await loadCursorReplayTaskLinks(env.CURSOR_HOME, sessionId),
+                  await loadCursorReplayTaskLinks(cursorConfigDir(), sessionId, cursorDataDir()),
                   'startIndex' in w && typeof w.startIndex === 'number' ? w.startIndex : 0,
                   'initialTodos' in w && Array.isArray(w.initialTodos) ? w.initialTodos : [],
                 )
@@ -1436,6 +2333,53 @@ export class BackendSocket {
           return
         }
 
+        case 'grid_models_list': {
+          // Every grid this computer is signed into, in sections, the account's own first. `gridName`
+          // and `models` keep naming the own grid alone, for an app that predates `grids`.
+          //
+          // DETACHED from this connection's ordered RPC chain, like `engines_probe`: it waits on a
+          // grid reconcile (up to 6s), then a `grid ls` spawn and — for a grid this daemon has never
+          // read — up to 4s of its first read (`gridModels.ts`); every other grid answers from its picture.
+          // The desktop asks for it in the same breath as `terminal_capabilities` and `agents_list`
+          // on every connect, and awaited here it held both behind it — with no network, past the
+          // app's 10s request timeout, on which the app forces a reconnect and asks all three again.
+          // Measured 2026-09-18, wifi off, daemon restarted: every local RPC timed out for as long
+          // as the backend stayed unreachable; the terminal on the SAME computer sat on "offline"
+          // until the wifi came back. Request ids make the reply safe to land out of order.
+          //
+          // One computation at a time: detached, a second ask that lands while the first is still
+          // out (the app re-asks on every connect) would spawn another `grid ls` for the same answer.
+          // Later askers share the one in flight; each grid's reads are single-flight in the service.
+          //
+          // `rowState: true` — a window that draws row state gets offline labels as `unavailable` (and
+          // its pushes in that form); `wake: [name]` — a person pressed "Show models" / "Wake now", and
+          // the answer (with those sections "waking") comes back at once while the wake runs behind it
+          // (grid-reads-without-waking issue 03). A wake never joins a listing already out: that one
+          // was built before the wake began, and would not say "waking".
+          const rowState = payload.rowState === true
+          if (rowState && this.localClients.has(connId)) this.rowStateWindows.add(connId)
+          const wake = Array.isArray(payload.wake)
+            ? payload.wake.filter((name): name is string => typeof name === 'string' && !!name.trim()).map((name) => name.trim()).slice(0, MAX_WAKES_PER_ASK)
+            : []
+          void (async () => {
+            const gridName = await this.resolveGridName()
+            const inFlight = this.gridModelsInFlight
+            const listing = wake.length
+              ? listAllGridModels(gridName, { wake })
+              : inFlight && inFlight.gridName === gridName
+                ? inFlight.grids
+                : (this.gridModelsInFlight = {
+                    gridName,
+                    grids: listAllGridModels(gridName).finally(() => {
+                      if (this.gridModelsInFlight?.gridName === gridName) this.gridModelsInFlight = null
+                    }),
+                  }).grids
+            reply(type, requestId, gridModelsPayload(gridName, await listing, rowState))
+          })().catch(() => reply(type, requestId, { error: 'GRID_MODELS_FAILED' }))
+          return
+        }
+
+
         case 'models_list': {
           const sessionId = typeof payload.agentId === 'string' && payload.agentId
             ? payload.agentId
@@ -1450,6 +2394,70 @@ export class BackendSocket {
               ? compactRuntimePickerModels(models, sessionId, payload.pickerMode, payload.selectedModel)
               : models,
           })
+          return
+        }
+
+        case 'dsh_list': {
+          // Keep catalog I/O off this connection's ordered RPC queue.
+          void refreshDshRegistry()
+            .then(catalog => reply(type, requestId, { dsh: dshListRows(undefined, catalog) }))
+            .catch(error => reply(type, requestId, { error: 'INTERNAL', detail: error instanceof Error ? error.message : String(error) }))
+          return
+        }
+
+        case 'dsh_remove': {
+          // Uninstall a harness from THIS machine: the clone under ~/.harness/dsh goes (a linked
+          // install loses only its link), the index forgets it, and a `dsh_list` after this no
+          // longer says installed. Agents already running from it keep running — their processes
+          // hold what they need — and the store is what asks; it refreshes the list itself.
+          if (!this.onDshRemove) { reply(type, requestId, { error: 'UNSUPPORTED_ON_REMOTE' }); return }
+          const id = dshRemoveId(payload)
+          if (!id) { reply(type, requestId, { error: 'INVALID_DSH', detail: 'dsh_remove needs an id' }); return }
+          reply(type, requestId, dshRemoveReply(id, this.onDshRemove(id)))
+          return
+        }
+
+        case 'remote_terminal_handoff': {
+          // `harness remote`, typed INSIDE one of this machine's terminal tiles, opened a terminal on
+          // another machine and asks the window showing the tile to swap it over: the tile it was
+          // typed in (named by its tmux pane, the one fact the shell has about itself) becomes the new
+          // agent's, and the old shell is ended by the window. Asked over loopback only (the command
+          // runs on this machine), but PUSHED to every audience: the window showing a tile of this
+          // machine may be on another computer, reached through the relay — nothing in the payload
+          // but ids, so it travels plain like dsh_install_status.
+          if (!this.localClients.has(connId)) { reply(type, requestId, { error: 'UNSUPPORTED' }); return }
+          const handoff = terminalHandoffRequest(payload)
+          if (!handoff) { reply(type, requestId, { error: 'INVALID_HANDOFF', detail: 'remote_terminal_handoff needs tmuxPane (%N), machineId and agentId' }); return }
+          const fromAgentId = this.onTerminalHandoff?.(handoff.tmuxPane) ?? null
+          if (!fromAgentId) { reply(type, requestId, { error: 'NOT_A_HARNESS_PANE', detail: `${handoff.tmuxPane} is not a Harness terminal on this machine` }); return }
+          // Who could hear it: other loopback clients (a window on this computer) and the web audience
+          // (a window elsewhere, relayed). None means nobody is here to swap the tile.
+          const windows = [...this.localClients.keys()].filter((id) => id !== connId).length + this.commanderCount
+          this.send({ type: 'remote_terminal_handoff', payload: { fromAgentId, machineId: handoff.machineId, agentId: handoff.agentId } })
+          reply(type, requestId, { ok: true, fromAgentId, windows })
+          return
+        }
+
+        case 'dsh_update': {
+          if (!this.onDshUpdate) { reply(type, requestId, { error: 'UNSUPPORTED_ON_REMOTE' }); return }
+          const id = dshRemoveId(payload)
+          if (!id) { reply(type, requestId, { error: 'INVALID_DSH', detail: 'dsh_update needs an id' }); return }
+          void this.onDshUpdate(id, p => this.send({ type: 'dsh_install_status', payload: dshInstallStatus(p, { id }) }))
+            .then(result => reply(type, requestId, dshInstallReply(result)))
+            .catch(error => reply(type, requestId, { error: 'INTERNAL', detail: error instanceof Error ? error.message : String(error) }))
+          return
+        }
+
+        case 'dsh_install': {
+          // Clone, set up and doctor a harness on THIS machine. Long — minutes, for a toolchain — so
+          // it is detached from the ordered RPC chain like `engines_probe`, and progress travels as
+          // `dsh_install_status` pushes the app renders in the create dialog.
+          if (!this.onDshInstall) { reply(type, requestId, { error: 'UNSUPPORTED_ON_REMOTE' }); return }
+          const request = dshInstallRequest(payload)
+          if (!request) { reply(type, requestId, { error: 'INVALID_DSH', detail: 'dsh_install needs an id or a url' }); return }
+          void this.onDshInstall(request, (p) => this.send({ type: 'dsh_install_status', payload: dshInstallStatus(p, request) }))
+            .then((result) => reply(type, requestId, dshInstallReply(result)))
+            .catch((error) => reply(type, requestId, { error: 'INTERNAL', detail: error instanceof Error ? error.message : String(error) }))
           return
         }
 
@@ -1475,7 +2483,7 @@ export class BackendSocket {
                 installed: entry.installed,
                 command: entry.command,
                 installable: entry.installable,
-                installCommand: entry.installable ? engineInstallRecipe(entry.engine).command : null,
+                installCommand: entry.installable ? engineInstallRecipe(entry.engine)?.command ?? null : null,
                 // Static per-CLI-version capability, not a probe result: its mere presence is what
                 // lets an older CLI (which never sends the field) keep reading as "unknown" rather
                 // than "no", per the desktop app's `EngineAvailability.fromJson`.
@@ -1506,8 +2514,9 @@ export class BackendSocket {
 
         case 'voice_route': {
           // Voice router (REMOTE machine): pick the best-fit agent for a transcribed Overview voice task,
-          // using each agent's name + recent-turn recap. Backend-originated (connId===''), so the transcript
-          // is plaintext and the reply falls through emitReply's plaintext path (voice_route is not E2EE-gated).
+          // using each agent's name + recent-turn recap. Once asked plaintext by the backend's legacy
+          // device-ws voice path; that path no longer reaches a harness machine, and the relay gate now
+          // refuses it unsealed like any other RPC.
           const transcript = typeof payload.transcript === 'string' ? payload.transcript : ''
           if (!transcript.trim()) {
             console.log('[voice-route] backend sent an empty transcript — nothing to route')
@@ -1536,7 +2545,16 @@ export class BackendSocket {
           if (!projectId) { reply(type, requestId, { error: 'MISSING_AGENT_ID' }); return }
           const hasName = Object.prototype.hasOwnProperty.call(payload, 'name')
           const hasProfile = Object.prototype.hasOwnProperty.call(payload, 'selectedModel')
-          if (!hasName && !hasProfile) { reply(type, requestId, { error: 'MISSING_UPDATE' }); return }
+          // An app OPENED this agent — see RegisteredSession.lastOpenedAt. Only a literal `true`: a
+          // client that means "opened" says so, and anything else is not an update at all. A client
+          // reaching this handler is already one that may change the agent — a shared harness's
+          // observer never gets here (sharing/owner.ts answers everything but terminal frames with
+          // VIEW_ONLY) — so an open is taken from the local window, a paired web/phone session and a
+          // remote desktop relayed through its own daemon alike.
+          const hasOpened = payload.opened === true
+          // An older client, and a request carrying none of the three, still get MISSING_UPDATE — which
+          // is also what a client learns from a daemon that predates `opened`.
+          if (!hasName && !hasProfile && !hasOpened) { reply(type, requestId, { error: 'MISSING_UPDATE' }); return }
           const name = typeof payload.name === 'string' ? payload.name.trim() : ''
           if (hasName && !name) { reply(type, requestId, { error: 'MISSING_NAME' }); return }
           let s = registry.resolve(projectId)
@@ -1558,8 +2576,27 @@ export class BackendSocket {
             s = registry.rename(projectId, name) ?? s
             this.onAgentRename?.(s, name)
           }
+          // Throttled on the stamp the row already carries, so a repeat inside the window is answered
+          // with the current frame but moves nothing and tells no one. A stamp from the future (the
+          // clock was set back) never throttles: the next open corrects it.
+          let opened = false
+          if (hasOpened) {
+            const since = Date.now() - (s.lastOpenedAt ?? 0)
+            if (!s.lastOpenedAt || since < 0 || since >= AGENT_OPENED_THROTTLE_MS) {
+              s = registry.markOpened(s.agentId) ?? s
+              opened = true
+            }
+          }
           const agent = await this.toProject(s)
           reply(type, requestId, { agent })
+          // Every app sorts by the same stamp, so every app hears it: the web audience — the phone,
+          // other desktops, and this computer's own windows — through `send`. Not the device: the dial
+          // lists agents in creation order and has nothing to reorder. Not for an agent whose terminal
+          // this daemon cannot see either, the rule `syncSession` (cli.ts) keeps: that row is not in
+          // `agents_list`, and a push would put it back on every screen.
+          if (opened && registry.terminalAvailable(s.agentId)) {
+            this.send({ type: 'agent_synced', payload: { agent } })
+          }
           if (hasName) {
             const renamed = { type: 'agent_renamed', payload: { agentId: s.agentId, name, engine: s.engine } }
             this.send(renamed)          // every OTHER web client on this machine (group-encrypted)
@@ -1593,7 +2630,11 @@ export class BackendSocket {
           catch (error) {
             reply(type, requestId, { error: error instanceof ProjectFolderError ? error.code : 'INVALID_PROJECT_SOURCE' }); return
           }
-          if (!projectFolder && (typeof cwd !== 'string' || !isAbsolute(cwd))) { reply(type, requestId, { error: 'INVALID_CWD' }); return }
+          // A terminal opens where a terminal app would — the home directory — when the client names
+          // no folder; every other engine works IN a folder and must be told which.
+          const terminal = isTerminalEngine(engine)
+          if (terminal && projectFolder) { reply(type, requestId, { error: 'INVALID_PROJECT_SOURCE', detail: 'a terminal opens in a folder, it does not prepare one' }); return }
+          if (!projectFolder && !(terminal && cwd === undefined) && (typeof cwd !== 'string' || !isAbsolute(cwd))) { reply(type, requestId, { error: 'INVALID_CWD' }); return }
           if (!this.onCreateAgent) { reply(type, requestId, { error: 'UNSUPPORTED_ON_REMOTE' }); return }
           const creationId = payload.creationId
           if (creationId !== undefined && !validCreationId(creationId)) {
@@ -1605,8 +2646,11 @@ export class BackendSocket {
           // Absent is the ordinary case and stays indistinguishable from a client that predates grids;
           // present-but-malformed is refused here rather than half-applied at launch, because an agent
           // that quietly ran on the engine's own login would look like it worked.
+          const model = parseNewAgentModel(engine, payload)
+          if (model.state === 'invalid') { reply(type, requestId, { error: 'INVALID_GRID', detail: model.detail }); return }
           const grid = parseGridLaunchOverride(payload.grid)
           if (grid.state === 'invalid') { reply(type, requestId, { error: 'INVALID_GRID', detail: grid.reason }); return }
+          if (terminal && grid.state === 'ok') { reply(type, requestId, { error: 'INVALID_GRID', detail: 'a terminal has no engine to point at a grid' }); return }
           // Same validation the desktop app already applies client-side (`Agent._safeCodexHome`) —
           // repeated here because a client's own check is not a guarantee about what actually
           // arrives on the wire.
@@ -1619,27 +2663,155 @@ export class BackendSocket {
             reply(type, requestId, { error: 'INVALID_CODEX_HOME', detail: 'codexHome is only valid for codex, without a grid' })
             return
           }
+          // A DSH is refused, never approximated: an agent created as its plain base engine would look
+          // like it worked and have none of the skills the user picked the tile for.
+          let dsh: string | null = null
+          if (payload.dsh !== undefined && payload.dsh !== null) {
+            if (typeof payload.dsh !== 'string' || !DSH_ID_RE.test(payload.dsh)) {
+              reply(type, requestId, { error: 'INVALID_DSH', detail: 'dsh must be an owner/name id' }); return
+            }
+            const installed = installedDsh(payload.dsh)
+            if (!installed) {
+              reply(type, requestId, { error: 'INVALID_DSH', detail: `${payload.dsh} is not installed on this machine` }); return
+            }
+            if (installed.manifest.kind === 'viewer') {
+              reply(type, requestId, { error: 'INVALID_DSH', detail: `${payload.dsh} is a viewer package, not an agent` }); return
+            }
+            if (!dshSupportedEngines(installed.manifest).includes(engine)) {
+              reply(type, requestId, { error: 'INVALID_DSH', detail: `${payload.dsh} supports ${dshSupportedEngines(installed.manifest).join(', ')}; ${engine} is not compatible` }); return
+            }
+            dsh = installed.id
+          }
+          // A first prompt is refused BEFORE any pane exists: an engine with no way to take one would
+          // otherwise open on an empty input and look like the person's request had been heard. The
+          // length bound is a first message's, not a document's. The text itself is never logged.
+          let prompt: string | null = null
+          if (payload.prompt !== undefined && payload.prompt !== null) {
+            if (typeof payload.prompt !== 'string') { reply(type, requestId, { error: 'INVALID_PROMPT', detail: 'prompt must be a string' }); return }
+            const trimmed = payload.prompt.trim()
+            if (trimmed.length > MAX_FIRST_PROMPT_CHARS) {
+              reply(type, requestId, { error: 'PROMPT_TOO_LONG', detail: `prompt is longer than ${MAX_FIRST_PROMPT_CHARS} characters` }); return
+            }
+            if (trimmed && !supportsFirstPrompt(engine)) {
+              reply(type, requestId, { error: 'PROMPT_UNSUPPORTED', detail: new FirstPromptUnsupportedError(engine).message }); return
+            }
+            prompt = trimmed || null
+          }
+          // Blank is "number it", the same as absent — a client that sends an empty field is not
+          // asking for an agent with no name.
+          const name = typeof payload.name === 'string' && payload.name.trim() ? payload.name.trim() : null
+          // The engine's named agent is refused BEFORE any pane exists, like the prompt: an engine with
+          // no way to open as one would otherwise come up as a general session under that agent's
+          // name. The shape is an identifier the engine looks a file up by — never a path.
+          let agent: string | null = null
+          if (payload.agent !== undefined && payload.agent !== null) {
+            if (typeof payload.agent !== 'string' || !AGENT_NAME_RE.test(payload.agent)) {
+              reply(type, requestId, { error: 'INVALID_AGENT', detail: 'agent must be 1-64 letters, digits, `-` or `_`' }); return
+            }
+            if (!supportsNamedAgent(engine)) {
+              reply(type, requestId, { error: 'AGENT_UNSUPPORTED', detail: new NamedAgentUnsupportedError(engine).message }); return
+            }
+            agent = payload.agent
+          }
+          // A permission mode picked in New Harness. A client that predates the choice sends only
+          // `bypassPermission`; one that sends a mode this engine does not have is refused rather than
+          // quietly launched in some other mode.
+          let permissionMode: string | null = null
+          if (payload.permissionMode !== undefined && payload.permissionMode !== null) {
+            if (typeof payload.permissionMode !== 'string' || !permissionModeFlags(engine, payload.permissionMode)) {
+              reply(type, requestId, { error: 'INVALID_PERMISSION_MODE', detail: `${engine} has no permission mode ${JSON.stringify(payload.permissionMode)}` }); return
+            }
+            permissionMode = payload.permissionMode
+          }
+          // Opening a conversation Harness did not start: the engine resumes it, as it was. Nothing a new
+          // conversation is created with applies to it.
+          let resumeSessionId: string | null = null
+          if (payload.resumeSessionId !== undefined && payload.resumeSessionId !== null) {
+            // Engines' ids: uuids, `ses_…` (OpenCode, Kilo), `20260927_101500_ab12cd` (Hermes), slugs
+            // (Devin), Pi's custom ids with dots. One word, never a path.
+            if (typeof payload.resumeSessionId !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._-]{1,127}$/.test(payload.resumeSessionId)) {
+              reply(type, requestId, { error: 'INVALID_SESSION', detail: 'resumeSessionId must be a session id' }); return
+            }
+            if (terminal || projectFolder || grid.state === 'ok' || model.state === 'ok' || dsh || prompt || agent) {
+              reply(type, requestId, { error: 'INVALID_SESSION', detail: 'a resumed conversation takes no new folder, grid, harness, prompt or agent' }); return
+            }
+            resumeSessionId = payload.resumeSessionId
+          }
+          let takeOver: 'idle' | 'now' | 'wait' | null = null
+          if (payload.takeOver !== undefined && payload.takeOver !== null) {
+            if (!resumeSessionId || (payload.takeOver !== 'idle' && payload.takeOver !== 'now' && payload.takeOver !== 'wait')) {
+              reply(type, requestId, { error: 'INVALID_SESSION', detail: 'takeOver is idle, now or wait, with a resumeSessionId' }); return
+            }
+            takeOver = payload.takeOver
+          }
           const input = {
             engine,
-            cwd: typeof cwd === 'string' ? cwd : '',
-            bypassPermission: payload.bypassPermission === true,
+            cwd: typeof cwd === 'string' ? cwd : terminal ? homedir() : '',
+            // On unless a client says otherwise: a harness works without stopping to ask for each command.
+            bypassPermission: permissionMode ? permissionModeApproves(permissionMode) : payload.bypassPermission !== false,
+            permissionMode,
             grid: grid.state === 'ok' ? grid.override : null,
             codexHome,
+            dsh,
+            prompt,
+            name,
+            agent,
+            resumeSessionId,
+            takeOver,
           }
+          const fingerprintInput = model.state === 'ok' ? { ...input, modelSelection: model.selection } : input
           if (creationId !== undefined) {
             // Reserve before spawning. A transport retry carries the SAME creationId; a deliberate
             // New agent action carries a new one. Detach so a status check can pass a slow create
             // on this connection, just as engines_probe is detached above.
             const create = this.onCreateAgent
             try {
-              void this.agentCreations.run(creationId, creationFingerprint(projectFolder ? { ...input, projectFolder } : input), async () => {
+              void this.agentCreations.run(creationId, creationFingerprint(projectFolder ? { ...fingerprintInput, projectFolder } : fingerprintInput), async () => {
+                if (model.state === 'ok') {
+                  const target = await resolveNewAgentModel(model.selection).catch(() => null)
+                  if (!target) return { state: 'failed', error: 'GRID_UNAVAILABLE', detail: 'The selected model is unavailable. Choose another model or refresh the list.' }
+                  input.grid = target
+                }
                 let preparedFolder: string | undefined
                 if (projectFolder) {
-                  try { preparedFolder = await prepareProjectFolder(projectFolder) }
+                  try { preparedFolder = await prepareProjectFolder(projectFolder, { label: (dsh ? installedDsh(dsh)?.manifest.name : null) ?? engineLabel(input.engine) }) }
                   catch (error) {
                     return { state: 'failed', error: error instanceof ProjectFolderError ? error.code : 'PROJECT_PREPARATION_FAILED',
                       detail: error instanceof ProjectFolderError ? error.message : 'Could not prepare the project folder.' }
                   }
+                  // Only a folder this daemon just made EMPTY is one the engine need not ask about. A clone or
+                  // the person's own repo is theirs to answer for (lib/claudeTrust.ts); a worktree gets only
+                  // the answer its source repo already has. `branch` IS the source folder: nothing to record.
+                  try {
+                    const engineTrust = input.engine === 'claude' ? { trusts: claudeTrusts, record: preTrustClaudeProject }
+                      : input.engine === 'codex' ? { trusts: codexTrusts, record: preTrustCodexProject } : null
+                    if (engineTrust && (projectFolder.source === 'new'
+                      || (projectFolder.source === 'worktree' && engineTrust.trusts(projectFolder.gitSource)))) {
+                      engineTrust.record(preparedFolder)
+                    }
+                  } catch (error) { console.warn(`[agent] pre-trust ${preparedFolder} · ${error instanceof Error ? error.message : error}`) }
+                } else if (!dsh && local && dirname(input.cwd) === projectsRoot()) {
+                  // On the LOCAL machine the desktop makes a new workspace ITSELF and sends the path as a plain
+                  // cwd, so `projectFolder` above never sees it. Such a folder is empty and is trusted the way a
+                  // `new` project is — but only on evidence, and only where those workspaces live:
+                  //
+                  //   · directly inside the projects root, which is the one folder the app and this daemon
+                  //     create workspaces in. Trust INHERITS downward (claudeTrusts), so recording it for a
+                  //     folder the person merely browsed to — an empty `~/code`, or a home with nothing in it —
+                  //     would silently cover every repo cloned under it later: OH-14 again by another door.
+                  //   · empty as read from disk, never on the client's word. A clone, a worktree or the
+                  //     person's own repo has content, so it stays the engine's question (lib/claudeTrust.ts).
+                  //   · from a LOCAL frame. agent_create is not backend-only, so a relayed peer would otherwise
+                  //     name an empty path on this host and have it trusted.
+                  //
+                  // DSH trust is decided in cli.ts, where the template count is known; leave that to it.
+                  try {
+                    const empty = await readdir(input.cwd).then((names) => names.length === 0, () => false)
+                    if (empty) {
+                      if (input.engine === 'claude') preTrustClaudeProject(input.cwd)
+                      if (input.engine === 'codex') preTrustCodexProject(input.cwd)
+                    }
+                  } catch (error) { console.warn(`[agent] pre-trust ${input.cwd} · ${error instanceof Error ? error.message : error}`) }
                 }
                 const result = await create(preparedFolder ? { ...input, cwd: preparedFolder } : input)
                 if (result.ok) return { state: 'created', agentId: result.session.agentId }
@@ -1656,6 +2828,11 @@ export class BackendSocket {
             return
           }
           // Clients predating receipts retain their existing response shape.
+          if (model.state === 'ok') {
+            const target = await resolveNewAgentModel(model.selection).catch(() => null)
+            if (!target) { reply(type, requestId, { error: 'GRID_UNAVAILABLE', detail: 'The selected model is unavailable. Choose another model or refresh the list.' }); return }
+            input.grid = target
+          }
           const result = await this.onCreateAgent(input)
           // `detail` carries the underlying cause (tmux's own message) so the person who clicked
           // Create can read it, rather than having to open a log on the machine that failed.
@@ -1675,6 +2852,45 @@ export class BackendSocket {
           if (!agentId) { reply(type, requestId, { error: 'MISSING_AGENT_ID' }); return }
           if (!this.onRetargetAgent) { reply(type, requestId, { error: 'UNSUPPORTED_ON_REMOTE' }); return }
           const clear = payload.clearGrid === true
+          // `gridModel` is the header picker's frame: a model id and nothing else. The endpoint and
+          // the credential are resolved HERE, from this machine's own signed-in `grid`, so neither
+          // ever crosses the relay and the app cannot be the source of truth for an address it does
+          // not know. A client that sends the full `grid` object still works unchanged.
+          const picked = typeof payload.gridModel === 'string' ? payload.gridModel : ''
+          // `apiConnection` + `apiModel`: a model of an API saved on this machine. Same rule as a grid
+          // model — the app names it, and the endpoint and key are read here, from the store — and
+          // only for whoever may manage those APIs (`api_connections`): this machine's own app, or
+          // its owner's paired session. The key itself never leaves this daemon either way.
+          const api = typeof payload.apiConnection === 'string' ? payload.apiConnection : ''
+          if (api && (picked || payload.grid !== undefined || clear)) {
+            reply(type, requestId, { error: 'INVALID_GRID', detail: 'Choose an API model, a grid model or the own login, not several.' })
+            return
+          }
+          if (api) {
+            if (!local && this.e2ee.sessionRole(connId) !== 'web') { reply(type, requestId, { error: 'OWNER_REQUIRED' }); return }
+            try {
+              payload.grid = await resolveApiTarget(this.apiConnections, api, typeof payload.apiModel === 'string' ? payload.apiModel.trim() : '')
+            } catch (error) {
+              reply(type, requestId, {
+                error: 'API_UNAVAILABLE',
+                detail: error instanceof ApiConnectionError ? error.message : 'This API could not be used. Try again.',
+              })
+              return
+            }
+          }
+          if (picked && payload.grid === undefined && !clear) {
+            // The grid the model was picked FROM, when the picker says (a shared grid's section);
+            // the account's own grid otherwise, as before.
+            const pickedGrid = typeof payload.gridName === 'string' && payload.gridName.trim()
+              ? payload.gridName.trim()
+              : await this.resolveGridName()
+            const resolved = await resolveGridTarget(pickedGrid, picked)
+            if (!resolved) {
+              reply(type, requestId, { error: 'GRID_UNAVAILABLE', detail: 'Could not read this machine\'s grid endpoint.' })
+              return
+            }
+            payload.grid = resolved
+          }
           const target = parseGridLaunchOverride(payload.grid)
           // Exactly one, and `clearGrid` is a separate field rather than `grid: null` on purpose:
           // parseGridLaunchOverride already answers `absent` for both undefined and null, so
@@ -1690,12 +2906,18 @@ export class BackendSocket {
             })
             return
           }
-          const moved = await this.onRetargetAgent({ agentId, grid: target.state === 'ok' ? target.override : null })
+          const override = target.state === 'ok' ? target.override : null
+          const moved = await this.onRetargetAgent({ agentId, grid: override })
           if (!moved.ok) {
             reply(type, requestId, moved.detail ? { error: moved.error, detail: moved.detail } : { error: moved.error })
             return
           }
           reply(type, requestId, { retargeted: true })
+          // The agent is on a grid model now and its pane is restarting: start that grid meanwhile if it
+          // sleeps, so the first message rarely waits on a boot (issue 03). Detached — the move is done
+          // and answered — and it decides for itself whether a wake is worth it.
+          // An API has no sleep to wake it from, and is not a grid to look up.
+          if (override && !isApiLaunch(override)) void retargetPrewarm(override).catch(() => {})
           return
         }
 
@@ -1705,18 +2927,46 @@ export class BackendSocket {
         case 'agent_delete': {
           const target = (payload.agentId as string | undefined) || (payload.sessionId as string | undefined)
           if (!target) { reply(type, requestId, { error: 'MISSING_AGENT_ID' }); return }
-          this.onDeleteAgent?.(target)
+          if (!this.onDeleteAgent) { reply(type, requestId, { error: 'UNSUPPORTED' }); return }
+          try { await this.onDeleteAgent(target) }
+          catch (error) {
+            if (!(error instanceof AgentStopError)) throw error
+            reply(type, requestId, { error: error.code, detail: error.message })
+            return
+          }
           reply(type, requestId, { deleted: true })
           return
         }
 
-        // Restart an agent: exit its live engine process and relaunch it in the SAME tmux pane, keeping
-        // the SAME agentId. Follows agent_create/agent_delete's exact validate → delegate → reply shape.
+        // Resume attaches or restores a saved conversation; restart replaces a live process in its
+        // existing pane. Both keep the agentId and use the same durable operation receipt protocol.
+        case 'agent_resume':
         case 'agent_restart': {
           const target = payload.agentId as string | undefined
           if (!target) { reply(type, requestId, { error: 'MISSING_AGENT_ID' }); return }
-          if (!this.onRestartAgent) { reply(type, requestId, { error: 'UNSUPPORTED_ON_REMOTE' }); return }
-          const result = await this.onRestartAgent(target)
+          const operation = type === 'agent_resume' ? 'resume' : 'restart'
+          const restart = operation === 'resume' ? this.onResumeAgent : this.onRestartAgent
+          if (!restart) { reply(type, requestId, { error: 'UNSUPPORTED_ON_REMOTE' }); return }
+          const creationId = payload.creationId
+          if (creationId !== undefined) {
+            if (!validCreationId(creationId)) { reply(type, requestId, { error: 'INVALID_CREATION_ID' }); return }
+            try {
+              void this.agentCreations.run(creationId, creationFingerprint({ operation, agentId: target }), async () => {
+                const result = await restart(target)
+                if (result.ok) return { state: 'created', agentId: result.session.agentId, resumed: result.resumed }
+                // RESTART_FAILED can follow an unobserved relaunch. Never silently
+                // replace that process again when a caller checks this intent.
+                if (result.error === 'RESTART_FAILED' || result.error === 'RESUME_UNCONFIRMED') return { state: 'unconfirmed' }
+                return { state: 'failed', error: result.error, ...(result.detail ? { detail: result.detail.slice(0, 2000) } : {}) }
+              }).then(async (status) => {
+                reply(type, requestId, { creationId, ...await this.creationStatusPayload(status) })
+              }).catch(() => reply(type, requestId, { error: 'INTERNAL' }))
+            } catch (error) {
+              reply(type, requestId, { error: error instanceof AgentCreationReceiptError ? error.code : 'INTERNAL' })
+            }
+            return
+          }
+          const result = await restart(target)
           if (!result.ok) {
             reply(type, requestId, result.detail ? { error: result.error, detail: result.detail } : { error: result.error })
             return
@@ -1725,14 +2975,85 @@ export class BackendSocket {
           return
         }
 
-        case 'agent_files': {
-          // SourceTree list — rooted at the tmux session's working dir.
-          const projectId = payload.agentId as string | undefined
-          if (!projectId) { reply(type, requestId, { error: 'MISSING_AGENT_ID' }); return }
-          const s = registry.resolve(projectId)
-          if (!s?.cwd) { reply(type, requestId, { error: 'AGENT_NOT_FOUND' }); return }
-          try { reply(type, requestId, { files: listFileTree(s.cwd) }) }
-          catch (e) { reply(type, requestId, { error: e instanceof Error ? e.message : 'FILE_TREE_ERROR' }) }
+        // Fork an agent: a second one with the first one's history — see lib/forkAgent.ts. The reply
+        // is agent_create's shape plus `level`, so a client opens the pane the same way.
+        case 'agent_fork': {
+          const target = payload.agentId as string | undefined
+          if (!target) { reply(type, requestId, { error: 'MISSING_AGENT_ID' }); return }
+          if (!this.onForkAgent) { reply(type, requestId, { error: 'UNSUPPORTED_ON_REMOTE' }); return }
+          const name = typeof payload.name === 'string' && payload.name.trim() ? payload.name.trim().slice(0, 120) : null
+          const rawPrompt = payload.prompt
+          if (rawPrompt !== undefined && rawPrompt !== null && typeof rawPrompt !== 'string') { reply(type, requestId, { error: 'INVALID_PROMPT' }); return }
+          const prompt = typeof rawPrompt === 'string' && rawPrompt.trim() ? rawPrompt : null
+          if (prompt && prompt.length > MAX_FIRST_PROMPT_CHARS) { reply(type, requestId, { error: 'PROMPT_TOO_LONG' }); return }
+          const creationId = payload.creationId
+          if (creationId !== undefined) {
+            if (!validCreationId(creationId)) { reply(type, requestId, { error: 'INVALID_CREATION_ID' }); return }
+            // Forking starts a new process too. Reserve the same durable intent used
+            // by agent_create so a lost receipt can be checked without another fork.
+            const fork = this.onForkAgent
+            try {
+              void this.agentCreations.run(creationId, creationFingerprint({ operation: 'fork', agentId: target, name, prompt }), async () => {
+                const result = await fork({ agentId: target, name, prompt })
+                if (result.ok) return { state: 'created', agentId: result.session.agentId, level: result.level }
+                if (result.error === 'SPAWN_FAILED' || result.error === 'REGISTRATION_FAILED') return { state: 'unconfirmed' }
+                return { state: 'failed', error: result.error, ...(result.detail ? { detail: result.detail.slice(0, 2000) } : {}) }
+              }).then(async (status) => {
+                reply(type, requestId, { creationId, ...await this.creationStatusPayload(status) })
+              }).catch(() => reply(type, requestId, { error: 'INTERNAL' }))
+            } catch (error) {
+              reply(type, requestId, { error: error instanceof AgentCreationReceiptError ? error.code : 'INTERNAL' })
+            }
+            return
+          }
+          const result = await this.onForkAgent({ agentId: target, name, prompt })
+          if (!result.ok) {
+            reply(type, requestId, result.detail ? { error: result.error, detail: result.detail } : { error: result.error })
+            return
+          }
+          reply(type, requestId, { agent: await this.toProject(result.session), level: result.level })
+          return
+        }
+
+        case 'terminal_info': {
+          // What a harness's pane runs now and where — tmux's #{pane_current_command} and
+          // #{pane_current_path}, for a terminal client's formats. Read-only. Not in the e2ee
+          // sets (core.ts is hash-pinned with the other implementations), so it answers the local
+          // client; over the relay a peer is not asked, and the client keeps its fallback.
+          const id = payload.agentId
+          const agent = typeof id === 'string' ? registry.resolve(id) : undefined
+          if (!agent?.tmuxPane) { reply(type, requestId, { error: 'AGENT_NOT_FOUND' }); return }
+          void tmuxPaneInfo(agent.tmuxPane).then(info => reply(type, requestId, info ? { ...info } : { error: 'PANE_NOT_FOUND' }))
+          return
+        }
+
+        case 'git_pull_request': {
+          const id = payload.agentId
+          const agent = typeof id === 'string' ? registry.resolve(id) : undefined
+          if (!agent?.cwd) { reply(type, requestId, { status: 'unavailable' }); return }
+          const requested = payload.context
+          if (requested !== undefined && (!requested || typeof requested !== 'object'
+            || typeof (requested as Record<string, unknown>).cwd !== 'string'
+            || typeof (requested as Record<string, unknown>).branch !== 'string'
+            || (requested as Record<string, unknown>).remote !== null && typeof (requested as Record<string, unknown>).remote !== 'string')) {
+            reply(type, requestId, { status: 'unavailable' }); return
+          }
+          void readSessionGitPullRequest(agent, {
+            expected: requested as import('./lib/sessionGitPullRequest.js').ExpectedGitContext | undefined,
+            history: payload.history === true, offset: typeof payload.offset === 'number' ? payload.offset : undefined,
+          }).then(result => reply(type, requestId, result))
+            .catch(() => reply(type, requestId, { status: 'unavailable' }))
+          return
+        }
+
+        case 'git_project_info': {
+          const path = typeof payload.path === 'string' ? payload.path : ''
+          // Same root set as project_preview below: the browsable home, widened by the workspaces
+          // agents are running in, so a repo outside both is not somewhere this daemon runs git.
+          void readGitProject(path, { refresh: payload.refresh === true,
+            knownRoots: registry.list().flatMap(agent => agent.cwd ? [agent.cwd] : []) })
+            .then(result => reply(type, requestId, result))
+            .catch(() => reply(type, requestId, { error: 'UNAVAILABLE' }))
           return
         }
 
@@ -1778,23 +3099,20 @@ export class BackendSocket {
         }
 
         case 'agent_read_file': {
-          // Text reads keep their ≤5 MB guard; media uses bounded binary chunks.
+          // Media previews, in bounded binary chunks. The text mode this RPC also used to serve was
+          // read by nothing — every client has always asked with `media: true` — so it is gone rather
+          // than carrying a second, laxer file reader (lib/mediaPreview.ts).
           const projectId = payload.agentId as string | undefined
           const path = payload.path as string | undefined
           if (!projectId || !path) { reply(type, requestId, { error: 'MISSING_AGENT_OR_PATH' }); return }
+          if (payload.media !== true) { reply(type, requestId, { error: 'UNSUPPORTED', detail: 'agent_read_file serves media previews only' }); return }
           const s = registry.resolve(projectId)
           if (!s?.cwd) { reply(type, requestId, { error: 'AGENT_NOT_FOUND' }); return }
-          if (payload.media === true) {
-            if (typeof path !== 'string') { reply(type, requestId, { error: 'MEDIA_INVALID_REQUEST' }); return }
-            try {
-              reply(type, requestId, { ...await readMediaPreviewChunk(s.cwd, path, payload.offset, payload.revision) })
-            } catch (error) {
-              reply(type, requestId, { error: error instanceof MediaPreviewError ? error.message : 'MEDIA_READ_FAILED' })
-            }
-            return
+          try {
+            reply(type, requestId, { ...await readMediaPreviewChunk(s.cwd, path, payload.offset, payload.revision) })
+          } catch (error) {
+            reply(type, requestId, { error: error instanceof MediaPreviewError ? error.message : 'MEDIA_READ_FAILED' })
           }
-          try { reply(type, requestId, { path, content: readProjectFile(s.cwd, path) }) }
-          catch (e) { reply(type, requestId, { error: e instanceof Error ? e.message : 'NOT_FOUND' }) }
           return
         }
 
@@ -1812,8 +3130,13 @@ export class BackendSocket {
           if (!content || !target) return
           // Inject into the pane; the resulting JSONL user/assistant lines drive the turn lifecycle back
           // to the web (mirror-all) — no synthetic events here. Prefer cli.ts's handler (inject + Enter
-          // retry); fall back to a direct inject when unwired (isolation/tests).
-          if (this.onMessage) this.onMessage(target, content)
+          // retry); fall back to a direct inject when unwired (isolation/tests). From the relay this is
+          // only reached sealed: text typed into an agent is never taken from the relay in the clear.
+          const tabId = Id.safeParse(payload.tabId)
+          if (this.onMessage) {
+            if (tabId.success) this.onMessage(target, content, undefined, tabId.data)
+            else this.onMessage(target, content)
+          }
           else console.warn('[backend] message handler is not wired; terminal input was not dispatched')
           return
         }
@@ -1844,7 +3167,15 @@ export class BackendSocket {
           // A device answered an AskUserQuestion. There's no control channel into an interactive CLI, so
           // cli.ts keys the answer straight into that session's tmux dialog.
           const p = payload as { requestId?: string; sessionId?: string; agentId?: string; answers?: Record<string, string> }
-          this.onQuestionAnswer?.(p)
+          const answered = this.onQuestionAnswer?.(p)
+          // Detached: driving a dialog takes seconds of keystrokes and repaints. The outcome goes back
+          // under the QUESTION's requestId, so the client that answered can say why nothing happened —
+          // STALE_QUESTION when the dialog changed before the answer arrived and nothing was typed.
+          if (answered) {
+            void answered
+              .then((result) => reply(type, requestId, result.ok ? { ok: true } : { error: result.error, detail: result.detail }))
+              .catch(() => reply(type, requestId, { error: 'ANSWER_FAILED', detail: 'The answer could not be entered.' }))
+          }
           return
         }
 
@@ -1853,7 +3184,38 @@ export class BackendSocket {
         // not — which may be signed in to a different subscription entirely. The vendor's answer goes
         // back as it came: see lib/accountUsage.ts for why the parsing stays on the client.
         case 'usage_read': {
-          reply(type, requestId, { providers: await this.accountUsageReader() })
+          // Two vendor round trips (up to 8s each, lib/accountUsage.ts) — detached from the ordered
+          // chain for the same reason as `grid_models_list`: it is asked on connect beside the RPCs
+          // the terminal needs, and with no network it held them past the app's timeout.
+          void this.accountUsageReader()
+            .then((providers) => reply(type, requestId, { providers }))
+            .catch(() => reply(type, requestId, { error: 'USAGE_READ_FAILED' }))
+          return
+        }
+
+        // Every conversation on this machine, searched by what was said in it (lib/sessionSearch/).
+        // Synchronous and a few milliseconds: the index is local SQLite FTS5. The words searched for
+        // arrive sealed and the hits leave sealed — the relay reads neither.
+        case 'session_search': {
+          if (!this.sessionSearchProvider) { reply(type, requestId, { error: 'SEARCH_UNAVAILABLE' }); return }
+          const query = typeof payload.query === 'string' ? payload.query.slice(0, 500) : ''
+          const number = (value: unknown) => typeof value === 'number' && Number.isFinite(value) ? value : undefined
+          // `from`/`to`: only sessions worked on in that window (epoch ms) — "the dial one from last
+          // week". The client reads the time words, so every machine searches the same window.
+          reply(type, requestId, { ...this.sessionSearchProvider(query, { limit: number(payload.limit), from: number(payload.from), to: number(payload.to) }) })
+          return
+        }
+
+        // A session's latest rows, newest last; `beforeTurn` pages up from the first row the client
+        // has. The same index as `session_search`, so it reads no transcript for a preview.
+        case 'session_tail': {
+          if (!this.sessionTailProvider) { reply(type, requestId, { error: 'SEARCH_UNAVAILABLE' }); return }
+          const sessionId = typeof payload.sessionId === 'string' ? payload.sessionId.slice(0, 200) : ''
+          if (!sessionId) { reply(type, requestId, { error: 'BAD_SESSION' }); return }
+          const integer = (value: unknown) => typeof value === 'number' && Number.isInteger(value) ? value : undefined
+          const tail = await this.sessionTailProvider(sessionId, { beforeTurn: integer(payload.beforeTurn), maxChars: integer(payload.maxChars) })
+          if (!tail) { reply(type, requestId, { error: 'NOT_INDEXED', sessionId }); return }
+          reply(type, requestId, { ...tail })
           return
         }
 
@@ -1867,12 +3229,6 @@ export class BackendSocket {
           reply(type, requestId, { applied: true })
           return
         }
-
-        // v1 no-ops: no programmatic session control over an interactive tmux claude.
-        case 'new_chat':
-        case 'compact':
-        case 'permission_response':
-          return
 
         default:
           // Unknown RPC with a requestId: reject fast so the web promise doesn't wait out its 20s.
@@ -1890,7 +3246,7 @@ export class BackendSocket {
     if (status.state === 'created') {
       const session = registry.byAgent(status.agentId)
       return session
-        ? { state: 'created', agent: await this.toProject(session) }
+        ? { state: 'created', agent: await this.toProject(session), ...(status.level ? { level: status.level } : {}), ...(status.resumed !== undefined ? { resumed: status.resumed } : {}) }
         : { state: 'unavailable' }
     }
     // A recorded refusal is a completed outcome. Keep it separate from transport/dispatch errors
@@ -1901,11 +3257,31 @@ export class BackendSocket {
     return status
   }
 
+  async publishStoppedAgent(s: RegisteredSession): Promise<void> {
+    this.send({ type: 'agent_synced', payload: { agent: await this.toStoppedProject(s) } })
+    this.sendCommander({ type: 'agent_deleted', payload: { agentId: s.agentId } })
+  }
+
+  private async toStoppedProject(s: RegisteredSession): Promise<AgentFrame> {
+    const frame = await agentFrame(s, { selectedModel: s.model, terminalAvailable: false, dsh: this.dshFrameProvider?.(s) ?? null,
+      tokenUsage: agentTokenUsage.get(s) })
+    return {
+      ...frame,
+      status: 'stopped',
+      tmuxPane: null,
+      terminal: { available: false, primary: '', runtimes: [] },
+      viewerUrl: null,
+      forkable: false,
+    }
+  }
+
   /** Map a registered tmux session onto the web's Project shape (tabs in ProjectTabs). */
   private toProject(s: RegisteredSession): Promise<AgentFrame> {
     return agentFrame(s, {
+      tokenUsage: agentTokenUsage.get(s),
       selectedModel: this.runtimeProfileProvider?.(s) ?? null,
       terminalAvailable: registry.terminalAvailable(s.agentId),
+      dsh: this.dshFrameProvider?.(s) ?? null,
     })
   }
 }

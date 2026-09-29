@@ -6,7 +6,7 @@
  * node_modules (it runs inside the user's `claude` process).
  *
  * SessionStart: registers terminal hints plus session metadata with the adapter,
- *   but only from an authenticated tmux or configured Herdr context.
+ *   but only from an authenticated tmux context.
  * SessionEnd:   asks the adapter to reconcile the terminal; process discovery remains
  *   the authority for whether the agent exists.
  *
@@ -17,7 +17,6 @@
 import http from 'node:http'
 import { execFile, execFileSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import { createConnection } from 'node:net'
 import {
   accessSync,
   closeSync,
@@ -37,7 +36,7 @@ import {
   statSync,
   writeFileSync,
 } from 'node:fs'
-import { basename, delimiter, dirname, isAbsolute, join, parse, relative, resolve, sep } from 'node:path'
+import { basename, delimiter, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { homedir, uptime } from 'node:os'
 
 const BOOT_TOLERANCE_SEC = 120
@@ -111,7 +110,7 @@ function paths() {
   const claudeProjectsDir = argValue('--claude-projects-dir', process.env.CLAUDE_PROJECTS_DIR || join(homedir(), '.claude', 'projects'))
   const codexHome = argValue('--codex-home', process.env.CODEX_HOME || join(homedir(), '.codex'))
   const grokHome = argValue('--grok-home', process.env.GROK_HOME || join(homedir(), '.grok'))
-  const cursorHome = argValue('--cursor-home', process.env.CURSOR_HOME || join(homedir(), '.cursor'))
+  const cursorHome = process.env.CURSOR_DATA_DIR?.trim() || argValue('--cursor-home', process.env.CURSOR_HOME || join(homedir(), '.cursor'))
   const hermesHome = argValue('--hermes-home', process.env.HERMES_HOME || join(homedir(), '.hermes'))
   const commandcodeHome = argValue('--commandcode-home', process.env.COMMANDCODE_HOME || join(homedir(), '.commandcode'))
   const devinHome = argValue('--devin-home', process.env.DEVIN_HOME || join(homedir(), '.local', 'share', 'devin', 'cli'))
@@ -237,6 +236,12 @@ function readStdin() {
   })
 }
 
+function boundedPrompt(prompt) {
+  // An oversized/escape-heavy prompt must still announce its submission so the daemon
+  // clears earlier scope. Keep the serialized field within the hook receiver's bounds.
+  return Buffer.byteLength(JSON.stringify(prompt)) <= 128 * 1024 ? prompt : ''
+}
+
 function post(port, path, body) {
   return new Promise((resolve) => {
     const payload = JSON.stringify(body)
@@ -348,12 +353,6 @@ function readHookCredential() {
 function terminalHookFields(tmuxPane) {
   const runtimeHints = []
   if (tmuxPane) runtimeHints.push({ backend: 'tmux', paneId: tmuxPane })
-  if (process.env.HERDR_PANE_ID) runtimeHints.push({
-    backend: 'herdr',
-    paneId: process.env.HERDR_PANE_ID,
-    sessionName: process.env.HERDR_SESSION,
-    socketPath: process.env.HERDR_SOCKET_PATH,
-  })
   return { tmuxPane, runtimeHints, callerPid: process.ppid }
 }
 
@@ -372,17 +371,14 @@ function execFileText(cmd, args, timeout, env) {
 }
 
 /**
- * Mirrors PS_ENV in src/lib/tmux.ts. Linux procps substitutes `?` for every byte it cannot print in the
- * current locale, and a hook child launched by an engine under systemd/docker/ssh usually has no locale
- * at all. Measured on Ubuntu 24.04 + procps-ng 4.0.4: `⌘ <title>` reads back as `??? <title>` in BOTH
- * comm and args, which kills both halves of the Command Code marker in processMatchScore. macOS never
- * substitutes, so this is Linux-only and cannot regress it.
- */
-/**
- * Mirrors lib/childLocale.ts. This process is spawned by the ENGINE, not by the daemon, so it inherits
- * the engine's environment and has to set its own — it shells out to both `tmux` and `ps`, and Linux
- * mangles both without a UTF-8 locale (tmux turns the -F TAB separator into `_`; ps turns `⌘` into
- * `???`). Only when nothing usable is configured.
+ * Mirrors ensureUtf8Locale in src/lib/childLocale.ts. This process is spawned by the ENGINE, not by the
+ * daemon, so it inherits the engine's environment and has to set its own — and a hook child launched by
+ * an engine under systemd/docker/ssh usually has no locale at all. It shells out to both `tmux` and
+ * `ps`, and Linux mangles both without a UTF-8 locale: tmux turns the `-F` TAB separator into `_`, and
+ * procps substitutes `?` for every byte it cannot print. Measured on Ubuntu 24.04 + procps-ng 4.0.4,
+ * `⌘ <title>` reads back as `??? <title>` in BOTH comm and args, which kills both halves of the Command
+ * Code marker in processMatchScore. macOS never substitutes, so this is Linux-only and cannot regress
+ * it. Applied only when nothing usable is configured.
  */
 function ensureUtf8Locale(env = process.env) {
   if (process.platform !== 'linux') return
@@ -391,6 +387,20 @@ function ensureUtf8Locale(env = process.env) {
   env.LC_ALL = 'C.UTF-8'
 }
 ensureUtf8Locale()
+
+/**
+ * Mirrors psEnv in src/lib/childLocale.ts. `processRows` below anchors on the `lstart` column, whose
+ * shape belongs to LC_TIME, not to `ps`: only C and en_US produce `DOW MON DD HH:MM:SS YYYY`. en_GB and
+ * en_AU swap day and month, de_DE/fr_FR do that and add dots, ja_JP prints `火  9/15`, ru_RU puts the
+ * year before the time. Every one of those parses ZERO rows, the hook concludes the machine has no
+ * processes, and the engine it was launched by goes unrecognised. LC_ALL has to be cleared because it
+ * outranks both categories; LC_CTYPE stays UTF-8 so Linux procps keeps returning raw bytes.
+ */
+function psEnv(env = process.env) {
+  const configured = env.LC_ALL || env.LC_CTYPE || env.LANG
+  const ctype = configured && /utf-?8/i.test(configured) ? configured : 'C.UTF-8'
+  return { ...env, LC_ALL: '', LC_CTYPE: ctype, LC_TIME: 'C' }
+}
 
 /** Second line of defence: /proc is raw bytes, so a glibc without C.UTF-8 still resolves correctly. */
 function repairMangledRows(rows) {
@@ -444,6 +454,31 @@ function processEntrypoint(args) {
     index += optionsWithValue.has(token) && index + 1 < tokens.length ? 2 : 1
   }
   return tokens[index] || ''
+}
+
+/** Hermes' managed launchers exec Python -I -c with a path bootstrap, then either import main
+ * or run it through runpy. Require that executable prefix and actual code, never a script argument
+ * or a quoted mention. argv[0] is authoritative here: macOS can truncate an absolute `comm` path.
+ * Keep the standalone hook's copy in sync. */
+function hermesInlineLauncher(row) {
+  const args = row.args.trim()
+  if (!/^python(?:\d+(?:\.\d+)*)?$/.test(basename(argvTokens(args)[0] ?? '').toLowerCase())) return false
+  const prefix = /^(?:"[^"]+"|'[^']+'|\S+)(?:\s+-(?:I|E|s|S|u|B|O{1,2}|q))*\s+-c\s+/.exec(args)
+  if (!prefix) return false
+  const source = args.slice(prefix[0].length).replace(/^["']/, '')
+  // Mask string literals before looking for Python statements. A print/prompt containing a whole
+  // launcher is still data. Keep literal values only to identify runpy's exact entry module.
+  const literals = []
+  const code = source.replace(/(['"])(?:\\[\s\S]|(?!\1)[^\\])*?\1/g, (literal) => {
+    literals.push(literal.slice(1, -1))
+    return `__literal${literals.length - 1}__`
+  })
+  if (!/^import\s+(?:(?:os|re|sys|runpy)\s*,\s*)*(?:sys|runpy)[;\s]+(?:os\.environ\.pop\(__literal\d+__,\s*None\)[;\s]+)*sys\.path\.insert\(\s*0,\s*__literal\d+__\s*\)/.test(code)) return false
+  if (/\bimport\s+hermes_bootstrap\b/.test(code)
+    && /\bfrom\s+hermes_cli\.main\s+import\s+main\b/.test(code)
+    && /\bsys\.exit\(\s*main\(\)\s*\)/.test(code)) return true
+  const run = /\brunpy\.run_module\(\s*__literal(\d+)__\s*,\s*run_name\s*=\s*__literal(\d+)__(?:\s*,\s*alter_sys\s*=\s*True)?\s*\)/.exec(code)
+  return !!run && literals[Number(run[1])] === 'hermes_cli.main' && literals[Number(run[2])] === '__main__'
 }
 
 const ENGINE_COMMANDS = {
@@ -541,6 +576,7 @@ function processMatchScore(row, engine, ownership, allowAgentHint = false) {
     return /command-code[\/\\]dist[\/\\]index\.mjs$/.test(entrypoint) ? 2 : 0
   }
   if (engine === 'devin') return /devin[\/\\]cli[\/\\]_versions[\/\\][^/\\]+[\/\\]bin[\/\\]devin$/.test(entrypoint) ? 2 : 0
+  if (engine === 'hermes' && hermesInlineLauncher(row)) return 2
   if (engine === 'hermes') return /hermes-agent[\/\\]hermes$/.test(entrypoint)
     || /^(?:hermes|hermes_cli)(?:\.|$)/.test(entrypoint) ? 2 : 0
   if (engine === 'muse') return /^muse-bin-/.test(executable) || /^muse-bin-/.test(entrybase) ? 3 : 0
@@ -560,7 +596,7 @@ function processMatchScore(row, engine, ownership, allowAgentHint = false) {
 }
 
 async function processRows() {
-  const stdout = await execFileText('ps', ['-axo', 'pid=,ppid=,comm=,lstart=,args='], 3000)
+  const stdout = await execFileText('ps', ['-axo', 'pid=,ppid=,comm=,lstart=,args='], 3000, psEnv())
   if (stdout === null) return null
   const rows = []
   for (const line of stdout.split('\n')) {
@@ -647,119 +683,6 @@ async function rootEngineProcess(rootPid, engine) {
   } : { state: 'gone' }
 }
 
-function safePathComponents(path) {
-  const root = parse(path).root
-  const result = [root]
-  for (const component of path.slice(root.length).split(sep).filter(Boolean)) {
-    result.push(resolve(result[result.length - 1], component))
-  }
-  return result
-}
-
-function readTerminalSnapshot(p) {
-  try {
-    const file = join(p.dataDir, 'terminal-config.json')
-    secureStateDirectory(p.dataDir, false)
-    const snapshot = JSON.parse(readPrivateStateFile(file, 64 * 1024))
-    if (snapshot?.version !== 1 || !Array.isArray(snapshot.backends) || !Array.isArray(snapshot.herdrEndpoints)) return null
-    return snapshot
-  } catch { return null }
-}
-
-function checkedHerdrEndpoint(endpoint) {
-  try {
-    if (!endpoint || typeof endpoint.socketPath !== 'string' || !isAbsolute(endpoint.socketPath)) return false
-    const uid = typeof process.getuid === 'function' ? process.getuid() : null
-    if (uid === null) return false
-    for (const component of safePathComponents(dirname(endpoint.socketPath))) {
-      const stat = lstatSync(component)
-      if (!stat.isDirectory() || stat.isSymbolicLink() || (stat.uid !== uid && stat.uid !== 0)) return false
-      if ((stat.mode & 0o002) || (stat.uid === 0 && (stat.mode & 0o020))) return false
-    }
-    const parent = lstatSync(dirname(endpoint.socketPath))
-    const socket = lstatSync(endpoint.socketPath)
-    if (parent.uid !== uid || !socket.isSocket() || socket.isSymbolicLink() || socket.uid !== uid || (socket.mode & 0o777) !== 0o600) return false
-    if (realpathSync(endpoint.socketPath) !== resolve(endpoint.socketPath)) return false
-    return socket.dev === endpoint.generation?.device && socket.ino === endpoint.generation?.inode
-  } catch { return false }
-}
-
-function herdrRequest(endpoint, method, params) {
-  return new Promise((resolveRequest) => {
-    const budget = Math.min(1500, remainingBudget())
-    if (budget < 50 || !checkedHerdrEndpoint(endpoint)) { resolveRequest(null); return }
-    const id = randomUUID()
-    const frame = Buffer.from(`${JSON.stringify({ id, method, params })}\n`)
-    if (frame.byteLength > 1024 * 1024) { resolveRequest(null); return }
-    let response = Buffer.alloc(0)
-    let settled = false
-    let socket
-    const finish = (value) => {
-      if (settled) return
-      settled = true
-      clearTimeout(timer)
-      socket?.destroy()
-      resolveRequest(value)
-    }
-    const timer = setTimeout(() => finish(null), budget)
-    try { socket = createConnection({ path: endpoint.socketPath }) } catch { finish(null); return }
-    socket.once('connect', () => {
-      if (!checkedHerdrEndpoint(endpoint)) { finish(null); return }
-      try { socket.end(frame) } catch { finish(null) }
-    })
-    socket.on('data', (chunk) => {
-      response = Buffer.concat([response, chunk])
-      if (response.byteLength > 1024 * 1024) { finish(null); return }
-      const newline = response.indexOf(0x0a)
-      if (newline < 0) return
-      if (response.subarray(newline + 1).toString('utf8').trim()) { finish(null); return }
-      try {
-        const parsed = JSON.parse(response.subarray(0, newline).toString('utf8'))
-        finish(parsed?.id === id && parsed.result && !parsed.error ? parsed.result : null)
-      } catch { finish(null) }
-    })
-    socket.once('end', () => finish(null))
-    socket.once('error', () => finish(null))
-  })
-}
-
-async function herdrFallbackRuntime(engine) {
-  const hint = terminalHookFields(process.env.TMUX_PANE).runtimeHints.find((runtime) => runtime.backend === 'herdr')
-  if (!hint?.sessionName || !hint.socketPath || !hint.paneId) return null
-  const snapshot = readTerminalSnapshot(paths())
-  if (!snapshot?.backends.includes('herdr')) return null
-  const endpoint = snapshot.herdrEndpoints.find((candidate) =>
-    candidate?.sessionName === hint.sessionName && candidate?.socketPath === hint.socketPath)
-  if (!endpoint || !checkedHerdrEndpoint(endpoint)) return null
-  const pong = await herdrRequest(endpoint, 'ping', {})
-  if (pong?.type !== 'pong' || pong.protocol !== 19 || !/^0\.8\./.test(String(pong.version || ''))) return null
-  const [pane, info] = await Promise.all([
-    herdrRequest(endpoint, 'pane.get', { pane_id: hint.paneId }),
-    herdrRequest(endpoint, 'pane.process_info', { pane_id: hint.paneId }),
-  ])
-  if (pane?.type !== 'pane_info' || typeof pane.pane?.terminal_id !== 'string'
-    || info?.type !== 'pane_process_info' || !Number.isSafeInteger(info.process_info?.shell_pid)) return null
-  const owner = await rootEngineProcess(info.process_info.shell_pid, engine)
-  if (owner.state !== 'alive' || !owner.identity) return null
-  const rows = await processRows()
-  if (!rows) return null
-  const parents = new Map(rows.map((row) => [row.pid, row.parentPid]))
-  let caller = process.ppid
-  const visited = new Set()
-  while (caller > 0 && !visited.has(caller) && caller !== owner.identity.pid) {
-    visited.add(caller)
-    caller = parents.get(caller) || 0
-  }
-  if (caller !== owner.identity.pid) return null
-  return {
-    identity: owner.identity,
-    runtime: {
-      backend: 'herdr', endpointId: endpoint.endpointId, sessionName: endpoint.sessionName,
-      terminalId: pane.pane.terminal_id, paneId: pane.pane.pane_id,
-    },
-  }
-}
-
 /**
  * Hermes delegation children execute the same pane-scoped hook as the visible CLI session. During
  * daemon downtime the regular hook server cannot apply its source guard, so consult Hermes' own store
@@ -769,23 +692,52 @@ async function herdrFallbackRuntime(engine) {
  */
 async function hermesTopLevelSession(dbPath, sessionId) {
   if (!/^[0-9]{8}_[0-9]{6}_[0-9a-fA-F]{4,16}$/.test(String(sessionId || ''))) return false
+  // EVERY home on this machine, this one first. `hermes -p <name>` keeps its sessions in
+  // `~/.hermes/profiles/<name>/state.db`, and the block in a profile's config.yaml may still name the
+  // DEFAULT home (Hermes copies the config when it creates a profile, and older installs baked the
+  // default path into it) — so a profile session looked unknown here and was dropped, silently, on
+  // every registration the daemon was not up for (openharness#191). The extra stores are asked only
+  // when this one has no row, which on a single-home machine is never.
+  const homes = hermesHomes(dbPath)
   for (let attempt = 0; attempt < 4; attempt++) {
     if (attempt > 0) await sleep(75)
-    const raw = await execFileText('sqlite3', [
-      '-json', '-cmd', '.timeout 500', '-cmd', 'PRAGMA query_only=1', `file:${dbPath}?mode=ro`,
-      `SELECT source FROM sessions WHERE id = '${sessionId}';`,
-    ], 1000)
-    if (raw === null) return false
-    try {
-      const rows = JSON.parse(raw.trim() || '[]')
-      if (!Array.isArray(rows) || rows.length === 0) continue
-      const source = typeof rows[0]?.source === 'string' ? rows[0].source : ''
-      return source === '' || source === 'cli'
-    } catch {
-      return false
+    let sawStore = false
+    for (const db of homes) {
+      const raw = await execFileText('sqlite3', [
+        '-json', '-cmd', '.timeout 500', '-cmd', 'PRAGMA query_only=1', `file:${db}?mode=ro`,
+        `SELECT source FROM sessions WHERE id = '${sessionId}';`,
+        // As long as the process scan gets: on a loaded machine a second is not always enough to
+        // spawn sqlite3, and a lookup cut short drops a real session's registration.
+      ], 3000)
+      if (raw === null) continue     // unreadable store — another home may still hold the row
+      sawStore = true
+      try {
+        const rows = JSON.parse(raw.trim() || '[]')
+        if (!Array.isArray(rows) || rows.length === 0) continue
+        const source = typeof rows[0]?.source === 'string' ? rows[0].source : ''
+        return (source === '' || source === 'cli' || source === 'tui') ? db : false
+      } catch {
+        return false
+      }
     }
+    if (!sawStore) return false
   }
   return false
+}
+
+/** `dbPath` and every sibling profile store, deduped, the given one first. */
+function hermesHomes(dbPath) {
+  const home = dirname(dbPath)
+  const roots = [home]
+  // A profile store sits at <default home>/profiles/<name>/state.db, so the default home is two
+  // levels up from one and the profiles folder is beside the other. Both spellings are cheap to try.
+  const base = basename(dirname(home)) === 'profiles' ? dirname(dirname(home)) : home
+  if (base !== home) roots.push(base)
+  const out = roots.map((root) => join(root, 'state.db'))
+  let names = []
+  try { names = readdirSync(join(base, 'profiles')) } catch { return [...new Set(out)] }
+  for (const name of names.slice(0, 64)) out.push(join(base, 'profiles', name, 'state.db'))
+  return [...new Set(out)]
 }
 
 function bootTimeSec() {
@@ -917,9 +869,9 @@ function processStartMarker(pid) {
   } catch { /* non-Linux or exited process; use ps below */ }
   try {
     const started = execFileSync('ps', ['-p', String(pid), '-o', 'lstart='], {
-      encoding: 'utf8', timeout: 1000,
+      encoding: 'utf8', timeout: 1000, env: { ...psEnv(), TZ: 'UTC' },
     }).trim()
-    return started ? `ps:${started}` : null
+    return started ? `ps-c:${started}` : null
   } catch { return null }
 }
 
@@ -928,7 +880,23 @@ function processAlive(pid, startMarker = '') {
   try { process.kill(pid, 0) } catch (error) { if (error?.code !== 'EPERM') return false }
   if (!startMarker) return true
   const current = processStartMarker(pid)
-  return current === null || current === startMarker
+  // Pre-upgrade ps markers may use another locale; a mismatch is not death.
+  const comparable = current !== null && ['linux:', 'ps-c:'].some(
+    (prefix) => startMarker.startsWith(prefix) && current.startsWith(prefix),
+  )
+  return !comparable || current === startMarker
+}
+
+
+// The legacy field stays empty for ps-c so old readers fall back to PID liveness during upgrade.
+function processLockIdentity(pid) {
+  const generationMarker = processStartMarker(pid) || ''
+  return { startMarker: generationMarker.startsWith('ps-c:') ? '' : generationMarker, generationMarker }
+}
+
+function lockStartMarker(owner) {
+  return typeof owner?.generationMarker === 'string' ? owner.generationMarker
+    : typeof owner?.startMarker === 'string' ? owner.startMarker : ''
 }
 
 async function withRegistryLock(registryFile, fn) {
@@ -937,7 +905,7 @@ async function withRegistryLock(registryFile, fn) {
   try {
     secureStateDirectory(dataDir)
   } catch { return }
-  const processMarker = processStartMarker(process.pid) || ''
+  const processIdentity = processLockIdentity(process.pid)
   for (let i = 0; i < LOCK_RETRIES; i++) {
     if (remainingBudget(750) < 50) return
     const token = randomUUID()
@@ -948,7 +916,7 @@ async function withRegistryLock(registryFile, fn) {
       const ownerFile = join(lockDir, 'owner.json')
       const ownerFd = openSync(ownerFile, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600)
       try {
-        writeFileSync(ownerFd, JSON.stringify({ pid: process.pid, startMarker: processMarker, token }))
+        writeFileSync(ownerFd, JSON.stringify({ pid: process.pid, ...processIdentity, token }))
         fsyncSync(ownerFd)
       } finally { closeSync(ownerFd) }
       try {
@@ -968,12 +936,12 @@ async function withRegistryLock(registryFile, fn) {
           || (ownerStat.mode & 0o777) !== 0o600) return
         const owner = JSON.parse(readFileSync(join(lockDir, 'owner.json'), 'utf8'))
         const ownerPid = Number(owner?.pid)
-        const ownerStartMarker = typeof owner?.startMarker === 'string' ? owner.startMarker : ''
+        const ownerStartMarker = lockStartMarker(owner)
         const ownerToken = typeof owner?.token === 'string' ? owner.token : ''
         if (!processAlive(ownerPid, ownerStartMarker) && ownerPid > 0 && ownerToken) {
           const current = JSON.parse(readFileSync(join(lockDir, 'owner.json'), 'utf8'))
           if (Number(current?.pid) === ownerPid
-            && current?.startMarker === ownerStartMarker
+            && lockStartMarker(current) === ownerStartMarker
             && current?.token === ownerToken
             && !processAlive(ownerPid, ownerStartMarker)) {
             rmSync(lockDir, { recursive: true, force: true })
@@ -1093,21 +1061,17 @@ async function clearCursorTasks(sessionId) {
 }
 
 function runtimeRouteKey(runtime) {
-  return runtime.backend === 'tmux'
-    ? `tmux\u0000${runtime.paneId}`
-    : `herdr\u0000${runtime.endpointId}\u0000${runtime.paneId}`
+  return `tmux\u0000${runtime.paneId}`
 }
 
 function runtimePlacementKey(runtime) {
-  return runtime.backend === 'tmux'
-    ? runtimeRouteKey(runtime)
-    : `herdr\u0000${runtime.endpointId}\u0000${runtime.terminalId}`
+  return runtimeRouteKey(runtime)
 }
 
 function mergeRuntimes(current, observed) {
   const merged = new Map()
   for (const runtime of [...(Array.isArray(current) ? current : []), ...observed]) {
-    if (runtime?.backend === 'tmux' || runtime?.backend === 'herdr') merged.set(runtimePlacementKey(runtime), runtime)
+    if (runtime?.backend === 'tmux') merged.set(runtimePlacementKey(runtime), runtime)
   }
   return [...merged.values()].sort((a, b) => runtimePlacementKey(a).localeCompare(runtimePlacementKey(b)))
 }
@@ -1122,13 +1086,8 @@ function validRegistryString(value, max = 4096) {
 }
 
 function validRegistryRuntime(runtime) {
-  if (!runtime || typeof runtime !== 'object') return false
-  if (runtime.backend === 'tmux') return typeof runtime.paneId === 'string' && /^%\d+$/.test(runtime.paneId)
-  return runtime.backend === 'herdr'
-    && validRegistryString(runtime.endpointId, 200) && runtime.endpointId.length > 0
-    && validRegistryString(runtime.sessionName, 64) && runtime.sessionName.length > 0
-    && validRegistryString(runtime.terminalId, 200) && runtime.terminalId.length > 0
-    && validRegistryString(runtime.paneId, 200) && runtime.paneId.length > 0
+  return !!runtime && typeof runtime === 'object'
+    && runtime.backend === 'tmux' && typeof runtime.paneId === 'string' && /^%\d+$/.test(runtime.paneId)
 }
 
 function validRegistryProcess(identity) {
@@ -1220,14 +1179,19 @@ async function fallbackRegister(input, engine, tmuxPane) {
       observations.push({ identity: tmux.identity, runtime: { backend: 'tmux', paneId: tmuxPane } })
     }
   }
-  const herdr = await herdrFallbackRuntime(engine)
-  if (herdr) observations.push(herdr)
   if (!observations.length) return
   const process = observations[0]
   if (observations.some((observation) => observation.identity.pid !== process.identity.pid
     || observation.identity.startMarker !== process.identity.startMarker)) return
   const observedRuntimes = observations.map((observation) => observation.runtime)
-  if (engine === 'hermes' && !await hermesTopLevelSession(p.hermesDb, sessionId)) return
+  // The store that turned out to hold it — recorded below, so the daemon's mirror reads this agent's
+  // OWN history when it comes back up rather than the default home's.
+  let hermesHome = null
+  if (engine === 'hermes') {
+    const db = await hermesTopLevelSession(p.hermesDb, sessionId)
+    if (!db) return
+    hermesHome = dirname(db)
+  }
 
   await withRegistryLock(p.registryFile, () => {
     if (remainingBudget(600) < 50) return
@@ -1263,7 +1227,13 @@ async function fallbackRegister(input, engine, tmuxPane) {
       grid: existing?.grid ?? null,
       ...(existing && Object.hasOwn(existing, 'gridLaunch') ? { gridLaunch: existing.gridLaunch ?? null } : {}),
       codexHome: typeof existing?.codexHome === 'string' && existing.codexHome ? existing.codexHome : null,
+      // …and the Hermes home this session's store turned out to be in — see hermesTopLevelSession.
+      // Fill-only, exactly as the daemon's own registry treats it.
+      hermesHome: hermesHome || (typeof existing?.hermesHome === 'string' && existing.hermesHome ? existing.hermesHome : null),
       ...(existing?.bypassPermission === true ? { bypassPermission: true } : {}),
+      // When an app last opened this agent (RegisteredSession.lastOpenedAt): a fact about the person,
+      // not the process, and the daemon's own rebuild carries it the same way.
+      ...(Number.isSafeInteger(existing?.lastOpenedAt) && existing.lastOpenedAt > 0 ? { lastOpenedAt: existing.lastOpenedAt } : {}),
     }
     const entry = {
       schemaVersion: 2,
@@ -1279,7 +1249,12 @@ async function fallbackRegister(input, engine, tmuxPane) {
         : transcriptPath
         ? basename(dirname(transcriptPath))
         : basename(typeof input.cwd === 'string' ? input.cwd : '') || sessionId,
-      cwd: typeof input.cwd === 'string' ? input.cwd : (existing?.cwd ?? null),
+      // The row's folder outranks the hook's for the session the row already holds: Claude reports
+      // its tracked shell directory, which follows every Bash `cd`, and a resume or restore `cd`s
+      // wherever this says. Same rule as `registry.register()`.
+      cwd: existing && existing.sessionId === sessionId && typeof existing.cwd === 'string' && existing.cwd
+        ? existing.cwd
+        : typeof input.cwd === 'string' ? input.cwd : (existing?.cwd ?? null),
       runtimes,
       primaryRuntimeKey: existing?.primaryRuntimeKey && runtimes.some((runtime) => runtimeRouteKey(runtime) === existing.primaryRuntimeKey)
         ? existing.primaryRuntimeKey
@@ -1321,7 +1296,7 @@ async function main() {
 
   const event = input.hook_event_name || input.hookEventName
   const tmuxPane = process.env.TMUX_PANE
-  if (!tmuxPane && !process.env.HERDR_PANE_ID) return
+  if (!tmuxPane) return
   const mutationFields = { engine, ...terminalHookFields(tmuxPane) }
   if (engine === 'cursor' && input.is_background_agent === true) return
   if (engine === 'codex' && isCodexSubagent(input, paths())) return
@@ -1456,6 +1431,7 @@ async function main() {
       engine,
       hookEvent: grokEventName,
       sessionId,
+      ...(grokEventName === 'UserPromptSubmit' && typeof input.prompt === 'string' ? { prompt: boundedPrompt(input.prompt) } : {}),
       transcriptPath,
       cwd,
       ...terminalHookFields(tmuxPane),
@@ -1588,6 +1564,8 @@ async function main() {
     engine,
     hookEvent: event,
     sessionId: input.session_id || input.conversation_id,
+    ...(event === 'UserPromptSubmit' && (engine === 'claude' || engine === 'codex') && typeof input.prompt === 'string'
+      ? { prompt: boundedPrompt(input.prompt) } : {}),
     transcriptPath,
     // Devin's payload carries no cwd; the hook process inherits the session's working directory.
     cwd: Array.isArray(input.workspace_roots) ? input.workspace_roots[0] : (input.cwd || (engine === 'devin' ? process.cwd() : undefined)),

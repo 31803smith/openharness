@@ -1,0 +1,11 @@
+{
+  "spec": 1,
+  "kind": "viewer",
+  "id": "autonomous/game-viewer",
+  "name": "Game Viewer",
+  "category": "Games",
+  "author": "OpenHarness contributors",
+  "description": "A live game studio with playable versions, rewind, alternate moves, and saved playtest moments that preserve the exact game and state.",
+  "toolchain": { "doctor": "bash doctor.sh" },
+  "viewer": { "command": "bash viewer.sh", "url": "http://127.0.0.1:${port}/" }
+}

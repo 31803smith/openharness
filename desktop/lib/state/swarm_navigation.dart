@@ -1,12 +1,23 @@
-import 'package:flutter/foundation.dart' show listEquals, setEquals;
+import '../shared/theme/prompt_style.dart';
+
+import 'dart:async';
+import 'dart:convert';
+
+import 'package:collection/collection.dart' show compareNatural;
+import 'package:flutter/foundation.dart' show immutable, listEquals, setEquals;
 
 import '../core/fuzzy_match.dart';
+import '../core/local_key_value_store.dart';
 import '../core/models.dart';
+import '../widgets/engine_identity.dart';
 import 'app_state.dart';
+import 'harness_placement.dart';
 import 'pane_arrangement.dart';
+import 'session_content_search.dart';
 import 'session_preview.dart';
 import 'swarm.dart';
 import 'swarm_catalog.dart';
+import 'take_over.dart';
 import 'terminal_pane.dart';
 
 String swarmDestinationId(String id) => 'swarm:$id';
@@ -18,6 +29,85 @@ String agentLocationId(String swarmId, int paneId) =>
 /// Session-local history contains identities only, never terminal buffers or
 /// controllers. Repeated discovery/output notifications do not reorder it.
 class SwarmNavigationHistory {
+  SwarmNavigationHistory({this.storage});
+
+  /// Where the recently used harnesses are kept between launches, or null to
+  /// keep them for this session only (tests).
+  ///
+  /// A quick-open earns its keep in the first three rows, before anything is
+  /// typed. Session-only memory meant every launch opened the box on an
+  /// alphabetical list: the harness from an hour ago was no nearer than one
+  /// from last month. Only harnesses are kept — their ids outlive a restart,
+  /// and a tab's does not have to.
+  final LocalKeyValueStore? storage;
+  static const _storageKey = 'swarm_recent_v1';
+  static const _commandsKey = 'swarm_recent_commands_v1';
+
+  /// The commands run from the palette, most recent first. A palette that
+  /// opens A–Z makes you type three letters for the command you ran a minute
+  /// ago; an editor's opens on it.
+  final _commands = <String>[];
+  List<String> get recentCommands => List.unmodifiable(_commands);
+  void rememberCommand(String id) {
+    _commands.remove(id);
+    _commands.insert(0, id);
+    if (_commands.length > _kept) _commands.removeLast();
+    _save();
+  }
+
+  static const _kept = 32;
+  Timer? _saving;
+  bool _disposed = false;
+
+  /// Fold what the last session remembered in BEHIND what this one has already
+  /// visited: a load that lands late must not reorder the present.
+  Future<void> load() async {
+    try {
+      final raw = await storage?.read(_storageKey);
+      if (raw == null || _disposed) return;
+      final ids = jsonDecode(raw);
+      if (ids is! List) return;
+      for (final id in ids.take(_kept)) {
+        if (id is String && id.startsWith('agent:') && !_recent.contains(id)) {
+          _recent.add(id);
+        }
+      }
+      _revision++;
+      final commands = await storage?.read(_commandsKey);
+      final ran = commands == null ? null : jsonDecode(commands);
+      if (ran is List && !_disposed) {
+        for (final id in ran.take(_kept)) {
+          if (id is String && !_commands.contains(id)) _commands.add(id);
+        }
+      }
+    } catch (_) {
+      // A damaged list is an empty one; the next visit writes a good one.
+    }
+  }
+
+  void _save() {
+    if (storage == null || _disposed) return;
+    // Focus moves in bursts; one write after it settles is enough.
+    _saving?.cancel();
+    _saving = Timer(const Duration(milliseconds: 600), () {
+      final ids = [
+        for (final id in _recent)
+          if (id.startsWith('agent:')) id,
+      ].take(_kept).toList();
+      unawaited(
+        storage!.write(_storageKey, jsonEncode(ids)).catchError((_) {}),
+      );
+      unawaited(
+        storage!.write(_commandsKey, jsonEncode(_commands)).catchError((_) {}),
+      );
+    });
+  }
+
+  void dispose() {
+    _disposed = true;
+    _saving?.cancel();
+  }
+
   static const capacity = 64;
   final _recent = <String>[];
   final _recentLocations = <String>[];
@@ -99,6 +189,7 @@ class SwarmNavigationHistory {
     _recent.remove(id);
     _recent.insert(0, id);
     if (_recent.length > capacity) _recent.removeLast();
+    _save();
   }
 
   /// Native menus are ready before opening. Ordinary terminal output reuses
@@ -111,6 +202,7 @@ class SwarmNavigationHistory {
       for (final swarm in app.swarms) ...[
         swarm.id,
         swarm.name,
+        swarm.kind,
         for (final pane in swarm.panes)
           (
             pane.id,
@@ -120,7 +212,7 @@ class SwarmNavigationHistory {
             pane.session?.engineId,
           ),
       ],
-      for (final machine in app.machineStates.values)
+      for (final machine in app.machineStates.values) ...[
         (
           machine.machine,
           machine.nodeOnline,
@@ -129,6 +221,8 @@ class SwarmNavigationHistory {
           machine.localEndpoint?.agentProjects,
           machine.localProjects,
         ),
+        ...machine.dsh.byId.values,
+      ],
     ];
     if (listEquals(_menuPresentation, presentation)) return _menuDestinations;
     _menuPresentation = presentation;
@@ -146,6 +240,65 @@ class SwarmNavigationHistory {
   }
 }
 
+/// A Claude Code or Codex conversation Harness did not start, on one machine:
+/// run in a terminal or in the engine's own app, found on disk by that
+/// machine's daemon (cli/src/lib/sessionSearch/external.ts). Cmd-P shows one
+/// when a search matches it, and opens it as a new harness resuming it.
+@immutable
+class ExternalSessionRef {
+  const ExternalSessionRef({
+    required this.sessionId,
+    required this.engine,
+    required this.cwd,
+    required this.origin,
+    this.title = '',
+    this.open = false,
+    this.openIn,
+  });
+
+  final String sessionId, engine, cwd, title;
+
+  /// `terminal`, `claude-app`, `codex-app` or `editor`.
+  final String origin;
+
+  /// Open in a running process elsewhere: opening it here too would have two
+  /// processes writing one conversation.
+  final bool open;
+
+  /// Where it is open: `terminal`, which Harness can take it over from; `app`,
+  /// which it cannot; `harness`, one of Harness's own panes whose agent the
+  /// machine is still binding; or `maybe` a terminal, whose process was started
+  /// on it and may have moved on (never stopped from here). Null when it is not
+  /// open, or the machine predates taking over.
+  final String? openIn;
+
+  /// Open, and only in a terminal: opening it here moves it, once asked.
+  bool get inTerminal => open && openIn == 'terminal';
+
+  /// Where it ran, as a person says it.
+  String get originLabel => switch (origin) {
+    'claude-app' => 'Claude app',
+    'codex-app' => 'Codex app',
+    'editor' => 'editor',
+    'app' => 'app',
+    _ => 'terminal',
+  };
+
+  /// The engine, as a person calls it.
+  String get engineName => externalEngineName(engine);
+}
+
+/// An engine's name for a conversation Harness did not start: Claude Code and
+/// Codex by their products' names, every other engine by its own.
+String externalEngineName(String engine) => switch (engine) {
+  'claude' => 'Claude Code',
+  'codex' => 'Codex',
+  final other => engineIdentity(other).label,
+};
+
+String externalDestinationId(String machineId, String sessionId) =>
+    'external:$machineId:$sessionId';
+
 /// A searchable snapshot. Resolving a result again at activation prevents live
 /// discovery or a closed tab from redirecting an action to unrelated work.
 class SwarmDestination {
@@ -154,33 +307,69 @@ class SwarmDestination {
     required this.title,
     required this.detail,
     this.detailBranchOffset,
+    this.terminalDetail,
+    this.promptContext,
+    this.lastActivityAt,
     required this.swarmId,
     required this.current,
     this.machineId,
     this.machineLabel = '',
     this.agentId,
+    this.modelId,
+    this.storeId,
     this.engine,
     this.closedId,
     this.commandId,
+    this.pickerQuery,
     this.shortcut,
     this.paneId,
     this.swarmName = '',
     this.projectId,
     this.previewKey,
     this.members = const {},
+    this.isStore = false,
+    this.isCreate = false,
+    this.isNote = false,
+    this.task,
+    this.external,
     Iterable<String?> searchFields = const [],
+    int titleFields = 1,
   }) : fields = [
          title.toLowerCase(),
          ...searchFields.whereType<String>().map((s) => s.toLowerCase()),
-       ];
+       ],
+       titleFieldCount = titleFields;
+
+  /// How many leading [fields] are "the name of the thing" rather than
+  /// metadata: the row's title, plus the agent's own title when it has one.
+  /// A match there outranks any match in a folder, a machine or a recap.
+  final int titleFieldCount;
 
   final String id, title, detail, machineLabel;
 
   /// The branch's start in the readable metadata, for its decorative glyph.
   final int? detailBranchOffset;
+
+  /// Plain-text identity for results without a provider mark. Put the agent
+  /// and machine before paths and branches, which are more likely to truncate.
+  final String? terminalDetail;
+  final PromptContext? promptContext;
+
+  /// When the harness's conversation last moved ([Agent.lastActivityAt]) — the
+  /// true time, not when someone last opened it. What Open Harness sorts by,
+  /// and the age it prints beside the row.
+  final DateTime? lastActivityAt;
   final String? swarmId, machineId, agentId, engine;
+  final String? modelId;
+  bool get isModel => modelId != null;
+  final String? storeId;
+  bool get isStoreEntry => storeId != null;
   final String? closedId;
   final String? commandId, shortcut;
+
+  /// A Quick Access help row changes the query in place, keeping the picker,
+  /// its destination tab, and keyboard focus rather than running a command.
+  final String? pickerQuery;
 
   /// An exact navigation location. Never fall back to a different swarm.
   final int? paneId;
@@ -189,36 +378,165 @@ class SwarmDestination {
   final String? projectId;
   final SessionPreviewKey? previewKey;
   final Set<String> members;
+
+  /// The Harness Store's tab, open or recently closed. It holds no agents, so
+  /// without this it would be drawn as an empty group; it wears the app icon.
+  final bool isStore;
+
+  /// The box's last row: make what was typed instead of finding it, the way a
+  /// browser's address bar offers to search for what is not a page.
+  final bool isCreate;
+
+  /// What the create row would start the new harness on: what was typed.
+  final String? task;
+
+  /// A line the box answers with, not a place to go (`xyzzy`: "Nothing
+  /// happens."). Return never takes it.
+  final bool isNote;
+
+  /// A conversation Harness did not start; opening it resumes it as a harness.
+  final ExternalSessionRef? external;
   final bool current;
   final List<String> fields;
   bool get isProject => projectId != null;
-  bool get isMachine => agentId == null && machineId != null && !isProject;
+  bool get isMachine =>
+      agentId == null &&
+      machineId != null &&
+      !isProject &&
+      !isModel &&
+      external == null;
   bool get isGroup => isProject || isMachine;
-  bool get isSwarm => agentId == null && !isGroup && !isCommand;
+  bool get isSwarm =>
+      agentId == null &&
+      !isGroup &&
+      !isCommand &&
+      !isCreate &&
+      !isNote &&
+      !isModel &&
+      !isStoreEntry &&
+      pickerQuery == null &&
+      external == null;
   bool get hasView => swarmId != null;
 }
 
 enum SwarmSearchAction { open, addHere }
 
-({String text, int? branchOffset}) _harnessDetail(
+class SwarmResumeFailure implements Exception {
+  const SwarmResumeFailure(this.destination, this.message, {this.code});
+  final SwarmDestination destination;
+  final String message;
+
+  /// The machine's refusal, such as `SESSION_BUSY_IN_TERMINAL`, when it said.
+  final String? code;
+
+  /// A conversation open in a terminal, which can be taken over from there.
+  bool get canTakeOver =>
+      code == 'SESSION_OPEN_IN_TERMINAL' || code == 'SESSION_BUSY_IN_TERMINAL';
+
+  /// Mid-turn in that terminal: wait for the turn, or stop it.
+  bool get busy => code == 'SESSION_BUSY_IN_TERMINAL';
+}
+
+Future<void> _resumeStoppedDestination(
+  AppNotifier app,
+  SwarmDestination destination,
+) async {
+  final machineId = destination.machineId;
+  final agentId = destination.agentId;
+  if (machineId == null || agentId == null) return;
+  final agent = app
+      .stateOf(machineId)
+      ?.agents
+      .where((agent) => agent.id == agentId)
+      .firstOrNull;
+  if (agent?.isStopped != true) return;
+  final machine = app.stateOf(machineId);
+  final terminalReady = Completer<void>();
+  void observeRuntime() {
+    if (terminalReady.isCompleted ||
+        !identical(machine, app.stateOf(machineId)) ||
+        app.pendingAgentStop(machineId, agentId) != null) {
+      return;
+    }
+    final current = app
+        .stateOf(machineId)
+        ?.agents
+        .where((row) => row.id == agentId)
+        .firstOrNull;
+    // This opens a view of the allocated terminal, not a claim that history
+    // has loaded. The native CLI may need login or hook review before it can
+    // confirm the conversation; the receipt keeps verifying in the background.
+    //
+    // The conversation has to be the one asked for — unless none was: a resume
+    // that was always going to open a new one (an engine with no resume argv, a
+    // harness paused with nothing recorded) reports a different id because it
+    // did as it was told, and the tile it opened is still this harness's.
+    final fresh =
+        agent?.resumesFreshConversation == true ||
+        current?.resumesFreshConversation == true;
+    if (current?.terminalAvailable == true &&
+        (fresh || current?.sessionId == agent!.sessionId) &&
+        current?.launchState != 'failed' &&
+        current?.isStopped == false) {
+      terminalReady.complete();
+    }
+  }
+
+  app.addListener(observeRuntime);
+  try {
+    final confirmed = app.resumeAgent(machineId, agentId).then((result) {
+      if (result.error case final error?) {
+        throw SwarmResumeFailure(destination, error);
+      }
+    });
+    observeRuntime();
+    await Future.any([confirmed, terminalReady.future]);
+  } finally {
+    app.removeListener(observeRuntime);
+  }
+}
+
+({String text, String terminalText, int? branchOffset}) _harnessDetail(
+  String? type,
   AgentProject? project,
   String machine,
-  bool offline,
-) {
-  final name = project?.name;
+  bool offline, {
+  required String agentLabel,
+}) {
+  final prefix = [
+    type,
+    project?.label,
+  ].whereType<String>().where((part) => part.isNotEmpty).join(' · ');
   final branch = project?.branch;
   return (
+    terminalText: [
+      agentLabel,
+      machine,
+      if (offline) 'Offline',
+      project?.label,
+      branch,
+    ].whereType<String>().where((part) => part.isNotEmpty).join(' · '),
     text: [
-      name,
+      prefix,
       branch,
       machine,
       if (offline) 'Offline',
     ].whereType<String>().where((part) => part.isNotEmpty).join(' · '),
     branchOffset: branch?.isNotEmpty == true
-        ? (name?.isNotEmpty == true ? name!.length + 3 : 0)
+        ? (prefix.isNotEmpty ? prefix.length + 3 : 0)
         : null,
   );
 }
+
+String? _harnessType(MachineState? machine, String? engine) =>
+    (engine == null ? null : machine?.dsh[engine]?.category) ??
+    engineIdentity(engine).category;
+
+String _harnessLabel(MachineState? machine, String? engine, String? name) =>
+    engineIdentity(
+      engine,
+      displayName: (engine == null ? null : machine?.dsh[engine]?.name) ?? name,
+    ).label;
 
 class SwarmSearchSelection {
   const SwarmSearchSelection(
@@ -248,6 +566,7 @@ List<Object?> _catalogPresentation(
   for (final swarm in app.swarms) ...[
     swarm.id,
     swarm.name,
+    swarm.kind,
     for (final pane in swarm.panes)
       (
         pane.id,
@@ -257,16 +576,20 @@ List<Object?> _catalogPresentation(
         pane.session?.engineId,
       ),
   ],
-  for (final machine in app.machineStates.values)
+  for (final machine in app.machineStates.values) ...[
     (
       machine.machine,
       machine.nodeOnline,
       machine.needsLink,
+      machine.connectionStatus,
+      machine.isLocalMachine,
       machine.agents,
       machine.agents.length,
       machine.localEndpoint?.agentProjects,
       machine.localProjects,
     ),
+    ...machine.dsh.byId.values,
+  ],
 ];
 
 /// One catalog for all search entry points. Terminal output leaves these
@@ -284,7 +607,15 @@ class SwarmSearchCatalog {
     final presentation = _catalogPresentation(app, projects, recent: recent);
     if (listEquals(_presentation, presentation)) return _entries;
     _presentation = presentation;
-    final entries = swarmDestinations(app, recent: recent);
+    final groups = swarmProjects(app, projects);
+    final entries = swarmDestinations(
+      app,
+      recent: recent,
+      projectGroups: groups,
+    );
+    // A one-harness tab is another view of that harness, not another result.
+    // Its name remains an alias on the harness, including after a tab rename.
+    entries.removeWhere((entry) => entry.isSwarm && entry.members.length == 1);
     final agentsById = {
       for (final entry in entries)
         if (entry.agentId != null) entry.id: entry,
@@ -293,7 +624,6 @@ class SwarmSearchCatalog {
     for (final entry in agentsById.values) {
       (machineMembers[entry.machineId!] ??= {}).add(entry.id);
     }
-    final groups = swarmProjects(app, projects);
     for (final machine in app.machineStates.values) {
       final id = machine.machine.machineId;
       final members = machineMembers[id] ?? const <String>{};
@@ -303,7 +633,7 @@ class SwarmSearchCatalog {
           title: machine.machine.displayName,
           detail: [
             'Machine',
-            _agentCountLabel(members),
+            _countLabel(members.length, 'harness'),
             if (machine.needsLink)
               'Link required'
             else if (machine.nodeOnline == false)
@@ -329,7 +659,7 @@ class SwarmSearchCatalog {
           id: 'project:${group.id}',
           projectId: group.id,
           title: group.name,
-          detail: 'Project · ${_agentCountLabel(members)}',
+          detail: _countLabel(members.length, 'harness'),
           swarmId: null,
           current: false,
           members: Set.unmodifiable(members),
@@ -402,6 +732,7 @@ class SwarmLocationCatalog {
       machineLabel: machineLabel,
       swarmId: swarm.id,
       swarmName: swarm.name,
+      isStore: swarm.isStore,
       current: swarm.id == app.activeSwarmId,
       searchFields: [machineLabel],
     );
@@ -416,17 +747,28 @@ class SwarmLocationCatalog {
     final machine = app.machineStates[pane.machineId];
     final project = agent == null ? null : machine?.projectOf(agent);
     final machineLabel = machine?.machine.displayName ?? pane.machineId;
-    final engine = agent?.engine ?? pane.session?.engineId;
+    final engine = agent?.identityEngine ?? pane.session?.engineId;
+    final label = _harnessLabel(machine, engine, agent?.identityDisplayName);
     final detail = _harnessDetail(
+      _harnessType(machine, engine),
       project,
       machineLabel,
       machine?.nodeOnline == false,
+      agentLabel: label,
     );
     return SwarmDestination(
       id: agentLocationId(swarm.id, pane.id),
-      title: agent?.name ?? pane.session?.agentName ?? pane.agentId!,
+      title: agent?.displayName ?? pane.session?.agentName ?? pane.agentId!,
       detail: detail.text,
       detailBranchOffset: detail.branchOffset,
+      terminalDetail: detail.terminalText,
+      promptContext: PromptContext(
+        harness: label,
+        machine: machineLabel,
+        project: project?.label,
+        branch: project?.shownBranch,
+        leading: machine?.nodeOnline == false ? 'Offline' : null,
+      ),
       swarmId: swarm.id,
       swarmName: swarm.name,
       paneId: pane.id,
@@ -435,10 +777,72 @@ class SwarmLocationCatalog {
       agentId: pane.agentId,
       previewKey: agent == null ? null : app.previewKey(pane.machineId, agent),
       engine: engine,
+      lastActivityAt: agent?.lastActivityAt,
       current: swarm.id == app.activeSwarmId && pane.id == app.focusedPaneId,
-      searchFields: [detail.text, project?.cwd, engine, swarm.name],
+      // The agent's own title first, ranked like the name: "board fab check"
+      // finds the agent whose work that is, not whichever recap mentions fab.
+      searchFields: [
+        agent?.title,
+        detail.text,
+        project?.cwd,
+        engine,
+        label,
+        swarm.name,
+      ],
+      titleFields: agent?.title == null ? 1 : 2,
     );
   }
+}
+
+/// Open Harness sorts by last use — activity, or a person opening the harness
+/// in any client, whichever is later — the same time it shows beside each
+/// session, within each [SwarmMatchStrength]: typing "hn" puts the harness named
+/// hn first, however many newer ones live in a folder whose path spells h…n.
+/// Undated rows come last; ties retain visit recency and search relevance.
+List<SwarmDestination> rankSwarmDestinationsByActivity(
+  List<SwarmDestination> all,
+  String query, {
+  List<String> recent = const [],
+  SessionPreviewStore? previews,
+  Map<String, SessionContentHit>? contentHits,
+  DateTime? Function(SwarmDestination row)? activityOf,
+}) {
+  final activity = activityOf ?? (SwarmDestination row) => row.lastActivityAt;
+  final matches = _matchSwarmDestinations(
+    all,
+    query,
+    previews,
+    contentHits: contentHits,
+  );
+  final visits = {for (var i = 0; i < recent.length; i++) recent[i]: i};
+  matches.sort((a, b) {
+    final strength = a.strength.index.compareTo(b.strength.index);
+    if (strength != 0) return strength;
+    // What was said is ranked by the index, which weighs how well it matched
+    // against how long ago; last use decides between equal answers.
+    if (a.strength == SwarmMatchStrength.said ||
+        a.strength == SwarmMatchStrength.content) {
+      final said = b.said.compareTo(a.said);
+      if (said != 0) return said;
+    }
+    final aTime = activity(a.entry);
+    final bTime = activity(b.entry);
+    final byTime = aTime == null
+        ? (bTime == null ? 0 : 1)
+        : bTime == null
+        ? -1
+        : bTime.compareTo(aTime);
+    if (byTime != 0) return byTime;
+    final visit = (visits[a.entry.id] ?? recent.length).compareTo(
+      visits[b.entry.id] ?? recent.length,
+    );
+    if (visit != 0) return visit;
+    final score = a.score.compareTo(b.score);
+    if (score != 0) return score;
+    final name = compareNatural(a.entry.fields.first, b.entry.fields.first);
+    return name != 0 ? name : a.entry.id.compareTo(b.entry.id);
+  });
+  return [for (final match in matches) match.entry];
 }
 
 /// Each swarm is one selectable parent, followed by its matching agent views.
@@ -477,8 +881,93 @@ Future<bool> activateSwarmSearchSelection(
   required String destinationSwarmId,
   List<SavedSwarmProject> projects = const [],
   PaneSplitRequest? split,
+  HarnessPlacement? placement,
+  TakeOver? takeOver,
 }) async {
   final destination = selection.destination;
+  if (destination.external case final external?) {
+    final machineId = destination.machineId;
+    if (machineId == null || split != null) return false;
+    // A new harness that resumes it, in its own folder: the machine refuses one
+    // that is open elsewhere, or already a harness, and says so — and one open
+    // in a terminal until asked how to take it over from there.
+    final (:error, :refusal) = await app.resumeConversation(
+      machineId,
+      engine: external.engine,
+      folder: external.cwd,
+      sessionId: external.sessionId,
+      name: external.title.isEmpty ? null : external.title,
+      swarmId: destinationSwarmId,
+      placement: placement ?? HarnessPlacement.currentTab,
+      takeOver: takeOver,
+    );
+    if (error != null) {
+      throw SwarmResumeFailure(destination, error, code: refusal);
+    }
+    return true;
+  }
+  if (placement != null) {
+    final machineId = destination.machineId;
+    final agentId = destination.agentId;
+    if (machineId == null || agentId == null || destination.isCommand) {
+      return false;
+    }
+    final agent = app
+        .stateOf(machineId)
+        ?.agents
+        .where((agent) => agent.id == agentId)
+        .firstOrNull;
+    final hasView = app.allPanes.any(
+      (pane) => pane.machineId == machineId && pane.agentId == agentId,
+    );
+    if (agent == null ||
+        (!agent.terminalAvailable && !agent.isStopped && !hasView)) {
+      return false;
+    }
+    var target = app.swarms
+        .where((tab) => tab.id == destinationSwarmId)
+        .firstOrNull;
+    if (placement == HarnessPlacement.currentTab) {
+      if (target == null || target.isStore || target.isOrchestrator) {
+        return false;
+      }
+      final existing = target.panes.any(
+        (pane) => pane.machineId == machineId && pane.agentId == agentId,
+      );
+      if (!existing && target.panes.length >= AppNotifier.maxPanes) {
+        return false;
+      }
+    }
+    await _resumeStoppedDestination(app, destination);
+    if (placement == HarnessPlacement.currentTab) {
+      if (!app.swarms.contains(target) ||
+          (target!.panes.length >= AppNotifier.maxPanes &&
+              !target.panes.any(
+                (pane) =>
+                    pane.machineId == machineId && pane.agentId == agentId,
+              ))) {
+        return false;
+      }
+    } else {
+      // Validate the saved target and wait for its terminal before allocating
+      // a tab, so a refusal cannot leave an empty tab behind.
+      app.newSwarm();
+      target = app.activeSwarm;
+    }
+    await app.assignAgentToPane(
+      null,
+      machineId,
+      agentId,
+      swarmId: target.id,
+      autoTile: true,
+    );
+    if (app.activeSwarmId == target.id) {
+      app.revealAgentView(machineId, agentId, preferredSwarmId: target.id);
+    }
+    return target.panes.any(
+      (pane) => pane.machineId == machineId && pane.agentId == agentId,
+    );
+  }
   if (selection.agents.isNotEmpty) {
     final target = app.swarms
         .where((swarm) => swarm.id == destinationSwarmId)
@@ -511,6 +1000,10 @@ Future<bool> activateSwarmSearchSelection(
     }
     // Validate the complete selection before recording any membership. Every
     // add records its destination synchronously, before attachment can wait.
+    for (final row in members) {
+      await _resumeStoppedDestination(app, row);
+    }
+    if (!app.swarms.contains(target)) return false;
     await Future.wait([
       for (final row in members)
         app.addAgentToSwarm(row.machineId!, row.agentId!, swarmId: target.id),
@@ -570,6 +1063,10 @@ Future<bool> activateSwarmSearchSelection(
       }
       // Every membership is recorded before awaiting any attachment. A slow
       // machine cannot retarget the add or hold up the other agents.
+      for (final row in members) {
+        await _resumeStoppedDestination(app, row);
+      }
+      if (!app.swarms.contains(target)) return false;
       await Future.wait([
         for (final row in members)
           app.addAgentToSwarm(row.machineId!, row.agentId!, swarmId: target.id),
@@ -592,6 +1089,11 @@ Future<bool> activateSwarmSearchSelection(
         .where((e) => e.id == destination.id)
         .firstOrNull;
     if (live == null) return false;
+    await _resumeStoppedDestination(app, live);
+    if (!app.swarms.any((s) => s.id == destinationSwarmId) ||
+        (split != null && !app.isPaneSplitCurrent(split))) {
+      return false;
+    }
     await app.assignAgentToPane(
       null,
       destination.machineId!,
@@ -662,13 +1164,8 @@ bool canOpenSwarmGroup(
   SwarmDestination destination, {
   required String destinationSwarmId,
 }) =>
-    destination.isGroup &&
-    destination.members.length <= AppNotifier.maxPanes &&
-    (_matchingGroupSwarm(app, destination) != null ||
-        app.swarms.any(
-          (swarm) => swarm.id == destinationSwarmId && swarm.panes.isEmpty,
-        ) ||
-        app.swarms.length < AppNotifier.maxSwarms);
+    // With no tab cap a group always has somewhere to open; only its size is bounded.
+    destination.isGroup && destination.members.length <= AppNotifier.maxPanes;
 
 Swarm? _matchingGroupSwarm(AppNotifier app, SwarmDestination destination) {
   bool matches(Swarm swarm) =>
@@ -691,7 +1188,12 @@ Swarm? _matchingGroupSwarm(AppNotifier app, SwarmDestination destination) {
 
 String _agentCountLabel(Iterable<String?> ids) {
   final count = ids.whereType<String>().length;
-  return '$count ${count == 1 ? 'agent' : 'agents'}';
+  return '$count ${count == 1 ? 'harness' : 'harnesses'}';
+}
+
+String _countLabel(int count, String noun) {
+  final plural = noun == 'harness' ? 'harnesses' : '${noun}s';
+  return '$count ${count == 1 ? noun : plural}';
 }
 
 String _swarmMachineLabel(AppNotifier app, Iterable<String> machineIds) {
@@ -710,6 +1212,7 @@ List<SwarmDestination> closedWorkDestinations(AppNotifier app) => [
         closedId: entry.historyId,
         title: entry.name,
         engine: entry.engine,
+        isStore: entry.kind == 'store',
         members: {
           for (final pane in entry.panes)
             if (pane.agentId != null)
@@ -746,11 +1249,19 @@ List<SwarmDestination> swarmDestinations(
   AppNotifier app, {
   List<String> recent = const [],
   bool openOnly = false,
+  List<SwarmProjectGroup> projectGroups = const [],
 }) {
   final owners = <String, List<Swarm>>{};
   final agents = <String, (MachineState, Agent)>{};
   final result = <SwarmDestination>[];
   final recency = {for (var i = 0; i < recent.length; i++) recent[i]: i};
+  final projectsByAgent = <String, Set<String>>{};
+  for (final group in projectGroups) {
+    for (final entry in group.agents) {
+      final id = agentDestinationId(entry.machineId, entry.agent.id);
+      (projectsByAgent[id] ??= {}).add(group.id);
+    }
+  }
   for (final machine in app.machineStates.values) {
     for (final agent in machine.agents) {
       agents[agentDestinationId(machine.machine.machineId, agent.id)] = (
@@ -761,43 +1272,53 @@ List<SwarmDestination> swarmDestinations(
   }
   for (final swarm in app.swarms) {
     final context = <String?>[];
-    for (final pane in swarm.panes) {
-      if (pane.agentId == null) continue;
+    final panes = swarm.panes.where((pane) => pane.agentId != null).toList();
+    final members = <String>{};
+    final projects = <String>{};
+    final machines = <String>{};
+    for (final pane in panes) {
       final id = agentDestinationId(pane.machineId, pane.agentId!);
+      members.add(id);
+      machines.add(pane.machineId);
       (owners[id] ??= []).add(swarm);
       final row = agents[id];
       final project = row?.$1.projectOf(row.$2);
+      if (project != null) projects.add(project.identity(pane.machineId));
+      projects.addAll(projectsByAgent[id] ?? const {});
       context.addAll([
         row?.$1.machine.displayName,
         row?.$2.name ?? pane.session?.agentName,
+        project?.label,
         project?.name,
         project?.branch,
         project?.cwd,
+        _harnessType(row?.$1, row?.$2.identityEngine ?? pane.session?.engineId),
       ]);
     }
     result.add(
       SwarmDestination(
         id: swarmDestinationId(swarm.id),
         title: swarm.name,
-        engine: swarm.panes.length == 1
+        engine: panes.length == 1
             ? agents[agentDestinationId(
-                        swarm.panes.single.machineId,
-                        swarm.panes.single.agentId ?? '',
+                        panes.single.machineId,
+                        panes.single.agentId!,
                       )]
                       ?.$2
-                      .engine ??
-                  swarm.panes.single.session?.engineId
+                      .identityEngine ??
+                  panes.single.session?.engineId
             : null,
-        machineLabel: _swarmMachineLabel(app, [
-          for (final pane in swarm.panes)
-            if (pane.agentId != null) pane.machineId,
-        ]),
-        detail: _agentCountLabel(swarm.panes.map((pane) => pane.agentId)),
-        members: {
-          for (final pane in swarm.panes)
-            if (pane.agentId != null)
-              agentDestinationId(pane.machineId, pane.agentId!),
-        },
+        machineLabel: _swarmMachineLabel(app, machines),
+        detail: [
+          // Project and machine rows name their kind; a tab beside them
+          // without one read as some fourth, unnamed thing.
+          if (!swarm.isStore) 'Swarm',
+          _countLabel(members.length, 'harness'),
+          if (projects.isNotEmpty) _countLabel(projects.length, 'project'),
+          if (machines.isNotEmpty) _countLabel(machines.length, 'machine'),
+        ].join(' · '),
+        members: members,
+        isStore: swarm.isStore,
         swarmId: swarm.id,
         current: swarm.id == app.activeSwarmId,
         searchFields: context.toSet(),
@@ -810,7 +1331,11 @@ List<SwarmDestination> swarmDestinations(
   for (final id in {...owners.keys, if (!openOnly) ...agents.keys}) {
     final memberships = owners[id] ?? const <Swarm>[];
     final row = agents[id];
-    if (memberships.isEmpty && row?.$2.terminalAvailable != true) continue;
+    if (memberships.isEmpty &&
+        row?.$2.terminalAvailable != true &&
+        row?.$2.isStopped != true) {
+      continue;
+    }
     Swarm? owner;
     var ownerRank = 1000;
     for (final candidate in memberships) {
@@ -834,11 +1359,15 @@ List<SwarmDestination> swarmDestinations(
     final machine = app.machineStates[machineId];
     final project = row?.$1.projectOf(row.$2);
     final machineName = machine?.machine.displayName ?? machineId;
-    final engine = row?.$2.engine ?? pane?.session?.engineId;
+    final engine = row?.$2.identityEngine ?? pane?.session?.engineId;
+    final type = _harnessType(machine, engine);
+    final label = _harnessLabel(machine, engine, row?.$2.identityDisplayName);
     final detail = _harnessDetail(
+      type,
       project,
       machineName,
       machine?.nodeOnline == false,
+      agentLabel: label,
     );
     result.add(
       SwarmDestination(
@@ -846,22 +1375,39 @@ List<SwarmDestination> swarmDestinations(
         title: row?.$2.name ?? pane?.session?.agentName ?? agentId,
         detail: detail.text,
         detailBranchOffset: detail.branchOffset,
+        terminalDetail: detail.terminalText,
+        promptContext: PromptContext(
+          harness: label,
+          machine: machineName,
+          project: project?.label,
+          branch: project?.shownBranch,
+          leading: machine?.nodeOnline == false ? 'Offline' : null,
+        ),
         swarmId: owner?.id,
         machineId: machineId,
         machineLabel: machineName,
         agentId: agentId,
         previewKey: row == null ? null : app.previewKey(machineId, row.$2),
         engine: engine,
+        lastActivityAt: row?.$2.lastActivityAt,
         current:
             owner?.id == app.activeSwarmId && pane?.id == app.focusedPaneId,
+        // The agent's own title is ranked like its name (see titleFields):
+        // "board fab check" finds the agent whose work that is, never the
+        // one whose folder or recap happens to mention fab.
         searchFields: [
+          row?.$2.title,
+          type,
           machineName,
+          project?.label,
           project?.name,
           project?.branch,
           project?.cwd,
           engine,
+          label,
           ...memberships.map((s) => s.name),
         ],
+        titleFields: row?.$2.title == null ? 1 : 2,
       ),
     );
   }
@@ -877,25 +1423,177 @@ List<String> swarmQueryTerms(String query) {
 
 /// The same field preference drives ranking and the visible match emphasis.
 /// A good metadata match should not paint unrelated fuzzy title characters.
-int? swarmFieldMatchScore(String field, String term, {required bool title}) {
+/// Whole words beat fragments: "port" is exact in "port", a prefix of
+/// "port audit", a word of "windows port" and only a fragment of "support".
+/// Scattered letters must start a word and stay close together; loose, they
+/// matched nearly any folder ("auth" in ".../autonomous-harness/...").
+///
+/// [strict] is for harness rows: hundreds of names and long folder paths, where
+/// loose letters match nearly anything, so scattered letters must start a word
+/// and stay close, and two letters count only as initials. Commands, machines,
+/// projects and models are short curated lists that keep any scattered
+/// letters, so abbreviations like "kb" and "mbp" still work.
+int? swarmFieldMatchScore(
+  String field,
+  String term, {
+  required bool title,
+  bool strict = false,
+}) {
   final offset = field.indexOf(term);
-  final spread = offset >= 0 ? 0 : subsequenceSpread(field, term);
-  if (spread == null) return null;
-  return (title ? 0 : 64) +
-      (field == term
-          ? 0
-          : offset == 0
-          ? 8
-          : offset > 0
-          ? 16
-          : 128 + spread);
+  final int score;
+  if (offset == 0) {
+    score = field.length == term.length ? 0 : 8;
+  } else if (offset > 0) {
+    score = wordStartIndexOf(field, term, offset) >= 0 ? 12 : 16;
+  } else {
+    final spread = strict
+        ? wordSubsequenceSpread(field, term)
+        : subsequenceSpread(field, term);
+    if (spread == null) return null;
+    score = 128 + spread;
+  }
+  return (title ? 0 : 64) + score;
 }
 
+/// How well a row matched, coarsest first. Harnesses order by activity only
+/// among equally good matches, so the one named for a word is never buried
+/// under newer ones that mention it in a folder or a recap.
+enum SwarmMatchStrength {
+  /// The whole query is the name.
+  exact,
+
+  /// Every word starts a word of the name or title.
+  name,
+
+  /// A fragment of the name, or a whole word of the project, branch or machine.
+  context,
+
+  /// A fragment of the project, branch, folder or machine.
+  fragment,
+
+  /// Every word in one turn of the conversation — asked, answered, or a file
+  /// or command it touched — as the machine's session index found it.
+  said,
+
+  /// The words appear in the conversation, but not together.
+  content,
+
+  /// Scattered letters of the name or its context: real words anywhere in
+  /// the conversation are better evidence than letters strewn across a name.
+  scattered;
+
+  static SwarmMatchStrength ofScore(int score) => score <= 12
+      ? name
+      : score <= 76
+      ? context
+      : score < 128
+      ? fragment
+      : scattered;
+}
+
+typedef _SwarmMatch = ({
+  SwarmDestination entry,
+  int score,
+  SwarmMatchStrength strength,
+
+  /// How the session index ranked this row among its machine's hits, as a
+  /// reciprocal rank (higher is better), when it found it.
+  double said,
+});
+
 /// Each word may match a different field, in either order: "mini auth" and
-/// "auth mini" both find Auth on Mac mini. Names outrank incidental metadata.
-/// Existing preview text is a fallback, with literal word fragments rather
-/// than scattered-letter matches across long paragraphs. Reading it never
-/// warms the cache or contacts a machine.
+/// "auth mini" both find Auth on Mac mini. Existing preview text is the last
+/// resort, matched at word starts so "port" does not find every "support".
+/// Reading it never warms the cache or contacts a machine.
+///
+/// [contentHits] are what the machines' session indexes found for this query,
+/// by row id: everything ever said in each session, not only the recent
+/// excerpt the preview holds. A hit vouches for every word, so it admits a
+/// row the fields alone cannot, and lifts one that only scattered letters
+/// matched.
+List<_SwarmMatch> _matchSwarmDestinations(
+  List<SwarmDestination> all,
+  String query,
+  SessionPreviewStore? previews, {
+  Map<String, SessionContentHit>? contentHits,
+}) {
+  final needle = query.trim().toLowerCase();
+  final terms = swarmQueryTerms(query);
+  final matches = <_SwarmMatch>[];
+  for (final entry in all) {
+    if (needle.isNotEmpty &&
+        entry.fields.take(entry.titleFieldCount).contains(needle)) {
+      matches.add((
+        entry: entry,
+        score: -1,
+        strength: SwarmMatchStrength.exact,
+        said: 0,
+      ));
+      continue;
+    }
+    final hit = terms.isEmpty ? null : contentHits?[entry.id];
+    final hitStrength = hit == null
+        ? null
+        : hit.together
+        ? SwarmMatchStrength.said
+        : SwarmMatchStrength.content;
+    var total = 0;
+    var strength = SwarmMatchStrength.name;
+    String? excerpt;
+    for (final term in terms) {
+      int? best;
+      for (var i = 0; i < entry.fields.length; i++) {
+        final field = entry.fields[i];
+        final score = swarmFieldMatchScore(
+          field,
+          term,
+          title: i < entry.titleFieldCount,
+          strict: entry.agentId != null,
+        );
+        if (score == null) continue;
+        if (best == null || score < best) best = score;
+        // Every remaining field is metadata, whose best possible score is 64.
+        // A whole-word or fragment title match already beats that; an exact
+        // metadata match ties it. Neither needs further field scans.
+        if (best <= 64) break;
+      }
+      final SwarmMatchStrength termStrength;
+      if (best == null) {
+        excerpt ??= entry.previewKey == null
+            ? ''
+            : previews?.read(entry.previewKey!)?.searchText ?? '';
+        if (wordStartIndexOf(excerpt, term) < 0) {
+          total = -1;
+          break;
+        }
+        termStrength = SwarmMatchStrength.content;
+        best = 256;
+      } else {
+        termStrength = SwarmMatchStrength.ofScore(best);
+      }
+      if (termStrength.index > strength.index) strength = termStrength;
+      total += best;
+    }
+    if (hitStrength != null &&
+        (total < 0 || hitStrength.index < strength.index)) {
+      strength = hitStrength;
+      if (total < 0) total = 256 * terms.length;
+    }
+    if (total >= 0) {
+      matches.add((
+        entry: entry,
+        score: total,
+        strength: strength,
+        // Reciprocal rank: each machine's session index ranks its own hits, and
+        // a machine's first is as good as another's first.
+        said: hit == null ? 0 : 1 / (1 + hit.position),
+      ));
+    }
+  }
+  return matches;
+}
+
+/// Names outrank incidental metadata, and metadata outranks preview text.
 List<SwarmDestination> rankSwarmDestinations(
   List<SwarmDestination> all,
   String query, {
@@ -903,46 +1601,8 @@ List<SwarmDestination> rankSwarmDestinations(
   SessionPreviewStore? previews,
 }) {
   final needle = query.trim().toLowerCase();
-  final terms = swarmQueryTerms(query);
   final recency = {for (var i = 0; i < recent.length; i++) recent[i]: i};
-  final ranked = <({SwarmDestination entry, int score, bool content})>[];
-  for (final entry in all) {
-    if (entry.fields.first == needle) {
-      ranked.add((entry: entry, score: -1, content: false));
-      continue;
-    }
-    var total = 0;
-    var content = false;
-    String? excerpt;
-    for (final term in terms) {
-      int? best;
-      for (var i = 0; i < entry.fields.length; i++) {
-        final field = entry.fields[i];
-        final score = swarmFieldMatchScore(field, term, title: i == 0);
-        if (score == null) continue;
-        if (best == null || score < best) best = score;
-        // Every remaining field is metadata, whose best possible score is 64.
-        // An exact/prefix/substring title match already beats that; an exact
-        // metadata match ties it. Neither needs further field scans.
-        if (best <= 64) break;
-      }
-      if (best == null) {
-        excerpt ??= entry.previewKey == null
-            ? ''
-            : previews?.read(entry.previewKey!)?.searchText ?? '';
-        if (!excerpt.contains(term)) {
-          total = -1;
-          break;
-        }
-        content = true;
-        best = 256;
-      }
-      total += best;
-    }
-    if (total >= 0) {
-      ranked.add((entry: entry, score: total, content: content));
-    }
-  }
+  final ranked = _matchSwarmDestinations(all, query, previews);
   int tier(SwarmDestination e) => !e.hasView
       ? 3
       : e.current
@@ -950,8 +1610,11 @@ List<SwarmDestination> rankSwarmDestinations(
       : recency.containsKey(e.id)
       ? 0
       : 1;
+  bool content(_SwarmMatch match) =>
+      match.strength == SwarmMatchStrength.content ||
+      match.strength == SwarmMatchStrength.said;
   ranked.sort((a, b) {
-    var order = (a.content ? 1 : 0).compareTo(b.content ? 1 : 0);
+    var order = (content(a) ? 1 : 0).compareTo(content(b) ? 1 : 0);
     if (order == 0) order = a.score.compareTo(b.score);
     if (order == 0 && needle.isEmpty) {
       order = tier(a.entry).compareTo(tier(b.entry));
@@ -962,7 +1625,7 @@ List<SwarmDestination> rankSwarmDestinations(
       );
     }
     if (order == 0) {
-      order = a.entry.fields.first.compareTo(b.entry.fields.first);
+      order = compareNatural(a.entry.fields.first, b.entry.fields.first);
     }
     return order == 0 ? a.entry.id.compareTo(b.entry.id) : order;
   });
@@ -1015,10 +1678,12 @@ Future<bool> activateSwarmDestination(
   final agent = app.machineStates[destination.machineId]?.agents
       .where((a) => a.id == destination.agentId)
       .firstOrNull;
-  if (agent?.terminalAvailable != true ||
+  if ((agent?.terminalAvailable != true && agent?.isStopped != true) ||
       !app.swarms.any((s) => s.id == destinationSwarmId)) {
     return false;
   }
+  await _resumeStoppedDestination(app, destination);
+  if (!app.swarms.any((s) => s.id == destinationSwarmId)) return false;
   await app.addAgentToSwarm(
     destination.machineId!,
     destination.agentId!,

@@ -1,0 +1,59 @@
+/// What the app says when the daemon refuses to move an agent to another model.
+///
+/// One sentence per refusal, in the app's own words. The daemon's `detail` is not shown: it is
+/// written for its log and names the grid, and the user's vocabulary is "Subscription" and "Local".
+/// Every code the daemon's `agent_retarget` can answer with is here, and an unknown one still gets a
+/// sentence rather than the code — a new refusal in a newer daemon must not surface as `SOME_CODE`.
+///
+/// These refusals happen BEFORE the pane is touched (an engine with no way onto a Local model, a
+/// busy agent, a machine that cannot resolve its Local models), so nothing in the terminal ever
+/// says why. Until this existed, picking a Local model for a Cursor agent simply did nothing.
+library;
+
+/// A move onto a saved API's model ([api]) is refused in its own words: its `API_UNAVAILABLE` detail
+/// is written for the person (the API's name and what to do), and its models are not Local ones.
+String retargetRefusalMessage(
+  String code, {
+  required String engineLabel,
+  bool api = false,
+  String? detail,
+}) {
+  return switch (code) {
+    'API_UNAVAILABLE' => detail ?? "Couldn't use this API. Try again.",
+    'LOCAL_ONLY' when api =>
+      'Saved APIs can run only the harnesses on this computer.',
+    'GRID_ENGINE_UNSUPPORTED' when api =>
+      '$engineLabel can only run on its own login, not an API model.',
+    'GRID_ENGINE_UNSUPPORTED' =>
+      '$engineLabel can only run on its own login, not a Local model.',
+    'GRID_MODEL_REQUIRED' =>
+      '$engineLabel needs a model named to run on a Local model.',
+    'GRID_UNAVAILABLE' =>
+      "Couldn't reach this machine's Local models. Try again in a moment.",
+    'GRID_CONFIG_FAILED' =>
+      "Couldn't write $engineLabel's Local-model configuration on this machine.",
+    'GRID_CLEAR_FAILED' =>
+      "Couldn't clear the Local-model settings from this harness's terminal.",
+    'TMUX_TOO_OLD_FOR_GRID' => "This machine's tmux is too old to move a harness to a Local model. Update tmux there.",
+    'TMUX_UNAVAILABLE' || 'TMUX_FAILED' =>
+      "This machine's tmux did not answer. Try again in a moment.",
+    // Changing model restarts the agent's process, which would cut off the
+    // reply it is writing — so the daemon waits for the person, and the
+    // sentence says what to do rather than naming the state ("mid-turn" read
+    // as an error).
+    'AGENT_BUSY' =>
+      'This harness is still responding. Stop it or let it finish, then '
+          'choose the model again.',
+    'AGENT_NOT_FOUND' ||
+    'MISSING_AGENT_ID' => 'This harness is no longer on the machine.',
+    'NO_ACTIVE_PROCESS' || 'RETARGET_UNSUPPORTED_BACKEND' =>
+      'This harness cannot change model right now.',
+    'RESPAWN_FAILED' =>
+      "$engineLabel did not start on the new model. The terminal shows what happened.",
+    'INVALID_GRID' =>
+      "This machine's Local models could not be resolved. Sign in again on it.",
+    'UNSUPPORTED_ON_REMOTE' ||
+    'UNSUPPORTED' => 'Update the harness CLI on this machine to change models.',
+    _ => "Couldn't change this harness's model.",
+  };
+}

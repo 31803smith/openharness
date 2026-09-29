@@ -1,7 +1,7 @@
 import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { delimiter, join } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { TmuxBackend, clearEnvArgs } from './tmuxBackend.js'
 
 const originalPath = process.env.PATH
@@ -14,7 +14,18 @@ afterEach(() => {
 })
 
 describe('TmuxBackend lifecycle', () => {
-  it('creates a detached session and kills the session resolved from its root pane', async () => {
+  it.each(['tmux', 'ps'] as const)('does not declare a running pane gone when the %s probe fails', async failed => {
+    const dir = mkdtempSync(join(tmpdir(), 'tmux-backend-probe-'))
+    dirs.push(dir)
+    writeFileSync(join(dir, 'tmux'), `#!/bin/sh\n${failed === 'tmux' ? 'exit 1' : 'echo 12345'}\n`, { mode: 0o700 })
+    writeFileSync(join(dir, 'ps'), '#!/bin/sh\nexit 1\n', { mode: 0o700 })
+    process.env.PATH = `${dir}${delimiter}${originalPath ?? ''}`
+    expect(await new TmuxBackend().validate({ backend: 'tmux', paneId: '%42' }, {
+      engine: 'claude', processIdentity: { pid: 12345, executable: 'claude', startMarker: 'Sun Sep 27 20:00:00 2026' },
+    })).toMatchObject({ state: 'unknown' })
+  })
+
+  it('creates a detached session and closes only its exact pane', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'tmux-backend-lifecycle-'))
     dirs.push(dir)
     const calls = join(dir, 'calls')
@@ -45,9 +56,29 @@ esac
       // terminal for its colours (OSC 10/11) once, at startup, and never again.
       'new-session -d -P -F #{pane_id} -c /tmp/work -s harness-test ; set-option -w remain-on-exit on ; set-option -w window-style bg=#181818,fg=#f5f5f5',
       'set-option -t %42 mouse on',
-      'display-message -p -t %42 #{session_id}',
-      'kill-session -t $7',
+      'kill-pane -t %42',
     ])
+  })
+
+  it.each(['gone', 'present', 'unknown', 'malformed', 'no server'] as const)('verifies %s inventory after a failed pane-close reply', async mode => {
+    const dir = mkdtempSync(join(tmpdir(), 'tmux-backend-close-'))
+    dirs.push(dir)
+    const inventory = mode === 'gone' ? "printf '%%43\\n'" : mode === 'present' ? "printf '%%42\\n'"
+      : mode === 'malformed' ? "printf 'not a pane\\n'" : mode === 'no server'
+        ? "printf 'no server running on /tmp/fixture\\n' >&2; exit 1" : 'exit 1'
+    writeFileSync(join(dir, 'tmux'), `#!/bin/sh\nif [ "$1" = list-panes ]; then\n${inventory}\nelse\nexit 1\nfi\n`, { mode: 0o700 })
+    process.env.PATH = `${dir}${delimiter}${originalPath ?? ''}`
+    const backend = new TmuxBackend()
+    // Even if discovery hides this pane (e.g. its session was renamed), the
+    // exact-pane check must see it and refuse a false successful pause.
+    const discovery = vi.spyOn(backend, 'inventory').mockResolvedValue({ state: 'available', roots: [] })
+    expect((await backend.kill({ backend: 'tmux', paneId: '%42' })).state).toBe(mode === 'gone' || mode === 'no server' ? 'succeeded' : 'unknown')
+    expect(discovery).not.toHaveBeenCalled()
+  })
+
+  it('rejects broad tmux targets before executing a command', async () => {
+    const backend = new TmuxBackend()
+    expect(await backend.kill({ backend: 'tmux', paneId: '*' })).toMatchObject({ state: 'failed', dispatch: 'not_started' })
   })
 
   it('styles panes with the theme the app last sent, and re-styles existing ones on a scan', async () => {
@@ -58,6 +89,7 @@ esac
     writeFileSync(tmux, `#!/bin/sh
 printf '%s\\n' "$*" >> "$TMUX_BACKEND_CALLS"
 case "$1" in
+  set-option) sleep 0.05 ;;
   new-session) printf '%%7\\n' ;;
   list-panes) printf '%%7|100|harness-codex-1|/tmp/work\\n%%9|101|harness-claude-2|/tmp/other\\n' ;;
 esac
@@ -74,17 +106,18 @@ esac
     await backend.inventory()
     theme = { background: '#300a24', foreground: '#ffffff' }
     await backend.inventory()
-    await new Promise((resolve) => setTimeout(resolve, 50))
-
-    const styleCalls = readFileSync(calls, 'utf8').trim().split('\n').filter((line) => line.includes('window-style'))
-    expect(styleCalls).toEqual([
+    const styleCalls = () => readFileSync(calls, 'utf8').trim().split('\n').filter((line) => line.includes('window-style'))
+    await vi.waitFor(() => expect(styleCalls()).toEqual([
       'new-session -d -P -F #{pane_id} -c /tmp/work -s harness-codex-1 ; set-option -w remain-on-exit on ; set-option -w window-style bg=#171b29,fg=#f5f5f5',
       // The pane this daemon did not create is styled on the first scan; %7 already was.
       'set-option -w -t %9 window-style bg=#171b29,fg=#f5f5f5',
       // The app changed its palette: every live pane, once.
       'set-option -w -t %7 window-style bg=#300a24,fg=#ffffff',
       'set-option -w -t %9 window-style bg=#300a24,fg=#ffffff',
-    ])
+    ]))
+    await backend.inventory()
+    await new Promise((resolve) => setTimeout(resolve, 80))
+    expect(styleCalls()).toHaveLength(4)
   })
 
   it('carries tmux\'s own refusal into the failure reason', async () => {
@@ -166,6 +199,25 @@ esac
     ])
   })
 
+  it('treats a fresh tmux installation with no server as an available empty inventory', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'tmux-backend-no-server-'))
+    dirs.push(dir)
+    const tmux = join(dir, 'tmux')
+    writeFileSync(tmux, `#!/bin/sh
+if [ "$1" = list-panes ]; then
+  printf 'no server running on /tmp/tmux-1000/default\\n' >&2
+  exit 1
+fi
+`)
+    chmodSync(tmux, 0o700)
+    process.env.PATH = `${dir}${delimiter}${originalPath ?? ''}`
+
+    await expect(new TmuxBackend().inventory()).resolves.toEqual({
+      state: 'available',
+      roots: [],
+    })
+  })
+
   it('respawns a pane in place with -k, an optional cwd, and the exact argv, no shell', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'tmux-backend-respawn-'))
     dirs.push(dir)
@@ -187,8 +239,8 @@ printf '%s\\n' "$*" >> "$TMUX_BACKEND_CALLS"
       .resolves.toEqual({ state: 'succeeded', dispatch: 'executed' })
     expect(readFileSync(calls, 'utf8').trim().split('\n')).toEqual([
       // The `;` inside an argv element is never shell-interpreted — it lands as one literal token.
-      'set-option -w -t %9 remain-on-exit on ; respawn-pane -k -c /tmp/work -t %9 claude --resume abc; rm -rf /',
-      'set-option -w -t %9 remain-on-exit on ; respawn-pane -k -t %9 claude',
+      'set-option -w -t %9 remain-on-exit on ; set-option -p -t %9 @harness_engine_exit  ; respawn-pane -k -c /tmp/work -t %9 claude --resume abc; rm -rf /',
+      'set-option -w -t %9 remain-on-exit on ; set-option -p -t %9 @harness_engine_exit  ; respawn-pane -k -t %9 claude',
     ])
   })
 
@@ -267,7 +319,7 @@ printf '%s\\n' "$*" >> "$TMUX_BACKEND_CALLS"
     // `remain-on-exit` is chained BEFORE the respawn, not after: an engine handed a rejected key can
     // exit before a follow-up call lands, taking its own error message down with it.
     expect(readFileSync(calls, 'utf8').trim()).toBe(
-      'set-option -w -t %42 remain-on-exit on ; respawn-pane -k -c /tmp/work'
+      'set-option -w -t %42 remain-on-exit on ; set-option -p -t %42 @harness_engine_exit  ; respawn-pane -k -c /tmp/work'
       + ' -e ANTHROPIC_BASE_URL=https://relay.example/relay -e ANTHROPIC_MODEL=GLM-4.7-Flash'
       + ' -t %42 /bin/zsh -lic exec "$@" harness-engine claude --resume sess-1',
     )

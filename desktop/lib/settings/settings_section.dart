@@ -1,9 +1,11 @@
 import 'package:flutter/widgets.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import '../logging/debug_surface.dart';
 
-/// One screen in Settings — a row in its rail, and the pane that row opens.
+/// A Settings navigation entry. Customize returns to the workspace and opens
+/// its side panel; the other entries select a Settings page.
 ///
 /// Declared once, like [ShortcutAction] in `shortcuts/app_shortcuts.dart`: the
 /// rail, the search filter and the pane all read this list, so a section cannot
@@ -11,7 +13,10 @@ import '../logging/debug_surface.dart';
 enum SettingsSection {
   account(LucideIcons.user300, 'Account'),
   usage(LucideIcons.chartNoAxesColumn300, 'Usage'),
-  devices(LucideIcons.zap300, 'Autonomous devices'),
+  customize(LucideIcons.palette300, 'Customize'),
+  notifications(LucideIcons.bell300, 'Notifications'),
+  experimental(LucideIcons.flaskConical300, 'Experimental'),
+  devices(LucideIcons.zap300, 'Autonomous robots'),
   shortcuts(LucideIcons.keyboard300, 'Keyboard shortcuts'),
   debug(LucideIcons.bug300, 'Debug'),
   tracking(LucideIcons.activity300, 'Tracking'),
@@ -58,7 +63,8 @@ List<SettingsGroup> get settingsGroups =>
 @visibleForTesting
 List<SettingsGroup> settingsGroupsFor({required bool debugSurface}) {
   bool visible(SettingsSection section) =>
-      debugSurface || !_kDeveloperSections.contains(section);
+      (!kIsWeb || section != SettingsSection.devices) &&
+      (debugSurface || !_kDeveloperSections.contains(section));
   return [
     for (final group in _kSettingsGroups)
       if (group.sections.any(visible))
@@ -82,6 +88,13 @@ const _kSettingsGroups = [
   // which logs are read at all — the pane is off until somebody sets it.
   SettingsGroup('Preferences', [
     SettingsSection.usage,
+    SettingsSection.customize,
+    // Beside Customize because it is the same kind of decision — how this Mac behaves while you
+    // work — and NOT inside it, which is where the alert switch started. Customize is about how
+    // the app looks; a sound is not a look, and somebody turning one off does not think to look
+    // under Appearance for it.
+    SettingsSection.notifications,
+    SettingsSection.experimental,
     SettingsSection.devices,
     SettingsSection.account,
   ]),

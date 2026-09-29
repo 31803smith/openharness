@@ -6,11 +6,13 @@ import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:harness/screens/swarm_screen.dart';
+import 'package:harness/state/swarm_search.dart';
 import 'package:harness/shared/theme/app_theme.dart' as grid;
 
 import 'support/real_fonts.dart';
 import 'swarm_state_test.dart' show createApp;
 import 'swarm_screen_test.dart' show terminal;
+import 'swarm_interactions_test.dart' show chord;
 
 import 'package:harness/core/models.dart';
 
@@ -87,20 +89,21 @@ void main() {
             // Only the device image: the ground behind the page is drawn
             // (swarm_wallpaper.dart), not loaded.
             await precacheImage(
-              const AssetImage('assets/harness_device_studio.png'),
+              const AssetImage('assets/harness_device_studio.jpg'),
               context,
             );
           });
           await tester.pump();
         }
         final field = find.byKey(const ValueKey('harness-start-search'));
-        final create = find.byKey(const ValueKey('harness-start-new'));
-        final open = find.byKey(const ValueKey('harness-start-open'));
+        final create = find.byKey(const ValueKey('harness-start-new-pane'));
+        final open = find.byKey(const ValueKey('harness-start-new-tab'));
         final device = find.byKey(const ValueKey('harness-device-link'));
+        final store = find.byKey(const ValueKey('harness-store-link'));
         expect(find.text('Harness'), findsNothing);
         expect(
           tester.widget<TextField>(field).decoration!.hintText,
-          'Find an agent',
+          kHarnessPickerHint,
         );
         expect(tester.widget<TextField>(field).focusNode!.hasFocus, isTrue);
         expect(find.byType(ListTile), findsNothing);
@@ -108,13 +111,18 @@ void main() {
         final createRect = tester.getRect(create);
         final openRect = tester.getRect(open);
         final deviceRect = tester.getRect(device);
+        final storeRect = tester.getRect(store);
         expect(createRect.center.dy, closeTo(openRect.center.dy, 1));
         expect(openRect.top, greaterThan(fieldRect.bottom));
         expect(openRect.left, closeTo(fieldRect.left, 1));
         expect(createRect.left, greaterThan(openRect.right));
         expect(fieldRect.center.dx, closeTo(width / 2, 1));
-        expect(deviceRect.left, closeTo(fieldRect.left, 1));
+        // The store card leads the footer row under the search; the device
+        // card follows it on the same row, never wrapped below it.
+        expect(storeRect.left, closeTo(fieldRect.left, 1));
+        expect(deviceRect.left, closeTo(storeRect.right + 16, 1));
         expect(deviceRect.bottom, closeTo(height - 80, 1));
+        expect(storeRect.bottom, closeTo(height - 80, 1));
         expect(find.text('Meet the\nHarness device'), findsOneWidget);
         expect(create.hitTestable(), findsOneWidget);
         expect(open.hitTestable(), findsOneWidget);
@@ -163,6 +171,10 @@ void main() {
         await tester.ensureVisible(create);
         expect(create.hitTestable(), findsOneWidget);
         await tester.tap(create);
+        await tester.pump();
+        await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+        expect(find.byType(AlertDialog), findsNothing);
+        await chord(tester, LogicalKeyboardKey.keyN);
         await tester.pumpAndSettle();
         expect(find.byType(AlertDialog), findsOneWidget);
         expect(results, findsNothing);

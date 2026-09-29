@@ -1,0 +1,64 @@
+name: Experience checks
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths: ['store/**', 'desktop/assets/engine-icons/**', '.github/workflows/experience-checks.yml']
+  push:
+    branches: [main]
+    paths: ['store/**', 'desktop/assets/engine-icons/**', '.github/workflows/experience-checks.yml']
+
+permissions:
+  contents: read
+
+# New commits replace obsolete checks for the same PR or branch.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  models-and-viewer:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: '22.23.2'
+      - name: Verify generated artifacts match reviewed sources
+        run: |
+          sh store/agents/voxel-worlds/toolchain/setup.sh
+          sh store/agents/drone-pilot/toolchain/setup.sh
+          sh store/agents/game-master/toolchain/setup.sh
+          sh store/agents/lab-bench/toolchain/setup.sh
+          node store/agents/lab-bench/toolchain/build-math.mjs --check
+          node store/tools/build-experiences.mjs --check
+      - name: Verify packaged branding matches desktop assets
+        run: node store/tools/build-experience-branding.mjs --check
+      - name: Check models, packages and viewer behavior
+        run: >-
+          node --test
+          store/tools/experience-tests/models.test.mjs
+          store/agents/{voxel-worlds,generative-art,music-studio,creative-direction,drone-pilot,game-master,lab-bench}/test/*.test.mjs
+          store/viewers/web-viewer/test/*.test.mjs
+      - name: Validate Store catalog
+        run: node store/tools/catalog.mjs
+      - name: Check FreeCAD contracts and delivery (native suite is opt-in)
+        run: node --test store/agents/freecad/test/*.test.mjs
+      - name: Check Score contracts, MIDI and delivery (native suite is opt-in)
+        run: node --test store/agents/score/test/*.test.mjs
+      - name: Install Score from scratch and engrave with its managed runtime
+        env:
+          SCORE_RUNTIME_DIR: ${{ runner.temp }}/score-runtime
+        run: |
+          sh store/agents/score/toolchain/setup.sh
+          sh store/agents/score/toolchain/doctor.sh
+          score_workspace="$(mktemp -d "$RUNNER_TEMP/score-project.XXXXXX")"
+          cp -R store/agents/score/template/. "$score_workspace/"
+          HARNESS_WORKSPACE="$score_workspace" sh store/agents/score/skills/score/scripts/render-score.sh
+      - name: Check OpenSCAD contracts and delivery (native suite is opt-in)
+        run: node --test store/agents/openscad/test/*.test.mjs
+      - name: Check OrcaSlicer briefs, G-code and delivery (native suite is opt-in)
+        run: node --test store/agents/orca-slicer/test/*.test.mjs
+      - name: Check Data Studio imports, SQL, real SQLite delivery and failure guards
+        run: node --test store/agents/data-studio/test/*.test.mjs

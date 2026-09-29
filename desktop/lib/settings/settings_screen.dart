@@ -1,18 +1,22 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../analytics/analytics.dart';
 import '../shared/theme/app_theme.dart' as grid;
 import '../state/app_state.dart';
-import '../widgets/window_chrome.dart';
+import '../widgets/harness_customize_pane.dart';
+import 'experimental_features.dart';
 import 'sections/about_section.dart';
 import 'sections/account_section.dart';
 import 'sections/debug_section.dart';
 import 'sections/devices_section.dart';
+import 'sections/experimental_section.dart';
 import 'sections/shortcuts_section.dart';
 import 'sections/tracking_section.dart';
 import 'sections/usage_section.dart';
 import 'settings_nav.dart';
 import 'settings_section.dart';
+import 'sections/notifications_section.dart';
 
 /// Opens Settings over the app.
 ///
@@ -29,24 +33,35 @@ Future<void> showSettingsScreen(
   BuildContext context,
   AppNotifier notifier, {
   SettingsSection? initialSection,
+  ExperimentalFeaturesStore? experimentalFeatures,
   // Which door opened Settings — see [AnalyticsEvents.screenView]. `required`,
   // because a pane reachable several ways is close to meaningless as a bare
   // count.
   required String source,
-}) {
-  return Navigator.of(context).push<void>(
-    PageRouteBuilder<void>(
+}) async {
+  if (initialSection == SettingsSection.customize) {
+    await showHarnessCustomizePane(context);
+    return;
+  }
+  final action = await Navigator.of(context).push<SettingsSection>(
+    PageRouteBuilder<SettingsSection>(
       // Opaque: it covers the window, and letting the shell show through would
       // mean compositing four live terminals under it for nothing.
       pageBuilder: (context, animation, _) => SettingsScreen(
         notifier: notifier,
         initialSection: initialSection,
+        experimentalFeatures: experimentalFeatures,
         source: source,
       ),
       transitionDuration: Duration.zero,
       reverseTransitionDuration: Duration.zero,
     ),
   );
+  // Leave the opaque Settings route before opening the panel, keeping the
+  // active terminals visible behind the controls and retaining caller focus.
+  if (action == SettingsSection.customize && context.mounted) {
+    await showHarnessCustomizePane(context);
+  }
 }
 
 /// Settings: pick on the left, work on the right.
@@ -55,10 +70,15 @@ class SettingsScreen extends StatefulWidget {
     super.key,
     required this.notifier,
     this.initialSection,
+    this.experimentalFeatures,
     this.source = 'unknown',
-  });
+  }) : assert(
+         initialSection != SettingsSection.customize,
+         'Open workspace actions through showSettingsScreen.',
+       );
 
   final AppNotifier notifier;
+  final ExperimentalFeaturesStore? experimentalFeatures;
 
   /// The door that opened this screen, reported with the first `screen_view`.
   /// Defaulted only for tests that build the screen directly; every app door
@@ -78,6 +98,30 @@ class _SettingsScreenState extends State<SettingsScreen> {
   late SettingsSection _section =
       widget.initialSection ?? kDefaultSettingsSection;
 
+  KeyEventResult _key(FocusNode node, KeyEvent event) {
+    if (event is! KeyDownEvent ||
+        event.logicalKey != LogicalKeyboardKey.escape ||
+        HardwareKeyboard.instance.isControlPressed ||
+        HardwareKeyboard.instance.isAltPressed ||
+        HardwareKeyboard.instance.isMetaPressed ||
+        HardwareKeyboard.instance.isShiftPressed ||
+        ModalRoute.of(context)?.isCurrent == false) {
+      return KeyEventResult.ignored;
+    }
+    final editing = FocusManager.instance.primaryFocus?.context
+        ?.findAncestorStateOfType<EditableTextState>()
+        ?.widget
+        .controller
+        .value;
+    if (editing != null &&
+        editing.composing.isValid &&
+        !editing.composing.isCollapsed) {
+      return KeyEventResult.skipRemainingHandlers;
+    }
+    Navigator.of(context).maybePop();
+    return KeyEventResult.handled;
+  }
+
   @override
   void initState() {
     super.initState();
@@ -90,6 +134,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   /// Move to another pane, from the settings rail.
   void _show(SettingsSection target) {
+    if (target == SettingsSection.customize) {
+      Navigator.of(context).pop(target);
+      return;
+    }
     if (target == _section) return;
     analytics.screenView(_screenName(target), source: 'rail');
     setState(() => _section = target);
@@ -105,35 +153,26 @@ class _SettingsScreenState extends State<SettingsScreen> {
   @override
   Widget build(BuildContext context) {
     grid.AppTheme.watch(context);
-    // Row-first, so the nav rail owns the window's full height and its fill
-    // runs from y=0 — under the macOS traffic lights included. A header across
-    // the top would have to carry the rail's fill over the pane as well, which
-    // is what leaves the top of a window reading as a separate, lighter band.
-    return Scaffold(
-      backgroundColor: grid.AppPalette.windowBg,
-      body: Row(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          SettingsNav(section: _section, onSelect: _show),
-          VerticalDivider(width: 1, color: grid.AppPalette.divider),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                // The pane needs the traffic lights' clearance and somewhere to
-                // grab the window, but no fill of its own — it sits on the
-                // window. The rail draws its own.
-                const WindowDragStrip(),
-                Expanded(
-                  child: _SettingsBody(
-                    section: _section,
-                    notifier: widget.notifier,
-                  ),
-                ),
-              ],
+    // The native title bar already owns window dragging. Settings starts below
+    // it, with the same content inset on both sides of the divider.
+    return Focus(
+      onKeyEvent: _key,
+      child: Scaffold(
+        backgroundColor: grid.AppPalette.windowBg,
+        body: Row(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            SettingsNav(section: _section, onSelect: _show),
+            VerticalDivider(width: 1, color: grid.AppPalette.divider),
+            Expanded(
+              child: _SettingsBody(
+                section: _section,
+                notifier: widget.notifier,
+                experimentalFeatures: widget.experimentalFeatures,
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -144,16 +183,29 @@ class _SettingsScreenState extends State<SettingsScreen> {
 /// Switch immediately, disposing the previous section instead of retaining it
 /// for a cross-fade while the new section starts its work.
 class _SettingsBody extends StatelessWidget {
-  const _SettingsBody({required this.section, required this.notifier});
+  const _SettingsBody({
+    required this.section,
+    required this.notifier,
+    this.experimentalFeatures,
+  });
 
   final SettingsSection section;
   final AppNotifier notifier;
+  final ExperimentalFeaturesStore? experimentalFeatures;
 
   @override
   Widget build(BuildContext context) {
     final screen = switch (section) {
       SettingsSection.account => AccountSection(notifier: notifier),
       SettingsSection.usage => const UsageSection(),
+      SettingsSection.customize => throw StateError(
+        'Customization opens over the workspace.',
+      ),
+      SettingsSection.notifications => const NotificationsSection(),
+      SettingsSection.experimental => ExperimentalSection(
+        store: experimentalFeatures ?? notifier.experimentalFeatures,
+        controller: notifier.swarmSettings,
+      ),
       SettingsSection.devices => const DevicesSection(),
       SettingsSection.shortcuts => const ShortcutsSection(),
       SettingsSection.debug => const DebugSection(),

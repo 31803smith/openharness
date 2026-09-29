@@ -1,15 +1,168 @@
-# Harness Desktop
+# Harness Desktop and Web
 
 Harness Desktop is the native Flutter client for browsing Harness machines and
-interacting with their terminal-backed agents. It runs natively on **macOS
-and Linux (Ubuntu)** and includes an unexercised Windows runner.
+interacting with their terminal-backed agents. **macOS is the primary supported and tested
+experience.** Linux builds exist, with feature parity still in progress; Windows support is
+planned and its runner is unexercised. Native embedded harness viewers require macOS;
+the browser renders managed viewers on their connected machine.
+
+`hn view` can open a viewer companion at `/?viewer=1&machine=<id>&agent=<id>`.
+This owner-only destination uses normal sign-in and machine linking. It does not restore or
+save the workspace, join the shared desk, or attach a terminal. OAuth returns to the same
+viewer after sign-in. The existing website root rewrite serves it without a new route.
+Publish the browser build before the corresponding native hn release so the entry point
+recognizes the viewer destination.
+
+The browser target uses this same Flutter package: swarms, pickers, settings, state and
+the patched xterm renderer are shared. `lib/main.dart` picks the browser's workspace at
+compile time (a conditional import of `lib/web/web_entry.dart`), composed for a mouse:
+every action desktop keeps in its native menus is clickable (keys still work, they are
+just not the way in). Browser-only UI lives in `lib/web/`, and desktop never imports it.
+Browser support is available as a public preview at
+[harness.autonomous.ai](https://harness.autonomous.ai).
+
+## Web development
+
+Use Flutter ≥ 3.47 / Dart ≥ 3.13. From `desktop/`:
+
+```bash
+flutter pub get
+flutter run -d chrome --web-port=3000
+flutter build web --release --no-wasm-dry-run --no-web-resources-cdn
+python3 scripts/serve-web.py --port 3000  # optional local release preview
+flutter test --platform=chrome --dart-define=HARNESS_TEST=true \
+  test/web test/browser_login_test.dart test/observer_codec_test.dart \
+  test/wire_counter_test.dart test/password_stretch_test.dart \
+  test/terminal_binary_test.dart test/e2ee/strict_down_test.dart
+```
+
+Deploy `build/web/` at the root of a dedicated HTTPS origin. The host must serve
+`index.html` for `/auth/callback`; `_redirects` and `_headers` cover hosts that
+support those files. For other hosts, configure the equivalent SPA fallback and
+revalidation of unversioned app files. Do not cache OAuth callbacks. The app uses
+JavaScript/CanvasKit; WebAssembly app compilation is not validated yet.
+
+The entry page inlines Flutter's generated bootstrap to start the app without
+an extra loader request. Keep entry pages and release metadata `no-store`.
+The production host serves JavaScript, CanvasKit and assets from a directory
+containing the release version and archive checksum, with immutable caching.
+Each fresh entry points to that release's assets. This matters because the CDN
+can extend cache lifetimes even when the origin requests revalidation. Local
+previews using stable filenames should use ETags and `max-age=0, must-revalidate`.
+
+The existing backend handles browser OAuth. Local previews on `127.0.0.1`,
+`localhost`, or `[::1]` use its existing loopback authorization endpoint, returning
+to the registered `/callback` path on the preview's own port without a server
+configuration change.
+For a hosted web app, add the exact origin to the backend's `WEB_URL` or
+comma-separated `WEB_ORIGINS`, and register that origin's `/auth/callback` with SSO.
+Any `SSO_REDIRECT_URI` override must point to that same hosted callback. Tests use a
+synthetic authorization service. An alternate backend can be selected with
+`--dart-define=HARNESS_API_URL=https://your-backend.example` on run/build.
+Use `--dart-define=HARNESS_ANALYTICS_DISABLED=true` for isolated previews.
+
+### Production release
+
+The Flutter source remains in this package. The website that serves it lives in
+[`../website`](../website) and serves its compiled files under `/harness-web/`,
+with `/`, `/s/:id` and `/auth/callback` opening the Flutter app. It also serves the desktop
+downloads and installer redirects.
+
+From the repo root, on a tested commit already on `main`, run `make release-web`
+(`ARGS="--dry-run"` to preview). [`scripts/release-web.sh`](scripts/release-web.sh)
+tags the commit `vX.Y.Z_web`, which runs **Release web**. That one job builds the
+bundle with Flutter 3.47.2, bakes it into the website image
+(`gcr.io/autonomous-ecm/autonomous-code-website:<tag>` and `:latest`; ArgoCD deploys
+it), and publishes the archive, SHA-256 and `harness-web-release.json` as a GitHub
+Release. The script waits for the run. After a failure, fix forward and cut the next
+version rather than moving the tag.
+
+The host configures Flutter's entrypoint, asset and CanvasKit URLs under
+`/harness-web/releases/<version>-<archive-checksum-prefix>/` and does not start
+the deprecated generated service worker. Public routes and the base href stay
+stable; legacy asset paths remain available for tabs opened before deployment.
+For a local production build, run `bash scripts/build-web-release.sh X.Y.Z`.
+`FLUTTER_BIN` can select an SDK installed outside `PATH`. Output is under
+`build/web-release/` and `build/web-dist/`; the ordinary local preview is separate.
+
+### Browser behavior
+
+- Authenticated access to existing machines uses the shared viewer services and
+  encrypted relay. Link a machine from the browser before controlling it.
+- **Share** on a harness creates one browser link. Private links require sign-in
+  with an invited email; public links open without an account. Viewers receive
+  only that harness's read-only output through the encrypted observer relay, with
+  the owner's identity pinned in the link. Sign-in returns to the same link.
+  Comments travel through that channel and persist on the owner's machine;
+  posting requires sign-in. Authors can remove their comments and owners can
+  moderate the thread. **Stop sharing** removes link and invitation access.
+  The owner's machine must be online; published snapshots are not included.
+- Login, linked machines, preferences, and cached workspace metadata persist in
+  this origin's local storage across tabs and browser restarts. Only the pending
+  OAuth transaction is tab-local. Browser locks serialize token refresh and
+  machine-key writes; signing out or changing accounts reloads other open tabs.
+  **Sign out** clears authentication while keeping this browser's machine links.
+  Clearing site data removes both; private browsing retains them only for that
+  private session. Existing tab credentials migrate on the next reload.
+- **Download app** sits at the top right of sign-in and workspace screens, opening
+  the existing macOS/Linux download page in a separate tab. Browser sign-in uses
+  a full-page fleet diagram and prominent CTA, sharing the native login actions
+  and their waiting, cancellation, and recovery states.
+- Workspace shortcuts use **Option/Alt** in the browser: Alt-P finds harnesses,
+  Alt-N starts a harness, Alt-M opens machines, and Alt-T opens a swarm.
+  Machine connection commands and link requests use that same `@` picker,
+  with connection and setup forms inside its preview pane.
+  Text editing and terminal
+  Control keys keep their usual behavior. The shared shortcut sheet and welcome
+  hints show the active bindings.
+- Agent processes and files stay on their host machines. Local provisioning,
+  desktop updates, hardware firmware, local usage ledgers, keyboard config files,
+  system notifications, and native image clipboard remain desktop capabilities. Closing the browser
+  does not stop a running agent.
+- **Work from your phone** on the welcome page shows the same QR setup as
+  desktop. In a browser it pairs the phone with the selected linked computer,
+  over an encrypted owner connection. The computer name stays visible and fixed
+  while the QR is open. A browser without a linked computer offers the machine
+  picker first.
+- API connections, model controls and orchestrator projects run on a linked
+  computer. Editors keep their destination while open; reopening model controls
+  selects the current computer. API keys are saved on that computer, not in
+  browser preferences. The command bar uses the same daemon decision service
+  and requires the same provider configuration; local navigation still works
+  without it. Sending a task remains a separate confirmed action.
+- Managed viewer panes accept mouse, keyboard and text input through an
+  encrypted owner connection. Their isolated Chromium renderer runs on the
+  agent machine and must be installed there. Shared-link viewers remain read
+  only. Streams are bounded to four interactive surfaces per connection/eight
+  per daemon, with an idle timeout; native dialogs, browser downloads, audio and
+  OS clipboard bridging are not provided by this stream. These capabilities
+  require an updated daemon; older hosts receive update guidance.
+
+The disposable full-stack fixture also accepts
+`HARNESS_WORKSPACE_BROWSER_CHECK=$PWD/desktop/scripts/check-workspace.cjs` and
+`HARNESS_SHARE_BROWSER_CHECK=$PWD/desktop/scripts/check-sharing.cjs` when running
+`npm run test:sharing-e2e` from `cli/` (set the paths from the repository root).
+It launches fixture accounts and daemons, signs into the browser through an SSO
+stand-in, then uses real password linking, encrypted RPCs, terminal/viewer input,
+API storage and shared links. No real user home or credentials are used. See
+[the readiness record](../docs/plans/2026-09-27-008-web-release-readiness.md)
+for the build origin, service prerequisites and current verification evidence.
+
+Keep product changes in the existing shared screens and state. Add platform
+adapters only for browser/native capabilities, following the conditional stores,
+login adapter, and runtime capability checks already in `lib/`.
 
 ## Development
 
-Install a compatible Flutter SDK, then run the project from this repository
-root:
+For workspace dialog work, follow the
+[terminal dialog design system](design/terminal-dialogs.md): fixed cells, plain
+text, and one-line selection, using Cmd-N and Cmd-O as references.
+
+Install a compatible Flutter SDK, then run the project from this directory
+(`desktop/` in the monorepo):
 
 ```bash
+cd desktop
 flutter pub get
 flutter test
 flutter run -d macos   # or: flutter run -d linux
@@ -26,6 +179,39 @@ flutter build linux --release   # must run on an Ubuntu host — no cross-compil
 
 The terminal core is vendored at `third_party/xterm`. Do not replace it with an
 upstream package upgrade without preserving the local rendering and IME fixes.
+
+## Harness manager
+
+The terminal icon to the left of Harness Store opens a compact list across your
+machines. Each harness shows its agent and name, followed by its machine, project,
+branch, and last activity (`5m`, `1h`, `2d`). Search matches names, machines,
+projects, branches, and pending questions. Filter All, Needs input, Running, or
+Paused; sort by recently active, name, machine, or project.
+
+Needs input replaces the separate bell. A red count badge at the terminal icon’s
+top-right corner appears only when harnesses need input. An amber help action
+opens the waiting harness; its question appears on a third line in the Needs input
+view. The same view opens with **⌘⇧I**. Questions update live and stale actions
+cannot redirect you after a question is answered or replaced elsewhere.
+
+Select a row to reveal its existing pane or resume and open saved work. The
+separate play button resumes in the background. Pause/play remains at the right;
+normal states need no redundant labels.
+
+Pause uses the CLI's existing stop operation, keeping the saved conversation and
+project on its machine. Pause/resume controls are enabled for saved Claude and
+Codex conversations; other engines remain openable with a tooltip explaining
+that exact resume is unavailable. The CLI confirms termination of the exact process
+and pane before publishing the paused state, preserving other panes in the same
+tmux session. A failed inventory refresh keeps confirmed paused work visible,
+and pending operations survive closing the manager.
+
+Closing a pane only hides its view: a curved Genie animation draws it into
+Harnesses while the process continues. A bounded GPU snapshot animates while the
+live terminal stays mounted at its original size. macOS Reduce Motion skips it.
+Offline and shared harnesses expose their state without offering process controls.
+Errors remain beside the affected row, and an uncertain resume checks its original
+receipt rather than starting the process twice.
 
 ## Open media from agent output
 
@@ -57,16 +243,28 @@ The optional A/B smoke test uses isolated identities, two loopback WebSockets,
 the CLI's real E2EE handshake/media reader and ffmpeg-generated PNG/MP4 fixtures:
 
 ```bash
-REMOTE_MEDIA_CLI_ROOT=../autonomous-harness/cli flutter test test/remote_media_smoke_test.dart
+REMOTE_MEDIA_CLI_ROOT=../openharness/cli flutter test test/remote_media_smoke_test.dart
 ```
 
 Install the companion CLI's npm dependencies first; ffmpeg must be on PATH.
 The smoke test does not use a real account or remote machine. It verifies the OS
 launch URI; playback in the native viewer is a separate manual check.
 
+## Viewers on linked machines
+
+Open a harness on a linked machine and its viewer appears beside the terminal. The local CLI
+forwards it through the existing encrypted machine connection, including interactive controls,
+streaming updates and WebSockets. Both computers need a forwarding-capable Harness CLI. An older
+remote CLI shows update guidance in the viewer pane; reconnect after updating it.
+
+The local viewer endpoint is private to the machine connection and closes on disconnect or
+revocation. This feature uses your existing machine access; it does not create a public share link.
+Embedded viewers remain macOS-only. See the
+[remote viewer plan](../docs/plans/2026-09-17-004-remote-viewers.md) for compatibility and tests.
+
 ## Local Codex profiles
 
-New Agent → Codex discovers local profiles when the Harness CLI advertises
+New Harness → Codex discovers local profiles when the Harness CLI advertises
 `supportsCodexHome`. The picker appears only when there are at least two distinct
 profile folders; **Default** does not count as another profile. A single profile
 is selected automatically, while no profiles keeps the normal launch. Linking
@@ -110,7 +308,7 @@ the backend is a sibling `autonomous-code` checkout. Their default layout is:
 ```text
 .../autonomous-ai/
   autonomous-code/
-  autonomous-harness/
+  openharness/
     cli/
     backend/
     desktop/        <- this app

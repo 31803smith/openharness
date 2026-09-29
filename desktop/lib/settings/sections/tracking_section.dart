@@ -74,7 +74,7 @@ class _TrackingSectionState extends State<TrackingSection> {
       title: 'Tracking',
       subtitle:
           'Every analytics event this app reports, and where it goes. Held in '
-          'memory for this session only — nothing here is written to disk.',
+          'memory for this harness only — nothing here is written to disk.',
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -137,7 +137,7 @@ class _TrackingSectionState extends State<TrackingSection> {
         icon: LucideIcons.activity300,
         title: 'No events yet',
         message:
-            'Move around the app — opening a screen or creating an agent '
+            'Move around the app — opening a screen or creating a harness '
             'reports an event, and each one shows up here with what it sent.',
       );
     }
@@ -168,7 +168,7 @@ class _Toolbar extends StatelessWidget {
         Expanded(
           child: Text(
             '$total ${total == 1 ? 'event' : 'events'}',
-            style: TextStyle(fontSize: 12.5, color: AppPalette.textSecondary),
+            style: AppType.body(color: AppPalette.textSecondary),
           ),
         ),
         ToolbarPill(

@@ -16,6 +16,9 @@ import 'dart:io';
 
 import 'ledger_scanner.dart';
 import 'ledger_types.dart';
+import 'jsonl_ledger_scan.dart';
+
+import '../../core/runtime_platform.dart';
 
 class CodexLedgerScanner implements LedgerScanner {
   CodexLedgerScanner({String? home, Map<String, String>? environment})
@@ -32,7 +35,7 @@ class CodexLedgerScanner implements LedgerScanner {
   /// `~/.codex`, and reads `archived_sessions/` beside `sessions/` so a session
   /// Codex has since filed away still counts — it was paid for either way.
   List<String> get roots {
-    final env = _environment ?? Platform.environment;
+    final env = _environment ?? RuntimePlatform.environment;
     final codexHome = env['CODEX_HOME']?.trim();
     final base = codexHome != null && codexHome.isNotEmpty
         ? codexHome
@@ -46,57 +49,26 @@ class CodexLedgerScanner implements LedgerScanner {
     final roots = this.roots;
     if (roots.isEmpty) {
       return const LedgerScanResult.unavailable(
-        'No home directory to read Codex sessions from',
+        'No home directory to read Codex conversations from',
       );
     }
-    final files = await listJsonlFiles(roots);
-    if (files.isEmpty) {
-      return const LedgerScanResult.unavailable(
-        'No Codex sessions on this computer',
-      );
-    }
-
-    final sources = <ScannedSource>[];
-    for (final file in files) {
-      final FileStat stat;
-      try {
-        stat = await file.stat();
-      } on FileSystemException {
-        continue;
-      }
-      final cached = previous[file.path];
-      if (cached != null && cached.matches(stat)) {
-        sources.add(cached);
-        continue;
-      }
-      sources.add(
-        ScannedSource(
-          path: file.path,
-          mtimeMs: stat.modified.millisecondsSinceEpoch,
-          size: stat.size,
-          entries: await _parse(file),
-        ),
-      );
-    }
-    return LedgerScanResult(sources: sources);
+    return scanJsonlUsage(
+      provider: provider,
+      roots: roots,
+      previous: previous,
+      missingMessage: 'No Codex conversations on this computer',
+      parse: _parse,
+    );
   }
 
-  Future<List<LedgerEntry>> _parse(File file) async {
+  Future<List<LedgerEntry>> _parse(File file, int length) async {
     final context = CodexParseContext(
       sessionId: file.uri.pathSegments.last.replaceAll('.jsonl', ''),
     );
     final entries = <LedgerEntry>[];
-    try {
-      final lines = file
-          .openRead()
-          .transform(utf8.decoder)
-          .transform(const LineSplitter());
-      await for (final line in lines) {
-        final entry = parseCodexLine(line, context);
-        if (entry != null) entries.add(entry);
-      }
-    } on FileSystemException {
-      return const [];
+    await for (final line in readJsonlLines(file, length)) {
+      final entry = parseCodexLine(line, context);
+      if (entry != null) entries.add(entry);
     }
     return entries;
   }

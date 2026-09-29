@@ -20,8 +20,17 @@ import '../core/local_key_value_store.dart';
 /// scheme later is one value here and one `const` in `terminal_theme.dart`.
 enum TerminalThemeChoice {
   /// Today's behaviour, and still the default: ground and cursor follow the
-  /// palette chosen in Customize Harness ▸ Appearance, ANSI ramp from `darkTerminalTheme`.
+  /// palette chosen in Customize Harness ▸ Appearance, and the ANSI ramp its
+  /// brightness (`darkTerminalTheme`'s or `lightTerminalTheme`'s).
   matchApp('Match app appearance', 'Matches your app palette'),
+
+  /// Harness's own dark screen whatever the app wears — a light app with a
+  /// dark terminal, the way many people keep an editor.
+  dark('Dark', 'A dark screen, whatever the app palette'),
+
+  /// Harness's own light screen whatever the app wears — the reverse, for
+  /// reading output on white inside a dark app.
+  light('Light', 'A light screen, whatever the app palette'),
 
   /// ⚠️ Named for the PALETTE, not for the distribution that popularised it.
   /// These sixteen colours are the Tango Desktop Project's, which GNOME
@@ -69,10 +78,8 @@ class TerminalThemeStore extends ValueNotifier<TerminalThemeChoice> {
   /// Read the saved choice, if there is one. Failure — or a scheme name from a
   /// build that had one this one does not — is silent and lands on the default.
   /// An unreadable state file is not a reason to refuse to start.
-  /// `readMany`, not a plain `read`, for a single key: it is the batch path
-  /// [TerminalFontStore] and [AppearancePrefsStore] take, so on a shared file
-  /// store this preference arrives in the same snapshot as theirs rather than
-  /// as a second pass over a file that may have been rewritten in between.
+  /// Uses the same batch-read API as [TerminalFontStore] and
+  /// [AppearancePrefsStore]. Each load observes its own current snapshot.
   Future<void> load() async {
     try {
       final saved = await _storage.readMany([_key]);

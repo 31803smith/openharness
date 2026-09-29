@@ -24,6 +24,8 @@ import { extractKey } from '../utils/crypto.js'
 import { machineIdFromKey } from '../utils/crypto.js'
 import { prisma, machineAlive } from './prisma.js'
 import { getAgentPresence, getAgentPresenceMany, subscribeStatus, getDevicePresence, subscribeDeviceStatus, subscribeDeviceMachineListChanged, subscribeDeviceE2eePair } from './bus.js'
+import { relayWebDocumentPushes } from './webAccountPushes.js'
+import { DAEMONS } from '../config/env.js'
 import { attachHubClient, trackSocketLiveness, type HubClient } from './hub.js'
 import { authenticateAccessToken, SsoAuthError, type AuthUser } from './ssoAuth.js'
 import type { Frame } from './tunnel.js'
@@ -53,8 +55,11 @@ import {
   P2pSignalRateGuard,
   terminalP2pPolicy,
 } from './p2pSignaling.js'
-import { touchUserOnlineDay, recordRemoteUsage } from './dailyTracking.js'
-import { utcDayKey } from '../types/analytics.js'
+import { recordRemoteUsage } from './dailyTracking.js'
+import { isBackendOnlyDownType } from './backendOnlyFrames.js'
+
+/** Down-frames only the backend may send — see lib/backendOnlyFrames.ts. Re-exported for existing callers. */
+export { BACKEND_ONLY_DOWN_TYPES } from './backendOnlyFrames.js'
 
 const wss = createWss(WS_LIMITS.web, { echoFirstProtocol: true })
 
@@ -122,20 +127,10 @@ function attachUserClient(ws: WebSocket, user: AuthUser): void {
   logger.info('web user connected', { userId: user.sub })
   send({ type: 'connected', payload: { userId: user.sub } })
 
-  // Daily presence: mark today online now, and re-check on the existing 30s re-seed tick / on
-  // disconnect so a connection spanning UTC midnight gets counted for the new day too. The guard
-  // only advances on a SUCCESSFUL write, so a transient DB failure gets retried on the next tick
-  // instead of being silently skipped for the rest of the day.
-  let lastPresenceDayKey: string | null = null
-  const touchPresence = (isNewConnection: boolean): void => {
-    const now = new Date()
-    const dayKey = utcDayKey(now)
-    if (!isNewConnection && dayKey === lastPresenceDayKey) return
-    touchUserOnlineDay(user.sub, now, { isNewConnection })
-      .then(() => { lastPresenceDayKey = dayKey })
-      .catch((err) => logger.warn('presence tracking failed', { userId: user.sub, error: String(err) }))
-  }
-  touchPresence(true)
+  // No daily-presence write here. This socket is not the person: the desktop app never dials it (the
+  // local daemon does, one per FOREIGN machine it relays), so counting upgrades measured relay
+  // reconnects and missed every single-machine user. `user_daily_presence` is fed by the app's own
+  // `app_presence` ping through the daemon's adapter-ws instead (lib/adapterWs.ts).
 
   // An unattached socket (user parked on the Machines page, no agent selected) holds no hub client, so a
   // registry-driven sweep can't see it — it would be killed by LB idle timeouts, or never reaped when
@@ -235,7 +230,6 @@ function attachUserClient(ws: WebSocket, user: AuthUser): void {
     if (!deviceSeedTimer) {
       deviceSeedTimer = setInterval(() => {
         void seedDeviceStatuses().catch(() => { /* ignore */ })
-        touchPresence(false)
       }, DEVICE_RESEED_MS)
     }
     await seedDeviceStatuses()
@@ -259,6 +253,19 @@ function attachUserClient(ws: WebSocket, user: AuthUser): void {
     })
     if (closed) { machineListUnsub(); machineListUnsub = null }
   })().catch((err) => logger.warn('web-ws machine-list watch failed', { userId: user.sub, error: String(err) }))
+
+  // ── The account's desk and zoo: changed somewhere ────────────────────────────────────────────
+  // The same `desk:{userId}` and `zoo:{userId}` invalidations every adapter socket hears
+  // (lib/adapterAccountPushes.ts), forwarded to the clients that have no daemon to relay them — the
+  // phone. One frame carrying the revision each; see lib/webAccountPushes.ts.
+  let documentsUnsub: (() => void) | null = null
+  void (async () => {
+    documentsUnsub = await relayWebDocumentPushes(user.sub, (frame) => {
+      if (ws.readyState !== WebSocket.OPEN) return
+      send(frame)
+    }, { zoo: DAEMONS.on })
+    if (closed) { documentsUnsub(); documentsUnsub = null }
+  })().catch((err) => logger.warn('web-ws desk/zoo watch failed', { userId: user.sub, error: String(err) }))
 
   // ── User-level E2EE device-pair requests ─────────────────────────────────────────────────────
   // Not tied to current machine selection: any logged-in page can receive the notice, then the frontend
@@ -350,9 +357,10 @@ function attachUserClient(ws: WebSocket, user: AuthUser): void {
 
   const handleFrame = async (frame: Frame): Promise<void> => {
     const type = frame.type as string | undefined
-    // Double-underscore frames are backend-to-Harness control messages. A web
-    // client must never be able to forge its own lifecycle notification.
-    if (typeof type === 'string' && type.startsWith('__')) return
+    // The backend's own control frames — `__`-prefixed, plus the named ones in lib/backendOnlyFrames.ts —
+    // are never a web client's to send. Refused here, on the legacy key path and on device-ws alike; the
+    // adapter also takes them only on the backend's own `connId: ''`, so each check stands on its own.
+    if (isBackendOnlyDownType(type)) return
     const isTerminal = typeof type === 'string' && TERMINAL_DOWN_TYPES.has(type)
     const terminalNamespace = typeof type === 'string' && type.startsWith('terminal_')
     if (terminalNamespace && !isTerminal) {
@@ -510,7 +518,7 @@ function attachUserClient(ws: WebSocket, user: AuthUser): void {
     if (deviceStatusUnsub) { deviceStatusUnsub(); deviceStatusUnsub = null }
     if (machineListUnsub) { machineListUnsub(); machineListUnsub = null }
     if (deviceE2eePairUnsub) { deviceE2eePairUnsub(); deviceE2eePairUnsub = null }
-    touchPresence(false)
+    if (documentsUnsub) { documentsUnsub(); documentsUnsub = null }
     logger.info('web user disconnected', { userId: user.sub, machineId: currentAgentId ?? undefined })
   }
   ws.on('close', cleanup)
@@ -550,7 +558,8 @@ function attachWebClient(ws: WebSocket, machineId: string): void {
     let frame: Frame
     try { frame = JSON.parse(raw.toString()) as Frame } catch { return }
     const type = frame.type as string | undefined
-    if (typeof type === 'string' && type.startsWith('__')) return
+    // The same backend-only refusal as the per-user path: a key holder is a client, not the backend.
+    if (isBackendOnlyDownType(type)) return
     if (typeof type === 'string' && type.startsWith('terminal_') && !TERMINAL_DOWN_TYPES.has(type)) return
     if (typeof type === 'string' && TERMINAL_DOWN_TYPES.has(type)) {
       const bytes = terminalFrameBytes(frame)

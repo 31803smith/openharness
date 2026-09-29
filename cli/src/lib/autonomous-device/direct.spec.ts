@@ -34,8 +34,18 @@ describe('direct Autonomous device endpoint selection', () => {
     await new Promise(resolve => setTimeout(resolve, 20))
     expect(await f.direct.pair(f.row.id, 'CODE12')).toMatchObject({ state: 'paired', fingerprint: f.fp })
     expect(f.attempts()).toBe(2)
+    const closed: number[] = []
+    for (const ws of f.wss.clients) ws.once('close', code => closed.push(code))
     f.direct.revoked(f.fp)
     expect(f.direct.connected()).toBe(0)
+    // Graceful close (not terminate) so a pair.revoke frame queued just before is flushed to the device.
+    await vi.waitFor(() => expect(closed).toEqual([1000]))
+  })
+  it('pairs a device just selected even when the next mDNS browse misses it', async () => {
+    const f = await fixture()
+    await f.direct.discover()
+    f.discovery.mockResolvedValueOnce([])
+    expect(await f.direct.pair(f.row.id, 'CODE12')).toMatchObject({ state: 'paired', fingerprint: f.fp })
   })
   it('does not persist success if PAKE identity has not authenticated its session', async () => {
     const f = await fixture()

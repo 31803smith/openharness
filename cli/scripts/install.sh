@@ -7,11 +7,13 @@
 # The website (autonomous-code, apps/web) still answers the OLD URL, https://harness.autonomous.ai/cli/
 # install.sh, but only as a redirect to the CDN one (its next.config.js) — kept for anyone with the old
 # link already saved.
-#   curl -fsSL https://cdn.autonomous.ai/harness/cli/install.sh | bash
+#   curl -fsSL https://cdn.autonomous.ai/harness/cli/install.sh | bash               # the CLI and hn
 #   curl -fsSL https://cdn.autonomous.ai/harness/cli/install.sh | sh -s -- --desktop  # Desktop: runtime + CLI only
 #   curl -fsSL https://cdn.autonomous.ai/harness/cli/install.sh | sh -s -- --host     # Desktop: host requirements only
+#   hn                            # Harness in this terminal: signs in and starts the daemon the first time
 #   harness login
 #   harness start
+#   harness remote-password set   # so your other machines (and `harness remote`) can reach this one
 #
 # Downloads the self-contained CLI bundle from the public GCS manifest and installs a `harness` command.
 # Login and start are deliberately separate: login saves a native SSO session, while start launches the
@@ -70,13 +72,23 @@ RUNTIME_METADATA_URL="${HARNESS_RUNTIME_METADATA_URL:-https://storage.googleapis
 # Published by release-tmux-runtime.yml (`make upload-tmux-runtime`): macOS tmux built against static
 # libevent/ncurses, its own manifest because the Node one already has a "darwin-arm64" key.
 TMUX_METADATA_URL="${HARNESS_TMUX_METADATA_URL:-https://storage.googleapis.com/s3-autonomous-upgrade-3/harness/runtime/tmux/metadata.json}"
+# Published by release-grid-runtime.yml: the grid CLI at the version this harness release PINS, in its
+# own manifest for the reason tmux has one. This installer lays the first one down (step 3b); the
+# daemon follows the pin on every start after that (ensureManagedGrid, cli/src/lib/runtimeInstall.ts).
+GRID_METADATA_URL="${HARNESS_GRID_METADATA_URL:-https://storage.googleapis.com/s3-autonomous-upgrade-3/harness/runtime/grid/metadata.json}"
+# Published by release-tui.yml: hn, the native terminal client, one static binary per platform.
+TUI_METADATA_URL="${HARNESS_TUI_MANIFEST_URL:-https://storage.googleapis.com/s3-autonomous-upgrade-3/harness/tui/metadata.json}"
 HARNESS_KEY="${HARNESS_KEY:-cli}"
 CLI_DIR="$HOME/.harness/cli"
 RUNTIME_DIR="$HOME/.harness/runtime"
 CURRENT_NODE_FILE="$RUNTIME_DIR/current-node"
 CURRENT_TMUX_FILE="$RUNTIME_DIR/current-tmux"
+CURRENT_GRID_FILE="$RUNTIME_DIR/current-grid"
 BIN_DIR="$HOME/.local/bin"
 LAUNCHER="$BIN_DIR/harness"
+# Where `harness tui` looks for hn's binary (cli/src/tui/index.ts), and the `hn` command.
+TUI_BIN="$HOME/.harness/bin/harness-tui"
+HN_LAUNCHER="$BIN_DIR/hn"
 
 # Shared by every download in this file — tmux in step 1 and Node in step 2 — so both manifests are
 # read by one implementation. Everything here must run in plain POSIX sh: there is no Node yet.
@@ -150,6 +162,121 @@ case "$(basename "${SHELL:-/bin/sh}")" in
         grep -qF "$marker" "$rc" 2>/dev/null || printf '\n%s\nfish_add_path %s\n' "$marker" "$HOME/.local/bin" >> "$rc" ;;
   *)    ensure_rc "$HOME/.profile" ;;
 esac
+}
+
+# The managed grid for this computer: download, verify, unpack under ~/.harness/runtime and record it
+# in current-grid (what the daemon reads, like current-node). Returns non-zero, having said why,
+# instead of exiting: the caller decides that a missing grid is not a failed install — the harness
+# works without one, and the daemon fetches it on its next start. Laid down READ-ONLY, the bin
+# directory too: `grid update` replaces the binary with a rename INTO that directory, and a directory
+# it cannot write to is what makes that fail loudly instead of overwriting the pin. Never linked into
+# ~/.local/bin — see the call site.
+# hn — Harness in a terminal: tmux's keys and ~/.tmux.conf, every harness on every machine. Its
+# binary from release-tui.yml's manifest, checksum-verified and run once before it replaces anything,
+# where `harness tui` finds it. Optional like the grid: `hn` fetches the binary itself on its first
+# run (`harness tui --install`), so a failure here says so and the install goes on.
+install_hn() {
+  platform="$(manifest_platform)"
+  [ -n "$platform" ] || {
+    echo "  ✗ No hn build is published for $(uname -s)/$(uname -m)." >&2
+    return 1
+  }
+  tui_manifest="$(curl -fsSL "$TUI_METADATA_URL")" || {
+    echo "  ✗ Could not fetch the hn manifest: $TUI_METADATA_URL" >&2
+    return 1
+  }
+  tui_version="$(printf '%s\n' "$tui_manifest" | sed -n 's/^[[:space:]]*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)"
+  tui_entry="$(manifest_entry "$tui_manifest" "$platform")"
+  tui_url="$(entry_field "$tui_entry" url)"
+  tui_sha="$(entry_field "$tui_entry" sha256)"
+  if [ -z "$tui_url" ] || [ -z "$tui_sha" ]; then
+    echo "  ✗ The hn manifest has no '$platform' build." >&2
+    return 1
+  fi
+  mkdir -p "$(dirname "$TUI_BIN")"
+  tui_staging="$TUI_BIN.$$.tmp"
+  echo "  ▸ downloading hn${tui_version:+ $tui_version} ($platform)…"
+  if ! curl -fsSL "$tui_url" -o "$tui_staging"; then
+    echo "  ✗ Could not download $tui_url" >&2
+    rm -f "$tui_staging"
+    return 1
+  fi
+  tui_got="$(sha256_of "$tui_staging")"
+  if [ "$tui_got" != "$tui_sha" ]; then
+    echo "  ✗ hn download failed checksum verification (expected $tui_sha, got $tui_got)" >&2
+    rm -f "$tui_staging"
+    return 1
+  fi
+  chmod 755 "$tui_staging"
+  if ! "$tui_staging" --version >/dev/null 2>&1; then
+    echo "  ✗ hn does not run on this computer." >&2
+    rm -f "$tui_staging"
+    return 1
+  fi
+  mv -f "$tui_staging" "$TUI_BIN"
+  echo "  ✓ installed hn${tui_version:+ $tui_version} → $TUI_BIN"
+  return 0
+}
+
+install_managed_grid() {
+  platform="$(manifest_platform)"
+  [ -n "$platform" ] || {
+    echo "  ✗ No managed grid is published for $(uname -s)/$(uname -m)." >&2
+    return 1
+  }
+  grid_manifest="$(curl -fsSL "$GRID_METADATA_URL")" || {
+    echo "  ✗ Could not fetch the grid manifest: $GRID_METADATA_URL" >&2
+    return 1
+  }
+  grid_entry="$(manifest_entry "$grid_manifest" "$platform")"
+  grid_url="$(entry_field "$grid_entry" url)"
+  grid_sha="$(entry_field "$grid_entry" sha256)"
+  grid_root="$(entry_field "$grid_entry" archiveRoot)"
+  grid_version="$(entry_field "$grid_entry" version)"
+  if [ -z "$grid_url" ] || [ -z "$grid_sha" ] || [ -z "$grid_root" ] || [ -z "$grid_version" ]; then
+    echo "  ✗ The grid manifest has no usable '$platform' entry." >&2
+    return 1
+  fi
+  grid_target="$RUNTIME_DIR/$grid_root"
+  if [ ! -x "$grid_target/bin/grid" ]; then
+    mkdir -p "$RUNTIME_DIR"
+    chmod 700 "$RUNTIME_DIR" 2>/dev/null || true
+    grid_staging="$RUNTIME_DIR/.grid-staging-$$"
+    rm -rf "$grid_staging"
+    mkdir -p "$grid_staging"
+    echo "  ▸ downloading grid $grid_version ($platform)…"
+    if ! curl -fsSL "$grid_url" -o "$grid_staging/grid.tar.gz"; then
+      echo "  ✗ Could not download $grid_url" >&2
+      rm -rf "$grid_staging"
+      return 1
+    fi
+    grid_got="$(sha256_of "$grid_staging/grid.tar.gz")"
+    if [ "$grid_got" != "$grid_sha" ]; then
+      echo "  ✗ grid download failed checksum verification (expected $grid_sha, got $grid_got)" >&2
+      rm -rf "$grid_staging"
+      return 1
+    fi
+    if ! tar -xzf "$grid_staging/grid.tar.gz" -C "$grid_staging" || [ ! -x "$grid_staging/$grid_root/bin/grid" ]; then
+      echo "  ✗ The grid archive has no $grid_root/bin/grid" >&2
+      rm -rf "$grid_staging"
+      return 1
+    fi
+    # A half-laid-down target from an earlier attempt may already be read-only; give it back first.
+    chmod -R u+w "$grid_target" 2>/dev/null || true
+    rm -rf "$grid_target"
+    mv "$grid_staging/$grid_root" "$grid_target"
+    rm -rf "$grid_staging"
+  fi
+  chmod 555 "$grid_target/bin/grid" "$grid_target/bin" 2>/dev/null || true
+  # Its update check off, as the daemon keeps it: this binary is the pin, not grid's to replace.
+  if ! GRID_NO_UPDATE_CHECK=1 "$grid_target/bin/grid" --version >/dev/null 2>&1; then
+    echo "  ✗ The managed grid does not run on this computer: $grid_target/bin/grid" >&2
+    return 1
+  fi
+  printf '%s\n' "$grid_target/bin/grid" > "$CURRENT_GRID_FILE"
+  chmod 600 "$CURRENT_GRID_FILE" 2>/dev/null || true
+  echo "  ✓ installed grid $grid_version → $grid_target"
+  return 0
 }
 
 # 1. Host requirements (standalone and --host). The CLI runs tmux, `ps`, and on a Linux desktop the
@@ -275,10 +402,16 @@ case "$(uname -s)" in
       fi
       if command -v brew >/dev/null 2>&1; then
         echo "▸ Installing tmux via Homebrew"
-        brew install tmux || echo "▸ Homebrew could not install tmux; using the managed build instead."
+        # --force-bottle: use Homebrew's prebuilt bottle if there is one, and fail FAST if there is
+        # not, rather than dragging the person into a from-source build. Homebrew stopped shipping
+        # Intel (x86_64) bottles in 2025, so on an Intel Mac `brew install tmux` would otherwise
+        # compile tmux + its deps and demand the Command Line Tools — the exact slow, password-and-
+        # compiler path the managed build exists to avoid. When no bottle is available this returns
+        # non-zero and the managed download below takes over.
+        brew install --force-bottle tmux || echo "▸ No Homebrew tmux bottle for this Mac; using the managed build instead."
       fi
-      # No Homebrew, or a Homebrew that could not: the managed build. Nothing to compile, nothing
-      # to ask a password for — the same checksum-verified download Node gets in step 2.
+      # No Homebrew, or a Homebrew that could not (no bottle): the managed build. Nothing to compile,
+      # nothing to ask a password for — the same checksum-verified download Node gets in step 2.
       tmux_runs || install_managed_tmux
     fi
     ;;
@@ -562,8 +695,33 @@ const bin = path.join(os.homedir(), '.local', 'bin')
   const shellQuote = value => "'" + value.replaceAll("'", "'\\''") + "'"
   fs.writeFileSync(path.join(bin, 'harness'), '#!/bin/sh\nexec ' + shellQuote(NODE) + ' ' + shellQuote(path.join(dir, 'cli.js')) + ' "$@"\n', { mode: 0o755 })
   console.log('  ✓ installed harness ' + entry.version + ' → ' + dir)
+  // `hn` is `harness tui`: it signs in and starts the daemon the first time, then opens hn. An `hn`
+  // that is someone else's (another program by that name) is left alone.
+  const hn = path.join(bin, 'hn')
+  let theirs = false
+  try { theirs = !fs.readFileSync(hn, 'utf8').includes('.harness') } catch { /* none yet */ }
+  if (theirs) console.log('  · ' + hn + ' is another program; run hn as: harness tui')
+  else fs.writeFileSync(hn, '#!/bin/sh\nexec ' + shellQuote(NODE) + ' ' + shellQuote(path.join(dir, 'cli.js')) + ' tui "$@"\n', { mode: 0o755 })
 })().catch((err) => { console.error('✗ install failed: ' + err.message); process.exit(1) })
 HARNESSJS
+
+# 3b. The managed grid — the grid CLI this release pins, beside Node and tmux: the daemon shells out
+#     to it, and an agent's pane runs it by name. Optional where Node and tmux are not: the harness
+#     works without it (every grid call says so, in a sentence), and the daemon follows the pin on
+#     every start, so a download that fails here is retried by `harness start`. Never linked into
+#     ~/.local/bin — that path is grid's own installer's (uv's, on a Mac) — the daemon puts the
+#     managed grid on an agent pane's PATH itself. Host mode installs no CLI, so no grid either.
+if [ "$INSTALL_MODE" != "host" ]; then
+  echo "▸ Installing the managed grid into $RUNTIME_DIR"
+  install_managed_grid || echo "  · the grid runtime will be fetched by the daemon on its next start"
+  "$NODE_BIN" "$HOME/.harness/cli/cli.js" dsh builtins || echo "  · Model Manager will be prepared on the next start"
+fi
+
+# 3c. hn's binary (the standalone install; Desktop's CLI fetches it on the first `hn`).
+if [ "$INSTALL_MODE" = "standalone" ]; then
+  echo "▸ Installing hn"
+  install_hn || echo "  · hn will download itself the first time you run it"
+fi
 
 # 4. Ensure ~/.local/bin is on PATH (per shell), idempotently — defined up with the other helpers.
 ensure_path_rc
@@ -576,13 +734,53 @@ if [ "$INSTALL_MODE" = "standalone" ]; then
   tmux -V >/dev/null 2>&1 || { echo "✗ tmux verification failed." >&2; exit 32; }
 fi
 
-# The explicit commands keep
-#    browser SSO and long-lived daemon lifecycle understandable and scriptable.
-echo ""
-echo "  harness installed."
-echo "  To connect this computer, run:"
-echo "      harness login"
-echo "      harness start"
+# The wordmark, as the sign the install is done. `printf '%s\n'` on purpose: the art holds
+# backslashes and a backtick, which `echo` eats or interprets depending on the shell behind `sh`.
+print_logo() {
+  printf '%s\n' \
+    '' \
+    '    _' \
+    '   | |__   __ _ _ __ _ __   ___  ___ ___' \
+    '   | '"'"'_ \ / _` | '"'"'__| '"'"'_ \ / _ \/ __/ __|' \
+    '   | | | | (_| | |  | | | |  __/\__ \__ \' \
+    '   |_| |_|\__,_|_|  |_| |_|\___||___/___/' \
+    ''
+}
+
+# The explicit commands keep browser SSO and the long-lived daemon lifecycle understandable and
+# scriptable: nothing here signs in or starts anything. Desktop mode is the app installing its own
+# CLI — the app takes the person through sign-in itself, so it gets the one line and not the guide.
+# One line of it: `harness version` prints the version alone today, and a notice it might add
+# tomorrow must not land inside this sentence.
+installed_version="$("$LAUNCHER" version 2>/dev/null | head -n 1 || true)"
+if [ "$INSTALL_MODE" = "desktop" ]; then
+  echo ""
+  echo "  harness${installed_version:+ $installed_version} installed."
+else
+  print_logo
+  echo "  ✓ harness${installed_version:+ $installed_version} installed."
+  hn_version="$("$TUI_BIN" --version 2>/dev/null | head -n 1 | cut -d' ' -f1-2 || true)"
+  if [ -n "$hn_version" ]; then echo "  ✓ ${hn_version} installed."; fi
+  echo ""
+  echo "  Start here — every harness on every machine, in this terminal:"
+  echo ""
+  echo "      hn                             # signs in and connects this computer the first time"
+  echo ""
+  echo "  Or set this computer up step by step — three commands, in this order:"
+  echo ""
+  echo "      harness login                  # 1. sign in with your Autonomous account (opens a browser)"
+  echo "      harness start                  # 2. connect this computer as a machine (runs in the background)"
+  echo "      harness remote-password set    # 3. let your OTHER machines reach this one (asked once, kept)"
+  echo ""
+  echo "  Then, from a Harness terminal tile on any of your machines:"
+  echo ""
+  echo "      harness remote                 # pick a machine — the tile becomes a terminal on it"
+  echo ""
+  echo "  Useful:"
+  echo "      harness machines               # this account's machines and their ids"
+  echo "      harness status                 # is the daemon running, and which machine this is"
+  echo "      harness --help                 # everything else"
+fi
 
 # 6. Make `harness` usable by NAME. We already added ~/.local/bin to your rc for NEW terminals (step 4);
 #    a piped `curl … | sh` can't touch the CURRENT shell's PATH, so print the one line that fixes it here

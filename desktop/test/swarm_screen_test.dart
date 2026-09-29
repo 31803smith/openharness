@@ -1,7 +1,11 @@
+import 'support/open_harness.dart';
+
+import 'package:harness/widgets/swarm_switcher.dart';
+
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
-import 'package:flutter/gestures.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:harness/core/models.dart';
@@ -10,6 +14,8 @@ import 'package:harness/shared/theme/app_theme.dart' as grid;
 import 'package:harness/state/app_state.dart';
 import 'package:harness/state/swarm_catalog.dart';
 import 'package:harness/state/swarm_navigation.dart';
+import 'package:harness/state/terminal_pane.dart';
+import 'package:harness/store/store_mark.dart';
 import 'package:harness/terminal/terminal_binary.dart';
 import 'package:harness/terminal/terminal_session.dart';
 import 'package:harness/widgets/pane_grid.dart';
@@ -32,6 +38,7 @@ Future<void> mount(
   addTearDown(tester.view.resetDevicePixelRatio);
   await tester.pumpWidget(
     MaterialApp(
+      debugShowCheckedModeBanner: false,
       theme: grid.buildAppTheme(brightness: Brightness.dark),
       home: SwarmScreen(
         notifier: app,
@@ -41,6 +48,26 @@ Future<void> mount(
     ),
   );
   await tester.pump(const Duration(milliseconds: 100));
+}
+
+/// Whether the native icon loader (`SwarmHistoryIcons` in
+/// macos/Runner/SwarmTitlebar.swift) opens [asset]: an exact path it names, or
+/// one under a folder it names. Read from the source because no Dart test can
+/// run the Swift, and the channel carrying a path the loader then refuses is
+/// exactly the break this guards.
+bool nativeIconLoaderOpens(String asset) {
+  final swift = File('macos/Runner/SwarmTitlebar.swift').readAsStringSync();
+  final start = swift.indexOf('class SwarmHistoryIcons');
+  expect(start, isNonNegative, reason: 'SwarmHistoryIcons moved');
+  final body = swift.substring(start, swift.indexOf('\n}\n', start));
+  final exact = RegExp(r'asset == "([^"]+)"')
+      .allMatches(body)
+      .map((m) => m[1]!);
+  final folders = RegExp(r'hasPrefix\("([^"]+/)"\)')
+      .allMatches(body)
+      .map((m) => m[1]!);
+  return !asset.contains('..') &&
+      (exact.contains(asset) || folders.any(asset.startsWith));
 }
 
 TerminalSession terminal(String id, List<TerminalBinaryFrame> input) =>
@@ -59,47 +86,300 @@ TerminalSession terminal(String id, List<TerminalBinaryFrame> input) =>
       ..streamId = 'stream-$id';
 
 void main() {
-  testWidgets('tab close marks follow hover and keyboard focus', (
-    tester,
-  ) async {
-    final app = createApp();
-    final first = app.activeSwarm;
-    app.renameSwarm(first.id, 'First tab');
-    app.newSwarm();
-    final second = app.activeSwarm;
-    app.renameSwarm(second.id, 'Second tab');
-    await mount(tester, app);
-    Finder close(String id) => find.byKey(ValueKey('tab-close:$id'));
-    double opacity(String id) => tester.widget<Opacity>(close(id)).opacity;
-    expect(opacity(first.id), 0);
-    expect(opacity(second.id), 0);
-    final pointer = await tester.createGesture(kind: PointerDeviceKind.mouse);
-    await pointer.addPointer(location: const Offset(900, 500));
-    await pointer.moveTo(tester.getCenter(find.text('First tab')));
-    await tester.pump();
-    expect(opacity(first.id), 1);
-    expect(opacity(second.id), 0);
-    await pointer.moveTo(const Offset(900, 500));
-    await tester.pump();
-    expect(opacity(first.id), 0);
-    Focus.of(tester.element(find.text('First tab'))).requestFocus();
-    await tester.pumpAndSettle();
-    expect(opacity(first.id), 1);
-    final closeIcon = find.descendant(
-      of: close(first.id),
-      matching: find.byType(Icon),
-    );
-    Focus.of(tester.element(closeIcon)).requestFocus();
-    await tester.pumpAndSettle();
-    await tester.sendKeyEvent(LogicalKeyboardKey.space);
-    await tester.pump();
-    expect(app.swarms.map((swarm) => swarm.id), [second.id]);
-    await pointer.removePointer();
-    await tester.pumpWidget(const SizedBox());
-    app.dispose();
-  });
+  testWidgets(
+    'tabs omit close buttons and redundant hints; Command-W closes the active tab',
+    (tester) async {
+      final app = createApp();
+      final first = app.activeSwarm;
+      app.renameSwarm(first.id, 'First tab');
+      app.newSwarm(name: 'Second tab');
+      final second = app.activeSwarm;
+      await mount(tester, app);
+      expect(find.byKey(ValueKey('tab-close:${first.id}')), findsNothing);
+      expect(find.byKey(ValueKey('tab-close:${second.id}')), findsNothing);
+      final label = find.text('2:Second tab');
+      final tab = find.byKey(ValueKey(second.id));
+      expect(
+        find.descendant(of: tab, matching: find.byType(Tooltip)),
+        findsNothing,
+      );
+      expect(
+        tester.getCenter(label).dx,
+        closeTo(tester.getCenter(tab).dx, .01),
+      );
+      Focus.of(tester.element(label)).requestFocus();
+      await tester.pumpAndSettle();
+      await chord(tester, LogicalKeyboardKey.keyW);
+      await tester.pumpAndSettle();
+      expect(app.swarms.map((swarm) => swarm.id), [first.id]);
+      await tester.pumpWidget(const SizedBox());
+      app.dispose();
+    },
+  );
 
   for (final native in [false, true]) {
+    testWidgets(
+      'New Tab keeps opening tabs past two dozen, as Chrome does (native=$native)',
+      (tester) async {
+        const channel = MethodChannel('harness/swarm_tabs');
+        tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+          channel,
+          (_) async => true,
+        );
+        addTearDown(
+          () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+            channel,
+            null,
+          ),
+        );
+        final app = createApp(connected: true);
+        for (var i = 1; i < 30; i++) {
+          app.newSwarm(name: 'Project $i');
+        }
+        app.selectSwarm(app.swarms.first.id);
+        await app.addAgentToSwarm('m', 'a0');
+        expect(app.swarms, hasLength(30));
+        await mount(tester, app, nativeTabs: native);
+        if (native) {
+          // What Swift sends for File ▸ New Tab, ⌘T and the strip's plus. Not awaited: the handler
+          // waits on a frame, which only the pumps below produce.
+          tester.binding.defaultBinaryMessenger.handlePlatformMessage(
+            'harness/swarm_tabs',
+            const StandardMethodCodec().encodeMethodCall(
+              const MethodCall('new'),
+            ),
+            (_) {},
+          );
+        } else {
+          await chord(tester, LogicalKeyboardKey.keyT);
+        }
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 300));
+        expect(app.swarms, hasLength(31));
+        expect(find.byKey(const ValueKey('swarm-search-input')), findsNothing);
+        await openHarnessPicker(tester);
+        final input = find.byKey(const ValueKey('swarm-search-input'));
+        await tester.enterText(input, 'Agent 1');
+        await tester.pump();
+        await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+        await tester.pump();
+        expect(app.swarms, hasLength(31));
+        expect(app.panes.single.agentId, 'a1');
+        await tester.pumpWidget(const SizedBox());
+        app.dispose();
+      },
+    );
+  }
+
+  for (final native in [false, true]) {
+    testWidgets('the store tab has a compact text label (native=$native)', (
+      tester,
+    ) async {
+      const channel = MethodChannel('harness/swarm_tabs');
+      final updates = <Map>[];
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(channel, (
+        call,
+      ) async {
+        if (call.method == 'update') updates.add(call.arguments as Map);
+        return true;
+      });
+      addTearDown(
+        () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+          channel,
+          null,
+        ),
+      );
+      final app = createApp();
+      final tab = app.activeSwarm;
+      await mount(tester, app, nativeTabs: native);
+      app.openStore();
+      await tester.pump();
+      expect(tab.isStore, isTrue);
+      if (native) {
+        final row = (updates.last['tabs'] as List).single as Map;
+        expect(row['kind'], 'store');
+        expect(row['agentCount'], 0);
+        expect(row['engine'], 'store');
+        expect(row['iconAsset'], kStoreMarkAsset);
+        // Sending the path is half of it: SwarmTitlebar.swift draws an initial
+        // for any asset its loader does not open, which is how the native
+        // strip came to show an "S" beside Harness Store.
+        expect(
+          nativeIconLoaderOpens(kStoreMarkAsset),
+          isTrue,
+          reason: 'SwarmHistoryIcons must open $kStoreMarkAsset',
+        );
+        expect(nativeIconLoaderOpens('assets/engine-icons/codex.png'), isTrue);
+        expect(
+          nativeIconLoaderOpens('assets/harness_device_studio.jpg'),
+          isFalse,
+        );
+      } else {
+        expect(find.text('1:store'), findsOneWidget);
+      }
+    });
+
+    testWidgets(
+      'a harness tab — its agent and that agent\'s viewer — uses the harness type (native=$native)',
+      (tester) async {
+        const channel = MethodChannel('harness/swarm_tabs');
+        final updates = <Map>[];
+        tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+          channel,
+          (call) async {
+            if (call.method == 'update') updates.add(call.arguments as Map);
+            return true;
+          },
+        );
+        addTearDown(
+          () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+            channel,
+            null,
+          ),
+        );
+        final app = createApp();
+        final machine = app.stateOf('m')!;
+        machine.agents = [
+          ...machine.agents,
+          const Agent(
+            id: 'deck',
+            name: 'Quarterly deck',
+            engine: 'claude',
+            dsh: 'autonomous/marp',
+            dshName: 'Marp',
+            terminalAvailable: true,
+          ),
+        ];
+        final tab = app.activeSwarm;
+        await mount(tester, app, nativeTabs: native);
+        await app.addAgentToSwarm('m', 'deck');
+        tab.panes.insert(
+          0,
+          TerminalPane(
+            id: 900,
+            machineId: 'm',
+            kind: PaneKind.web,
+            ownerAgentId: 'deck',
+            url: 'http://127.0.0.1:1/',
+          ),
+        );
+        app.renameSwarm(tab.id, 'Quarterly deck');
+        await tester.pump();
+        if (native) {
+          final row = (updates.last['tabs'] as List).single as Map;
+          expect(row['kind'], 'harness');
+          expect(row['agentCount'], 1);
+          expect(
+            row['engine'],
+            'autonomous/marp',
+            reason: 'the harness, not the engine under it',
+          );
+          expect(row['iconAsset'], 'assets/engine-icons/marp.png');
+        } else {
+          expect(
+            find.descendant(
+              of: find.byKey(ValueKey(tab.id)),
+              matching: find.text('Quarterly deck'),
+            ),
+            findsOneWidget,
+          );
+        }
+
+        // An agent the machine no longer lists is drawn as its session's engine,
+        // and one with neither is a plain tab.
+        final other = TerminalPane(id: 901, machineId: 'm', agentId: 'gone');
+        app.newSwarm(name: 'Leftovers');
+        final leftovers = app.activeSwarm;
+        leftovers.panes.add(other);
+        // Back to the harness tab: the strip draws every tab, shown or not.
+        app.selectSwarm(tab.id);
+        await tester.pump();
+        if (native) {
+          final row = (updates.last['tabs'] as List).cast<Map>().last;
+          expect(row['agentCount'], 1);
+          expect(row['engine'], isNull);
+          expect(row['iconAsset'], isNull);
+        } else {
+          expect(find.text('2:Leftovers'), findsOneWidget);
+        }
+        final session = terminal('gone', []);
+        other.session = session;
+        app.renameSwarm(leftovers.id, 'Leftovers again');
+        await tester.pump();
+        if (native) {
+          final row = (updates.last['tabs'] as List).cast<Map>().last;
+          expect(row['engine'], 'codex');
+          expect(row['iconAsset'], 'assets/engine-icons/codex.png');
+        } else {
+          expect(find.text('2:Leftovers again'), findsOneWidget);
+        }
+        tab.panes.removeWhere((pane) => pane.id == 900);
+        leftovers.panes.clear();
+        await tester.pumpWidget(const SizedBox());
+        app.dispose();
+      },
+    );
+
+    testWidgets(
+      'the store opens past forty tabs, and is still one tab (native=$native)',
+      (tester) async {
+        const channel = MethodChannel('harness/swarm_tabs');
+        final updates = <Map>[];
+        tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+          channel,
+          (call) async {
+            if (call.method == 'update') updates.add(call.arguments as Map);
+            return true;
+          },
+        );
+        addTearDown(
+          () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+            channel,
+            null,
+          ),
+        );
+        final app = createApp();
+        await mount(tester, app, nativeTabs: native);
+        await app.addAgentToSwarm('m', 'a0');
+        for (var i = 0; i < 40; i++) {
+          app.newSwarm(name: 'Project $i');
+        }
+        app.openStore();
+        await tester.pump();
+        final store = app.activeSwarm;
+        expect(store.isStore, isTrue);
+        expect(app.swarms, hasLength(42));
+        app.selectSwarm(app.swarms.first.id);
+        app.openStore();
+        await tester.pump();
+        expect(app.activeSwarm, same(store));
+        expect(app.swarms.where((swarm) => swarm.isStore), hasLength(1));
+        if (native) {
+          final rows = (updates.last['tabs'] as List).cast<Map>();
+          expect(rows, hasLength(42));
+          expect(rows.where((row) => row['kind'] == 'store'), hasLength(1));
+          expect(rows.last['engine'], 'store');
+          expect(updates.last['activeId'], store.id);
+        } else {
+          // The strip is the one horizontal list; the store is its last tab.
+          final strip = find
+              .byWidgetPredicate(
+                (widget) =>
+                    widget is Scrollable &&
+                    widget.axisDirection == AxisDirection.right,
+              )
+              .first;
+          // Scrolled, not dragged: a drag on a tab reorders it.
+          final position = tester.state<ScrollableState>(strip).position;
+          position.jumpTo(position.maxScrollExtent);
+          await tester.pump();
+          expect(find.text('42:store'), findsOneWidget);
+        }
+        await tester.pumpWidget(const SizedBox());
+        app.dispose();
+      },
+    );
+
     testWidgets('tab identity follows its agent count (native=$native)', (
       tester,
     ) async {
@@ -120,7 +400,7 @@ void main() {
       final app = createApp();
       final tab = app.activeSwarm;
       await mount(tester, app, nativeTabs: native);
-      expect(tab.name, 'New Harness');
+      expect(tab.name, 'New Swarm');
       expect(
         find.byKey(const ValueKey('harness-start-search')),
         findsOneWidget,
@@ -134,8 +414,30 @@ void main() {
         expect(row['engine'], 'codex');
         expect(row['iconAsset'], 'assets/engine-icons/codex.png');
       } else {
-        expect(find.byKey(ValueKey('tab-engine:${tab.id}')), findsOneWidget);
+        expect(find.text('code'), findsOneWidget);
       }
+
+      // A harness's viewer beside its agent is the same agent: still its mark, not a group.
+      tab.panes.add(
+        TerminalPane(
+          id: 900,
+          machineId: 'm',
+          kind: PaneKind.web,
+          ownerAgentId: 'a0',
+          url: 'http://127.0.0.1:1/',
+        ),
+      );
+      app.renameSwarm(tab.id, 'New Swarm');
+      await tester.pump();
+      if (native) {
+        final row = (updates.last['tabs'] as List).single as Map;
+        expect(row['agentCount'], 1);
+        expect(row['engine'], 'codex');
+      } else {
+        expect(find.text('New Swarm'), findsOneWidget);
+        expect(find.byKey(ValueKey('tab-group:${tab.id}')), findsNothing);
+      }
+      tab.panes.removeWhere((pane) => pane.id == 900);
 
       await app.addAgentToSwarm('m', 'a1');
       await tester.pump();
@@ -144,7 +446,7 @@ void main() {
         expect(row['agentCount'], 2);
         expect(row['engine'], isNull);
       } else {
-        expect(find.byKey(ValueKey('tab-group:${tab.id}')), findsOneWidget);
+        expect(find.text('New Swarm'), findsOneWidget);
       }
 
       await app.closePane(app.panes.last.id);
@@ -155,7 +457,7 @@ void main() {
           'codex',
         );
       } else {
-        expect(find.byKey(ValueKey('tab-engine:${tab.id}')), findsOneWidget);
+        expect(find.text('New Swarm'), findsOneWidget);
         expect(find.byKey(ValueKey('tab-group:${tab.id}')), findsNothing);
       }
       expect(app.activeSwarm, same(tab));
@@ -167,7 +469,7 @@ void main() {
   testWidgets(
     'an older daemon working folder is searchable and seeds its real agents',
     (tester) async {
-      final app = createApp();
+      final app = createApp(connected: true);
       app.machineStates['m']!.localEndpoint = LocalCliEndpoint(
         computerId: 'local-computer',
         wsUri: Uri.parse('ws://fixture.invalid'),
@@ -180,7 +482,7 @@ void main() {
       );
       await mount(tester, app);
       expect(find.text('Existing project'), findsNothing);
-      await chord(tester, LogicalKeyboardKey.keyO);
+      await openHarnessPicker(tester);
       await tester.pump();
       await tester.enterText(
         find.byKey(const ValueKey('swarm-search-input')),
@@ -196,10 +498,17 @@ void main() {
         findsOneWidget,
       );
       expect(find.byKey(ValueKey(agentDestinationId('m', 'a2'))), findsNothing);
-      await tester.tap(find.widgetWithText(ListTile, 'Existing project'));
+      expect(
+        tester
+            .widget<SwarmSearchResults>(find.byType(SwarmSearchResults))
+            .search
+            .rows
+            .where((row) => row.isProject),
+        isEmpty,
+      );
+      await tester.tap(find.byKey(ValueKey(agentDestinationId('m', 'a0'))));
       await tester.pump(const Duration(milliseconds: 100));
-      expect(app.activeSwarm.name, 'Existing project');
-      expect(app.panes.map((p) => p.agentId), ['a0', 'a1']);
+      expect(app.panes.map((p) => p.agentId), ['a0']);
       await tester.pumpWidget(const SizedBox());
       app.dispose();
     },
@@ -208,15 +517,15 @@ void main() {
   testWidgets(
     'welcome, search and picker cancellation leave layout and zoom intact',
     (tester) async {
-      final app = createApp();
+      final app = createApp(connected: true);
       await mount(tester, app);
       expect(
         find.byKey(const ValueKey('harness-start-search')),
         findsOneWidget,
       );
-      expect(find.text('Models'), findsNothing);
+      expect(find.byKey(const ValueKey('swarm-search-button')), findsOneWidget);
       expect(find.text('Machines'), findsNothing);
-      await chord(tester, LogicalKeyboardKey.keyO);
+      await tester.tap(find.byKey(const ValueKey('swarm-search-button')));
       await tester.pump();
       await tester.enterText(
         find.byKey(const ValueKey('swarm-search-input')),
@@ -228,11 +537,11 @@ void main() {
       await tester.pump();
       await app.addAgentToSwarm('m', 'a2');
       app.toggleZoomPane();
-      // The Open button appears when the first agent replaces the welcome page.
+      // New Pane overlays the workspace without resizing its terminals.
       await tester.pump(const Duration(milliseconds: 200));
       final zoom = app.zoomedPaneId;
       final before = tester.getSize(find.byType(PaneGrid));
-      await tester.tap(find.byKey(const ValueKey('swarm-open-agent-button')));
+      await openHarnessPicker(tester);
       await tester.pump(const Duration(milliseconds: 300));
       expect(
         find.byKey(const ValueKey('swarm-search-results')),
@@ -425,9 +734,12 @@ void main() {
   );
 
   testWidgets(
-    'notifications show only current questions and navigate to their originating swarm',
+    'attention shortcut opens current questions in Harnesses and their originating swarm',
     (tester) async {
       final app = createApp();
+      app.machineStates['m']!
+        ..nodeOnline = true
+        ..connectionStatus = ConnectionStatus.connected;
       await app.addAgentToSwarm('m', 'a0');
       final first = app.activeSwarmId;
       app.newSwarm();
@@ -448,7 +760,7 @@ void main() {
       await chord(tester, LogicalKeyboardKey.keyI, shift: true);
       await tester.pump(const Duration(milliseconds: 300));
       expect(find.text('Which folder?'), findsOneWidget);
-      await tester.tap(find.text('Which folder?'));
+      await tester.tap(find.byKey(ValueKey(agentDestinationId('m', 'a0'))));
       await tester.pump(const Duration(milliseconds: 300));
       expect(app.activeSwarmId, first);
       expect(app.focusedPane?.agentId, 'a0');
@@ -458,7 +770,7 @@ void main() {
       });
       await chord(tester, LogicalKeyboardKey.keyI, shift: true);
       await tester.pump(const Duration(milliseconds: 300));
-      expect(find.text('No agents need your input'), findsOneWidget);
+      expect(find.text('No harnesses need your input'), findsOneWidget);
       await tester.pumpWidget(const SizedBox());
       app.dispose();
     },

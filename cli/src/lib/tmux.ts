@@ -14,7 +14,8 @@ import {
   executableFileIdentity,
   type AgentCommandOwnershipSnapshot,
 } from './engineBin.js'
-import { BYPASS_PERMISSION_FLAGS } from './engineLaunch.js'
+import { BYPASS_PERMISSION_FLAGS, PERMISSION_MODES, permissionModeApproves } from './engineLaunch.js'
+import { psEnv } from './childLocale.js'
 
 function cleanPaneTitle(title: string): string | null {
   const cleaned = title
@@ -115,6 +116,31 @@ function hasCursorPackageEntrypoint(args: string): boolean {
     /cursor-agent[\/\\]versions[\/\\][^/\\]+[\/\\]index\.js$/i.test(token))
 }
 
+/** Hermes' managed launchers exec Python -I -c with a path bootstrap, then either import main
+ * or run it through runpy. Require that executable prefix and actual code, never a script argument
+ * or a quoted mention. argv[0] is authoritative here: macOS can truncate an absolute `comm` path.
+ * Keep the standalone hook's copy in sync. */
+function hermesInlineLauncher(row: Pick<ProcessRow, 'args'>): boolean {
+  const args = row.args.trim()
+  if (!/^python(?:\d+(?:\.\d+)*)?$/.test(basename(argvTokens(args)[0] ?? '').toLowerCase())) return false
+  const prefix = /^(?:"[^"]+"|'[^']+'|\S+)(?:\s+-(?:I|E|s|S|u|B|O{1,2}|q))*\s+-c\s+/.exec(args)
+  if (!prefix) return false
+  const source = args.slice(prefix[0].length).replace(/^["']/, '')
+  // Mask string literals before looking for Python statements. A print/prompt containing a whole
+  // launcher is still data. Keep literal values only to identify runpy's exact entry module.
+  const literals: string[] = []
+  const code = source.replace(/(['"])(?:\\[\s\S]|(?!\1)[^\\])*?\1/g, (literal) => {
+    literals.push(literal.slice(1, -1))
+    return `__literal${literals.length - 1}__`
+  })
+  if (!/^import\s+(?:(?:os|re|sys|runpy)\s*,\s*)*(?:sys|runpy)[;\s]+(?:os\.environ\.pop\(__literal\d+__,\s*None\)[;\s]+)*sys\.path\.insert\(\s*0,\s*__literal\d+__\s*\)/.test(code)) return false
+  if (/\bimport\s+hermes_bootstrap\b/.test(code)
+    && /\bfrom\s+hermes_cli\.main\s+import\s+main\b/.test(code)
+    && /\bsys\.exit\(\s*main\(\)\s*\)/.test(code)) return true
+  const run = /\brunpy\.run_module\(\s*__literal(\d+)__\s*,\s*run_name\s*=\s*__literal(\d+)__(?:\s*,\s*alter_sys\s*=\s*True)?\s*\)/.exec(code)
+  return !!run && literals[Number(run[1])] === 'hermes_cli.main' && literals[Number(run[2])] === '__main__'
+}
+
 function agentAliasCandidate(row: Pick<ProcessRow, 'executable' | 'args'>): boolean {
   if (basename(row.executable).toLowerCase() === 'agent') return true
   return basename(processEntrypoint(row.args)).toLowerCase() === 'agent'
@@ -127,13 +153,19 @@ function agentAliasCandidate(row: Pick<ProcessRow, 'executable' | 'args'>): bool
  * `comm` can itself contain spaces: Command Code rewrites its argv to `⌘ <session title>` and macOS
  * prints that verbatim as the command name. Splitting comm off as a single `\S+` therefore shifted every
  * later field — `startMarker` came out as `"<rest of title> Thu Jul 30"` instead of a start time, so it
- * changed whenever Command Code renamed the session, `validateSessionRuntime` saw a different process,
+ * changed whenever Command Code renamed the session, runtime validation saw a different process,
  * and the reaper evicted a live pane ~10s after its first turn (observed four times on one session; the
  * pane went on serving turn-stop hooks after being declared "gone"). It also silently defeated the
  * PID-reuse guard that startMarker exists for.
  *
  * So anchor on `lstart` instead — it is the one field with a fixed shape (`DOW MON DD HH:MM:SS YYYY`) —
- * and let comm be lazy. The day/month names stay unconstrained so a non-English `LC_TIME` still parses.
+ * and let comm be lazy.
+ *
+ * That shape is only fixed because every `ps` whose output reaches this parser is spawned under
+ * `LC_TIME=C` (`psEnv`, lib/childLocale.ts). The day and month names are left unconstrained as a
+ * courtesy to a locale that merely renames them — NOT as support for one. A locale that REORDERS the
+ * fields parses zero rows here, and most of them do: `Tue 15 Sep` (en_GB, en_AU), `Di. 15 Sep.`
+ * (de_DE), `火  9/15` (ja_JP), `вторник, 15 сентября 2026 г.` (ru_RU). That is what `psEnv` prevents.
  */
 export function parseProcessRow(line: string): ProcessRow | null {
   const match = /^\s*(\d+)\s+(\d+)\s+(.+?)\s+(\S+\s+\S+\s+\d{1,2}\s+\d{1,2}:\d{2}:\d{2}\s+\d{4})\s*(.*)$/.exec(line)
@@ -172,10 +204,56 @@ function readProcField(pid: number, field: 'cmdline' | 'comm'): string | null {
   try { return readFileSync(`/proc/${pid}/${field}`, 'utf8') } catch { return null }
 }
 
+/**
+ * The rows that are actually running: a zombie is dropped.
+ *
+ * ⚠️ **A zombie keeps its pid, its command name and its start time — everything an identity check
+ * compares — while being dead.** It stays in the table until its parent reaps it, and an orphan's
+ * parent is pid 1, which in a container is often something that never reaps (`tail -f /dev/null` in
+ * the remote-machine rig did not). `checkPidRuntime` then called the zombie of a stopped agent's
+ * engine "alive", and resume refused that agent for as long as the zombie lasted — forever — with
+ * "The previous process is still running". No consumer of the process table wants one: a zombie
+ * runs nothing, holds no conversation, and can be neither signalled nor attached to.
+ *
+ * `ps` renders one as `[comm] <defunct>` (procps) or `<defunct>` (BSD). On Linux the kernel's own
+ * state letter settles it, so an argv that merely ENDS in that word is never mistaken for a corpse.
+ */
+export function liveProcessRows(rows: ProcessRow[]): ProcessRow[] {
+  return rows.filter((row) => !isZombie(row))
+}
+
+function isZombie(row: ProcessRow): boolean {
+  if (!/(^|\s)<defunct>$/.test(row.args)) return false
+  if (process.platform !== 'linux') return true
+  // `pid (comm) S ...` — comm may hold spaces and parentheses, so the state is read after the LAST `)`.
+  const stat = readProcStat(row.pid)
+  return stat === null || stat.slice(stat.lastIndexOf(')') + 1).trimStart().startsWith('Z')
+}
+
+function readProcStat(pid: number): string | null {
+  try { return readFileSync(`/proc/${pid}/stat`, 'utf8') } catch { return null }
+}
+
+/**
+ * A `ps` that is already running answers everyone who asks while it runs. The first reconcile pass
+ * after a boot attaches a few agents at once and every attach validates its pane against the table,
+ * as does each hook that arrives in the same burst — one table serves them all. There is no cache,
+ * only the read in flight: the oldest table anyone is handed began a `ps` ago (tens of ms), never
+ * one that finished before they asked. Callers get the SAME array; none of them mutates it (every
+ * consumer maps or filters into its own), and any new one must not either.
+ */
+let processRowsInFlight: Promise<ProcessRow[] | null> | null = null
+
 /** The process table, or null when `ps` itself failed — "we could not look" is not "nothing is there". */
-export async function processRows(): Promise<ProcessRow[] | null> {
+export function processRows(): Promise<ProcessRow[] | null> {
+  if (processRowsInFlight) return processRowsInFlight
+  processRowsInFlight = readProcessRows().finally(() => { processRowsInFlight = null })
+  return processRowsInFlight
+}
+
+async function readProcessRows(): Promise<ProcessRow[] | null> {
   const rows = await new Promise<ProcessRow[] | null>((resolve) => {
-    execFile('ps', ['-axo', 'pid=,ppid=,comm=,lstart=,args='], { timeout: 3000 }, (err, stdout) => {
+    execFile('ps', ['-axo', 'pid=,ppid=,comm=,lstart=,args='], { timeout: 3000, env: psEnv() }, (err, stdout) => {
       if (err) { resolve(null); return }
       const rows: ProcessRow[] = []
       for (const line of stdout.split('\n')) {
@@ -185,7 +263,7 @@ export async function processRows(): Promise<ProcessRow[] | null> {
       resolve(rows)
     })
   })
-  return rows ? repairMangledRows(rows) : null
+  return rows ? liveProcessRows(repairMangledRows(rows)) : null
 }
 
 function execText(command: string, args: string[], timeout: number): Promise<string | null> {
@@ -384,6 +462,9 @@ export const ENGINE_PROCESS_SIGNATURES: Readonly<Record<RegisteredSession['engin
     basenames: [/^copilot$/],
     entrypoints: [/@github[\/\\]copilot[\/\\](?:npm-loader\.js|index\.js|bin[\/\\]copilot)$/],
   },
+  // A terminal is a shell, and a shell is what every pane starts as — so nothing matches it, ever.
+  // Discovery walks PROCESS_ENGINES and never asks; this entry exists for the Record's sake.
+  terminal: { basenames: [], entrypoints: [] },
 }
 
 function heuristicEngineProcessMatchScore(
@@ -410,6 +491,9 @@ function heuristicEngineProcessMatchScore(
 
   // Cursor's launcher can retain argv[0]=agent while the Node package path appears later in argv.
   if (engine === 'cursor' && hasCursorPackageEntrypoint(row.args)) return 3
+
+  // Hermes' own launcher, read out of the inline source it runs as. See `hermesInlineLauncher`.
+  if (engine === 'hermes' && hermesInlineLauncher(row)) return 2
 
   const signature = ENGINE_PROCESS_SIGNATURES[engine]
   if (signature.basenames.some((pattern) => pattern.test(executable) || pattern.test(entrybase))) return 3
@@ -530,24 +614,36 @@ function selectEngineProcess(
  * SessionStart hook fires for a NEW session, so a pane that reattached to an old one is invisible to the
  * daemon until the user happens to type. Read from each CLI's own `--help` on 2026-08-03.
  *
- * Two deliberate holes:
- *   - `--continue` / `-c` carries NO id on any of these CLIs. Nothing can be recovered from argv there.
- *   - claude and codex are absent: `registry.register` demands a transcript path for those two, which
- *     argv does not carry — and both DO fire SessionStart on resume, so there is nothing to repair.
+ * One deliberate hole: `--continue` / `-c` carries NO id on any of these CLIs. Nothing can be
+ * recovered from argv there.
+ *
+ * claude and codex DO fire SessionStart on resume, so their argv is normally redundant — but a hook
+ * only helps a daemon that was listening for it. An agent whose SessionStart landed while the daemon
+ * could not see its pane (a session named by an older build, before the `harness-` whitelist) sits
+ * with no session until the user types again, and cannot be forked meanwhile. Their ids are read
+ * here for that case; `registry.register` still demands the transcript, which sessionRepair's
+ * `findResumedTranscript` derives from the id. `--fork-session` (claude) writes a NEW session, so
+ * that argv names the PARENT and must not bind — `codex fork <id>` never matched `resume` to begin with.
  *
  * The id pattern is a filter, not decoration: `-r` on Command Code takes "a name (use quotes for
  * multi-word names)", so a title would otherwise be registered as a session id.
  */
-const RESUME_ARGS: Partial<Record<RegisteredSession['engine'], { flags: string[]; id: RegExp }>> = {
+const RESUME_ARGS: Partial<Record<RegisteredSession['engine'], { flags: string[]; id: RegExp; unless?: string[] }>> = {
+  claude: { flags: ['--resume', '-r'], id: /^[0-9a-f-]{16,}$/i, unless: ['--fork-session'] },
+  codex: { flags: ['resume'], id: /^[0-9a-f-]{16,}$/i },
   cursor: { flags: ['--resume'], id: /^[0-9a-f-]{16,}$/i },
-  opencode: { flags: ['--session', '-s'], id: /^ses_[A-Za-z0-9]+$/ },
+  // `--fork` continues from the id but writes a NEW session, so the id in argv is the parent's.
+  opencode: { flags: ['--session', '-s'], id: /^ses_[A-Za-z0-9]+$/, unless: ['--fork'] },
   // Kilo inherits opencode's resume flags and its `ses_` id prefix — measured on this machine's kilo.db:
   // `ses_024a007fdffe11yG68JPxsHJly`. `--fork` is deliberately NOT here: it CONTINUES from an id but
   // writes a NEW session, so the id in argv is the parent's and would bind the agent to the wrong row.
-  kilo: { flags: ['--session', '-s'], id: /^ses_[A-Za-z0-9]+$/ },
+  kilo: { flags: ['--session', '-s'], id: /^ses_[A-Za-z0-9]+$/, unless: ['--fork'] },
   pi: { flags: ['--session', '--session-id'], id: /^[0-9a-f][0-9a-f-]{7,}$/i },
   // Hermes ids are timestamps: 20260728_115628_f2c86a.
-  hermes: { flags: ['--resume'], id: /^\d{8}_\d{6}_[0-9a-z]+$/i },
+  // Hermes ids are timestamps (20260728_115628_f2c86a), or uuids for an editor's (ACP) sessions.
+  hermes: { flags: ['--resume', '-r'], id: /^(?:\d{8}_\d{6}_[0-9a-z]+|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i },
+  // `devin -r <id>` / `--resume <id>`: ids are word slugs (`brisk-otter`).
+  devin: { flags: ['--resume', '-r'], id: /^[a-z0-9]+(?:-[a-z0-9]+)+$/ },
   commandcode: { flags: ['--resume', '-r', '--session'], id: /^[0-9a-f-]{16,}$/i },
   // `muse resume <uuid>` names the session; `muse resume --last` does not, so that form falls through
   // to the scan in sessionRepair instead.
@@ -567,23 +663,65 @@ const RESUME_ARGS: Partial<Record<RegisteredSession['engine'], { flags: string[]
 
 /**
  * Whether a live process's argv already contains every flag this engine's confirmed bypass-permission
- * mode requires — read from the running process BEFORE restart signals it, so the relaunch can reapply
- * the exact autonomy mode the agent had (there is nowhere else to read it from once the process is
- * dead). Token-exact via `argvTokens`, not a substring `.includes()` check on the raw string, so a
- * prompt or argument that merely CONTAINS the flag text cannot false-positive. Engines with no
- * confirmed bypass flag (`BYPASS_PERMISSION_FLAGS[engine] === null`) always read false — never guess.
+ * mode requires. Discovery reads it off every running agent and keeps the registry row's
+ * `bypassPermission` in step with it, which is what a relaunch reads (a row written before the field
+ * existed learns it here). Token-exact via `argvTokens`, not a substring `.includes()` check on the raw
+ * string, so a prompt or argument that merely CONTAINS the flag text cannot false-positive. Engines
+ * with no confirmed bypass flag (`BYPASS_PERMISSION_FLAGS[engine] === null`) always read false — never
+ * guess.
  */
 export function bypassPermissionActive(engine: RegisteredSession['engine'], args: string): boolean {
   const flags = BYPASS_PERMISSION_FLAGS[engine]
   if (!flags) return false
+  // A named mode says exactly how much the engine approves on its own (`full` — the old
+  // skip-everything flag — included); only an argv naming none falls back to the bare flag check.
   const tokens = argvTokens(args)
-  return flags.every((flag) => tokens.includes(flag))
+  const mode = permissionModeFromTokens(engine, tokens)
+  return mode ? permissionModeApproves(mode) : flagsInOrder(tokens, flags)
+}
+
+/**
+ * The permission mode a live process's argv names — the inverse of `permissionModeFlags`, so the row
+ * of an agent somebody typed into a terminal (or one written before modes were recorded) can carry
+ * the SAME mode a created one does, and a relaunch brings it back exactly: `--dangerously-skip-permissions`
+ * comes back as `--dangerously-skip-permissions`, not downgraded to the auto mode. Null when argv
+ * names no mode — which is not `ask` (a person picking Ask records it; an argv with no flag is just
+ * silent), so `bypassPermission` keeps deciding there as before. Token-exact like
+ * `bypassPermissionActive`; an engine with no mode table reads null.
+ */
+export function permissionModeFromArgv(engine: RegisteredSession['engine'], args: string): string | null {
+  return permissionModeFromTokens(engine, argvTokens(args))
+}
+
+function permissionModeFromTokens(engine: RegisteredSession['engine'], tokens: readonly string[]): string | null {
+  const modes = PERMISSION_MODES[engine]
+  if (!modes) return null
+  // `full` is checked ahead of the rest where the engine has it: its flag is a single token no other
+  // mode shares, and an argv carrying both it and `--permission-mode` is running without permissions
+  // whatever else it says. `ask` is empty and can never be "found".
+  const names = ['full', ...Object.keys(modes).filter((mode) => mode !== 'full')]
+  for (const mode of names) {
+    const flags = modes[mode]
+    if (flags?.length && flagsInOrder(tokens, flags)) return mode
+  }
+  return null
+}
+
+/** The flags in order, as launch writes them (`--permission-mode auto` is two tokens, and "auto"
+ *  alone elsewhere in argv is not the mode) — or `--flag=value` as one. */
+function flagsInOrder(tokens: readonly string[], want: readonly string[]): boolean {
+  return tokens.some((_, i) => want.every((flag, j) => tokens[i + j] === flag))
+    || (want.length === 2 && tokens.includes(`${want[0]}=${want[1]}`))
 }
 
 /** The session id an engine was told to resume, or null when argv does not name one. */
 export function resumeSessionId(engine: RegisteredSession['engine'], args: string): string | null {
   const spec = RESUME_ARGS[engine]
   if (!spec) return null
+  if (spec.unless) {
+    const tokens = argvTokens(args)
+    if (spec.unless.some((flag) => tokens.includes(flag))) return null
+  }
   for (const flag of spec.flags) {
     const escaped = flag.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
     const value = new RegExp(`(?:^|\\s)${escaped}(?:=|\\s+)(\\S+)`, 'i').exec(args)?.[1]
@@ -602,7 +740,7 @@ type PaneProcessLookup =
   | { ok: true; identity: ProcessIdentity }
   | { ok: false; unknown: boolean; reason: string }
 
-async function lookupPaneEngineProcess(
+export async function lookupPaneEngineProcess(
   pane: string,
   engine: RegisteredSession['engine'],
 ): Promise<PaneProcessLookup> {
@@ -689,13 +827,16 @@ export async function resolvePaneEngineProcess(
   return found.ok ? found.identity : null
 }
 
-/** A whole `lstart` stamp — `DOW MON DD HH:MM:SS YYYY` — and nothing else. */
-const LSTART_MARKER_RE = /^\S+\s+\S+\s+\d{1,2}\s+\d{1,2}:\d{2}:\d{2}\s+\d{4}$/
-
-/** Pane + engine process validation. A saved identity prevents PID reuse from reviving a stale entry. */
-export async function validateSessionRuntime(session: RegisteredSession): Promise<boolean> {
-  return (await checkSessionRuntime(session)).state === 'alive'
-}
+/**
+ * A whole C-locale `lstart` stamp — `DOW MON DD HH:MM:SS YYYY` — and nothing else.
+ *
+ * The names are spelled out rather than left as `\S+` so this also rejects a stamp recorded while `ps`
+ * still ran under the user's own `LC_TIME` (`K szept. 15 …` parsed fine before `psEnv` landed). Such a
+ * stamp can never equal the C-locale one read back for the same process, so without this it would fail
+ * the identity comparison below and evict a live pane once per session on upgrade.
+ */
+export const LSTART_MARKER_RE =
+  /^(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{1,2}\s+\d{1,2}:\d{2}:\d{2}\s+\d{4}$/
 
 /**
  * The same check, but three-valued and with a reason — the reaper needs both.
@@ -721,8 +862,9 @@ export async function checkSessionRuntime(session: RegisteredSession): Promise<R
   if (!found.ok) return { state: found.unknown ? 'unknown' : 'gone', reason: found.reason }
   const live = found.identity
   const saved = session.processIdentity
-  // A persisted identity whose startMarker is not an lstart stamp was written by the pre-fix parser (see
-  // parseProcessRow) — its fields are shifted, so it can NEVER match the corrected ones again. Adopt the
+  // A persisted identity whose startMarker is not a C-locale lstart stamp was written either by the
+  // pre-fix parser (see parseProcessRow), with its fields shifted, or by a `ps` that still inherited the
+  // user's LC_TIME (see psEnv). Either way it can NEVER match the corrected ones again. Adopt the
   // corrected identity instead of failing: the pane still has a matching engine process, and failing here
   // would drop a live session for good (Command Code, the only engine affected, does not re-register on
   // its Stop hook). One-time, per session.
@@ -745,8 +887,8 @@ export async function checkSessionRuntime(session: RegisteredSession): Promise<R
   return { state: 'alive' }
 }
 
-// A short single-line message can be pasted without bracketed-paste settling. Anything longer or
-// multi-line uses bracketed paste and waits before Enter (see sendToTmux).
+// Short single-line messages need no settling delay, but still need bracketed-paste boundaries:
+// Codex treats Enter immediately after an unbracketed text burst as a pasted newline, not submit.
 const INJECT_FASTPATH_MAXLEN = 500
 // Base settle time before the submit Enter; grows with length (Claude needs time to ingest a big paste
 // and collapse it to `[Pasted text]` before a clean Enter counts as submit rather than paste content).
@@ -805,11 +947,21 @@ export function setPaneWindowStyle(pane: string, style: string): Promise<boolean
 }
 
 /** What tmux knows about a pane right now. See `agentCreateDiagnosis.ts` for why this is read. */
+/**
+ * The pane option an engine's launch wrapper sets when the engine exits and the pane falls back to
+ * a shell (engineLaunch.ts, `harness_engine`): the engine's exit status. Empty/absent while the
+ * wrapper is still running the engine — and for the whole life of the fallback shell after that,
+ * once something reads it, so `respawn` clears it before every new launch in the same pane.
+ */
+export const ENGINE_EXIT_PANE_OPTION = '@harness_engine_exit'
+
 export interface TmuxPaneState {
   dead: boolean
   /** Exit status once the process is gone; null while it is still running. */
   exitStatus: number | null
   command: string
+  /** The engine's exit status once its launch wrapper handed the pane to a shell; null before. */
+  engineExit: number | null
 }
 
 /**
@@ -820,19 +972,46 @@ export interface TmuxPaneState {
  */
 export function tmuxPaneState(pane: string): Promise<TmuxPaneState | null> {
   return new Promise((resolve) => {
-    const format = '#{pane_dead}|#{pane_dead_status}|#{pane_current_command}'
+    const format = `#{pane_dead}|#{pane_dead_status}|#{${ENGINE_EXIT_PANE_OPTION}}|#{pane_current_command}`
     execFile('tmux', ['display-message', '-p', '-t', pane, format], { timeout: 2_000 }, (err, stdout) => {
       if (err) { resolve(null); return }
       const fields = stdout.trim().split('|')
-      if (fields.length < 3) { resolve(null); return }
+      if (fields.length < 4) { resolve(null); return }
       const status = Number(fields[1])
+      const engineExit = Number(fields[2])
       resolve({
         dead: fields[0] === '1',
         exitStatus: fields[1] !== '' && Number.isSafeInteger(status) ? status : null,
+        engineExit: fields[2] !== '' && Number.isSafeInteger(engineExit) ? engineExit : null,
         // A command name cannot contain `|`, but rejoining costs nothing and keeps a surprising
         // one from silently truncating the field.
-        command: fields.slice(2).join('|'),
+        command: fields.slice(3).join('|'),
       })
+    })
+  })
+}
+
+/** What a pane is running and where, as tmux knows it (terminal clients' #{pane_current_*}). */
+export interface TmuxPaneInfo { command: string; path: string; pid: number | null; tty: string }
+
+/**
+ * The foreground command, live working directory, pid and tty of a pane — tmux's
+ * `#{pane_current_command}` and `#{pane_current_path}`, which a terminal client (hn) shows and a
+ * vim-tmux-navigator style check asks. Null when tmux does not know the pane.
+ */
+export function tmuxPaneInfo(pane: string, socket?: string): Promise<TmuxPaneInfo | null> {
+  return new Promise((resolve) => {
+    // A path can hold any character but a newline; the command, pid and tty cannot hold one either.
+    const format = '#{pane_current_command}\n#{pane_pid}\n#{pane_tty}\n#{pane_current_path}'
+    // `socket` names a server outright (tests pass their own); without it, the daemon's server.
+    const args = [...(socket ? ['-S', socket] : []), 'display-message', '-p', '-t', pane, format]
+    execFile('tmux', args, { timeout: 2_000 }, (err, stdout) => {
+      if (err) { resolve(null); return }
+      const [command = '', pid = '', tty = '', ...path] = stdout.replace(/\n$/, '').split('\n')
+      const n = Number(pid)
+      // tmux 3.5 answers a pane it does not know with empty fields rather than an error.
+      if (pid === '' || !Number.isSafeInteger(n)) { resolve(null); return }
+      resolve({ command, path: path.join('\n'), pid: n, tty })
     })
   })
 }
@@ -880,18 +1059,18 @@ async function tmuxPasteText(pane: string, content: string, bracketed: boolean):
  * Type a message into a tmux pane and submit it — the web-chat/device → terminal injection point.
  *
  * All text is loaded into a uniquely named tmux buffer over stdin so prompt bytes never enter argv,
- * environment, logs, or child-process error strings. Short single-line input is pasted literally and
- * submitted immediately.
+ * environment, logs, or child-process error strings. Every message is bracketed-pasted as one unit
+ * (`paste-buffer -p`) so the terminal can distinguish the paste from the separate submit Enter.
+ * Short single-line input is submitted immediately after that explicit paste boundary.
  *
- * Long/multiline input is bracketed-pasted as one unit (`paste-buffer -p`), allowed to settle, then
- * submitted with a separate Enter. (Verified: reliably submits up to ~28 KB.)
+ * Long/multiline input is allowed to settle before Enter. (Verified: reliably submits up to ~28 KB.)
  */
 export function sendToTmux(pane: string, text: string): Promise<boolean> {
   const content = text.replace(/[\r\n]+$/, '') // strip trailing newlines so the submit Enter isn't doubled
   return (async () => {
-    const bracketed = content.length > INJECT_FASTPATH_MAXLEN || content.includes('\n')
-    if (!(await tmuxPasteText(pane, content, bracketed))) return false
-    if (bracketed) await sleep(Math.min(1500, INJECT_PASTE_DELAY_BASE_MS + Math.floor(content.length / 60)))
+    const needsSettle = content.length > INJECT_FASTPATH_MAXLEN || content.includes('\n')
+    if (!(await tmuxPasteText(pane, content, true))) return false
+    if (needsSettle) await sleep(Math.min(1500, INJECT_PASTE_DELAY_BASE_MS + Math.floor(content.length / 60)))
     return tmuxEnter(pane)
   })()
 }

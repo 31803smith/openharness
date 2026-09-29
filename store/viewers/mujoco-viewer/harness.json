@@ -1,0 +1,20 @@
+{
+  "spec": 1,
+  "kind": "viewer",
+  "id": "autonomous/mujoco-viewer",
+  "name": "MuJoCo Viewer",
+  "category": "Simulation",
+  "author": "Autonomous",
+  "description": "Live MuJoCo physics with actuator controls, replay, sensors and a What if lab: branch a moment, change the conditions, compare both futures and save a self-contained experiment.",
+  "toolchain": {
+    "setup": "./setup.sh",
+    "doctor": "./doctor.sh"
+  },
+  "viewer": {
+    "command": "./viewer.sh",
+    "url": "http://127.0.0.1:${port}/?file=${artifact}",
+    "artifactExtensions": [
+      ".json"
+    ]
+  }
+}

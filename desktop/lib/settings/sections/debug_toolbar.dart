@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import '../../core/reveal_folder.dart';
@@ -28,13 +29,15 @@ class DebugToolbar extends StatelessWidget {
         Expanded(
           child: Text(
             '$total ${total == 1 ? 'entry' : 'entries'}',
-            style: TextStyle(fontSize: 12.5, color: AppPalette.textSecondary),
+            style: AppType.body(color: AppPalette.textSecondary),
           ),
         ),
-        const _ExportLogsPill(),
-        const SizedBox(width: 6),
-        const _OpenLogsPill(),
-        const SizedBox(width: 6),
+        if (!kIsWeb) ...[
+          const _ExportLogsPill(),
+          const SizedBox(width: 6),
+          const _OpenLogsPill(),
+          const SizedBox(width: 6),
+        ],
         ToolbarPill(
           // Visible and dead when there is nothing to clear, rather than gone:
           // a control that disappears takes its own explanation with it.
@@ -133,14 +136,7 @@ class DebugPillLabel extends StatelessWidget {
       children: [
         Icon(icon, size: 13, color: ink),
         const SizedBox(width: 6),
-        Text(
-          label,
-          style: TextStyle(
-            fontSize: 13,
-            fontWeight: AppFont.medium,
-            color: ink,
-          ),
-        ),
+        Text(label, style: AppType.label(color: ink)),
       ],
     );
   }

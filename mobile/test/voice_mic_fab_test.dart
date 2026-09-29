@@ -1,0 +1,180 @@
+import 'package:flutter/material.dart';
+import 'package:harness_mobile/phone/voice_mic_face.dart';
+import 'package:harness_mobile/phone/voice_mic_button.dart';
+import 'package:flutter/rendering.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:harness_mobile/phone/voice_input_controller.dart';
+import 'package:harness_mobile/phone/voice_mic_fab.dart';
+import 'package:harness_mobile/phone/voice_notice.dart';
+import 'package:harness_mobile/terminal/terminal_session.dart';
+
+import 'voice_fakes.dart';
+
+/// The mic over the terminal: tap to talk, tap to send — the words go as a
+/// composer turn.
+void main() {
+  late FakeVoiceRecorder recorder;
+  late FakeTranscriber backend;
+  late ValueNotifier<String> language;
+  late VoiceInputController voice;
+  late TerminalSession session;
+  late List<(String, Map<String, dynamic>)> frames;
+
+  /// What reached the prompt, keystroke by keystroke.
+  late List<String> typed;
+
+  final mic = find.byKey(const ValueKey('voice-mic'));
+
+  setUp(() {
+    recorder = FakeVoiceRecorder();
+    backend = FakeTranscriber();
+    language = ValueNotifier('en');
+    voice = VoiceInputController(
+      transcriber: backend.call,
+      recorder: recorder,
+      language: language,
+    );
+    frames = [];
+    session = TerminalSession(
+      machineId: 'm',
+      agentId: 'a',
+      agentName: 'Agent',
+      engineId: 'claude',
+      send: (type, payload) async {
+        frames.add((type, payload));
+        return true;
+      },
+      sendBinary: (_) async => true,
+    );
+    session.status = TerminalSessionStatus.controlling;
+    session.streamId = 's';
+    typed = [];
+    session.terminal.onOutput = typed.add;
+  });
+
+  tearDown(() {
+    voice.dispose();
+    language.dispose();
+    session.dispose();
+  });
+
+  Widget fab() => VoiceMicFab(voice: voice, session: session);
+
+  Future<void> pumpFab(WidgetTester tester, {Widget? around}) =>
+      tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(body: around ?? Center(child: fab())),
+        ),
+      );
+
+  List<Object?> sentTurns() => [
+    for (final (type, payload) in frames)
+      if (type == 'message') payload['content'],
+  ];
+
+  // Never typed into the pane with a Return behind them: arriving together, a
+  // TUI reads the pair as a paste and the Return becomes a newline — Codex left
+  // the words in its prompt, unsent. See `_tapAction`.
+  testWidgets('tap, talk, tap Send: the words go as a composer turn', (
+    tester,
+  ) async {
+    await pumpFab(tester);
+    backend.replies.add('ship it');
+
+    await tester.tap(mic);
+    await tester.pump();
+    expect(voice.status, VoiceInputStatus.listening);
+
+    await tester.tap(mic);
+    await tester.pumpAndSettle();
+
+    expect(sentTurns(), ['ship it']);
+    expect(typed, isEmpty);
+    expect(voice.isIdle, isTrue);
+  });
+
+  testWidgets('a send that cannot land keeps the words for the next tap', (
+    tester,
+  ) async {
+    await pumpFab(tester);
+    backend.replies.add('ship it');
+
+    await tester.tap(mic);
+    await tester.pump();
+    session.status = TerminalSessionStatus.takenOver;
+    session.notifyListeners();
+    await tester.pump();
+    await tester.tap(mic);
+    // Timed pumps, not `pumpAndSettle`: the capsule animates for as long as
+    // the notice is up, so settling would run the clock past
+    // [VoiceInputController.noticeLinger] and read the row after it cleared.
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+
+    expect(sentTurns(), isEmpty);
+    expect(voice.transcript, 'ship it');
+    expect(voice.notice, VoiceNotice.notSent);
+
+    // The notice goes by itself; the words it was about stay for the retry.
+    await tester.pump(VoiceInputController.noticeLinger);
+    expect(voice.notice, isNull);
+    expect(voice.transcript, 'ship it');
+
+    session.status = TerminalSessionStatus.controlling;
+    session.notifyListeners();
+    await tester.pump();
+    await tester.tap(mic);
+    await tester.pumpAndSettle();
+
+    expect(sentTurns(), ['ship it']);
+    expect(voice.isIdle, isTrue);
+  });
+
+  testWidgets('no talking while the terminal takes no input', (tester) async {
+    session.status = TerminalSessionStatus.takenOver;
+    await pumpFab(tester);
+
+    await tester.tap(mic);
+    await tester.pumpAndSettle();
+
+    expect(recorder.starts, 0);
+    expect(frames, isEmpty);
+  });
+
+  testWidgets(
+    'VoiceOver can cancel a take — the swipe down is VoiceOver\'s own',
+    (tester) async {
+      final handle = tester.ensureSemantics();
+      var cancelled = 0;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: Center(
+              child: VoiceMicButton(
+                face: VoiceMicFace.listening,
+                onPressed: () {},
+                onSwipeDown: () => cancelled++,
+              ),
+            ),
+          ),
+        ),
+      );
+      final node = tester.getSemantics(find.byType(VoiceMicButton));
+      // One word while the mic is open: a read-out sentence would land in the take.
+      expect(node.label, 'Send');
+      node.owner!.performAction(
+        node.id,
+        SemanticsAction.customAction,
+        CustomSemanticsAction.getIdentifier(
+          const CustomSemanticsAction(label: 'Cancel'),
+        ),
+      );
+      node.owner!.performAction(
+        node.id,
+        SemanticsAction.dismiss,
+      );
+      expect(cancelled, 2);
+      handle.dispose();
+    },
+  );
+}

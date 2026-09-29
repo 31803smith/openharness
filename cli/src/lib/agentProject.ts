@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process'
-import { basename, isAbsolute } from 'node:path'
+import { basename, dirname, isAbsolute, resolve } from 'node:path'
 import { promisify } from 'node:util'
 
 const exec = promisify(execFile)
@@ -9,6 +9,10 @@ export type AgentProject = {
   root: string | null
   remote: string | null
   branch: string | null
+  /** Inside a linked worktree rather than the repository's own checkout. */
+  worktree?: true
+  /** The branch still has the name Harness made up at Start; the session's replaces it. */
+  branchPending?: true
 }
 
 /** Compare remote repositories without publishing embedded credentials or transport syntax. */
@@ -31,9 +35,11 @@ export function canonicalRepository(raw: string | null): string | null {
 /** Bounded subprocesses, no shell, network, or repository mutation. */
 async function git(cwd: string, args: string[]): Promise<string | null> {
   try {
+    const environment = { ...process.env, GIT_OPTIONAL_LOCKS: '0', GIT_TERMINAL_PROMPT: '0' }
+    for (const key of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_COMMON_DIR', 'GIT_INDEX_FILE', 'GIT_NAMESPACE', 'GIT_PREFIX']) delete (environment as NodeJS.ProcessEnv)[key]
     const { stdout } = await exec('git', ['-C', cwd, ...args], {
       timeout: 1500, maxBuffer: 16 * 1024, encoding: 'utf8',
-      env: { ...process.env, GIT_OPTIONAL_LOCKS: '0', GIT_TERMINAL_PROMPT: '0' },
+      env: environment,
     })
     return stdout.trim() || null
   } catch { return null }
@@ -50,13 +56,29 @@ async function inspect(cwd: string): Promise<AgentProject> {
     const root = await git(cwd, ['rev-parse', '--show-toplevel'])
     if (!root) return { name: basename(cwd) || cwd, cwd, root: null, remote: null, branch: null }
     const remote = await git(cwd, ['config', '--get', 'remote.origin.url'])
+    // A checkout on no branch still says where it is, as the desktop's own reader does.
     const branch = await git(cwd, ['symbolic-ref', '--quiet', '--short', 'HEAD'])
-    return { name: basename(root), cwd, root, remote: canonicalRepository(remote), branch }
+      ?? await git(cwd, ['rev-parse', '--short', 'HEAD']).then(sha => sha && `Detached ${sha}`)
+    const common = await git(root, ['rev-parse', '--git-common-dir'])
+    // A linked worktree is named for its repository, not its folder.
+    const main = common && basename(common) === '.git' ? dirname(resolve(root, common)) : root
+    const pending = branch && !branch.startsWith('Detached ')
+      ? await git(cwd, ['config', '--get', `branch.${branch}.harness`]) === 'placeholder'
+      : false
+    return {
+      name: basename(main), cwd, root, remote: canonicalRepository(remote), branch,
+      ...(main !== root ? { worktree: true as const } : {}), ...(pending ? { branchPending: true as const } : {}),
+    }
   } finally {
     const next = waiting.shift()
     if (next) next()
     else running--
   }
+}
+
+/** Forget what was read for `cwd`, as after renaming its branch. */
+export function forgetAgentProject(cwd: string): void {
+  cache.delete(cwd)
 }
 
 export function agentProject(cwd: string | null, now = Date.now()): Promise<AgentProject | null> {

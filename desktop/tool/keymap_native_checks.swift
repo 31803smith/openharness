@@ -11,28 +11,68 @@ let source = try Data(contentsOf: URL(fileURLWithPath: CommandLine.arguments[1])
 let fixture = try JSONSerialization.jsonObject(with: source) as! [String: [String: Any]]
 let defaults = HarnessNativeKeymap(fixture["defaults"]!)!
 let changed = HarnessNativeKeymap(fixture["changed"]!)!
+for key in ["n", "o", "g", "1", "2", "3", "4", "5", "6", "7", "8", "9"] {
+  try checkKeymap(defaults.match([stroke(key)], context: "project").binding?.command.hasPrefix("creation.project_") != true,
+    "Project search does not bind action or recent shortcuts to \(key)")
+}
+for key in ["a", "m", "p", "t", "o"] {
+  try checkKeymap(defaults.match([stroke(key)], context: "picker").binding == nil,
+    "Launch menu uses arrows/Enter instead of plain \(key)")
+}
+try checkKeymap(changed.match([stroke("down")], context: "project").binding == nil &&
+  changed.match([stroke("ctrl+j")], context: "project").binding?.command == "picker.previous",
+  "Project navigation inherits picker remaps and unbindings")
 for (key, command) in [
   ("cmd+left", "pane.focus_left"), ("cmd+down", "pane.focus_below"),
   ("cmd+up", "pane.focus_above"), ("cmd+right", "pane.focus_right"),
-  ("cmd+s", "pane.layout"), ("cmd+r", "pane.split_right"),
-  ("cmd+d", "pane.split_down"),
+  ("cmd+s", "app.store"), ("cmd+shift+l", "pane.layout"),
   ("cmd+b", "task.route"), ("cmd+t", "swarm.new"),
-  ("cmd+o", "agent.add"), ("cmd+n", "agent.new"),
+  ("cmd+p", "harnesses.list"), ("cmd+o", "agent.open"), ("cmd+shift+p", "navigation.commands"),
+  ("cmd+r", "pane.split_right"), ("cmd+d", "pane.split_down"),
+  ("cmd+n", "agent.new"),
+  ("cmd+m", "machines.list"),
+  ("cmd+i", "models.list"),
   ("cmd+h", "pane.focus_left"), ("cmd+j", "pane.focus_below"),
   ("cmd+k", "pane.focus_above"), ("cmd+l", "pane.focus_right"),
 ] {
   try checkKeymap(defaults.match([stroke(key)], context: "workspace").binding?.command == command,
     "Preserve the current default for \(key)")
 }
-for context in ["workspace", "terminal", "picker"] {
-  try checkKeymap(defaults.match([stroke("cmd+shift+n")], context: context).binding == nil,
-    "Shift-Command-N is unbound by default in \(context)")
+try checkKeymap(defaults.viewerOrchestratorCommand(stroke("cmd+p")) == nil,
+  "The pane picker chord is not mistaken for an orchestrator command")
+try checkKeymap(defaults.viewerOrchestratorCommand(stroke("cmd+b")) == nil,
+  "The viewer bridge does not change single-agent routing")
+try checkKeymap(defaults.viewerOrchestratorCommand(stroke("cmd+shift+p")) == nil,
+  "The viewer bridge does not take the command palette chord")
+for context in HarnessNativeKeymap.contexts {
+  try checkKeymap(defaults.match([stroke("cmd+m")], context: context).binding?.command == "machines.list",
+    "Command-M opens Machines from \(context)")
+  let models = defaults.match([stroke("cmd+i")], context: context).binding
+  try checkKeymap(models?.command == "models.list" && models?.menuAction == "models" && models?.hint == "⌘I",
+    "Command-I opens Models with the matching native action and hint from \(context)")
+  let directModels = defaults.match([stroke("cmd+semicolon")], context: context).binding
+  try checkKeymap(directModels == nil,
+    "Command-semicolon is unbound from \(context)")
+  try checkKeymap(defaults.match([stroke("cmd+u")], context: context).binding == nil,
+    "Command-U has no default workspace action")
+  try checkKeymap(defaults.match([stroke("cmd+y")], context: context).binding == nil,
+    "Command-Y has no default workspace action")
+  let store = defaults.match([stroke("cmd+s")], context: context).binding
+  try checkKeymap(store?.command == "app.store" && store?.menuAction == "store" && store?.hint == "⌘S",
+    "Command-S opens Store with the matching native action and hint")
+  try checkKeymap(defaults.match([stroke("cmd+o")], context: context).binding?.command == "agent.open",
+    "Command-O opens the project picker")
+  try checkKeymap(defaults.match([stroke("cmd+shift+n")], context: context).binding?.command == "agent.clone",
+    "Shift-Command-N clones the harness in \(context)")
   for number in 1...9 {
     try checkKeymap(defaults.match([stroke("cmd+\(number)")], context: context).binding?.command == "swarm.select_\(number)",
       "Command-number selects the corresponding tab from \(context)")
   }
 }
-for context in ["workspace", "terminal", "picker"] {
+for context in HarnessNativeKeymap.contexts {
+  try checkKeymap(changed.match([stroke("cmd+i")], context: context).binding == nil &&
+    changed.match([stroke("cmd+y")], context: context).binding?.command == "models.list",
+    "Models respects shortcut remaps from \(context)")
   try checkKeymap(changed.match([stroke("cmd+t")], context: context).binding == nil,
     "Native context honors inherited unbinding")
   let search = changed.match([stroke("cmd+o")], context: context).binding
@@ -49,14 +89,14 @@ try checkKeymap(changed.match([stroke("down")], context: "picker").binding == ni
   "Picker unbinding removes the original arrow action")
 try checkKeymap(changed.match([stroke("ctrl+j")], context: "picker").binding?.command == "picker.previous",
   "Picker remapping wins")
-try checkKeymap(defaults.match([stroke("cmd+i")], context: "picker").binding == nil,
-  "Always-on preview does not consume a hide-preview shortcut")
-for (key, command) in [("pageup", "picker.preview_page_up"), ("pagedown", "picker.preview_page_down")] {
+try checkKeymap(defaults.match([stroke("ctrl+slash")], context: "picker").binding?.command == "picker.toggle_preview",
+  "Preview visibility stays on Control-/ while Command-I opens Models")
+for (key, command) in [("pageup", "picker.page_up"), ("pagedown", "picker.page_down")] {
   try checkKeymap(defaults.match([stroke(key)], context: "picker").binding?.command == command,
-    "Preview paging follows the exported Search binding")
+    "Result paging follows the exported Search binding")
   for context in ["workspace", "terminal"] {
     try checkKeymap(defaults.match([stroke(key)], context: context).binding == nil,
-      "Preview paging leaves \(context) input alone")
+      "Result paging leaves \(context) input alone")
   }
 }
 
@@ -88,12 +128,12 @@ try checkKeymap(!send("x", 4, owner: otherField).handled && dispatcher.pending.i
 _ = send("cmd+k")
 try checkKeymap(!send("enter", 6, composing: true).handled && dispatcher.pending.isEmpty,
   "IME composition keeps input and cancels the prefix")
-try checkKeymap(send("cmd+o", executable: false).handled && send("cmd+o", executable: false).command == nil,
+try checkKeymap(send("cmd+p", executable: false).handled && send("cmd+p", executable: false).command == nil,
   "An unavailable mapped action cannot fall through as input")
-try checkKeymap(send("cmd+o", repeated: true).command == nil, "Search does not repeat")
+try checkKeymap(send("cmd+p", repeated: true).command == nil, "Search does not repeat")
 try checkKeymap(send("ctrl+j", repeated: true).command == "picker.previous", "Result movement repeats")
-try checkKeymap(send("pagedown", repeated: true).command == "picker.preview_page_down",
-  "Holding a preview paging key continues scrolling")
+try checkKeymap(send("pagedown", repeated: true).command == "picker.page_down",
+  "Holding a result paging key continues scrolling")
 _ = send("cmd+k")
 dispatcher.suspend()
 try checkKeymap(dispatcher.pending.isEmpty && !dispatcher.release(1), "Window blur clears pending and held keys")
@@ -102,6 +142,8 @@ try checkKeymap(send("cmd+t").command == "swarm.new", "Reload installs the new r
 
 try checkKeymap(HarnessKeyStroke.fromCharacters("H", modifiers: [.command, .capsLock]) == stroke("cmd+h"),
   "Caps Lock does not change a Command binding")
+try checkKeymap(HarnessKeyStroke.fromCharacters(";", modifiers: [.command]) == stroke("cmd+semicolon"),
+  "Command-semicolon remains a valid remappable key")
 try checkKeymap(HarnessKeyStroke.fromCharacters("1", modifiers: [.command, .shift]) == stroke("cmd+shift+1"),
   "Shift stays in modifiers after layout translation")
 try checkKeymap(HarnessKeyStroke.fromCharacters("\u{f702}", modifiers: .command) == stroke("cmd+left"),
@@ -114,9 +156,15 @@ try checkKeymap(stroke("cmd+shift+left").menuEquivalent == "\u{f702}" && stroke(
   "Native menu equivalents preserve function keys")
 
 func payload(_ rows: [[String: Any]]) -> [String: Any] {
-  ["version": 1, "contexts": ["workspace": rows, "terminal": rows, "picker": rows]]
+  ["version": 1, "contexts": ["workspace": rows, "terminal": rows, "picker": rows, "project": rows]]
 }
 let prefix: [String: Any] = ["keys": ["cmd+k"], "command": "example", "hint": "⌘K", "repeatable": false]
+let remappedOrchestrator = HarnessNativeKeymap(payload([
+  ["keys": ["cmd+y"], "command": "project.orchestrate", "hint": "⌘Y", "repeatable": false],
+]))!
+try checkKeymap(remappedOrchestrator.viewerOrchestratorCommand(stroke("cmd+p")) == nil &&
+  remappedOrchestrator.viewerOrchestratorCommand(stroke("cmd+y")) == "project.orchestrate",
+  "Native viewers respect an orchestrator shortcut remap")
 let sequence: [String: Any] = ["keys": ["cmd+k", "cmd+n"], "command": "example", "hint": "⌘K ⌘N", "repeatable": false]
 try checkKeymap(HarnessNativeKeymap(payload([prefix, sequence])) == nil, "Reject ambiguous prefixes atomically")
 try checkKeymap(HarnessNativeKeymap(payload([prefix, prefix])) == nil, "Reject duplicate strokes atomically")

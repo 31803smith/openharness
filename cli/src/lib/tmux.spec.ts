@@ -2,14 +2,18 @@ import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
-import { ENGINES } from '../engines/types.js'
+import { PROCESS_ENGINES } from '../engines/types.js'
 import type { AgentCommandOwnershipSnapshot } from './engineBin.js'
 import {
   ambiguousAgentProcess,
   bypassPermissionActive,
+  permissionModeFromArgv,
   engineProcessMatch,
   engineProcessMatchScore,
+  LSTART_MARKER_RE,
+  liveProcessRows,
   parseProcessRow,
+  pasteRawIntoTmux,
   resumeSessionId,
   sendLiteralToTmux,
   sendToTmux,
@@ -26,6 +30,21 @@ const ownership = (cursor: string[] = [], grok: string[] = []): AgentCommandOwne
 })
 
 describe('tmux process primitives', () => {
+  it('drops a zombie from the process table — it keeps the identity of the engine it no longer is', () => {
+    // The row the remote-machine rig showed for a stopped agent's Claude, orphaned to a pid 1 that
+    // never reaped: same pid, comm and start time as the saved identity, so resume thought it alive.
+    const zombie = parseProcessRow('78206     1 claude          Tue Sep 22 08:23:44 2026 [claude] <defunct>')!
+    const bsdZombie = parseProcessRow('78207     1 (claude)        Tue Sep 22 08:23:44 2026 <defunct>')!
+    const live = parseProcessRow('3998  3992 node            Mon Sep 21 08:15:25 2026 node /home/node/.npm-global/bin/codex')!
+    // Only a TRAILING marker is a corpse; an argument that mentions the word is a running process.
+    const mentions = parseProcessRow('4000  3992 grep            Mon Sep 21 08:15:25 2026 grep <defunct> log.txt')!
+    // Pids that do not exist here, so on Linux the /proc check cannot vouch for a live process either.
+    vi.spyOn(process, 'platform', 'get').mockReturnValue('darwin')
+    expect(liveProcessRows([zombie, live, bsdZombie, mentions])).toEqual([live, mentions])
+    vi.restoreAllMocks()
+  })
+
+
   it('parses a process whose comm field contains spaces', () => {
     expect(parseProcessRow('4242 100 ⌘ Greeting Thu Jul 30 11:00:03 2026 cmd -r abcdef12-3456-7890-abcd-ef1234567890')).toEqual({
       pid: 4242,
@@ -73,6 +92,54 @@ describe('tmux process primitives', () => {
    * the live pane. processRows() now reads ps under LC_ALL=C.UTF-8 and repairs any surviving `?` row from
    * /proc, which is raw bytes. These two cases pin the before and the after.
    */
+  /**
+   * `lstart`'s shape belongs to LC_TIME, not to `ps`. Captured with
+   * `LC_TIME=<locale> ps -axo pid=,ppid=,comm=,lstart=,args=` on macOS 15.5, one run per locale on the
+   * same machine in the same second. Of sixteen locales tried only C, en_US and hu_HU parse at all; the
+   * rest reorder the fields and yield ZERO rows out of ~590.
+   *
+   * Zero rows is the whole bug: processRows returns `[]`, not null, so "we looked and the machine is
+   * empty" is indistinguishable from the truth, resolvePaneEngineProcess finds no engine under any pane,
+   * and watchCreatedPane burns its full ten minutes before reporting START_TIMEOUT — "claude did not
+   * expose an engine process within 10 minutes" — against a pane where claude is running and still
+   * firing hooks. This is why processRows spawns ps under psEnv instead of inheriting the locale.
+   */
+  it('cannot parse an lstart column written by a locale that reorders it', () => {
+    const rows = [
+      '15160  2281 /Users/admin/.lo Tue 15 Sep 23:10:38 2026 /Users/admin/.local/bin/claude',
+      '15160  2281 /Users/admin/.lo Di. 15 Sep. 23:10:38 2026 /Users/admin/.local/bin/claude',
+      '15160  2281 /Users/admin/.lo mar. 15 sept. 23:10:38 2026 /Users/admin/.local/bin/claude',
+      '15160  2281 /Users/admin/.lo \u706b  9/15 23:10:38 2026 /Users/admin/.local/bin/claude',
+      '15160  2281 /Users/admin/.lo \u0432\u0442\u043e\u0440\u043d\u0438\u043a, 15 \u0441\u0435\u043d\u0442\u044f\u0431\u0440\u044f 2026 \u0433. 23:10:38 /Users/admin/.local/bin/claude',
+    ]
+    for (const row of rows) expect(parseProcessRow(row)).toBeNull()
+
+    // The same process, same second, under the LC_TIME=C that psEnv guarantees.
+    expect(parseProcessRow('15160  2281 /Users/admin/.lo Tue Sep 15 23:10:38 2026 /Users/admin/.local/bin/claude'))
+      .toEqual({
+        pid: 15160,
+        parentPid: 2281,
+        executable: '/Users/admin/.lo',
+        startMarker: 'Tue Sep 15 23:10:38 2026',
+        args: '/Users/admin/.local/bin/claude',
+      })
+  })
+
+  /**
+   * checkSessionRuntime adopts, rather than compares, any saved marker this rejects. It has to reject
+   * localized stamps too: a marker recorded before psEnv landed (hu_HU parsed fine, `K szept. 15 …`) can
+   * never equal the C-locale stamp read back for the same live process, and comparing them would evict a
+   * live pane exactly once per session on upgrade.
+   */
+  it('recognises only a C-locale lstart stamp as a comparable start marker', () => {
+    expect(LSTART_MARKER_RE.test('Tue Sep 15 23:10:38 2026')).toBe(true)
+    expect(LSTART_MARKER_RE.test('Fri Aug 21 09:28:14 2026')).toBe(true)
+
+    expect(LSTART_MARKER_RE.test('K szept. 15 23:10:38 2026')).toBe(false)   // hu_HU, parsed pre-fix
+    expect(LSTART_MARKER_RE.test('Tue 15 Sep 23:10:38 2026')).toBe(false)    // en_AU
+    expect(LSTART_MARKER_RE.test('Greeting Thu Jul 30 11:00:03 2026')).toBe(false) // pre-fix shifted comm
+  })
+
   it('scores Command Code from the real bytes, and cannot from the mangled ones', () => {
     const mangled = parseProcessRow('  185   178 ??? harness-cli Fri Aug 21 09:34:20 2026 ??? harness-cli ubuntu probe')
     expect(engineProcessMatchScore(mangled!, 'commandcode')).toBe(0)
@@ -119,7 +186,7 @@ describe('tmux process primitives', () => {
     expect(engineProcessMatchScore(row, 'claude', commands)).toBe(0)
   })
 
-  it.each(ENGINES)('recognises a renamed native %s image from installed file identity', (engine) => {
+  it.each(PROCESS_ENGINES)('recognises a renamed native %s image from installed file identity', (engine) => {
     const key = `native-${engine}`
     const commands: AgentCommandOwnershipSnapshot = {
       ...ownership(),
@@ -150,6 +217,56 @@ describe('tmux process primitives', () => {
       args: '/home/demo/.local/share/claude/versions/2.1.246',
     }, 'claude')).toBe(3)
     expect(engineProcessMatchScore({ executable: '2.1.246', args: '2.1.246' }, 'claude')).toBe(0)
+  })
+
+  it('reads Hermes out of the inline source it runs as', () => {
+    // 0.21.5+2144.g7b761da, copied off `ps` on this machine. The `sh` stub in
+    // `~/.hermes/hermes-agent/.hermes/bin/hermes` execs Hermes' own interpreter with the whole
+    // launcher as `-c` text, so argv names no script and `comm` is a python. Nothing here carried
+    // the engine's name anywhere the matcher looked, and a running Hermes read as absent: its pane
+    // was retained six seconds after New Harness, then failed RESUME_UNCONFIRMED ten minutes later.
+    const python = '/Users/demo/.hermes/tools/python-3.14.7+20260901-darwin-arm64/bin/python3'
+    const launcher = (entry: string) => `${python} -I -c import os, re, sys`
+      + ` sys.path.insert(0, '/Users/demo/.hermes/hermes-agent')`
+      + ` import hermes_bootstrap from ${entry} import main sys.exit(main())`
+    // macOS prints `comm` through a 16-column field beside lstart, so every absolute path arrives
+    // truncated. The interpreter has to be read from argv[0] or this row scores on a home directory.
+    const comm = '/Users/demo'
+    expect(engineProcessMatchScore({ executable: comm, args: launcher('hermes_cli.main') }, 'hermes')).toBe(2)
+    // `hermes-acp` is the other stub in that bin, identical but for its entry module. An ACP adapter
+    // is not the harness's engine, and the sys.path root alone would have claimed it.
+    expect(engineProcessMatchScore({ executable: comm, args: launcher('acp_adapter.entry') }, 'hermes')).toBe(0)
+    // Inline source stays unreadable as an entrypoint for everyone else: a prompt may say anything.
+    expect(engineProcessMatchScore({
+      executable: comm,
+      args: `${python} -I -c print('x') compare hermes_cli and codex`,
+    }, 'hermes')).toBe(0)
+    expect(engineProcessMatchScore({
+      executable: 'python3',
+      args: `python3 worker.py from hermes_cli.main import main /Users/demo/.hermes/hermes-agent'`,
+    }, 'hermes')).toBe(0)
+    // And the shapes that already worked keep working.
+    expect(engineProcessMatchScore({ executable: 'hermes', args: 'hermes --resume 20260728_115628_f2c86a' }, 'hermes')).toBe(3)
+    expect(engineProcessMatchScore({ executable: comm, args: `${python} -m hermes_cli.main` }, 'hermes')).toBe(2)
+  })
+
+  it('recognizes managed Hermes runpy launchers without relying on their install directory', () => {
+    const bootstrap = "import os, sys, runpy; os.environ.pop('PYTHONHOME', None); os.environ.pop('PYTHONPATH', None); os.environ.pop('VIRTUAL_ENV', None); sys.path.insert(0, '/opt/custom install'); os.environ['HERMES_HOME'] = os.environ.get('HERMES_HOME') or str(__import__('hermes_constants').get_default_hermes_root()); import hermes_bootstrap; runpy.run_module('hermes_cli.main', run_name='__main__', alter_sys=True)"
+    const old = "import sys, runpy; sys.path.insert(0, '/opt/hermes-agent'); runpy.run_module('hermes_cli.main', run_name='__main__')"
+    for (const code of [bootstrap, old]) {
+      for (const source of [code, `\"${code}\"`]) {
+        expect(engineProcessMatchScore({ executable: '/home/demo/.her', args: `/opt/python3.14 -I -I -c ${source} --resume 20260927_101500_ab12cd` }, 'hermes')).toBe(2)
+      }
+    }
+    for (const args of [
+      `python3 worker.py -c ${bootstrap}`,
+      `node -c ${bootstrap}`,
+      `python3 -c print(\"${bootstrap}\")`,
+      `python3 -c ${bootstrap.replace('hermes_cli.main', 'acp_adapter.entry')}`,
+      "python3 -c import sys; sys.path.insert(0, '/opt/hermes-agent'); print('from hermes_cli.main import main')",
+    ]) {
+      expect(engineProcessMatchScore({ executable: 'python3', args }, 'hermes')).toBe(0)
+    }
   })
 
   it('reads an engine through the ori launcher, before and after its exec', () => {
@@ -214,12 +331,67 @@ describe('tmux process primitives', () => {
     expect(resumeSessionId('grok', 'grok -r 53d3843c-724e-47ff-ae3a-9fedfa328bba'))
       .toBe('53d3843c-724e-47ff-ae3a-9fedfa328bba')
     expect(resumeSessionId('commandcode', 'cmd -r Greeting')).toBeNull()
-    expect(resumeSessionId('claude', 'claude --resume 53d3843c-724e-47ff-ae3a-9fedfa328bba')).toBeNull()
-    expect(resumeSessionId('codex', 'codex resume 53d3843c-724e-47ff-ae3a-9fedfa328bba')).toBeNull()
-    expect(resumeSessionId('devin', 'devin --resume 53d3843c-724e-47ff-ae3a-9fedfa328bba')).toBeNull()
+    // Devin's ids are word slugs; a bare word is not one.
+    expect(resumeSessionId('devin', 'devin --resume brisk-otter')).toBe('brisk-otter')
+    expect(resumeSessionId('devin', 'devin -r blue-agustinia --model x')).toBe('blue-agustinia')
+    expect(resumeSessionId('devin', 'devin -r latest')).toBeNull()
+    // Hermes takes -r too; opencode's --fork names the parent, never the session.
+    expect(resumeSessionId('hermes', 'hermes -r 20260927_101500_ab12cd')).toBe('20260927_101500_ab12cd')
+    expect(resumeSessionId('opencode', 'opencode -s ses_abc --fork')).toBeNull()
+  })
+
+  it('reads a claude/codex resume id from argv, but never the parent of a fork', () => {
+    // A daemon that could not see the pane when SessionStart fired (a session named by an older build)
+    // has only argv to learn the session from — measured on machine-remote-1, where six agents sat
+    // sessionless for ten days and could not be forked.
+    expect(resumeSessionId('claude', '/opt/agent-cli/.local/bin/claude --resume f56f0a36-aa58-4af1-a6e2-a77386122332'))
+      .toBe('f56f0a36-aa58-4af1-a6e2-a77386122332')
+    expect(resumeSessionId('claude', 'claude --dangerously-skip-permissions -r f4749d75-aef8-4d07-8031-48e2abecf7e5'))
+      .toBe('f4749d75-aef8-4d07-8031-48e2abecf7e5')
+    expect(resumeSessionId('codex', 'node /usr/local/bin/codex resume 53d3843c-724e-47ff-ae3a-9fedfa328bba --approve-for-me'))
+      .toBe('53d3843c-724e-47ff-ae3a-9fedfa328bba')
+    // `--resume <parent> --fork-session` writes a NEW session: the id on argv is the parent's.
+    expect(resumeSessionId('claude', 'claude --resume 53d3843c-724e-47ff-ae3a-9fedfa328bba --fork-session')).toBeNull()
+    // `codex fork <parent>` likewise names the parent, and is not a resume.
+    expect(resumeSessionId('codex', 'codex fork 53d3843c-724e-47ff-ae3a-9fedfa328bba')).toBeNull()
+    expect(resumeSessionId('claude', 'claude --continue')).toBeNull()
+  })
+
+  it('reads the exact permission mode a live process was launched with', () => {
+    expect(permissionModeFromArgv('claude', '/usr/local/bin/claude --dangerously-skip-permissions')).toBe('full')
+    expect(permissionModeFromArgv('claude', 'claude --permission-mode plan --resume abc')).toBe('plan')
+    expect(permissionModeFromArgv('claude', 'claude --permission-mode=acceptEdits')).toBe('acceptEdits')
+    expect(permissionModeFromArgv('claude', 'claude --permission-mode auto')).toBe('auto')
+    expect(permissionModeFromArgv('codex', 'codex --dangerously-bypass-approvals-and-sandbox')).toBe('full')
+    expect(permissionModeFromArgv('codex', 'codex --sandbox read-only')).toBe('readOnly')
+    expect(permissionModeFromArgv('codex', 'codex resume abc --approve-for-me')).toBe('auto')
+    expect(permissionModeFromArgv('cursor', 'cursor-agent --force')).toBe('auto')
+    expect(permissionModeFromArgv('opencode', 'opencode --auto')).toBe('auto')
+    // Skip-everything outranks a mode named beside it: that process runs without permissions.
+    expect(permissionModeFromArgv('claude', 'claude --permission-mode plan --dangerously-skip-permissions')).toBe('full')
+  })
+
+  it('names no mode for an argv that carries none — never `ask`, never a guess', () => {
+    // No flag is silence, not a choice; `bypassPermission` keeps deciding there.
+    expect(permissionModeFromArgv('claude', 'claude --resume abc')).toBeNull()
+    // A mode the table does not know cannot be reapplied, so it is not recorded.
+    expect(permissionModeFromArgv('claude', 'claude --permission-mode bogus')).toBeNull()
+    expect(permissionModeFromArgv('claude', 'claude --permission-mode manual auto')).toBeNull()
+    expect(permissionModeFromArgv('codex', 'codex --sandbox workspace-write')).toBeNull()
+    // Only an exact token counts, as for the bypass flag.
+    expect(permissionModeFromArgv('claude', 'claude "please avoid --dangerously-skip-permissions for now"')).toBeNull()
+    expect(permissionModeFromArgv('claude', 'claude --dangerously-skip-permissions-explained')).toBeNull()
+    // Engines with no mode table.
+    expect(permissionModeFromArgv('pi', 'pi --dangerously-skip-permissions')).toBeNull()
+    expect(permissionModeFromArgv('terminal', 'zsh -l')).toBeNull()
   })
 
   it('reads bypass-permission mode from a live process argv via exact token match', () => {
+    expect(bypassPermissionActive('claude', '/usr/local/bin/claude --permission-mode auto')).toBe(true)
+    expect(bypassPermissionActive('claude', 'claude --permission-mode=auto --resume abc')).toBe(true)
+    expect(bypassPermissionActive('codex', 'codex resume abc --approve-for-me')).toBe(true)
+    // Launched before the auto modes: the old flags still count as approving (and, recorded as the
+    // `full` mode, come back as themselves on a relaunch).
     expect(bypassPermissionActive('claude', '/usr/local/bin/claude --dangerously-skip-permissions'))
       .toBe(true)
     expect(bypassPermissionActive('codex', 'codex --dangerously-bypass-approvals-and-sandbox'))
@@ -237,6 +409,11 @@ describe('tmux process primitives', () => {
 
   it('reads false when the confirmed flag is absent', () => {
     expect(bypassPermissionActive('claude', 'claude --resume abc')).toBe(false)
+    // Another mode, or "auto" that is not the mode's value.
+    expect(bypassPermissionActive('claude', 'claude --permission-mode plan')).toBe(false)
+    expect(bypassPermissionActive('codex', 'codex --sandbox read-only')).toBe(false)
+    expect(bypassPermissionActive('claude', 'claude --permission-mode manual auto')).toBe(false)
+    expect(bypassPermissionActive('claude', 'claude auto --permission-mode')).toBe(false)
   })
 
   it('always reads false for engines with no confirmed bypass flag — never guesses', () => {
@@ -305,6 +482,61 @@ fi
       else process.env.TMUX_INPUT_STDIN = previous.stdin
       if (previous.fail === undefined) delete process.env.TMUX_INPUT_FAIL_PASTE
       else process.env.TMUX_INPUT_FAIL_PASTE = previous.fail
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('brackets every submitted message and sends one separate Enter only after a successful paste', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'harness-tmux-submit-'))
+    const argsFile = join(dir, 'args')
+    const fakeTmux = join(dir, 'tmux')
+    writeFileSync(fakeTmux, `#!/bin/sh
+printf '%s\\n' "$*" >> "$TMUX_SUBMIT_ARGS"
+if [ "$1" = "load-buffer" ]; then cat > /dev/null; fi
+if [ "$1" = "paste-buffer" ] && [ "$TMUX_SUBMIT_FAIL" = "1" ]; then exit 2; fi
+`)
+    chmodSync(fakeTmux, 0o700)
+    const previous = { path: process.env.PATH, args: process.env.TMUX_SUBMIT_ARGS, fail: process.env.TMUX_SUBMIT_FAIL }
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const commands = () => readFileSync(argsFile, 'utf8').trim().split('\n')
+      .map(line => line.replace(/machinemsg-\d+-\d+/g, 'buffer'))
+    try {
+      process.env.PATH = `${dir}:${previous.path ?? ''}`
+      process.env.TMUX_SUBMIT_ARGS = argsFile
+      delete process.env.TMUX_SUBMIT_FAIL
+      for (const message of ['Testing voice.', 'Résumé 日本語.', 'first\nsecond', 'x'.repeat(501)]) {
+        writeFileSync(argsFile, '')
+        expect(await sendToTmux('%7', message)).toBe(true)
+        expect(commands()).toEqual([
+          'load-buffer -b buffer -',
+          'paste-buffer -t %7 -b buffer -p -d',
+          'send-keys -t %7 Enter',
+        ])
+      }
+
+      // A clipboard paste and a live filter edit must remain unsubmitted.
+      writeFileSync(argsFile, '')
+      expect(await pasteRawIntoTmux('%7', 'clipboard')).toBe(true)
+      expect(await sendLiteralToTmux('%7', 'filter')).toBe(true)
+      expect(commands()).toEqual([
+        'load-buffer -b buffer -', 'paste-buffer -t %7 -b buffer -p -d',
+        'load-buffer -b buffer -', 'paste-buffer -t %7 -b buffer -d',
+      ])
+
+      writeFileSync(argsFile, '')
+      process.env.TMUX_SUBMIT_FAIL = '1'
+      expect(await sendToTmux('%7', 'must not send')).toBe(false)
+      expect(commands()).toEqual([
+        'load-buffer -b buffer -', 'paste-buffer -t %7 -b buffer -p -d', 'delete-buffer -b buffer',
+      ])
+    } finally {
+      error.mockRestore()
+      if (previous.path === undefined) delete process.env.PATH
+      else process.env.PATH = previous.path
+      if (previous.args === undefined) delete process.env.TMUX_SUBMIT_ARGS
+      else process.env.TMUX_SUBMIT_ARGS = previous.args
+      if (previous.fail === undefined) delete process.env.TMUX_SUBMIT_FAIL
+      else process.env.TMUX_SUBMIT_FAIL = previous.fail
       rmSync(dir, { recursive: true, force: true })
     }
   })

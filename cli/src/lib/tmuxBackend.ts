@@ -22,8 +22,10 @@ import {
 import { TmuxControlStream } from './tmuxStream.js'
 import {
   captureTmuxPane,
+  ENGINE_EXIT_PANE_OPTION,
   listPaneTitles,
-  resolvePaneEngineProcess,
+  LSTART_MARKER_RE,
+  lookupPaneEngineProcess,
   sendKeyToTmux,
   sendLiteralToTmux,
   sendToTmux,
@@ -31,7 +33,7 @@ import {
   setPaneWindowStyle,
 } from './tmux.js'
 import { DEFAULT_HOST_THEME, windowStyleOf, type HostTheme } from './hostTheme.js'
-import { listTmuxPanes } from './tmuxAgentDiscovery.js'
+import { isNoTmuxServerError, listTmuxPanes } from './tmuxAgentDiscovery.js'
 import { terminalRouteKey } from './terminalRuntime.js'
 
 const TMUX_KEYS: Record<TerminalLogicalKey, string> = {
@@ -93,6 +95,8 @@ export class TmuxBackend implements TerminalBackend<TmuxRuntimeRef> {
 
   /** What each Harness pane's `window-style` was last set to, so a scan re-applies only changes. */
   private readonly styledPanes = new Map<string, string>()
+  private readonly desiredStyles = new Map<string, string>()
+  private readonly stylingPanes = new Set<string>()
 
   /**
    * [hostTheme] answers with the desktop's current pane colours (see `hostTheme.ts`); read at every
@@ -161,7 +165,13 @@ export class TmuxBackend implements TerminalBackend<TmuxRuntimeRef> {
    * instead of taking the pane down with it. Whoever calls this owns turning it back off.
    */
   async respawn(runtime: TmuxRuntimeRef, request: TerminalRespawnRequest): Promise<TerminalActionResult> {
-    const args = ['set-option', '-w', '-t', runtime.paneId, 'remain-on-exit', 'on', ';', 'respawn-pane', '-k']
+    // The engine-exit marker is the pane's, and a respawned pane is a new launch: cleared here, in
+    // the same invocation, or the new engine would read as exited the moment it started.
+    const args = [
+      'set-option', '-w', '-t', runtime.paneId, 'remain-on-exit', 'on', ';',
+      'set-option', '-p', '-t', runtime.paneId, ENGINE_EXIT_PANE_OPTION, '', ';',
+      'respawn-pane', '-k',
+    ]
     if (request.cwd) args.push('-c', request.cwd)
     for (const [key, value] of Object.entries(request.env ?? {})) args.push('-e', `${key}=${value}`)
     args.push('-t', runtime.paneId, ...request.command)
@@ -180,12 +190,26 @@ export class TmuxBackend implements TerminalBackend<TmuxRuntimeRef> {
   }
 
   async kill(runtime: TmuxRuntimeRef): Promise<TerminalActionResult> {
-    const sessionId = await this.resolveSessionId(runtime.paneId)
-    if (!sessionId) return terminalActionNotStarted('tmux session could not be resolved from pane')
+    if (!/^%\d+$/.test(runtime.paneId)) return terminalActionNotStarted('invalid tmux pane identity')
+    // Discovered harnesses can share a tmux session with unrelated work. The
+    // canonical pane id is the entire target; never widen this to kill-session.
     const ok = await new Promise<boolean>((resolve) => {
-      execFile('tmux', ['kill-session', '-t', sessionId], { timeout: 5_000 }, (error) => resolve(!error))
+      execFile('tmux', ['kill-pane', '-t', runtime.paneId], { timeout: 5_000 }, (error) => resolve(!error))
     })
-    return legacyActionResult(ok, 'tmux session close')
+    if (ok) return TERMINAL_ACTION_SUCCEEDED
+    // The engine may have exited and removed its pane before the parallel PID
+    // check completed. Only authoritative inventory makes that an idempotent success.
+    // Use all panes here: discovery deliberately hides sessions that were renamed
+    // or created elsewhere, and their absence from discovery is not proof of exit.
+    const absent = await new Promise<boolean>(resolve => {
+      execFile('tmux', ['list-panes', '-a', '-F', '#{pane_id}'], { timeout: 2_000 }, (error, stdout) => {
+        if (error) { resolve(isNoTmuxServerError(error.message)); return }
+        const ids = stdout.trim().split('\n').filter(Boolean)
+        resolve(ids.every(id => /^%\d+$/.test(id)) && !ids.includes(runtime.paneId))
+      })
+    })
+    if (absent) return TERMINAL_ACTION_SUCCEEDED
+    return legacyActionResult(false, 'tmux pane close')
   }
 
   /**
@@ -263,23 +287,48 @@ export class TmuxBackend implements TerminalBackend<TmuxRuntimeRef> {
   private restyle(panes: readonly string[]): void {
     const style = windowStyleOf(this.hostTheme())
     const live = new Set(panes)
-    for (const pane of panes) {
-      if (this.styledPanes.get(pane) === style) continue
-      // Recorded only once tmux has taken it: a pane recorded on the attempt would never be
-      // retried after a timeout, until the theme happened to change again.
-      void setPaneWindowStyle(pane, style).then((applied) => {
-        if (applied && live.has(pane)) this.styledPanes.set(pane, style)
-      })
+    for (const pane of this.desiredStyles.keys()) {
+      if (!live.has(pane)) this.desiredStyles.delete(pane)
     }
-    for (const pane of [...this.styledPanes.keys()]) {
+    for (const pane of this.styledPanes.keys()) {
       if (!live.has(pane)) this.styledPanes.delete(pane)
     }
+    for (const pane of panes) {
+      this.desiredStyles.set(pane, style)
+      this.applyStyle(pane)
+    }
+  }
+
+  private applyStyle(pane: string): void {
+    const style = this.desiredStyles.get(pane)
+    if (style === undefined || this.stylingPanes.has(pane) || this.styledPanes.get(pane) === style) return
+    // Serialize writes per pane: scans can overlap a slow tmux command or a theme change.
+    this.stylingPanes.add(pane)
+    void setPaneWindowStyle(pane, style).then((applied) => {
+      if (applied && this.desiredStyles.has(pane)) this.styledPanes.set(pane, style)
+    }).finally(() => {
+      this.stylingPanes.delete(pane)
+      // Apply a newer theme immediately, but retry a failed unchanged write on the next scan.
+      if (this.desiredStyles.get(pane) !== style) this.applyStyle(pane)
+    })
   }
 
   async validate(runtime: TmuxRuntimeRef, expected: TerminalProcessExpectation): Promise<RuntimeValidation> {
     try {
-      const live = await resolvePaneEngineProcess(runtime.paneId, expected.engine)
-      if (!live) return { state: 'gone', reason: `no ${expected.engine} process under tmux pane` }
+      const found = await lookupPaneEngineProcess(runtime.paneId, expected.engine)
+      if (!found.ok) return { state: found.unknown ? 'unknown' : 'gone', reason: found.reason }
+      const live = found.identity
+      // A saved marker that is not a C-locale `lstart` stamp was written either by the pre-fix parser,
+      // with its fields shifted, or by a `ps` that still inherited the user's LC_TIME (see psEnv in
+      // lib/childLocale.ts). Either way it can never equal the corrected stamp for the same live
+      // process, so comparing it would report a running engine as gone — once, on the upgrade that
+      // fixed the reading. The pane still has a matching engine process; take it.
+      //
+      // Resume's checkSessionRuntime makes the same allowance. The coordinator passes persisted
+      // identities directly here when validating or acquiring a terminal lease.
+      if (expected.processIdentity && !LSTART_MARKER_RE.test(expected.processIdentity.startMarker)) {
+        return { state: 'alive' }
+      }
       if (expected.processIdentity
         && (expected.processIdentity.pid !== live.pid || expected.processIdentity.startMarker !== live.startMarker)) {
         return { state: 'gone', reason: 'process changed under tmux pane' }
@@ -349,16 +398,17 @@ export class TmuxBackend implements TerminalBackend<TmuxRuntimeRef> {
    * `TmuxControlStream.open` reads `paneMeta` first and refuses a missing pane and a multi-pane
    * window. Dropping the check also takes a whole-process-table `ps` scan off every terminal open.
    *
-   * `expected` stays in the signature because `TerminalBackend` defines it and Herdr may still want
-   * it; it is intentionally unused here.
+   * `expected` stays in the signature because `TerminalBackend` defines it; it is intentionally
+   * unused here.
    */
   async openStream(
     runtime: TmuxRuntimeRef,
     expected: TerminalProcessExpectation,
     size: TerminalStreamSize,
     sink: TerminalStreamSink,
+    readOnly?: boolean,
   ): Promise<TerminalReadResult<TerminalStreamHandle<TmuxRuntimeRef>>> {
     void expected
-    return TmuxControlStream.open(runtime.paneId, size, sink)
+    return TmuxControlStream.open(runtime.paneId, size, sink, readOnly)
   }
 }

@@ -38,6 +38,61 @@ class BufferLine with IndexedItem {
   int get textVersion => _textVersion;
   int _textVersion = 0;
 
+  /// Changes whenever anything that affects how this line is drawn changes —
+  /// text, colours or attributes. A renderer can reuse its drawing of the line
+  /// while it holds. Writing a cell with the value it already has does not
+  /// count: a TUI repainting its whole screen rewrites mostly identical cells,
+  /// and treating those as changes would make every line new on every redraw.
+  int get paintVersion => _paintVersion;
+  int _paintVersion = 0;
+
+  /// Store one cell's four words, noting in [paintVersion] if any differ.
+  @pragma('vm:prefer-inline')
+  void _store(int offset, int foreground, int background, int attrs, int content) {
+    final data = _data;
+    if (data[offset + _cellForeground] == foreground &&
+        data[offset + _cellBackground] == background &&
+        data[offset + _cellAttributes] == attrs &&
+        data[offset + _cellContent] == content) {
+      return;
+    }
+    data[offset + _cellForeground] = foreground;
+    data[offset + _cellBackground] = background;
+    data[offset + _cellAttributes] = attrs;
+    data[offset + _cellContent] = content;
+    _paintVersion++;
+  }
+
+  /// Store one word of a cell, noting in [paintVersion] if it differs.
+  @pragma('vm:prefer-inline')
+  void _storeWord(int index, int value) {
+    if (_data[index] == value) return;
+    _data[index] = value;
+    _paintVersion++;
+  }
+
+  /// The OSC 8 target of each cell, parallel to [_data]. Allocated on the
+  /// first linked cell written, so a line with no links costs nothing.
+  List<String?>? _links;
+
+  /// The OSC 8 hyperlink target of the cell at [index], or null.
+  String? getHyperlink(int index) {
+    final links = _links;
+    return links == null || index >= links.length ? null : links[index];
+  }
+
+  @pragma('vm:prefer-inline')
+  void _storeLink(int index, String? uri) {
+    var links = _links;
+    if (links == null) {
+      if (uri == null) return;
+      links = _links = List<String?>.filled(_data.length ~/ _cellSize, null);
+    }
+    if (links[index] == uri) return;
+    links[index] = uri;
+    _paintVersion++;
+  }
+
   final _anchors = <CellAnchor>[];
 
   List<CellAnchor> get anchors => _anchors;
@@ -77,29 +132,27 @@ class BufferLine with IndexedItem {
   CellData createCellData(int index) {
     _textVersion++;
     final cellData = CellData.empty();
-    final offset = index * _cellSize;
-    _data[offset + _cellForeground] = cellData.foreground;
-    _data[offset + _cellBackground] = cellData.background;
-    _data[offset + _cellAttributes] = cellData.flags;
-    _data[offset + _cellContent] = cellData.content;
+    _store(index * _cellSize, cellData.foreground, cellData.background,
+        cellData.flags, cellData.content);
+    _storeLink(index, null);
     return cellData;
   }
 
   void setForeground(int index, int value) {
-    _data[index * _cellSize + _cellForeground] = value;
+    _storeWord(index * _cellSize + _cellForeground, value);
   }
 
   void setBackground(int index, int value) {
-    _data[index * _cellSize + _cellBackground] = value;
+    _storeWord(index * _cellSize + _cellBackground, value);
   }
 
   void setAttributes(int index, int value) {
-    _data[index * _cellSize + _cellAttributes] = value;
+    _storeWord(index * _cellSize + _cellAttributes, value);
   }
 
   void setContent(int index, int value) {
     _textVersion++;
-    _data[index * _cellSize + _cellContent] = value;
+    _storeWord(index * _cellSize + _cellContent, value);
   }
 
   void setCodePoint(int index, int char) {
@@ -109,38 +162,29 @@ class BufferLine with IndexedItem {
 
   void setCell(int index, int char, int witdh, CursorStyle style) {
     _textVersion++;
-    final offset = index * _cellSize;
-    _data[offset + _cellForeground] = style.foreground;
-    _data[offset + _cellBackground] = style.background;
-    _data[offset + _cellAttributes] = style.attrs;
-    _data[offset + _cellContent] = char | (witdh << CellContent.widthShift);
+    _store(index * _cellSize, style.foreground, style.background, style.attrs,
+        char | (witdh << CellContent.widthShift));
+    _storeLink(index, style.hyperlink);
   }
 
   void setCellData(int index, CellData cellData) {
     _textVersion++;
-    final offset = index * _cellSize;
-    _data[offset + _cellForeground] = cellData.foreground;
-    _data[offset + _cellBackground] = cellData.background;
-    _data[offset + _cellAttributes] = cellData.flags;
-    _data[offset + _cellContent] = cellData.content;
+    _store(index * _cellSize, cellData.foreground, cellData.background,
+        cellData.flags, cellData.content);
+    _storeLink(index, null);
   }
 
   void eraseCell(int index, CursorStyle style) {
     _textVersion++;
-    final offset = index * _cellSize;
-    _data[offset + _cellForeground] = style.foreground;
-    _data[offset + _cellBackground] = style.background;
-    _data[offset + _cellAttributes] = style.attrs;
-    _data[offset + _cellContent] = 0;
+    _store(
+        index * _cellSize, style.foreground, style.background, style.attrs, 0);
+    _storeLink(index, null);
   }
 
   void resetCell(int index) {
     _textVersion++;
-    final offset = index * _cellSize;
-    _data[offset + _cellForeground] = 0;
-    _data[offset + _cellBackground] = 0;
-    _data[offset + _cellAttributes] = 0;
-    _data[offset + _cellContent] = 0;
+    _store(index * _cellSize, 0, 0, 0, 0);
+    _storeLink(index, null);
   }
 
   /// Erase cells whose index satisfies [start] <= index < [end]. Erased cells
@@ -170,12 +214,19 @@ class BufferLine with IndexedItem {
 
     style ??= CursorStyle.empty;
 
+    if (count > 0) _paintVersion++;
     if (start + count < _length) {
       final moveStart = start * _cellSize;
       final moveEnd = (_length - count) * _cellSize;
       final moveOffset = count * _cellSize;
       for (var i = moveStart; i < moveEnd; i++) {
         _data[i] = _data[i + moveOffset];
+      }
+      final links = _links;
+      if (links != null) {
+        for (var i = start; i < _length - count; i++) {
+          links[i] = links[i + count];
+        }
       }
     }
 
@@ -208,12 +259,19 @@ class BufferLine with IndexedItem {
       eraseCell(start - 1, style);
     }
 
+    if (count > 0) _paintVersion++;
     if (start + count < _length) {
       final moveStart = start * _cellSize;
       final moveEnd = (_length - count) * _cellSize;
       final moveOffset = count * _cellSize;
       for (var i = moveEnd - 1; i >= moveStart; i--) {
         _data[i + moveOffset] = _data[i];
+      }
+      final links = _links;
+      if (links != null) {
+        for (var i = _length - count - 1; i >= start; i--) {
+          links[i + count] = links[i];
+        }
       }
     }
 
@@ -254,10 +312,16 @@ class BufferLine with IndexedItem {
         final newBuffer = Uint32List(newBufferSize);
         newBuffer.setRange(0, _data.length, _data);
         _data = newBuffer;
+        final links = _links;
+        if (links != null) {
+          _links = List<String?>.filled(newBufferSize ~/ _cellSize, null)
+            ..setRange(0, links.length, links);
+        }
       }
     }
 
     _textVersion++;
+    _paintVersion++;
     _length = length;
 
     for (var i = 0; i < _anchors.length; i++) {
@@ -300,6 +364,7 @@ class BufferLine with IndexedItem {
   /// line.
   void copyFrom(BufferLine src, int srcCol, int dstCol, int len) {
     _textVersion++;
+    _paintVersion++;
     resize(dstCol + len);
 
     // data.setRange(
@@ -313,6 +378,9 @@ class BufferLine with IndexedItem {
 
     for (var i = 0; i < len * _cellSize; i++) {
       _data[dstOffset++] = src._data[srcOffset++];
+    }
+    for (var i = 0; i < len; i++) {
+      _storeLink(dstCol + i, src.getHyperlink(srcCol + i));
     }
   }
 

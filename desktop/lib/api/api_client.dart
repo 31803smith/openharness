@@ -1,52 +1,332 @@
+import 'dart:collection';
+
 import 'package:dio/dio.dart';
 
 import '../auth/auth_session.dart';
 import '../core/config.dart';
 import '../core/models.dart';
 import '../logging/http_log.dart';
+import '../ws/local_daemon_transport.dart';
+import 'access_token_source.dart';
+import 'bearer_auth_interceptor.dart';
 
-/// Control-plane REST client. Every call here goes to the LOCAL `harness` CLI
-/// (loopback, no credential — see CLAUDE.md's naming/architecture notes for why), which proxies to
-/// the real backend using its own saved SSO session. This app never holds a bearer token itself.
-/// Terminal bytes ride the local WS path (relayed transparently for non-local machines).
+/// Rows and freshness from one response, even when requests overlap.
+class MachineInventory extends UnmodifiableListView<Machine> {
+  MachineInventory(super.source, {required this.isStale});
+
+  final bool isStale;
+}
+
+/// Control-plane REST client.
+///
+/// In a desktop build every call goes to the LOCAL `harness` CLI (loopback, no credential — see
+/// CLAUDE.md's naming/architecture notes for why), which proxies to the real backend using its own
+/// saved SSO session, and this app never holds a bearer token itself. A viewer build has no CLI:
+/// given [auth], the same calls go straight to the backend, signed with the session the app holds.
+/// Terminal bytes ride the WS path either way.
 class ApiClient {
   final AppConfig config;
   final AuthSession session;
-  late final Dio _dio = attachHttpLog(
-    Dio(
-      BaseOptions(
-        baseUrl: config.localCliBaseUrl,
-        connectTimeout: const Duration(seconds: 15),
-        receiveTimeout: const Duration(seconds: 30),
-        // Let the API wrapper turn HTTP failures into short, user-facing
-        // ApiExceptions. Transport failures still surface as DioExceptions.
-        validateStatus: (status) =>
-            status != null && status >= 200 && status < 600,
+  final AccessTokenSource? auth;
+
+  /// How the local CLI is reached — its Unix socket or the loopback port (see
+  /// [LocalDaemonTransport]). Null keeps the loopback port, as before.
+  final LocalDaemonTransport? localTransport;
+  late final Dio _dio = _buildDio();
+
+  ApiClient({
+    required this.config,
+    required this.session,
+    this.auth,
+    this.localTransport,
+  });
+
+  Dio _buildDio() {
+    final dio = attachHttpLog(
+      Dio(
+        BaseOptions(
+          baseUrl: auth == null ? config.localCliBaseUrl : config.apiBaseUrl,
+          connectTimeout: const Duration(seconds: 15),
+          receiveTimeout: const Duration(seconds: 30),
+          // Let the API wrapper turn HTTP failures into short, user-facing
+          // ApiExceptions. Transport failures still surface as DioExceptions.
+          validateStatus: (status) =>
+              status != null && status >= 200 && status < 600,
+        ),
       ),
-    ),
-  );
-
-  ApiClient({required this.config, required this.session});
-
-  dynamic _unwrap(Response res) {
-    final body = res.data;
-    if (body is Map && body['success'] == true) {
-      return body['data'];
-    }
-    final error = body is Map ? body['error'] : null;
-    final serverMessage = error is Map ? error['message'] : null;
-    throw ApiException(
-      serverMessage is String && serverMessage.isNotEmpty
-          ? serverMessage
-          : 'Request failed (${res.statusCode})',
-      status: res.statusCode,
     );
+    final transport = localTransport;
+    if (auth == null && transport != null) {
+      dio.httpClientAdapter = LocalDaemonHttpAdapter(
+        transport,
+        daemonBase: Uri.parse(config.localCliBaseUrl),
+      );
+    }
+    final source = auth;
+    if (source != null) {
+      dio.interceptors.add(
+        BearerAuthInterceptor(source, dio, autonomousEnv: config.autonomousEnv),
+      );
+    }
+    return dio;
   }
 
   // -- auth (proxied by the local CLI — no credential on this leg) --
+  String _commandBarPath(String path) {
+    // A separate loopback service lets an experimental UI use the existing session daemon.
+    const override = String.fromEnvironment('JEV_COMMAND_BAR_URL');
+    if (override.isEmpty) return path;
+    final uri = Uri.parse(override);
+    if (uri.scheme != 'http' ||
+        uri.host != '127.0.0.1' ||
+        uri.userInfo.isNotEmpty ||
+        uri.hasQuery ||
+        uri.hasFragment ||
+        (uri.path.isNotEmpty && uri.path != '/')) {
+      throw const FormatException(
+        'JEV_COMMAND_BAR_URL must be a loopback HTTP origin.',
+      );
+    }
+    return uri.replace(path: path).toString();
+  }
+
+  Future<Map<String, dynamic>> commandBarStatus() async {
+    final response = await _dio.get(
+      _commandBarPath('/api/command-bar/status'),
+      options: Options(headers: {'x-adapter-local': '1'}),
+    );
+    return Map<String, dynamic>.from(unwrapApiResponse(response) as Map);
+  }
+
+  Future<Map<String, dynamic>> resolveCommandBar(
+    Map<String, dynamic> request, {
+    required CancelToken cancelToken,
+  }) async {
+    final response = await _dio.post(
+      _commandBarPath('/api/command-bar/resolve'),
+      data: request,
+      cancelToken: cancelToken,
+      options: Options(
+        headers: {'x-adapter-local': '1'},
+        receiveTimeout: const Duration(seconds: 15),
+      ),
+    );
+    return Map<String, dynamic>.from(unwrapApiResponse(response) as Map);
+  }
+
   Future<Map<String, dynamic>?> me() async {
     final res = await _dio.get('/api/auth/me');
-    return _unwrap(res) as Map<String, dynamic>?;
+    return unwrapApiResponse(res) as Map<String, dynamic>?;
+  }
+
+  // -- the desk: the account's tabs, the same on every computer (proxied by the local CLI) --
+
+  /// `{revision, tabs}` as the backend holds it; null when the daemon predates the desk (404) or is
+  /// signed out (401) — the app then keeps its tabs to itself, as it did before the desk existed.
+  Future<Map<String, dynamic>?> desk() async {
+    final res = await _dio.get('/api/desk');
+    if (res.statusCode == 404 || res.statusCode == 401) return null;
+    return unwrapApiResponse(res) as Map<String, dynamic>?;
+  }
+
+  /// Apply [ops] to the desk (backend routes/desk.ts); answers the desk as it is afterwards. Null
+  /// under the same two conditions as [desk].
+  Future<Map<String, dynamic>?> deskOps(List<Map<String, dynamic>> ops) async {
+    final res = await _dio.post(
+      '/api/desk/ops',
+      data: {'ops': ops},
+      options: Options(headers: {'x-adapter-local': '1'}),
+    );
+    if (res.statusCode == 404 || res.statusCode == 401) return null;
+    return unwrapApiResponse(res) as Map<String, dynamic>?;
+  }
+
+  // -- account-wide Experimental preferences --
+  Future<Map<String, dynamic>> experimentalSettings() async {
+    final res = await _dio.get('/api/experimental-settings');
+    return Map<String, dynamic>.from(unwrapApiResponse(res) as Map);
+  }
+
+  Future<Map<String, dynamic>> setExperimentalSetting(
+    String accountId,
+    String feature,
+    bool enabled,
+  ) async {
+    final res = await _dio.patch(
+      '/api/experimental-settings',
+      data: {'accountId': accountId, 'feature': feature, 'enabled': enabled},
+      options: Options(headers: {'x-adapter-local': '1'}),
+    );
+    return Map<String, dynamic>.from(unwrapApiResponse(res) as Map);
+  }
+
+  /// The account's collection; null when disabled or signed out. A failed read throws.
+  Future<Map<String, dynamic>?> zoo() async {
+    final res = await _dio.get('/api/zoo');
+    if (res.statusCode == 404 || res.statusCode == 401) return null;
+    return unwrapApiResponse(res) as Map<String, dynamic>?;
+  }
+
+  /// Apply [ops] in order; answers `{revision, zoo, hatched}`. Null under the same two
+  /// conditions as [zoo].
+  Future<Map<String, dynamic>?> zooOps(List<Map<String, dynamic>> ops) async {
+    final res = await _dio.post(
+      '/api/zoo/ops',
+      data: {'ops': ops},
+      options: Options(headers: {'x-adapter-local': '1'}),
+    );
+    if (res.statusCode == 404 || res.statusCode == 401) return null;
+    return unwrapApiResponse(res) as Map<String, dynamic>?;
+  }
+
+  // -- pairing a phone (Harness ▸ Add Phone…) --
+
+  /// `POST /api/pair` — hand THIS computer's daemon the one-time code the Add
+  /// Phone QR is showing, so it runs the end-to-end-encryption handshake with
+  /// the phone that scanned it. The same call `harness pair <code>` makes
+  /// (cli.ts `pairCommand`, hookServer.ts `/api/pair`).
+  ///
+  /// Answers the HTTP status and the daemon's own body, untouched: this route
+  /// does NOT speak the `{success, data, error}` envelope [unwrapApiResponse]
+  /// reads — it answers `{label, fingerprint}` on success and `{error: CODE}`
+  /// otherwise — so the caller (`widgets/add_phone_dialog.dart`) reads the
+  /// code itself. A transport failure still throws its [DioException].
+  ///
+  /// ⚠️ A LONG POLL, hence its own receive timeout. With no phone waiting the
+  /// daemon answers at once (`NO_INTENT`); with one, it holds the request
+  /// until the handshake is over, which its own round timers bound at 15 s a
+  /// round. The client's shared 30 s would cut a slow-but-healthy handshake
+  /// off in the middle and report a timeout for a pairing that then succeeds.
+  Future<({int status, Map<String, dynamic> body})> pair(
+    String code, {
+    CancelToken? cancelToken,
+  }) async {
+    final res = await _dio.post(
+      '/api/pair',
+      data: {'code': code},
+      cancelToken: cancelToken,
+      // A write, so the daemon's CSRF gate wants the local header — as it
+      // does for renaming a machine.
+      options: Options(
+        headers: {'x-adapter-local': '1'},
+        receiveTimeout: const Duration(seconds: 60),
+        // 409 is "no phone yet" (NO_INTENT / EXPIRED / BUSY), asked every
+        // 1.5 s while the dialog is open: not a failure worth a log line.
+        extra: {
+          httpLogRoutineStatusesKey: const <int>{409},
+        },
+      ),
+    );
+    final body = res.data;
+    return (
+      status: res.statusCode ?? 0,
+      body: body is Map ? Map<String, dynamic>.from(body) : <String, dynamic>{},
+    );
+  }
+
+  /// A one-time code that signs a phone in to this account: the Add Phone
+  /// QR's `h=`, which the phone redeems for a session of its own instead of
+  /// asking for an emailed code (backend `lib/harnessSession.ts`).
+  ///
+  /// Minted by the backend against the daemon's own session, and the daemon
+  /// hands it out over its owner-only socket and nowhere else — a code that
+  /// signs a device in is a credential. So null is an ordinary answer: an
+  /// older daemon or backend, this app on the TCP fallback, the backend down.
+  /// The QR then goes without it and the phone falls back to the email code.
+  Future<({String code, Duration ttl})?> phoneSignInCode() async {
+    try {
+      final res = await _dio.post(
+        '/api/auth/handoff',
+        data: const <String, Object?>{},
+        options: Options(headers: {'x-adapter-local': '1'}),
+      );
+      final data = unwrapApiResponse(res);
+      final code = data is Map ? data['code'] : null;
+      final expiresIn = data is Map ? data['expiresIn'] : null;
+      if (code is! String || code.isEmpty) return null;
+      return (
+        code: code,
+        ttl: Duration(
+          seconds: expiresIn is int && expiresIn > 0 ? expiresIn : 60,
+        ),
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// What this computer trusts to read and drive its terminals — every phone
+  /// paired by QR or password, and every computer linked to it — as the
+  /// daemon keeps them (`GET /api/pairs`, the list `harness pairings` prints).
+  /// Null when the daemon cannot say; the dialog then shows no list.
+  Future<List<PairedDevice>?> pairedDevices() async {
+    try {
+      final res = await _dio.get('/api/pairs');
+      final data = res.data;
+      final pairs = data is Map ? data['pairs'] : null;
+      if (res.statusCode != 200 || pairs is! List) return null;
+      return [for (final raw in pairs) ?PairedDevice.fromJson(raw)];
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Take [fingerprint]'s trust away: it can no longer read or drive this
+  /// computer, and any session it has open is dropped (`POST /api/revoke`,
+  /// what `harness unpair` sends). True when the daemon did it.
+  Future<bool> removePairedDevice(String fingerprint) async {
+    try {
+      final res = await _dio.post(
+        '/api/revoke',
+        data: {'id': fingerprint},
+        options: Options(headers: {'x-adapter-local': '1'}),
+      );
+      final data = res.data;
+      return res.statusCode == 200 && !(data is Map && data['error'] != null);
+    } catch (_) {
+      return false;
+    }
+  }
+
+  // -- the Harness Store: ratings and reviews (control plane, proxied by the local CLI) --
+  Future<Map<String, dynamic>?> storeRatings() async {
+    final res = await _dio.get('/api/store/ratings');
+    return unwrapApiResponse(res) as Map<String, dynamic>?;
+  }
+
+  Future<Map<String, dynamic>?> storeReviews(String harnessId) async {
+    final res = await _dio.get('/api/store/harnesses/$harnessId/reviews');
+    return unwrapApiResponse(res) as Map<String, dynamic>?;
+  }
+
+  /// Write (or rewrite) the signed-in person's review of [harnessId].
+  Future<Map<String, dynamic>?> putStoreReview(
+    String harnessId, {
+    required int rating,
+    String? title,
+    String? body,
+  }) async {
+    final res = await _dio.put(
+      '/api/store/harnesses/$harnessId/review',
+      data: {
+        'rating': rating,
+        if (title != null && title.trim().isNotEmpty) 'title': title.trim(),
+        if (body != null && body.trim().isNotEmpty) 'body': body.trim(),
+      },
+      // The CLI accepts a write only from this app on this computer, as it does
+      // for renaming a machine. Without the header every review was refused
+      // with 403, which the store worded as "Sign in".
+      options: Options(headers: {'x-adapter-local': '1'}),
+    );
+    return unwrapApiResponse(res) as Map<String, dynamic>?;
+  }
+
+  Future<void> deleteStoreReview(String harnessId) async {
+    final res = await _dio.delete(
+      '/api/store/harnesses/$harnessId/review',
+      options: Options(headers: {'x-adapter-local': '1'}),
+    );
+    unwrapApiResponse(res);
   }
 
   // -- machines (control plane, proxied by the local CLI) --
@@ -55,15 +335,63 @@ class ApiClient {
   /// The daemon answers 200 with the last known-good list when the backend leg is unreachable, so a
   /// caller that only checked the status code would mistake an outage for a healthy, current read.
   bool lastMachinesStale = false;
+  List<Machine> _sharedMachines = [];
+  int _accountRevision = 0;
+  int _machineRequestRevision = 0;
+
+  /// Sharing fallback belongs to the account that loaded it. Late responses
+  /// must not refill it after sign-out or while a new sign-in is starting.
+  void resetAccountCache() {
+    ++_accountRevision;
+    _sharedMachines = [];
+    lastMachinesStale = false;
+  }
+
+  void _requireAccount(int revision) {
+    if (revision != _accountRevision) {
+      throw StateError('Account changed while loading machines.');
+    }
+  }
 
   Future<List<Machine>> machines() async {
+    final account = _accountRevision;
+    final request = ++_machineRequestRevision;
     final res = await _dio.get('/api/machines');
-    final data = _unwrap(res) as Map<String, dynamic>;
-    lastMachinesStale = data['stale'] == true;
+    _requireAccount(account);
+    final data = unwrapApiResponse(res) as Map<String, dynamic>;
+    var stale = data['stale'] == true;
     final list = data['machines'] as List<dynamic>? ?? [];
-    return list
+    final owned = list
         .map((e) => Machine.fromJson(e as Map<String, dynamic>))
         .toList();
+    var sharedMachines = _sharedMachines;
+    try {
+      final shared = await _dio.get('/api/harness-shares');
+      _requireAccount(account);
+      if (shared.statusCode == 404) {
+        sharedMachines = [];
+      } else {
+        final body = unwrapApiResponse(shared) as Map<String, dynamic>;
+        sharedMachines = [
+          for (final row in body['machines'] as List? ?? const [])
+            Machine.fromJson(Map<String, dynamic>.from(row as Map)),
+        ];
+      }
+    } catch (error) {
+      if (isUnauthorizedError(error)) rethrow;
+      stale = true;
+    }
+    _requireAccount(account);
+    if (request == _machineRequestRevision) {
+      _sharedMachines = sharedMachines;
+      lastMachinesStale = stale;
+    }
+    return MachineInventory([
+      ...owned,
+      ...sharedMachines.where(
+        (shared) => !owned.any((own) => own.machineId == shared.machineId),
+      ),
+    ], isStale: stale);
   }
 
   Future<String?> renameMachine({
@@ -75,7 +403,7 @@ class ApiClient {
       data: {'name': name},
       options: Options(headers: {'x-adapter-local': '1'}),
     );
-    final data = _unwrap(res) as Map<String, dynamic>;
+    final data = unwrapApiResponse(res) as Map<String, dynamic>;
     return data['name'] as String?;
   }
 
@@ -84,7 +412,7 @@ class ApiClient {
       '/api/machines/$machineId',
       options: Options(headers: {'x-adapter-local': '1'}),
     );
-    _unwrap(res);
+    unwrapApiResponse(res);
   }
 }
 
@@ -97,8 +425,30 @@ class ApiException implements Exception {
 }
 
 bool isUnauthorizedError(Object error) =>
-    error is DioException && error.response?.statusCode == 401 ||
+    error is AccessTokenFailure && error.signedOut ||
+    error is DioException &&
+        (error.response?.statusCode == 401 ||
+            error.error is AccessTokenFailure &&
+                (error.error as AccessTokenFailure).signedOut) ||
     error is ApiException && error.status == 401;
+
+/// Unwraps the backend's `{success, data, error}` envelope, which both legs
+/// speak: the CLI's loopback server mirrors it, and the viewer's own auth calls
+/// (`viewer/direct_auth_api.dart`) read it straight from the backend.
+dynamic unwrapApiResponse(Response res) {
+  final body = res.data;
+  if (body is Map && body['success'] == true) {
+    return body['data'];
+  }
+  final error = body is Map ? body['error'] : null;
+  final serverMessage = error is Map ? error['message'] : null;
+  throw ApiException(
+    serverMessage is String && serverMessage.isNotEmpty
+        ? serverMessage
+        : 'Request failed (${res.statusCode})',
+    status: res.statusCode,
+  );
+}
 
 /// The local daemon can answer normally while its separate backend request fails.
 /// Those gateway errors need recovery just as a broken loopback connection does.
@@ -146,4 +496,48 @@ String describeApiError(Object error) {
     }
   }
   return '$error';
+}
+
+/// One entry of [ApiClient.pairedDevices].
+class PairedDevice {
+  const PairedDevice({
+    required this.fingerprint,
+    required this.label,
+    required this.pairedAt,
+    required this.online,
+  });
+
+  final String fingerprint;
+
+  /// What the device called itself ("Dee's iPhone"). An older phone, or a
+  /// computer linked with `harness link connect`, is `harness link` — which
+  /// says nothing, so [name] says "Linked device" for it instead.
+  final String label;
+  final DateTime pairedAt;
+  final bool online;
+
+  String get name {
+    final trimmed = label.trim();
+    return trimmed.isEmpty || trimmed == 'harness link' || trimmed == 'browser'
+        ? 'Linked device'
+        : trimmed;
+  }
+
+  /// A `web` pairing: a phone or another computer. The dial (`device`) has
+  /// its own place, in Settings.
+  static PairedDevice? fromJson(Object? raw) {
+    if (raw is! Map) return null;
+    final fingerprint = raw['fingerprint'], label = raw['label'];
+    final pairedAt = raw['pairedAt'], role = raw['role'];
+    if (fingerprint is! String || fingerprint.isEmpty) return null;
+    if (role != null && role != 'web') return null;
+    return PairedDevice(
+      fingerprint: fingerprint,
+      label: label is String ? label : '',
+      pairedAt: pairedAt is num
+          ? DateTime.fromMillisecondsSinceEpoch(pairedAt.toInt())
+          : DateTime.fromMillisecondsSinceEpoch(0),
+      online: raw['online'] == true,
+    );
+  }
 }

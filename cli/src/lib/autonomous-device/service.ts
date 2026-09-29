@@ -1,20 +1,44 @@
+import { DeviceResultPayloadSchema } from './resultContract.js'
+import { DeviceResultEvidence, inputHash, type ResultEvidence } from './resultEvidence.js'
+import type { DeviceResultJournal } from './resultJournal.js'
+import type { DeviceInputStatus } from './input.js'
+import type { AutonomousDeviceStore } from './store.js'
+import { DEVICE_STORE_CAPABILITIES, DeviceStoreError } from './storeContract.js'
 import { createHash, randomUUID } from 'node:crypto'
+import type { LiveEvent } from '../normalize.js'
+import { AgentStreams, STREAM_KINDS, STREAM_TTL_DEFAULT_SEC, STREAM_TTL_MAX_SEC, StreamRequestError, type StreamKind } from './stream.js'
 
 export type AutonomousDeviceFrame = Record<string, unknown> & { type: string }
 export type ReceiptState = 'queued' | 'delivered' | 'started' | 'completed' | 'rejected' | 'unknown'
 export interface AutonomousDeviceReceipt {
   idempotencyKey: string; deliveryId: string; operation: string; state: ReceiptState
   agentId: string; machineId: string; serverInstanceId: string; turnId: string | null
+  input?: Pick<DeviceInputStatus, 'mode' | 'phase'>
   error: { code: string; message: string } | null; at: number
 }
-export interface AutonomousDeviceAgent { agentId: string; name: string; engine: string; state: string }
+export interface AutonomousDeviceAgent { agentId: string; name: string; engine: string; state: string; packageId?: string | null; workspace?: string | null; runtime?: string }
 
 const AGENT_RECAP_MAX_CHARS = 200
 export interface AutonomousDeviceDelivery { deliveryId: string; sessionId: string; state: ReceiptState; reason?: string }
 export interface AutonomousDeviceServiceOptions {
+  resultJournal?: Pick<DeviceResultJournal, 'load' | 'save'> & Partial<Pick<DeviceResultJournal, 'archive'>>
+  inputConsumed?: (agentId: string, text: string) => void
+  store?: AutonomousDeviceStore
   machineId: string; serverInstanceId?: string; now?: () => number
   agents: () => AutonomousDeviceAgent[]
   requestAppFocus?: (agentId: string, expiresAt: number, focusRevision: string) => boolean
+  /**
+   * Turn the app's focus one agent along the desk, the way the USB dial does — same ring, same wrap,
+   * same `dial_focus` forward. Resolves to the agent it asked the app to show; the app's own `app_focus`
+   * acknowledgment is what makes the move real. `'no_app'` when no Desktop window is connected.
+   */
+  stepFocus?: (direction: 'next' | 'previous', currentAgentId: string | undefined) => Promise<{ machineId: string; agentId: string } | 'no_agents' | 'no_app'>
+  /**
+   * One piece of a finger stroke for the focused terminal's scrollback, the way the USB dial's glass
+   * reports it — same `dial_scroll` forward, the terminal does the arithmetic. `false` when no Desktop
+   * window is connected to scroll.
+   */
+  scroll?: (phase: 'down' | 'move' | 'up', dy: number, velocity: number) => boolean
   submit: (agentId: string, text: string, deliveryId: string) => void
   cancelDelivery: (deliveryId: string) => boolean
   stop: (agentId: string) => Promise<boolean>
@@ -29,12 +53,22 @@ export interface AutonomousDeviceServiceOptions {
    * looks at between the dial and its turn cards.
    */
   fullText?: (agentId: string) => string | undefined
-  emit?: (frame: AutonomousDeviceFrame) => void
+  /** `deviceId` set: this frame is for that paired device alone (an agent stream), never a broadcast. */
+  emit?: (frame: AutonomousDeviceFrame, deviceId?: string) => void
 }
-interface Entry { deviceId: string; digest: string; receipt: AutonomousDeviceReceipt }
-const CAPABILITIES = ['focus.get', 'focus.ensure', 'agents.list', 'turn.send', 'turn.stop', 'status', 'recap', 'question.answer', 'receipt.get'] as const
+interface Entry { deviceId: string; digest: string; receipt: AutonomousDeviceReceipt
+  promptHash?: string; reservedAt?: number; dispatchedAt?: number; sessionId?: string; evidenceManaged?: boolean; consumed?: boolean
+}
+interface ResultRecord { deviceId: string; evidenceId: string; at: number; agentId: string; payload: Record<string, unknown> }
+const CAPABILITIES = ['focus.get', 'focus.ensure', 'focus.step', 'scroll', 'agents.list', 'turn.send', 'turn.stop', 'status', 'recap', 'question.answer', 'receipt.get', 'agent.subscribe', 'agent.unsubscribe'] as const
 export const AUTONOMOUS_DEVICE_CAPABILITIES: string[] = [...CAPABILITIES]
 const MUTATIONS = new Set(['turn.send', 'turn.stop', 'question.answer'])
+const STEP_RESULTS_MAX = 512
+const SCROLL_PHASES = new Set(['down', 'move', 'up'])
+/** Device pixels per report and px/s: generous for any glass, tight enough that a bad value cannot fling a terminal for minutes. */
+const SCROLL_DY_MAX = 4096
+const SCROLL_VELOCITY_MAX = 100_000
+const APP_FOCUS_WAIT_MS = 2000
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 const KEY = /^[A-Za-z0-9_-]{1,64}$/
 const TTL = 30 * 60_000
@@ -54,9 +88,126 @@ export class AutonomousDeviceService {
   private readonly entries = new Map<string, Entry>()
   private readonly deliveries = new Map<string, Entry>()
   private readonly turns = new Map<string, Entry>()
+  // Transcript adapters expose session boundaries, not engine input/turn IDs. Once
+  // inputs overlap, a session-wide done cannot prove which request finished.
+  private readonly ambiguousTurns = new Set<string>()
+  private readonly openTurns = new Set<string>()
+  private readonly pendingStarts = new Set<string>()
   private readonly questions = new Map<string, { requestId: string; questions: unknown }>()
   private events: AutonomousDeviceFrame[] = []
   private sequence = 0
+  private readonly results = new Map<string, ResultRecord>()
+  private readonly transcriptSessions = new Map<string, string>()
+  private readonly transcriptAgents = new Set<string>()
+  private readonly evidence = new DeviceResultEvidence(
+    (agent, text, at) => this.consumeInput(agent, text, at),
+    (agent, evidence) => this.recordResult(agent, evidence),
+    (agent, ids) => this.evidenceUnknown(agent, ids),
+  )
+  /** Cheap no-op for ordinary app/orchestrator agents; only dispatched Device work opts in. */
+  needsTranscript(agentId: string, sessionId: string, engine: string): boolean {
+    if (!this.transcriptAgents.has(agentId) || !['claude', 'codex'].includes(engine)) return false
+    let pending = false
+    for (const entry of this.deliveries.values()) {
+      if (!entry.evidenceManaged || entry.receipt.agentId !== agentId
+        || entry.receipt.serverInstanceId !== this.serverInstanceId || entry.dispatchedAt === undefined
+        || ['completed', 'rejected'].includes(entry.receipt.state)) continue
+      pending = true
+      if (!entry.sessionId || entry.sessionId === sessionId) return true
+    }
+    if (!pending) {
+      this.transcriptAgents.delete(agentId)
+      this.transcriptSessions.delete(agentId)
+      this.evidence.forget(agentId)
+    }
+    return false
+  }
+  observeTranscript(agentId: string, sessionId: string, engine: string, line: string): void {
+    if (!this.needsTranscript(agentId, sessionId, engine)) return
+    if (this.transcriptSessions.get(agentId) !== sessionId) {
+      this.evidence.forget(agentId)
+      this.transcriptSessions.set(agentId, sessionId)
+    }
+    this.evidence.ingest(agentId, engine, line)
+  }
+  inputDispatched(agentId: string, deliveryId: string, text: string, sessionId?: string): void {
+    const entry = this.deliveries.get(deliveryId)
+    if (!entry?.evidenceManaged || entry.receipt.agentId !== agentId || entry.receipt.serverInstanceId !== this.serverInstanceId || entry.dispatchedAt !== undefined) return
+    entry.promptHash = inputHash(text) // exact engine input after slash-command adaptation
+    entry.dispatchedAt = this.now()
+    entry.sessionId = sessionId || this.transcriptSessions.get(agentId)
+    this.persist()
+    this.transcriptAgents.add(agentId)
+  }
+  private consumeInput(agentId: string, text: string, timestamp: number): string | null {
+    if (!Number.isFinite(timestamp)) return null
+    const hash = inputHash(text)
+    const candidates = [...this.entries.values()].filter(e => e.evidenceManaged && !e.consumed
+      && (!e.sessionId || e.sessionId === this.transcriptSessions.get(agentId))
+      && e.receipt.agentId === agentId && e.receipt.serverInstanceId === this.serverInstanceId
+      && !['completed', 'rejected'].includes(e.receipt.state) && e.promptHash === hash && timestamp >= (e.dispatchedAt ?? Infinity))
+    // Identical unresolved text cannot be disambiguated using a transcript timestamp alone.
+    if (candidates.length !== 1) { this.evidenceUnknown(agentId, candidates.map(e => e.receipt.deliveryId)); return null }
+    const entry = candidates[0]
+    entry.consumed = true
+    this.options.inputConsumed?.(agentId, text)
+    this.update(entry, 'started')
+    return entry.receipt.deliveryId
+  }
+  private evidenceUnknown(agentId: string, ids: string[]): void {
+    for (const id of ids) {
+      const entry = this.deliveries.get(id)
+      if (entry?.receipt.agentId === agentId) this.update(entry, 'unknown', 'RESULT_EVIDENCE_MISSING')
+    }
+  }
+  private recordResult(agentId: string, evidence: ResultEvidence): void {
+    const evidenceId = `${agentId}:${this.transcriptSessions.get(agentId)}:${evidence.evidenceId}`
+    if (this.results.has(evidenceId)) return
+    const entries = evidence.inputs.map(id => this.deliveries.get(id))
+    const first = entries[0]
+    if (!first || entries.some(e => !e || !e.consumed || e.receipt.agentId !== agentId
+      || e.deviceId !== first.deviceId || e.receipt.serverInstanceId !== this.serverInstanceId
+      || ['completed', 'rejected'].includes(e.receipt.state))) {
+      this.evidenceUnknown(agentId, evidence.inputs); return
+    }
+    this.prune()
+    if (entries.length > 64 || this.results.size >= 512 || Buffer.byteLength(evidence.fullText) > 128 * 1024) {
+      this.evidenceUnknown(agentId, evidence.inputs); return
+    }
+    const payload = DeviceResultPayloadSchema.parse({ serverInstanceId: this.serverInstanceId, resultId: randomUUID(),
+      correlation: { scope: entries.length === 1 ? 'input' : 'group',
+        inputs: entries.map(e => ({ deliveryId: e!.receipt.deliveryId, idempotencyKey: e!.receipt.idempotencyKey })),
+        ...(evidence.engineTurnId ? { engineTurnId: evidence.engineTurnId } : {}) },
+      outcome: evidence.outcome, fullText: evidence.fullText, kind: 'summary',
+      text: evidence.fullText.replace(/\s+/g, ' ').trim().slice(0, AGENT_RECAP_MAX_CHARS),
+      ...(entries.length === 1 ? { idempotencyKey: first.receipt.idempotencyKey, turnId: first.receipt.turnId } : {}) })
+    if (Buffer.byteLength(JSON.stringify(payload)) > 32 * 1024) { this.evidenceUnknown(agentId, evidence.inputs); return }
+    this.results.set(evidenceId, { deviceId: first.deviceId, evidenceId, agentId, at: this.now(), payload })
+    // Commit the immutable result and all its proven receipts together before publishing anything.
+    const previous = entries.map(e => structuredClone(e!.receipt))
+    for (const entry of entries) {
+      entry!.receipt.state = evidence.outcome === 'completed' ? 'completed' : 'unknown'
+      entry!.receipt.error = evidence.outcome === 'completed' ? null : { code: 'RESULT_NOT_COMPLETED', message: evidence.outcome }
+      entry!.receipt.at = this.now()
+    }
+    try { this.persist() } catch (error) {
+      this.results.delete(evidenceId)
+      entries.forEach((entry, i) => { entry!.receipt = previous[i] })
+      throw error
+    }
+    // Retain the result envelope before any network callback can fail.
+    this.event('turn.summary', agentId, payload)
+    for (const entry of entries) this.event('receipt.updated', agentId, { receipt: structuredClone(entry!.receipt), idempotencyKey: entry!.receipt.idempotencyKey })
+  }
+  canSendResult(deviceId: string, frame: AutonomousDeviceFrame): boolean {
+    const payload = frame.payload as Record<string, unknown> | undefined
+    return [...this.results.values()].some(r => r.deviceId === deviceId && r.agentId === frame.agentId
+      && r.payload.resultId === payload?.resultId && canonical(r.payload) === canonical(payload) && r.at >= this.now() - TTL)
+  }
+  private persist(): void {
+    this.options.resultJournal?.save({ version: 1, machineId: this.options.machineId,
+      entries: [...this.entries.values()], results: [...this.results.values()] })
+  }
   private focusOwner: string | undefined
   private focused: { machineId: string; agentId: string } | null = null
   private focusCounter = 0
@@ -85,6 +236,53 @@ export class AutonomousDeviceService {
       focusRevision: `${this.serverInstanceId}:${this.focusCounter}` }
   }
   private ensuringFocus: Promise<ReturnType<AutonomousDeviceService['focusSnapshot']>> | undefined
+  /** Settled `focus.step` outcomes by (device, idempotencyKey): a retried gesture is one tick, not two. */
+  private readonly steps = new Map<string, { deviceId: string; digest: string; result: Promise<ReturnType<AutonomousDeviceService['focusSnapshot']>> }>()
+
+  private stepFocus(deviceId: string, req: Record<string, unknown>): Promise<ReturnType<AutonomousDeviceService['focusSnapshot']>> {
+    if (req.direction !== 'next' && req.direction !== 'previous') fail('INVALID_REQUEST', 'direction must be next or previous')
+    if (!KEY.test(String(req.idempotencyKey ?? ''))) fail('INVALID_REQUEST', 'Invalid idempotencyKey')
+    if (typeof req.focusRevision !== 'string' || !req.focusRevision) fail('INVALID_REQUEST', 'focusRevision must be a nonempty string')
+    const digest = createHash('sha256').update(canonical({ ...req, requestId: null, idempotencyKey: null })).digest('hex')
+    const key = this.key(deviceId, String(req.idempotencyKey))
+    const previous = this.steps.get(key)
+    if (previous) {
+      if (previous.digest !== digest) fail('IDEMPOTENCY_CONFLICT', 'Key already belongs to a different operation or payload')
+      return previous.result
+    }
+    const result = this.performStep(req.direction, req.focusRevision)
+    result.catch(() => undefined) // settled either way; the retry re-awaits it
+    this.steps.set(key, { deviceId, digest, result })
+    // ponytail: FIFO eviction, no TTL — a step result is a snapshot, nothing waits on it like a receipt.
+    if (this.steps.size > STEP_RESULTS_MAX) this.steps.delete(this.steps.keys().next().value as string)
+    return result
+  }
+
+  private async performStep(direction: 'next' | 'previous', focusRevision: string): Promise<ReturnType<AutonomousDeviceService['focusSnapshot']>> {
+    const before = this.focusSnapshot()
+    if (focusRevision !== before.focusRevision) fail('FOCUS_CHANGED', 'App focus changed before the step; nothing was moved')
+    if (!this.options.stepFocus) fail('FOCUS_UNAVAILABLE', 'Stepping focus is not wired on this machine')
+    const target = await this.options.stepFocus(direction, before.focus?.agentId)
+    if (target === 'no_agents') fail('NO_AGENTS', 'No agent is on the desk to step to')
+    if (target === 'no_app') fail('FOCUS_UNAVAILABLE', 'Open Harness Desktop to select an agent')
+    // A desk of one: the only neighbour is the agent already in front — nothing to move, nothing to await.
+    if (before.focus?.machineId === target.machineId && before.focus.agentId === target.agentId) return before
+    return this.waitForAppFocus(Date.now() + APP_FOCUS_WAIT_MS, s => s.focusRevision !== before.focusRevision)
+  }
+
+  /**
+   * A stroke is a stream, not a mutation: no idempotency key, no receipt, nothing retained. A lost `move`
+   * is a shorter scroll; a lost `up` is what the next `down` closes on the app side, as for the dial.
+   */
+  private scroll(req: Record<string, unknown>): void {
+    const phase = req.phase
+    if (typeof phase !== 'string' || !SCROLL_PHASES.has(phase)) fail('INVALID_REQUEST', 'phase must be down, move or up')
+    const dy = req.dy ?? 0, velocity = req.velocity ?? 0
+    if (!Number.isInteger(dy) || Math.abs(dy as number) > SCROLL_DY_MAX) fail('INVALID_REQUEST', `dy must be an integer within ±${SCROLL_DY_MAX}`)
+    if (!Number.isInteger(velocity) || Math.abs(velocity as number) > SCROLL_VELOCITY_MAX) fail('INVALID_REQUEST', `velocity must be an integer within ±${SCROLL_VELOCITY_MAX}`)
+    if (!this.options.scroll) fail('FOCUS_UNAVAILABLE', 'Scrolling is not wired on this machine')
+    if (!this.options.scroll(phase as 'down' | 'move' | 'up', dy as number, velocity as number)) fail('FOCUS_UNAVAILABLE', 'Open Harness Desktop to scroll a terminal')
+  }
 
   /** Enable-time fallback only. The desktop must acknowledge its selected pane. */
   private ensureFocus(): Promise<ReturnType<AutonomousDeviceService['focusSnapshot']>> {
@@ -93,18 +291,18 @@ export class AutonomousDeviceService {
     if (this.ensuringFocus) return this.ensuringFocus
     const first = this.options.agents()[0]
     if (!first) fail('NO_AGENTS', 'No local agent is available')
-    const expiresAt = Date.now() + 2000
+    const expiresAt = Date.now() + APP_FOCUS_WAIT_MS
     if (!this.options.requestAppFocus?.(first.agentId, expiresAt, current.focusRevision)) {
       fail('FOCUS_UNAVAILABLE', 'Open Harness Desktop to select an agent')
     }
-    this.ensuringFocus = this.waitForAppFocus(expiresAt).finally(() => { this.ensuringFocus = undefined })
+    this.ensuringFocus = this.waitForAppFocus(expiresAt, s => !!s.focus).finally(() => { this.ensuringFocus = undefined })
     return this.ensuringFocus
   }
 
-  private async waitForAppFocus(expiresAt: number): Promise<ReturnType<AutonomousDeviceService['focusSnapshot']>> {
+  private async waitForAppFocus(expiresAt: number, done: (s: ReturnType<AutonomousDeviceService['focusSnapshot']>) => boolean): Promise<ReturnType<AutonomousDeviceService['focusSnapshot']>> {
     for (;;) {
       const snapshot = this.focusSnapshot()
-      if (snapshot.focus) return snapshot
+      if (done(snapshot)) return snapshot
       if (Date.now() >= expiresAt) fail('FOCUS_UNAVAILABLE', 'Harness Desktop did not acknowledge focus')
       await new Promise(resolve => setTimeout(resolve, 20))
     }
@@ -112,6 +310,73 @@ export class AutonomousDeviceService {
   constructor(private readonly options: AutonomousDeviceServiceOptions) {
     this.serverInstanceId = options.serverInstanceId ?? randomUUID()
     this.now = options.now ?? Date.now
+    this.streams = new AgentStreams({ machineId: options.machineId, serverInstanceId: this.serverInstanceId,
+      send: (deviceId, frame) => this.options.emit?.(frame, deviceId) })
+    let snapshot = options.resultJournal?.load()
+    // Written on this computer under ANOTHER machine id: a sign-in to another account, a switch of
+    // backend, a machine re-registered. Its dedupe cannot apply here — every request naming that
+    // machine is refused as MACHINE_MISMATCH before a reservation is looked up — so it is set aside,
+    // not trusted and not treated as corruption. Throwing here kept the whole daemon in safe mode
+    // after a legitimate identity change, with every terminal on this computer down with it.
+    if (object(snapshot) && typeof snapshot.machineId === 'string' && snapshot.machineId
+      && snapshot.machineId !== options.machineId) {
+      const owner = snapshot.machineId
+      // Keeping a copy is a courtesy to a switch back; failing to keep one must not bring back the very
+      // start-up failure this avoids. The fresh journal's first save replaces the file either way.
+      let kept: string | undefined
+      try { kept = options.resultJournal?.archive?.(owner) } catch { /* not kept */ }
+      console.log(`[device] result journal belongs to machine ${owner.slice(0, 8)} — ${kept ? `kept as ${kept}` : 'discarded'}, starting fresh`)
+      snapshot = undefined
+    }
+    if (snapshot !== undefined) {
+      if (!object(snapshot) || snapshot.version !== 1 || snapshot.machineId !== options.machineId
+        || !Array.isArray(snapshot.entries) || !Array.isArray(snapshot.results)) throw new Error('Invalid Device result journal; refusing to lose delivery dedupe')
+      for (const entry of snapshot.entries as Entry[]) {
+        if (!entry.deviceId || !entry.digest || !entry.receipt?.deliveryId || !entry.receipt.idempotencyKey) throw new Error('Invalid Device receipt journal')
+        if (!['completed', 'rejected'].includes(entry.receipt.state)) {
+          entry.receipt.state = 'unknown'; entry.receipt.error = { code: 'DAEMON_RESTART', message: 'Reconcile original delivery; never resend automatically' }
+        }
+        this.entries.set(this.key(entry.deviceId, entry.receipt.idempotencyKey), entry)
+        this.deliveries.set(entry.receipt.deliveryId, entry)
+      }
+      for (const record of snapshot.results as ResultRecord[]) {
+        if (!record.deviceId || !record.evidenceId || !record.payload?.resultId) throw new Error('Invalid Device result journal')
+        this.results.set(record.evidenceId, record)
+      }
+      this.prune()
+      this.persist()
+      // New transport instance/sequence; immutable payload retains its originating instance.
+      for (const record of this.results.values()) this.retainEvent('turn.summary', record.agentId, record.payload)
+    }
+  }
+  private readonly streams: AgentStreams
+  /** Live events of one agent, for its subscribers only. Never recorded in the replay log. */
+  stream(agentId: string, events: readonly LiveEvent[]): void { this.streams.ingest(agentId, events) }
+  /** The device's last link closed: its subscriptions end with it, and a reconnect subscribes again. */
+  deviceOffline(deviceId: string): void { this.streams.dropDevice(deviceId) }
+
+  private subscription(deviceId: string, type: 'agent.subscribe' | 'agent.unsubscribe', req: Record<string, unknown>): Record<string, unknown> {
+    const fields = type === 'agent.subscribe' ? ['type', 'requestId', 'machineId', 'agentId', 'ttlSec', 'include'] : ['type', 'requestId', 'subscriptionId']
+    if (Object.keys(req).some(k => !fields.includes(k))) fail('INVALID_REQUEST', 'Unknown request field')
+    if (type === 'agent.unsubscribe') {
+      if (!UUID.test(String(req.subscriptionId))) fail('INVALID_REQUEST', 'subscriptionId must be a UUIDv4')
+      return { unsubscribed: this.streams.unsubscribe(deviceId, String(req.subscriptionId)) }
+    }
+    if (typeof req.agentId !== 'string' || !req.agentId || typeof req.machineId !== 'string') fail('MISSING_TARGET', 'machineId and agentId are required')
+    if (req.machineId !== this.options.machineId) fail('MACHINE_MISMATCH', 'Only the paired machine is available')
+    const ttlSec = req.ttlSec ?? STREAM_TTL_DEFAULT_SEC
+    if (!Number.isInteger(ttlSec) || (ttlSec as number) < 1 || (ttlSec as number) > STREAM_TTL_MAX_SEC) fail('INVALID_REQUEST', `ttlSec must be an integer from 1 to ${STREAM_TTL_MAX_SEC}`)
+    const include = req.include ?? STREAM_KINDS
+    if (!Array.isArray(include) || !include.length || new Set(include).size !== include.length
+      || include.some(k => !(STREAM_KINDS as readonly unknown[]).includes(k))) fail('INVALID_REQUEST', `include must be distinct values of ${STREAM_KINDS.join(', ')}`)
+    const agentId = req.agentId
+    if (!this.options.agents().some(a => a.agentId === agentId)) fail('AGENT_NOT_FOUND', 'Agent is not available on the paired machine')
+    try {
+      return { machineId: this.options.machineId, agentId, include, ...this.streams.subscribe(deviceId, agentId, ttlSec as number, new Set(include as StreamKind[])) }
+    } catch (e) {
+      if (e instanceof StreamRequestError) fail(e.code, e.message)
+      throw e
+    }
   }
   private key(deviceId: string, key: string): string { return `${deviceId}:${key}` }
   /** The newest `recap` turn's headline for an agent, or undefined when no turn has been summarised. */
@@ -126,6 +391,7 @@ export class AutonomousDeviceService {
     return value ? structuredClone(value) : null
   }
   private prune(): void {
+    for (const [key, result] of this.results) if (this.now() - result.at > TTL) this.results.delete(key)
     for (const [key, entry] of this.entries) {
       if (['completed', 'rejected'].includes(entry.receipt.state) && this.now() - entry.receipt.at > TTL) {
         this.entries.delete(key); this.deliveries.delete(entry.receipt.deliveryId)
@@ -145,37 +411,77 @@ export class AutonomousDeviceService {
   }
   private update(entry: Entry, state: ReceiptState, code?: string): void {
     if (['completed', 'rejected'].includes(entry.receipt.state)) return
-    if (state === 'delivered' && entry.receipt.state === 'started') return
+    if ((state === 'delivered' || state === 'started') && entry.receipt.state === 'started') return
     entry.receipt.state = state
     entry.receipt.at = this.now()
     entry.receipt.error = code ? { code, message: code === 'NOT_CONFIRMED' ? 'Delivery could not be confirmed; inspect the agent before retrying.' : code } : null
-    if (state === 'started') {
-      entry.receipt.turnId ??= randomUUID()
-      this.turns.set(entry.receipt.agentId, entry)
+    if (state === 'started') entry.receipt.turnId ??= randomUUID()
+    if (state === 'started' && !entry.evidenceManaged) {
+      const agentId = entry.receipt.agentId
+      const previous = this.turns.get(agentId)
+      if (this.openTurns.has(agentId) || this.ambiguousTurns.has(agentId) || (previous && previous !== entry)) {
+        this.ambiguousTurns.add(agentId)
+        this.turns.delete(agentId)
+        if (previous) this.update(previous, 'unknown', 'OVERLAPPING_INPUTS')
+        this.update(entry, 'unknown', 'OVERLAPPING_INPUTS')
+        return
+      }
+      this.turns.set(agentId, entry)
+      this.pendingStarts.add(agentId)
     }
     this.event('receipt.updated', entry.receipt.agentId, { receipt: structuredClone(entry.receipt), idempotencyKey: entry.receipt.idempotencyKey })
   }
+  agentGone(agentId: string): void {
+    this.transcriptAgents.delete(agentId)
+    this.evidence.forget(agentId)
+    this.transcriptSessions.delete(agentId)
+    this.turns.delete(agentId)
+    this.openTurns.delete(agentId)
+    this.pendingStarts.delete(agentId)
+    this.ambiguousTurns.delete(agentId)
+    for (const entry of this.deliveries.values()) {
+      if (entry.receipt.agentId === agentId && entry.receipt.operation === 'turn.send'
+        && !['completed', 'rejected'].includes(entry.receipt.state)) this.update(entry, 'unknown', 'AGENT_GONE')
+    }
+  }
+  inputStatus(event: DeviceInputStatus): void {
+    const entry = this.deliveries.get(event.deliveryId)
+    if (!entry || entry.receipt.agentId !== event.sessionId) return
+    if (['completed', 'rejected'].includes(entry.receipt.state)) return
+    entry.receipt.input = { mode: event.mode, phase: event.phase }
+    this.event('receipt.updated', event.sessionId, { receipt: structuredClone(entry.receipt), idempotencyKey: entry.receipt.idempotencyKey })
+  }
   delivery(event: AutonomousDeviceDelivery): void {
     const entry = this.deliveries.get(event.deliveryId)
-    if (!entry) return
+    if (!entry || entry.receipt.agentId !== event.sessionId) return
     this.update(entry, event.state, event.reason)
   }
   revoke(deviceId: string): void {
+    this.options.store?.revoke(deviceId)
     for (const [key, entry] of this.entries) if (entry.deviceId === deviceId) {
       this.options.cancelDelivery(entry.receipt.deliveryId)
       this.deliveries.delete(entry.receipt.deliveryId)
       if (this.turns.get(entry.receipt.agentId) === entry) this.turns.delete(entry.receipt.agentId)
       this.entries.delete(key)
     }
+    for (const [key, step] of this.steps) if (step.deviceId === deviceId) this.steps.delete(key)
+    this.streams.dropDevice(deviceId)
+    for (const [key, result] of this.results) if (result.deviceId === deviceId) this.results.delete(key)
+    this.persist()
     // A newly paired identity cannot replay the previous device's request receipts.
     this.events = []
   }
-  event(kind: string, agentId: string | undefined, payload: Record<string, unknown>): void {
+  private retainEvent(kind: string, agentId: string | undefined, payload: Record<string, unknown>): AutonomousDeviceFrame {
     const frame: AutonomousDeviceFrame = { type: 'event', eventId: ++this.sequence, serverInstanceId: this.serverInstanceId,
-      machineId: this.options.machineId, ...(agentId ? { agentId } : {}), kind, payload }
+      machineId: this.options.machineId, ...(agentId ? { agentId } : {}), kind, payload: structuredClone(payload) }
     this.events.push(frame)
     if (this.events.length > 500) this.events.shift()
-    this.options.emit?.(frame)
+    return frame
+  }
+  event(kind: string, agentId: string | undefined, payload: Record<string, unknown>): void {
+    if (kind === 'receipt.updated') this.persist()
+    const frame = this.retainEvent(kind, agentId, payload)
+    this.options.emit?.(structuredClone(frame))
   }
   resume(resume?: { serverInstanceId?: unknown; cursor?: unknown }): { resumed: boolean; cursor: number } {
     const cursor = resume?.cursor
@@ -186,15 +492,32 @@ export class AutonomousDeviceService {
   replay(resume: { serverInstanceId?: unknown; cursor?: unknown } | undefined, send: (frame: AutonomousDeviceFrame) => unknown): void {
     if (!this.resume(resume).resumed) {
       send({ type: 'resync', reason: resume?.serverInstanceId === this.serverInstanceId ? 'cursor_too_old' : 'instance_changed', serverInstanceId: this.serverInstanceId, cursor: this.sequence })
+      // Reconcile immutable retained results even when the ordinary event cursor expired.
+      for (const record of this.results.values()) if (record.at >= this.now() - TTL) send(this.retainEvent('turn.summary', record.agentId, structuredClone(record.payload)))
       return
     }
-    for (const event of this.events) if (Number(event.eventId) > Number(resume?.cursor)) send(event)
+    for (const event of this.events) if (Number(event.eventId) > Number(resume?.cursor)) send(structuredClone(event))
   }
   turnStarted(agentId: string): void {
+    this.openTurns.add(agentId)
+    if (!this.pendingStarts.delete(agentId)) {
+      const previous = this.turns.get(agentId)
+      if (previous) {
+        this.turns.delete(agentId)
+        this.ambiguousTurns.add(agentId)
+        this.update(previous, 'unknown', 'OVERLAPPING_INPUTS')
+      }
+    }
     const entry = this.turns.get(agentId)
     this.event('turn.started', agentId, entry ? { turnId: entry.receipt.turnId, idempotencyKey: entry.receipt.idempotencyKey } : {})
   }
   turnEnded(agentId: string, aborted = false): void {
+    // Session-wide close is not evidence for Device native inputs. Raw engine evidence owns completion.
+    for (const entry of this.entries.values()) if (entry.evidenceManaged && entry.receipt.agentId === agentId
+      && entry.receipt.state === 'started') this.update(entry, 'unknown', aborted ? 'TURN_INTERRUPTED' : 'RESULT_EVIDENCE_MISSING')
+    this.ambiguousTurns.delete(agentId)
+    this.openTurns.delete(agentId)
+    this.pendingStarts.delete(agentId)
     const entry = this.turns.get(agentId)
     if (entry) {
       this.update(entry, aborted ? 'unknown' : 'completed', aborted ? 'TURN_INTERRUPTED' : undefined)
@@ -207,23 +530,37 @@ export class AutonomousDeviceService {
     const p = object(frame.payload) ? frame.payload : {}
     if (frame.type === 'commander_question' && agentId && typeof p.requestId === 'string') {
       this.questions.set(agentId, { requestId: p.requestId, questions: p.questions })
-      this.event('question.open', agentId, { questionRequestId: p.requestId, questions: p.questions })
+      const candidates = [...this.entries.values()].filter(e => e.receipt.agentId === agentId && e.consumed
+        && e.receipt.serverInstanceId === this.serverInstanceId
+        && !['completed', 'rejected'].includes(e.receipt.state))
+      const single = candidates.length === 1 ? candidates[0] : this.turns.get(agentId)
+      this.event('question.open', agentId, { questionRequestId: p.requestId, questions: p.questions,
+        ...(single ? { idempotencyKey: single.receipt.idempotencyKey, turnId: single.receipt.turnId } : {}) })
     } else if (frame.type === 'commander_question_close' && agentId) {
       if (this.questions.get(agentId)?.requestId === p.requestId) this.questions.delete(agentId)
       this.event('question.close', agentId, { questionRequestId: p.requestId })
     } else if (frame.type === 'commander_event' && agentId && ['summary', 'tool', 'error'].includes(String(p.kind))) {
+      // Device native results already use turn.summary with exact engine evidence. The
+      // legacy mirror's asynchronous/latest recap must never emit a second final reply.
+      // Other engines and sessions without native Device reservations keep their path.
+      this.prune()
+      if (p.kind === 'summary' && ([...this.entries.values()].some(e => e.evidenceManaged && e.receipt.agentId === agentId)
+        || [...this.results.values()].some(r => r.agentId === agentId))) return
       const full = p.kind === 'summary' ? this.options.fullText?.(agentId) : undefined
       this.event(p.kind === 'summary' ? 'turn.summary' : p.kind === 'tool' ? 'turn.tool' : 'agent.error', agentId, full ? { ...p, fullText: full } : p)
     }
   }
+  get capabilities(): string[] { return [...AUTONOMOUS_DEVICE_CAPABILITIES, 'input.status.v1', ...(this.options.store ? DEVICE_STORE_CAPABILITIES : [])] }
   async request(deviceId: string, req: Record<string, unknown>): Promise<AutonomousDeviceFrame> {
     const type = typeof req.type === 'string' ? req.type : 'invalid'
     const response = (data: Record<string, unknown>): AutonomousDeviceFrame => ({ type: `${type}_result`, requestId: req.requestId, ...data })
     let reserved: Entry | undefined
     try {
       if (!UUID.test(String(req.requestId))) fail('INVALID_REQUEST', 'requestId must be a UUIDv4')
-      if (!AUTONOMOUS_DEVICE_CAPABILITIES.includes(type)) fail('UNSUPPORTED_CAPABILITY', 'Operation is not supported')
-      const allowed = ['type', 'requestId', ...(['agents.list', 'focus.get', 'focus.ensure'].includes(type) ? [] : type === 'receipt.get' ? ['idempotencyKey'] : ['machineId', 'agentId']),
+      if (type === 'input.status.v1' || !this.capabilities.includes(type)) fail('UNSUPPORTED_CAPABILITY', 'Operation is not supported')
+      if ((DEVICE_STORE_CAPABILITIES as readonly string[]).includes(type)) return response(await this.options.store!.request(deviceId, req))
+      if (type === 'agent.subscribe' || type === 'agent.unsubscribe') return response(this.subscription(deviceId, type, req))
+      const allowed = ['type', 'requestId', ...(['agents.list', 'focus.get', 'focus.ensure'].includes(type) ? [] : type === 'receipt.get' ? ['idempotencyKey'] : type === 'focus.step' ? ['direction', 'idempotencyKey', 'focusRevision'] : type === 'scroll' ? ['phase', 'dy', 'velocity'] : ['machineId', 'agentId']),
         ...(MUTATIONS.has(type) ? ['idempotencyKey'] : []), ...(type === 'turn.send' ? ['text', 'focusRevision'] : type === 'question.answer' ? ['questionRequestId', 'answers', 'focusRevision'] : type === 'recap' ? ['n'] : [])]
       if (Object.keys(req).some(k => !allowed.includes(k))) fail('INVALID_REQUEST', 'Unknown request field')
       if (type === 'receipt.get') {
@@ -232,6 +569,8 @@ export class AutonomousDeviceService {
       }
       if (type === 'focus.get') return response(this.focusSnapshot())
       if (type === 'focus.ensure') return response(await this.ensureFocus())
+      if (type === 'focus.step') return response(await this.stepFocus(deviceId, req))
+      if (type === 'scroll') { this.scroll(req); return response({}) }
       if ('focusRevision' in req && (typeof req.focusRevision !== 'string' || !req.focusRevision)) fail('INVALID_REQUEST', 'focusRevision must be a nonempty string')
       if (type === 'agents.list') {
         return response({ machineId: this.options.machineId, agents: this.options.agents().map(a => {
@@ -271,9 +610,10 @@ export class AutonomousDeviceService {
       }
       if (type === 'question.answer' && this.questions.get(agentId)?.requestId !== req.questionRequestId) fail('QUESTION_STALE', 'Question is no longer open')
       this.reserveCapacity()
-      const entry: Entry = { deviceId, digest, receipt: { idempotencyKey: String(req.idempotencyKey), deliveryId: randomUUID(), operation: type,
+      const entry: Entry = { deviceId, digest, ...(type === 'turn.send' && ['claude', 'codex'].includes(agent.engine) ? { promptHash: inputHash(String(req.text)), reservedAt: this.now(), evidenceManaged: true } : {}), receipt: { idempotencyKey: String(req.idempotencyKey), deliveryId: randomUUID(), operation: type,
         machineId: this.options.machineId, agentId, state: 'queued', turnId: null, serverInstanceId: this.serverInstanceId, error: null, at: this.now() } }
       this.entries.set(key, entry); this.deliveries.set(entry.receipt.deliveryId, entry); reserved = entry
+      this.persist() // durable reservation MUST precede any engine write
       try {
         if (type === 'turn.send') this.options.submit(agentId, String(req.text), entry.receipt.deliveryId)
         else {
@@ -296,7 +636,7 @@ export class AutonomousDeviceService {
         reserved.receipt.error = { code: 'INTERNAL', message: 'Reserved operation could not be confirmed' }
         return response({ status: 'accepted', receipt: structuredClone(reserved.receipt) })
       }
-      return response({ error: { code: e instanceof RequestError ? e.code : 'INTERNAL', message: e instanceof RequestError ? e.message : 'Request failed' } })
+      return response({ error: { code: e instanceof RequestError || e instanceof DeviceStoreError ? e.code : 'INTERNAL', message: e instanceof RequestError || e instanceof DeviceStoreError ? e.message : 'Request failed' } })
     }
   }
 }

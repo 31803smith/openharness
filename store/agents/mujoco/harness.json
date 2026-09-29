@@ -1,0 +1,34 @@
+{
+  "spec": 1,
+  "id": "autonomous/mujoco",
+  "name": "MuJoCo",
+  "category": "Simulation",
+  "author": "Google DeepMind",
+  "description": "Build robots and controllers, then investigate them in live MuJoCo physics. Push a robot, compare two futures with different gravity or grip, and give the agent a reproducible experiment to improve.",
+  "engine": "claude",
+  "workspace": {
+    "template": "template",
+    "marker": "sim/hello.py",
+    "init": "toolchain/init-workspace.sh"
+  },
+  "agent": {
+    "instructions": "AGENTS.md",
+    "skills": [
+      "skills"
+    ],
+    "env": {
+      "MUJOCO_PYTHON": "${dsh}/.venv/bin/python",
+      "MUJOCO_TOOLCHAIN": "${dsh}/toolchain",
+      "MENAGERIE": "${dsh}/menagerie",
+      "PYTHONPATH": "${dsh}/toolchain"
+    }
+  },
+  "toolchain": {
+    "setup": "toolchain/setup.sh",
+    "doctor": "toolchain/doctor.sh"
+  },
+  "viewer": {
+    "use": "autonomous/mujoco-viewer"
+  },
+  "verdict": ".harness/verdict.json"
+}

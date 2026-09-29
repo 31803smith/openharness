@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:harness/terminal/terminal_text.dart';
 
 import '../shared/theme/app_theme.dart' as grid;
 import '../shared/widgets/app_dialog.dart';
@@ -9,7 +10,7 @@ import '../shortcuts/keymap.dart';
 import '../state/pane_preset.dart';
 import '../theme/app_theme.dart';
 
-/// ⌘S — pick the shape of the grid.
+/// ⇧⌘L — pick the shape of the grid.
 ///
 /// Shapes are DRAWN, not listed. "Two over one" and "one over two" are the same
 /// four words in a different order, and nobody reads a layout name twice; the
@@ -17,15 +18,15 @@ import '../theme/app_theme.dart';
 ///
 /// Every card describes a distinct concrete arrangement. Automatic defaults
 /// resolve to the matching card, instead of adding a duplicate picture.
-/// Set while the palette is up, so a second ⌘S can be answered rather than
+/// Set while the palette is up, so a second ⇧⌘L can be answered rather than
 /// stacking a route.
 ///
 /// It used to be a bool and a bare return. That stopped the palette fading the
 /// window to black under a held key — each press laid another dialog and another
-/// 30% barrier over the last — but it left ⌘S meaning "open" once and nothing
+/// 30% barrier over the last — but it left ⇧⌘L meaning "open" once and nothing
 /// ever after, which is the one thing a person holding a key does not expect.
 ///
-/// THE SAME KEY WALKS THE STRIP. ⌘S opens it, ⌘S again steps to the next shape,
+/// THE SAME KEY WALKS THE STRIP. ⇧⌘L opens it, ⇧⌘L again steps to the next shape,
 /// Enter takes it. That is how every cycling chord on this OS behaves, and it
 /// means the shape can be chosen without the hand leaving the chord it arrived
 /// on.
@@ -107,7 +108,7 @@ class _LayoutPaletteState extends State<_LayoutPalette> {
   /// `autofocus: true` alone was not enough: it only takes the focus when the
   /// enclosing scope has none to give, and by the time this is laid out the
   /// route that opened it has already settled focus somewhere. The symptom was
-  /// precise — ⌘S opened the palette and cycled it, because that chord is a
+  /// precise — ⇧⌘L opened the palette and cycled it, because that chord is a
   /// global binding, while the arrow keys did nothing at all, because those are
   /// read HERE and nothing here was listening.
   final FocusNode _keys = FocusNode(debugLabel: 'layout-palette');
@@ -123,7 +124,7 @@ class _LayoutPaletteState extends State<_LayoutPalette> {
     });
     // Registered here rather than by the opener, so the hook cannot outlive the
     // widget it steps: a stale callback would move a cursor on a palette that
-    // is no longer on screen, and the next ⌘S would find the strip already
+    // is no longer on screen, and the next ⇧⌘L would find the strip already
     // walked.
     _layoutPaletteAdvance = _advance;
   }
@@ -215,7 +216,7 @@ class _LayoutPaletteState extends State<_LayoutPalette> {
     final choices = PanePreset.forCount(count);
     final current = _currentChoice(count);
     final cursor = _cursorIn(choices, current);
-    final textScale = MediaQuery.textScalerOf(context).scale(11.5) / 11.5;
+    final textScale = grid.appTextScaleOf(context);
     final shapeWidth = (_Strip.shape * textScale).clamp(_Strip.shape, 216.0);
     final paletteWidth =
         _Strip.width(choices.length) * textScale.clamp(1.0, 2.0);
@@ -305,11 +306,8 @@ class _LayoutPaletteState extends State<_LayoutPalette> {
                         padding: const EdgeInsets.fromLTRB(18, 16, 18, 12),
                         child: Text(
                           choices.isEmpty ? 'Layout' : 'Layout · $count panes',
-                          style: TextStyle(
+                          style: grid.AppType.monoLabel(
                             color: grid.AppPalette.textSecondary,
-                            fontSize: 11.5,
-                            letterSpacing: 0.9,
-                            fontWeight: grid.AppFont.medium,
                           ),
                         ),
                       ),
@@ -319,9 +317,9 @@ class _LayoutPaletteState extends State<_LayoutPalette> {
                           child: Text(
                             'One tile has no layout to choose. Open another and the '
                             'shapes appear here.',
-                            style: TextStyle(
+                            style: grid.AppType.monoLabel(
+                              fontWeight: FontWeight.w400,
                               color: grid.AppPalette.textFaint,
-                              fontSize: 12.5,
                               height: 1.45,
                             ),
                           ),
@@ -365,9 +363,8 @@ class _LayoutPaletteState extends State<_LayoutPalette> {
                           child: Text(
                             'Arrows to move · Enter or 1–${choices.length} to apply.\n'
                             'Changing layout resets pane sizes.',
-                            style: TextStyle(
+                            style: grid.AppType.monoMeta(
                               color: grid.AppPalette.textSecondary,
-                              fontSize: 11,
                               height: 1.4,
                             ),
                           ),
@@ -449,6 +446,7 @@ class _ShapeButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    TerminalFontScope.watch(context);
     return GestureDetector(
       onTap: onTap,
       child: Container(
@@ -483,19 +481,17 @@ class _ShapeButton extends StatelessWidget {
               preset.label,
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
-              style: TextStyle(
+              style: grid.AppType.monoLabel(
+                fontWeight: FontWeight.w400,
                 color: selected
                     ? grid.AppPalette.textPrimary
                     : grid.AppPalette.textSecondary,
-                fontSize: 11.5,
               ),
             ),
             const SizedBox(height: 2),
             Text(
               '$index',
-              style: TextStyle(
-                fontFamily: grid.AppFont.mono,
-                fontSize: 9.5,
+              style: grid.AppType.monoMeta(
                 color: grid.AppPalette.textSecondary,
               ),
             ),

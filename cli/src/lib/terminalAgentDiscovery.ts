@@ -2,12 +2,14 @@ import type { AgentEngine } from '../engines/types.js'
 import {
   agentAliasOwner,
   agentCommandOwnershipSnapshot,
-  ENGINES,
+  PROCESS_ENGINES,
   type AgentCommandOwnershipSnapshot,
 } from './engineBin.js'
 import { probeGatewayRuntime } from './gatewayRuntime.js'
 import { probeGridAssignment, type GridAssignment } from './gridAssignment.js'
 import { probeCodexHome } from './codexHomeProbe.js'
+import { probeHermesHome } from '../engines/hermes/homeProbe.js'
+import { probeDsh } from '../dsh/probe.js'
 import type { TerminalBackend } from './terminalBackend.js'
 import {
   ambiguousAgentProcess,
@@ -41,8 +43,8 @@ export interface DiscoveredTerminalAgent {
    * undefined = the probe could not read the process; the registry then keeps whatever it already knew,
    * rather than downgrading a gateway agent to a vendor one on one failed read.
    *
-   * Deliberately NOT a property of the terminal: the probe reads the engine's own env and argv, so a
-   * gateway launch is recognized identically under tmux and under Herdr.
+   * Deliberately NOT a property of the terminal: the probe reads the engine's own env and argv, not
+   * anything the pane says about itself.
    */
   gateway?: 'ori' | null
   /**
@@ -58,6 +60,20 @@ export interface DiscoveredTerminalAgent {
    * process, and the registry keeps what it already knows. See `codexHomeProbe.ts`.
    */
   codexHome?: string | null
+  /**
+   * Hermes only: the home the process runs under (`hermes -p <name>` → `~/.hermes/profiles/<name>`),
+   * when it is not this machine's default and the engine exports `HERMES_HOME`. Same three answers as
+   * `codexHome`. The registry also finds this by looking the session up in each store
+   * (`engines/hermes/home.ts`), which is the answer that needs no cooperation from the engine — this
+   * is the free one, from a read the discovery pass makes anyway.
+   */
+  hermesHome?: string | null
+  /**
+   * The domain-specific harness this process was launched as, read off its `HARNESS_DSH`. null = a
+   * plain engine; undefined = the probe could not read the process, and the registry keeps what it
+   * already knows. See `src/dsh/probe.ts`.
+   */
+  dsh?: string | null
 }
 
 export interface TerminalTargetProbe {
@@ -118,7 +134,7 @@ function rootOwner(
     const current = queue.shift()!
     const row = byPid.get(current.pid)
     if (row && !excluded.has(row.pid)) {
-      for (const engine of ENGINES) {
+      for (const engine of PROCESS_ENGINES) {
         const score = engineProcessMatchScore(row, engine, ownership)
         if (score > 0) matches.push({ row, engine, depth: current.depth, score })
       }
@@ -157,14 +173,9 @@ function rootOwner(
   }
 }
 
-function runtimeRank(runtime: TerminalRuntimeRef, backendOrder: readonly string[], herdrSessionOrder: readonly string[]): number[] {
+function runtimeRank(runtime: TerminalRuntimeRef, backendOrder: readonly string[]): number {
   const backend = backendOrder.indexOf(runtime.backend)
-  const session = runtime.backend === 'herdr' ? herdrSessionOrder.indexOf(runtime.sessionName) : 0
-  return [backend < 0 ? Number.MAX_SAFE_INTEGER : backend, session < 0 ? Number.MAX_SAFE_INTEGER : session]
-}
-
-function rankBefore(a: number[], b: number[]): boolean {
-  return a[0] < b[0] || (a[0] === b[0] && a[1] < b[1])
+  return backend < 0 ? Number.MAX_SAFE_INTEGER : backend
 }
 
 /** Pure process-authoritative merge used by fixtures and the live coordinator. */
@@ -173,7 +184,6 @@ export function discoverTerminalAgentsFromSnapshot(
   rows: readonly ProcessRow[],
   daemonPid: number,
   backendOrder: readonly string[],
-  herdrSessionOrder: readonly string[],
   hints: ReadonlyMap<string, AgentEngine> = new Map(),
   ownership = agentCommandOwnershipSnapshot(),
 ): { agents: DiscoveredTerminalAgent[]; ambiguousPlacements: Set<string> } {
@@ -202,10 +212,9 @@ export function discoverTerminalAgentsFromSnapshot(
     for (const observation of observations) byPlacement.set(terminalPlacementKey(observation.runtime), observation)
     const ordered = [...byPlacement.values()].sort((a, b) => {
       if (a.depth !== b.depth) return a.depth - b.depth
-      const ar = runtimeRank(a.runtime, backendOrder, herdrSessionOrder)
-      const br = runtimeRank(b.runtime, backendOrder, herdrSessionOrder)
-      if (rankBefore(ar, br)) return -1
-      if (rankBefore(br, ar)) return 1
+      const ar = runtimeRank(a.runtime, backendOrder)
+      const br = runtimeRank(b.runtime, backendOrder)
+      if (ar !== br) return ar - br
       return terminalPlacementKey(a.runtime).localeCompare(terminalPlacementKey(b.runtime))
     })
     return {
@@ -222,7 +231,6 @@ export function discoverTerminalAgentsFromSnapshot(
 export async function probeTerminalAgents(
   backends: readonly TerminalBackend[],
   backendOrder: readonly string[],
-  herdrSessionOrder: readonly string[],
   daemonPid = process.pid,
   hints: ReadonlyMap<string, AgentEngine> = new Map(),
 ): Promise<TerminalAgentProbe> {
@@ -241,7 +249,6 @@ export async function probeTerminalAgents(
     enrichedRows,
     daemonPid,
     backendOrder,
-    herdrSessionOrder,
     hints,
   )
   // Which endpoint each agent's engine talks to. Cached per live process, so this is one read per agent
@@ -254,6 +261,10 @@ export async function probeTerminalAgents(
     agent.grid = await probeGridAssignment(agent.processIdentity, agent.engine, agent.args)
     // And, for Codex, the profile it runs under — a fact about the process the row cannot otherwise learn.
     agent.codexHome = await probeCodexHome(agent.processIdentity, agent.engine)
+    // …and, for Hermes, the home — same cached read, and it beats looking the session up in every store.
+    agent.hermesHome = await probeHermesHome(agent.processIdentity, agent.engine)
+    // And the DSH it was created as — same read, so a pane the daemon did not create is labelled too.
+    agent.dsh = await probeDsh(agent.processIdentity)
   }))
   return { processTableAvailable: true, targets, ...discovered }
 }

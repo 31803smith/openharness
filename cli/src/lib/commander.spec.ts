@@ -207,6 +207,93 @@ describe('CommanderMirror recap events', () => {
     expect((last?.payload.agents as Array<{ text: string }>).map((r) => r.text)).toEqual(['› still going', '› second'])
   })
 
+  it('marks a sub-agent\'s turn end so the dial redraws the tile and tells nobody', async () => {
+    // An Orchestrator specialist (or the Director while specialists are still out): its `done`/`summary`
+    // carry `subagent: true`; the live stream does not, so the tile still moves.
+    const deviceFrames: CommanderFrame[] = []
+    const mirror = new CommanderMirror({
+      send: (frame) => deviceFrames.push(frame),
+      sendWeb: () => {},
+      hasDevice: () => true,
+      summarize: async () => 'Short recap\n\nLong body',
+      isSubagent: (sessionId) => sessionId === 'specialist',
+      dataDir,
+    })
+    for (const sessionId of ['specialist', 'director']) {
+      mirror.ingest([
+        { type: 'turn_started', payload: { userMessage: 'go' } },
+        { type: 'text_delta', payload: { content: 'answered.' } },
+        { type: 'turn_ended', payload: {} },
+      ] as LiveEvent[], sessionId)
+    }
+    await vi.runAllTimersAsync()
+    await Promise.resolve()
+    const of = (id: string) => deviceFrames.filter((f) => f.dbSessionId === id)
+    expect(of('specialist').map((f) => [f.payload.kind, f.payload.subagent])).toEqual([
+      ['processing', undefined], ['processing', undefined], ['done', true], ['summary', true],
+    ])
+    expect(of('director').every((f) => f.payload.subagent === undefined)).toBe(true)
+  })
+
+  it('keeps holding the turn end past the old cap while a sub-agent is still writing, then gives up silently', async () => {
+    // A fixed ten minutes released the hold under long sub-agents: one ring for a turn that was not
+    // over, another when it was. Now the sub-agents' transcripts are asked every minute.
+    const deviceFrames: CommanderFrame[] = []
+    let writing = true
+    const mirror = new CommanderMirror({
+      send: (frame) => deviceFrames.push(frame),
+      sendWeb: () => {},
+      hasDevice: () => true,
+      summarize: async () => 'Short recap\n\nLong body',
+      subagentActive: (_sessionId, agentId) => agentId === 'a1' && writing,
+      dataDir,
+    })
+    mirror.ingest([
+      { type: 'turn_started', payload: { userMessage: 'delegate' } },
+      { type: 'tool_start', payload: { id: 'a1', tool: 'Agent', input: { description: 'long job' } } },
+      { type: 'tool_end', payload: { id: 'a1', tool: 'Agent', output: 'Async agent launched successfully.', isError: false, summary: '' } },
+      { type: 'text_delta', payload: { content: 'Launched the long job.' } },
+      { type: 'turn_ended', payload: {} },
+    ] as LiveEvent[], 'session-long')
+    const ends = () => deviceFrames.filter((f) => f.payload.kind === 'summary')
+
+    await vi.advanceTimersByTimeAsync(25 * 60_000)
+    expect(ends()).toHaveLength(0)   // 25 minutes in, still writing: still held
+
+    writing = false
+    await vi.advanceTimersByTimeAsync(2 * 60_000)
+    await vi.runAllTimersAsync()
+    await Promise.resolve()
+    expect(ends()).toHaveLength(1)
+    // Given up on, not done — silent, so the person is not rung for an answer that never came.
+    expect(ends()[0].payload).toMatchObject({ subagent: true, recap: 'Short recap' })
+  })
+
+  it('a sub-agent that finishes releases the hold with an ordinary, audible summary', async () => {
+    const deviceFrames: CommanderFrame[] = []
+    const mirror = new CommanderMirror({
+      send: (frame) => deviceFrames.push(frame),
+      sendWeb: () => {},
+      hasDevice: () => true,
+      summarize: async () => 'Short recap\n\nLong body',
+      subagentActive: () => true,
+      dataDir,
+    })
+    mirror.ingest([
+      { type: 'turn_started', payload: { userMessage: 'delegate' } },
+      { type: 'tool_start', payload: { id: 'a1', tool: 'Agent', input: { description: 'short job' } } },
+      { type: 'turn_ended', payload: {} },
+      { type: 'subagent_finished', payload: { id: 'a1', status: 'completed' } },
+      { type: 'text_delta', payload: { content: 'Both done.' } },
+    ] as LiveEvent[], 'session-short')
+    mirror.noteEngineStopped('session-short')
+    await vi.runAllTimersAsync()
+    await Promise.resolve()
+    const ends = deviceFrames.filter((f) => f.payload.kind === 'summary')
+    expect(ends).toHaveLength(1)
+    expect(ends[0].payload).not.toHaveProperty('subagent')
+  })
+
   it('emits done before summary when recap succeeds', async () => {
     const deviceFrames: CommanderFrame[] = []
     const webFrames: Record<string, unknown>[] = []
@@ -233,7 +320,7 @@ describe('CommanderMirror recap events', () => {
       'done',
       'summary',
     ])
-    expect(deviceFrames.at(-1)?.payload).toEqual({ kind: 'summary', text: 'Long body', recap: 'Short recap' })
+    expect(deviceFrames.at(-1)?.payload).toEqual({ kind: 'summary', text: 'Long body', recap: 'Short recap', notification: { id: expect.any(String), kind: 'done' } })
     expect(webFrames.map((f) => f.type)).toEqual(['turn_summary_pending', 'turn_summary'])
   })
 
@@ -282,6 +369,33 @@ describe('CommanderMirror recap events', () => {
     await Promise.resolve()
     expect(summarizeCalls).toBe(0)
     expect(mirror.recent('session-off', 1)).toHaveLength(0)
+  })
+
+  it('alwaysGenerate may be a switch read per turn (the pair brain), and onSummary sees each stored recap', async () => {
+    let pairing = false
+    const summaries: Array<[string, { recap: string; body: string }]> = []
+    const mirror = new CommanderMirror({
+      send: () => {}, sendWeb: () => {},
+      hasDevice: () => false,
+      alwaysGenerate: () => pairing,
+      onSummary: (sessionId, summary) => summaries.push([sessionId, summary]),
+      summarize: async () => 'Fixed the flaky test\n\nPinned the clock in billing.spec.ts.',
+      dataDir,
+    })
+    const turn = [
+      { type: 'turn_started', payload: { userMessage: 'fix it' } },
+      { type: 'text_delta', payload: { content: 'done' } },
+      { type: 'turn_ended', payload: {} },
+    ] as LiveEvent[]
+    mirror.ingest(turn, 'session-pair')
+    await vi.runAllTimersAsync()
+    await Promise.resolve()
+    expect(summaries).toHaveLength(0)
+    pairing = true
+    mirror.ingest(turn, 'session-pair')
+    await vi.runAllTimersAsync()
+    await Promise.resolve()
+    expect(summaries).toEqual([['session-pair', { recap: 'Fixed the flaky test', body: 'Pinned the clock in billing.spec.ts.' }]])
   })
 
   it('runs the recap once when a turn closes twice (Stop hook + watcher race)', async () => {
@@ -635,5 +749,22 @@ describe('CommanderMirror keeps the complete final answer beside the clipped one
     expect(full).not.toContain('�')
     // A round trip through UTF-8 is lossless only if nothing was severed.
     expect(Buffer.from(full, 'utf8').toString('utf8')).toBe(full)
+  })
+})
+
+describe('CommanderMirror keeps the open tool calls for the pair\'s floor', () => {
+  it('a call is open from its tool_start to its tool_end, and a turn boundary clears them all', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'adapter-commander-tools-'))
+    const mirror = new CommanderMirror({ send: () => {}, sendWeb: () => {}, hasDevice: () => false, summarize: async () => null, dataDir: dir })
+    mirror.ingest([
+      { type: 'turn_started', payload: { userMessage: 'test it' } },
+      { type: 'tool_start', payload: { id: 't1', tool: 'Bash', input: { command: 'npm test', description: 'Run the tests' } } },
+      { type: 'tool_start', payload: { id: 't2', tool: 'Read', input: { file_path: '/w/a.ts' } } },
+      { type: 'tool_end', payload: { id: 't2', tool: 'Read', output: '', isError: false, summary: '' } },
+    ] as LiveEvent[], 's1')
+    expect(mirror.openTools('s1')).toEqual([{ name: 'Bash', input: { command: 'npm test', description: 'Run the tests' } }])
+    mirror.ingest([{ type: 'turn_ended', payload: {} }] as LiveEvent[], 's1')
+    expect(mirror.openTools('s1')).toEqual([])
+    rmSync(dir, { recursive: true, force: true })
   })
 })

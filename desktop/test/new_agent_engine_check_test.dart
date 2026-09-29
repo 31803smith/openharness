@@ -20,16 +20,19 @@ import 'package:harness/core/config.dart';
 import 'package:harness/core/engine_availability.dart';
 import 'package:harness/core/models.dart';
 import 'package:harness/state/app_state.dart';
+import 'package:harness/state/harness_placement.dart';
 import 'package:harness/core/project_folder.dart';
 import 'package:harness/state/pane_arrangement.dart';
 import 'package:harness/shared/widgets/app_choice_picker.dart';
-import 'package:harness/shared/widgets/app_select_field.dart';
+import 'package:harness/widgets/agent_picker.dart';
 import 'package:harness/widgets/new_agent_dialog.dart';
+
+import 'support/agent_picker.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  const pickedFolder = '/Users/macbook/Downloads/20260907';
+  const pickedFolder = '/Users/example/Downloads/20260907';
   setUp(() => FileSelectorPlatform.instance = _StubFileSelector(pickedFolder));
 
   const machine = Machine(
@@ -94,12 +97,12 @@ void main() {
     // be attempted and troubleshooting stays in the optional details.
     expect(find.textContaining('Couldn’t check whether'), findsOneWidget);
     expect(
-      find.textContaining('You can still try creating an agent.'),
+      find.textContaining('You can still try starting the harness.'),
       findsOneWidget,
     );
     expect(find.textContaining('uses an older Harness CLI'), findsNothing);
     await tester.ensureVisible(find.byKey(const Key('new-agent-advanced')));
-    await tester.tap(find.byKey(const Key('new-agent-advanced')));
+    await expandNewAgentAdvanced(tester);
     await tester.pump();
     expect(
       find.textContaining('If harness-remote-box uses an older Harness CLI'),
@@ -137,16 +140,17 @@ void main() {
       (engines) => engines.error = 'Check failed',
       app: app,
     );
-    await tester.ensureVisible(
-      find.byKey(const ValueKey('new-agent-quick-codex')),
-    );
-    await tester.tap(find.byKey(const ValueKey('new-agent-quick-codex')));
+    await chooseAgent(tester, 'codex');
     await tester.ensureVisible(find.byKey(const Key('new-agent-advanced')));
-    await tester.tap(find.byKey(const Key('new-agent-advanced')));
+    await expandNewAgentAdvanced(tester);
     await tester.pumpAndSettle();
-    await tester.ensureVisible(find.text('Bypass approvals'));
-    await tester.tap(find.text('Bypass approvals'));
-    await tester.pump();
+    await tester.ensureVisible(
+      find.byKey(const Key('new-agent-permission-mode')),
+    );
+    await tester.tap(find.byKey(const Key('new-agent-permission-mode')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Ask first').last);
+    await tester.pumpAndSettle();
     final retry = find.byKey(const Key('new-agent-retry-check'));
     await tester.ensureVisible(retry);
     final pending = app.pending['machine-1'] = Completer<void>();
@@ -182,9 +186,7 @@ void main() {
     expect(find.text(pickedFolder), findsNothing);
     expect(
       tester
-          .widget<AppSelectField<String>>(
-            find.byKey(const Key('new-agent-engine-field')),
-          )
+          .widget<AgentPicker>(find.byKey(const Key('new-agent-agent-picker')))
           .value,
       'codex',
     );
@@ -194,13 +196,14 @@ void main() {
       findsOneWidget,
     );
     expect(app.launches, isEmpty);
-    await tester.tap(find.widgetWithText(FilledButton, 'Create'));
+    await tester.tap(find.byKey(const ValueKey('create-agent-submit')));
     await tester.pump();
     expect(app.launches.single, {
       'machine': 'machine-1',
       'engine': 'codex',
       'folder': pickedFolder,
-      'bypass': true,
+      // Auto-approve by default; Ask first was picked above, and the retry kept that choice.
+      'bypass': false,
     });
     expect(tester.takeException(), isNull);
   });
@@ -222,17 +225,20 @@ void main() {
       app: app,
     );
     final pending = app.pending['machine-1'] = Completer<void>();
+    await tester.ensureVisible(find.byKey(const Key('new-agent-retry-check')));
     await tester.tap(find.byKey(const Key('new-agent-retry-check')));
     await tester.pump();
     await tester.pump();
-    await tester.tap(find.byKey(const ValueKey('new-agent-machine-machine-2')));
-    await tester.pumpAndSettle();
-    await tester.ensureVisible(
-      find.byKey(const ValueKey('new-agent-quick-codex')),
+    await expandNewAgentAdvanced(tester);
+    final otherMachine = find.byKey(
+      const ValueKey('new-agent-machine-machine-2'),
     );
-    await tester.tap(find.byKey(const ValueKey('new-agent-quick-codex')));
+    await tester.ensureVisible(otherMachine);
+    await tester.tap(otherMachine);
+    await tester.pumpAndSettle();
+    await chooseAgent(tester, 'codex');
     await tester.ensureVisible(find.byKey(const Key('new-agent-advanced')));
-    await tester.tap(find.byKey(const Key('new-agent-advanced')));
+    await expandNewAgentAdvanced(tester);
     await tester.pumpAndSettle();
     expect(
       find.text('Checking whether Other computer supports Codex profiles…'),
@@ -253,9 +259,7 @@ void main() {
     );
     expect(
       tester
-          .widget<AppSelectField<String>>(
-            find.byKey(const Key('new-agent-engine-field')),
-          )
+          .widget<AgentPicker>(find.byKey(const Key('new-agent-agent-picker')))
           .value,
       'codex',
     );
@@ -307,18 +311,25 @@ class _RetryNotifier extends AppNotifier {
   Future<String?> createAgent(
     String machineId, {
     required String engine,
-    required String folder,
+    required String? folder,
     ProjectFolderRequest? projectFolder,
     bool bypassPermission = false,
+    String? permissionMode,
     String? codexHome,
+    String? dsh,
+    GridModel? model,
+    String? prompt,
+    String? name,
+    String? agent,
     String? swarmId,
     PaneSplitRequest? split,
     AgentCreationAttempt? attempt,
+    HarnessPlacement? placement,
   }) async {
     launches.add({
       'machine': machineId,
       'engine': engine,
-      'folder': folder,
+      'folder': folder!,
       'bypass': bypassPermission,
     });
     return 'Test launch refused.';

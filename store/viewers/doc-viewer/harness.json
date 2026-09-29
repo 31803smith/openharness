@@ -1,0 +1,20 @@
+{
+  "spec": 1,
+  "kind": "viewer",
+  "id": "autonomous/doc-viewer",
+  "name": "Doc Viewer",
+  "category": "Documents",
+  "author": "Autonomous",
+  "description": "Read a live PDF, hold an exact draft, pin feedback to words or page regions, and compare the next revision. Keep portable PDF-and-notes review packets alongside native pdf.js search, outlines, spreads and compile diagnostics.",
+  "toolchain": {
+    "setup": "./setup.sh",
+    "doctor": "./doctor.sh"
+  },
+  "viewer": {
+    "command": "./viewer.sh",
+    "url": "http://127.0.0.1:${port}/?file=${artifact}",
+    "artifactExtensions": [
+      ".pdf"
+    ]
+  }
+}

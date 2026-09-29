@@ -34,8 +34,9 @@ void main() {
       'waiting composer',
       'tab',
       'close pane',
+      if (nativeEntry) 'close pane menu',
       'close tab',
-      'new tab',
+      'new swarm',
     ]) {
       testWidgets(
         '$action owns immediate input before a frame (native=$nativeEntry)',
@@ -86,14 +87,17 @@ void main() {
                 LogicalKeyboardKey.arrowLeft,
               ),
               'tab' => ('swarm.select_1', LogicalKeyboardKey.digit1),
-              'close pane' => ('pane.close', LogicalKeyboardKey.keyW),
+              'close pane' ||
+              'close pane menu' => ('pane.close', LogicalKeyboardKey.keyW),
               'close tab' => ('swarm.close', LogicalKeyboardKey.keyW),
               _ => ('swarm.new', LogicalKeyboardKey.keyT),
             };
-            if (nativeEntry) {
+            if (action == 'close pane menu') {
+              await native(tester, 'closePane');
+            } else if (nativeEntry) {
               await native(tester, 'keymapCommand', {'command': commandId});
             } else {
-              await command(tester, key, shift: action == 'close pane');
+              await command(tester, key, shift: commandId == 'pane.close');
             }
             // Both events arrive before the canvas updates its widgets.
             await tester.sendKeyEvent(LogicalKeyboardKey.arrowLeft);
@@ -102,17 +106,14 @@ void main() {
             }
             await tester.pump(const Duration(milliseconds: 10));
             expect(secondInput, isEmpty, reason: 'The old agent owns no input');
-            if (action == 'new tab') {
+            if (action == 'new swarm') {
               expect(app.panes, isEmpty);
+              expect(app.swarms.first.panes, [first, second]);
+              expect(app.swarms, hasLength(2));
               expect(firstInput, isEmpty);
               expect(
-                tester
-                    .widget<TextField>(
-                      find.byKey(const ValueKey('harness-start-search')),
-                    )
-                    .focusNode!
-                    .hasFocus,
-                isTrue,
+                find.byKey(const ValueKey('swarm-search-input')),
+                findsNothing,
               );
             } else if (action == 'waiting composer') {
               expect(app.focusedPane, same(first));
@@ -136,6 +137,18 @@ void main() {
               expect(firstInput, isEmpty);
             } else {
               expect(app.focusedPane, same(first));
+              if (action == 'close tab') {
+                // The tab beside a closed one is shown, but the keys typed
+                // after the close wait on the tab strip until ⏎ goes in.
+                expect(app.tabStripFocused, isTrue);
+                expect(firstInput, isEmpty);
+                await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+                await tester.sendKeyEvent(LogicalKeyboardKey.arrowLeft);
+                if (tester.testTextInput.hasAnyClients) {
+                  tester.testTextInput.enterText('next');
+                }
+                await tester.pump(const Duration(milliseconds: 10));
+              }
               expect(firstInput.expand((frame) => frame.bytes).toList(), [
                 27,
                 91,
@@ -245,10 +258,7 @@ void main() {
         await command(tester, LogicalKeyboardKey.keyR, shift: true);
         await tester.pumpAndSettle();
         final field = tester.widget<TextField>(
-          find.descendant(
-            of: find.byType(AlertDialog),
-            matching: find.byType(TextField),
-          ),
+          find.byKey(const Key('tab-rename-input')),
         );
         expect(field.focusNode!.hasFocus, isTrue);
         if (change == 'waiting composer') {

@@ -1,6 +1,11 @@
 /// Data models mirroring the backend/web types.
 library;
 
+import 'package:flutter/foundation.dart' show immutable;
+
+import 'runtime_model_name.dart';
+import 'agent_git_context.dart';
+
 enum MachineAuthMode { managed, remote, self, provider }
 
 enum ConnectionStatus { disconnected, connecting, connected, reconnecting }
@@ -60,7 +65,42 @@ class CurrentUserProfile {
   }
 }
 
+/// A view-only invitation. It never contains a full machine credential.
+class SharedHarness {
+  const SharedHarness({
+    required this.id,
+    required this.agentId,
+    required this.name,
+    this.engine,
+    required this.expiresAt,
+    this.ownerPublicKey,
+  });
+  final String id, agentId, name;
+  final String? engine;
+  final DateTime expiresAt;
+  final String? ownerPublicKey;
+  factory SharedHarness.fromJson(Map<String, dynamic> j) => SharedHarness(
+    id: j['id'] as String,
+    agentId: j['agentId'] as String,
+    name: j['name'] as String,
+    engine: j['engine'] as String?,
+    expiresAt: DateTime.parse(j['expiresAt'] as String),
+    ownerPublicKey: j['ownerPublicKey'] as String?,
+  );
+}
+
 /// Control-plane machine (GET /api/machines).
+/// Two spellings of the same machine or computer id.
+///
+/// The backend stores a computer id with its dashes stripped
+/// (`d11a1f3bca2a44e9…`) while `~/.harness/computer-id` — which is what the
+/// daemon serves under while signed out, and therefore what a tile made then is
+/// keyed by — keeps them (`d11a1f3b-ca2a-44e9-…`). The same id, written two
+/// ways, and a plain `==` between them never matches. Anything comparing an id
+/// that crossed that boundary has to come through here.
+bool sameMachineId(String a, String b) =>
+    a.replaceAll('-', '').toLowerCase() == b.replaceAll('-', '').toLowerCase();
+
 class Machine {
   final String machineId;
 
@@ -71,6 +111,9 @@ class Machine {
   final String? engine;
   final String? name;
   final String? hostname;
+  final bool isShared;
+  final String? ownerName;
+  final List<SharedHarness> sharedHarnesses;
   final String? status;
 
   const Machine({
@@ -81,12 +124,34 @@ class Machine {
     this.engine,
     this.name,
     this.hostname,
+    this.isShared = false,
+    this.ownerName,
+    this.sharedHarnesses = const [],
     this.status,
   });
 
   String get displayName => (name != null && name!.isNotEmpty)
       ? name!
       : 'machine-${machineId.length > 8 ? machineId.substring(0, 8) : machineId}';
+
+  /// What the machine list says about this computer being up — `null` when it
+  /// says a word neither side has agreed on, which is not the same as "down".
+  ///
+  /// This is the ONE signal that speaks for a machine we have never reached:
+  /// our own socket goes to the local daemon, so its being up says nothing
+  /// about whether the far end answered. Kept on the model rather than in
+  /// `AppNotifier` because the box reads it too, and two copies of a word list
+  /// are two chances to disagree about what "stopped" means.
+  bool? get reportedOnline => switch (status?.trim().toLowerCase()) {
+    'running' || 'online' || 'connected' || 'ready' => true,
+    'offline' ||
+    'stopped' ||
+    'disconnected' ||
+    'unreachable' ||
+    'error' ||
+    'failed' => false,
+    _ => null,
+  };
 
   factory Machine.fromJson(Map<String, dynamic> j) => Machine(
     machineId: j['machineId'] as String,
@@ -99,6 +164,12 @@ class Machine {
     engine: j['engine'] as String?,
     name: j['name'] as String?,
     hostname: j['hostname'] as String?,
+    isShared: j['shared'] == true,
+    ownerName: j['ownerName'] as String?,
+    sharedHarnesses: [
+      for (final row in j['shares'] as List? ?? const [])
+        SharedHarness.fromJson(Map<String, dynamic>.from(row as Map)),
+    ],
     status: j['status'] as String?,
   );
 
@@ -110,21 +181,190 @@ class Machine {
     engine: engine,
     name: name ?? this.name,
     hostname: hostname,
+    isShared: isShared,
+    ownerName: ownerName,
+    sharedHarnesses: sharedHarnesses,
     status: status,
   );
 }
 
+/// Whether an agent on a Local model can search the web, as the daemon decided when it built the
+/// launch (`grid.webSearch` on the agent frame).
+///
+/// Three words, each a different fact for the person reading the picker: `on` needs no sentence;
+/// `unavailable` means the daemon could not obtain the web-tools configuration this time (an
+/// outdated CLI, no sign-in) and moving the agent again may fix it; `unsupported` means the engine
+/// cannot take the tools on this machine at all (Pi has no MCP client; Hermes under a
+/// system-managed install), and nothing about the model changes that.
+enum GridWebSearch {
+  on,
+  unavailable,
+  unsupported;
+
+  /// The one sentence shown for a degraded status, or null when there is nothing to say.
+  String? get sentence => switch (this) {
+    GridWebSearch.on => null,
+    GridWebSearch.unavailable => 'Web search unavailable',
+    GridWebSearch.unsupported => 'Web search not supported by this engine',
+  };
+
+  /// The wire word, or null for anything else — an older daemon sends no field, and a newer one
+  /// might send a fourth word this build should neither print verbatim nor guess at.
+  static GridWebSearch? fromWire(Object? raw) => switch (raw) {
+    'on' => GridWebSearch.on,
+    'unavailable' => GridWebSearch.unavailable,
+    'unsupported' => GridWebSearch.unsupported,
+    _ => null,
+  };
+}
+
 /// Data-plane agent (RPC agents_list).
+/// Where a forked agent came from — see [Agent.forkedFrom].
+class ForkedFrom {
+  final String agentId;
+  final String name;
+
+  const ForkedFrom({required this.agentId, required this.name});
+
+  static ForkedFrom? fromJson(Object? raw) {
+    if (raw is! Map) return null;
+    final agentId = raw['agentId'];
+    if (agentId is! String || agentId.isEmpty) return null;
+    final name = raw['name'];
+    return ForkedFrom(
+      agentId: agentId,
+      name: name is String && name.isNotEmpty ? name : 'a harness',
+    );
+  }
+}
+
+/// Display-only fallbacks; never send these to a CLI as a user rename.
+const kUntitledPane = 'Untitled Pane';
+final _automaticHarnessName = RegExp(
+  r'^(?:(?:harness|agent)-[1-9]\d*|.+ harness \d{1,2}-\d{1,2} \d{1,2}:\d{2}(?::\d{2})?)$',
+);
+
+bool isAutomaticHarnessName(String name) =>
+    _automaticHarnessName.hasMatch(name);
+
+/// Only measurements confirmed by this harness's own tool receipts.
+class AgentOutputStats {
+  const AgentOutputStats({
+    this.linesAdded,
+    this.linesRemoved,
+    this.pullRequestsCreated,
+    this.updatedAt,
+  });
+  final int? linesAdded, linesRemoved, pullRequestsCreated;
+  final DateTime? updatedAt;
+  bool get hasEdits => linesAdded != null && linesRemoved != null;
+  bool get isEmpty => !hasEdits && pullRequestsCreated == null;
+  static AgentOutputStats? fromJson(Object? value) {
+    if (value is! Map) return null;
+    int? count(Object? n) =>
+        n is int && n >= 0 && n <= 9007199254740991 ? n : null;
+    final added = count(value['linesAdded']),
+        removed = count(value['linesRemoved']);
+    final stats = AgentOutputStats(
+      linesAdded: removed == null ? null : added,
+      linesRemoved: added == null ? null : removed,
+      pullRequestsCreated: count(value['pullRequestsCreated']),
+      updatedAt: value['updatedAt'] is String
+          ? DateTime.tryParse(value['updatedAt'] as String)
+          : null,
+    );
+    return stats.isEmpty ? null : stats;
+  }
+
+  @override
+  bool operator ==(Object other) =>
+      other is AgentOutputStats &&
+      linesAdded == other.linesAdded &&
+      linesRemoved == other.linesRemoved &&
+      pullRequestsCreated == other.pullRequestsCreated &&
+      updatedAt == other.updatedAt;
+  @override
+  int get hashCode =>
+      Object.hash(linesAdded, linesRemoved, pullRequestsCreated, updatedAt);
+}
+
 class Agent {
   final String id;
   final String? sessionId;
   final String name;
+
+  /// What the agent is on, in its own words — the transcript's title as the
+  /// daemon cleaned it, null when it has none or it is the name already. A
+  /// search finds an agent by this before it finds one by a recap.
+  final String? title;
   final String? engine;
   final String? engineDisplayName;
   final String? engineIconHint;
   final String? codexHome;
+
+  /// Model observed in this session by the daemon, when available. Independent
+  /// of [gridModel], which determines subscription versus local-model routing.
+  final String? modelName;
+
+  /// Effort reported with [modelName], never inferred from a model default.
+  final String? modelEffort;
+
+  /// The grid model this agent is CURRENTLY running on, or null for its own vendor login.
+  ///
+  /// Read by the daemon off the live process on every discovery, never bookkept — so it is the
+  /// truth even for an agent someone re-pointed by hand. Null is a real answer, not a missing one.
+  final String? gridModel;
+
+  /// Whether the agent can search the web on that model, or null when the daemon said nothing —
+  /// an agent on its own login, an older daemon, or a grid agent it merely discovered. Decided by
+  /// the daemon when it built the launch and carried on every frame, so it is right after a
+  /// reconnect or a restart without anything being replayed.
+  final GridWebSearch? gridWebSearch;
+
+  /// Where [gridModel] is served — the endpoint the engine was handed (a grid's relay, or a saved
+  /// API such as `https://openrouter.ai/api`). Null with no [gridModel], or from an older daemon.
+  final String? gridBaseUrl;
+
+  /// How the daemon's picture has the grid this agent's model is on (`grid.state`), or null when
+  /// it did not say — an agent on its own login, or an older daemon. Asleep or waking is what puts
+  /// the "Starting up…" chip on its pane between a message and the first answer.
+  final GridSectionState? gridState;
+
+  /// Why the agent's model will not answer right now (`grid.note`), or null when nothing is wrong.
+  final GridNote? gridNote;
   final String? parentAgentId;
   final AgentProject? project;
+  final AgentGitContext? gitContext;
+  AgentProject? get displayProject =>
+      gitContext?.displayProject(project) ?? project;
+
+  /// The CLI's transcript/hook activity time, not its registry refresh time.
+  final DateTime? lastActivityAt;
+
+  /// When a person last opened or focused this harness in ANY client, as the
+  /// owning daemon recorded it (`lastOpenedAt`, stamped by `agent_update
+  /// {opened: true}`). Null when never opened, or from a daemon that predates
+  /// the field.
+  final DateTime? lastOpenedAt;
+
+  /// What harness lists sort by: the later of [lastActivityAt] and
+  /// [lastOpenedAt], so a harness someone just looked at rises even while it
+  /// is quiet. The order is global — every client and machine reads the same
+  /// daemon stamps.
+  DateTime? get lastUsedAt {
+    final activity = lastActivityAt;
+    final opened = lastOpenedAt;
+    if (activity == null) return opened;
+    if (opened == null) return activity;
+    return opened.isAfter(activity) ? opened : activity;
+  }
+
+  /// Cached conversation usage reported by this agent's owning machine.
+  final int? tokensUsed;
+  final DateTime? tokensUpdatedAt;
+  final AgentOutputStats? outputStats;
+  bool get hasMonitorStats =>
+      tokensUsed != null || (outputStats != null && !outputStats!.isEmpty);
   final String status;
   final String launchState;
   final String? launchError;
@@ -132,23 +372,163 @@ class Agent {
   final bool terminalAvailable;
   final String? terminalUnavailableReason;
 
+  /// The domain-specific harness this agent was created from (`autonomous/autonomous-circuit`), or
+  /// null for a plain engine. [engine] stays the BASE engine the process actually runs —
+  /// a DSH is a decoration on the session, never a second engine (see the DSH spec in
+  /// `store/spec/README.md`). Everything a person sees keys off this when it is set.
+  final String? dsh;
+
+  /// The harness's display name as the daemon read it off the manifest. Lets a DSH this
+  /// build has never heard of still show its own name rather than its id.
+  final String? dshName;
+
+  /// The URL of the harness's viewer for this agent, served on the agent's machine, or null
+  /// when there is none (yet). A change means the viewer pane must navigate.
+  final String? viewerUrl;
+
+  /// Why this remote viewer could not be forwarded, including old-daemon update guidance.
+  final String? viewerError;
+
+  /// What the harness's viewer pane is called — the shared viewer's own name ("3D Viewer"), or
+  /// the harness's name and "Viewer" for one it ships ("Marp Viewer") — as the daemon worked it
+  /// out. Null from an older daemon or with no viewer; see [PaneGrid] for what stands in.
+  final String? viewerName;
+
+  /// The harness's last verdict on this workspace, or null when it has not written one.
+  final AgentVerdict? verdict;
+
+  /// The agent this one was forked from (`agent_fork`), or null for every
+  /// other agent. Carries the source's name as it was at the fork, because the
+  /// source may be renamed or gone by the time the badge is read.
+  final ForkedFrom? forkedFrom;
+
+  /// Whether the daemon can fork this agent (`agent_fork`), as it said on the
+  /// frame; null from a daemon that predates the field — then the engine
+  /// decides (see [canFork]).
+  final bool? forkable;
+
+  /// How much a Pause of this harness can promise to bring back, as the daemon
+  /// reports it (`lib/resumeCapability.ts`): `shell`, `conversation` or
+  /// `fresh`. Null from a daemon that predates the field — see
+  /// [canPauseAndResume] for what this build assumes then.
+  final String? resumeMode;
+
+  /// The permission mode this agent was launched in (`plan`, `readOnly`, …),
+  /// as the daemon recorded it; null from a daemon that predates the field, a
+  /// row from before the choice existed, or an agent Harness did not launch.
+  /// Read for Clone (⌘⇧N), so another of this one opens in the same mode.
+  final String? permissionMode;
+
+  /// Whether its permission prompts were bypassed at launch; null when
+  /// unrecorded (see [permissionMode]) — then a clone uses the default.
+  final bool? bypassPermission;
+
+  /// The engine's own named agent it was opened as (`agent_create`'s `agent`),
+  /// or null for a general session.
+  final String? namedAgent;
+
   const Agent({
     required this.id,
     this.sessionId,
     required this.name,
+    this.title,
     this.engine,
     this.engineDisplayName,
     this.engineIconHint,
     this.codexHome,
+    this.modelName,
+    this.modelEffort,
+    this.gridModel,
+    this.gridWebSearch,
+    this.gridBaseUrl,
+    this.gridState,
+    this.gridNote,
     this.parentAgentId,
     this.project,
+    this.gitContext,
+    this.lastActivityAt,
+    this.lastOpenedAt,
+    this.tokensUsed,
+    this.tokensUpdatedAt,
+    this.outputStats,
     this.status = 'active',
     this.launchState = 'ready',
     this.launchError,
     this.launchDetail,
     this.terminalAvailable = false,
     this.terminalUnavailableReason,
+    this.dsh,
+    this.dshName,
+    this.viewerUrl,
+    this.viewerError,
+    this.viewerName,
+    this.verdict,
+    this.forkedFrom,
+    this.forkable,
+    this.resumeMode,
+    this.permissionMode,
+    this.bypassPermission,
+    this.namedAgent,
   });
+
+  bool get isStopped => status == 'stopped';
+
+  /// Exact saved-conversation resume is currently implemented for these engines.
+  bool get canResumeConversation =>
+      (engine == 'claude' || engine == 'codex') &&
+      sessionId?.isNotEmpty == true;
+
+  /// Whether the Harnesses panel may pause this harness and bring it back.
+  ///
+  /// Every engine can, and the daemon says so per engine through [resumeMode]
+  /// — a client that kept its own allow-list is how the two drifted, with
+  /// engines the daemon would happily resume greyed out here for a year.
+  /// What DIFFERS per engine is how much comes back, which
+  /// [resumesFreshConversation] answers and the button's wording says.
+  ///
+  /// The fallback is for a daemon that predates the field: the old rule, so an
+  /// older machine is never offered a Pause its CLI will refuse. `'terminal'`
+  /// is `kTerminalEngine` (`widgets/engine_identity.dart`), spelled out for the
+  /// same reason `'claude'`/`'codex'` are above: this is the model layer and
+  /// does not reach into the widgets.
+  bool get canPauseAndResume =>
+      resumeMode != null || engine == 'terminal' || canResumeConversation;
+
+  /// Whether resuming this harness opens a NEW conversation rather than the one
+  /// it was paused in — either because the engine has no resume argv (`fresh`),
+  /// or because nothing recorded a conversation to reopen. The button says so
+  /// before it is pressed, and a resume that reports it is a success, not a
+  /// failure.
+  bool get resumesFreshConversation =>
+      resumeMode == 'fresh' ||
+      (resumeMode == 'conversation' && (sessionId?.isEmpty ?? true));
+
+  /// Explicit names win. An automatic CLI label gives way to its session title.
+  String get displayName => _automaticHarnessName.hasMatch(name)
+      ? (title?.trim().isNotEmpty == true ? title!.trim() : kUntitledPane)
+      : name;
+
+  /// The engines whose sessions can be forked — natively (Claude Code's
+  /// `--fork-session`, `codex fork`) or by a handoff message (OpenCode takes a
+  /// first prompt). The daemon is the authority when it says (`forkable`);
+  /// this is the answer for one that does not.
+  static const forkableEngines = {'claude', 'codex', 'opencode'};
+
+  /// Whether to offer Fork for this agent at all. Devin, Cursor and the rest
+  /// can neither fork nor open with a message, so the button is not drawn
+  /// rather than drawn and refused.
+  bool get canFork => forkable ?? forkableEngines.contains(engine);
+
+  /// Whether Clone (⌘⇧N) can open another of this agent — any engine, but not
+  /// one on a grid: the frame carries the grid's model and never its launch
+  /// key, so a clone would silently land on the engine's own login instead.
+  bool get canClone => engine != null && gridModel == null;
+
+  /// What to draw this agent AS: its harness when it has one, else its engine.
+  String? get identityEngine => dsh ?? engine;
+
+  /// The name that goes with [identityEngine], for an id this build has no picture of.
+  String? get identityDisplayName => dsh != null ? dshName : engineDisplayName;
 
   factory Agent.fromJson(Map<String, dynamic> j) {
     final terminal = j['terminal'];
@@ -174,16 +554,46 @@ class Agent {
       'failed' => 'failed',
       _ => 'ready',
     };
+    final grid = j['grid'] as Map<String, dynamic>?;
+    final usage = j['tokenUsage'];
+    final total = usage is Map ? usage['totalTokens'] : null;
+    final validTokens = total is int && total >= 0 && total <= 9007199254740991;
+    final model = runtimeModelDetails(
+      j['selectedModel'],
+      agentId: j['id'] as String,
+      engine: _safeEngine(j['engine']),
+    );
     return Agent(
       id: j['id'] as String,
       sessionId: _safeLabel(j['sessionId']),
-      name: j['name'] as String? ?? 'agent',
+      name: j['name'] as String? ?? 'harness',
+      title: _safeLabel(j['title']),
       engine: _safeEngine(j['engine']),
       engineDisplayName: _safeLabel(j['engineDisplayName']),
       engineIconHint: _safeLabel(j['engineIconHint']),
       codexHome: j['engine'] == 'codex' ? _safeCodexHome(j['codexHome']) : null,
+      modelName: model?.name,
+      modelEffort: model?.effort,
+      gridModel: _safeLabel(grid?['model']),
+      gridWebSearch: GridWebSearch.fromWire(grid?['webSearch']),
+      gridBaseUrl: _safeUrl(grid?['baseUrl']),
+      gridState: GridSectionState.parse(grid?['state']),
+      gridNote: GridNote.fromWire(grid?['note']),
       parentAgentId: _safeLabel(j['parentAgentId'] ?? j['parentId']),
       project: AgentProject.fromJson(j['project']),
+      gitContext: AgentGitContext.fromJson(j['gitContext']),
+      lastActivityAt: j['updatedAt'] is String
+          ? DateTime.tryParse(j['updatedAt'] as String)
+          : null,
+      lastOpenedAt: j['lastOpenedAt'] is String
+          ? DateTime.tryParse(j['lastOpenedAt'] as String)
+          : null,
+      tokensUsed: validTokens ? total : null,
+      tokensUpdatedAt:
+          validTokens && usage is Map && usage['updatedAt'] is String
+          ? DateTime.tryParse(usage['updatedAt'] as String)
+          : null,
+      outputStats: AgentOutputStats.fromJson(j['outputStats']),
       status: (j['status'] as String?) ?? 'active',
       launchState: launchState,
       launchError: launchState == 'failed' ? _safeLabel(launch['error']) : null,
@@ -195,26 +605,115 @@ class Agent {
           ? null
           : _safeLabel(terminalMap['reason']) ??
                 'terminal unavailable (no verified terminal pane)',
+      dsh: _safeDsh(j['dsh']),
+      dshName: _safeLabel(j['dshName']),
+      viewerUrl: _safeViewerUrl(j['viewerUrl']),
+      viewerError: _safeDetail(j['viewerError']),
+      viewerName: _safeLabel(j['viewerName']),
+      verdict: AgentVerdict.fromJson(j['verdict']),
+      forkedFrom: ForkedFrom.fromJson(j['forkedFrom']),
+      forkable: j['forkable'] is bool ? j['forkable'] as bool : null,
+      resumeMode: _safeResumeMode(j['resumeMode']),
+      permissionMode: _safePermissionMode(j['permissionMode']),
+      bypassPermission: j['bypassPermission'] is bool
+          ? j['bypassPermission'] as bool
+          : null,
+      namedAgent: _safeNamedAgent(j['namedAgent']),
     );
   }
 
-  Agent copyWith({String? name}) => Agent(
+  Agent copyWith({
+    String? name,
+    AgentGitContext? gitContext,
+    String? status,
+    bool? terminalAvailable,
+    DateTime? lastOpenedAt,
+  }) => Agent(
     id: id,
     sessionId: sessionId,
     name: name ?? this.name,
+    title: title,
     engine: engine,
     engineDisplayName: engineDisplayName,
     engineIconHint: engineIconHint,
     codexHome: codexHome,
+    modelName: modelName,
+    modelEffort: modelEffort,
+    gridModel: gridModel,
+    gridWebSearch: gridWebSearch,
+    gridBaseUrl: gridBaseUrl,
+    gridState: gridState,
+    gridNote: gridNote,
     parentAgentId: parentAgentId,
     project: project,
-    status: status,
+    gitContext: gitContext ?? this.gitContext,
+    lastActivityAt: lastActivityAt,
+    lastOpenedAt: lastOpenedAt ?? this.lastOpenedAt,
+    tokensUsed: tokensUsed,
+    tokensUpdatedAt: tokensUpdatedAt,
+    outputStats: outputStats,
+    status: status ?? this.status,
     launchState: launchState,
     launchError: launchError,
     launchDetail: launchDetail,
-    terminalAvailable: terminalAvailable,
+    terminalAvailable: terminalAvailable ?? this.terminalAvailable,
     terminalUnavailableReason: terminalUnavailableReason,
+    dsh: dsh,
+    dshName: dshName,
+    viewerUrl: viewerUrl,
+    viewerError: viewerError,
+    viewerName: viewerName,
+    verdict: verdict,
+    forkedFrom: forkedFrom,
+    forkable: forkable,
+    resumeMode: resumeMode,
+    permissionMode: permissionMode,
+    bypassPermission: bypassPermission,
+    namedAgent: namedAgent,
   );
+
+  /// A mode id as `PERMISSION_MODES` spells them (`acceptEdits`, `readOnly`):
+  /// one word. Not checked against this build's own list — the daemon that
+  /// launched the agent is the authority, and it is the one that will read the
+  /// id back on a clone.
+  /// One of the daemon's three resume modes, or null for anything else — an
+  /// older daemon that does not send it, or a newer one that grew a fourth
+  /// this build has no wording for.
+  static String? _safeResumeMode(Object? raw) =>
+      raw is String && const {'shell', 'conversation', 'fresh'}.contains(raw)
+      ? raw
+      : null;
+
+  static String? _safePermissionMode(Object? raw) =>
+      raw is String && RegExp(r'^[A-Za-z]{1,32}$').hasMatch(raw) ? raw : null;
+
+  /// The daemon's `AGENT_NAME_RE` (engineLaunch.ts): a flag value, never a path.
+  static String? _safeNamedAgent(Object? raw) =>
+      raw is String && RegExp(r'^[A-Za-z0-9_-]{1,64}$').hasMatch(raw)
+      ? raw
+      : null;
+
+  /// `owner/name`, exactly the shape the DSH manifest schema allows and nothing else — the
+  /// id names an install directory on the far machine and a picker tile here.
+  static String? _safeDsh(Object? raw) {
+    if (raw is! String || raw.isEmpty || raw.length > 129) return null;
+    return RegExp(r'^[a-z0-9][a-z0-9-]{0,63}/[a-z0-9][a-z0-9-]{0,63}$')
+            .hasMatch(raw)
+        ? raw
+        : null;
+  }
+
+  /// A loopback or plain http(s) URL the viewer pane may load. Anything else — a `file:`,
+  /// a `javascript:`, a string with control characters — is dropped rather than navigated
+  /// to, since this lands straight in a webview.
+  static String? _safeViewerUrl(Object? raw) {
+    if (raw is! String || raw.isEmpty || raw.length > 2048) return null;
+    if (RegExp(r'[\x00-\x1f\x7f\s]').hasMatch(raw)) return null;
+    final uri = Uri.tryParse(raw);
+    if (uri == null || !uri.hasAuthority) return null;
+    if (uri.scheme != 'http' && uri.scheme != 'https') return null;
+    return raw;
+  }
 
   static String? _safeEngine(Object? raw) {
     if (raw is! String || raw.isEmpty || raw.length > 64) return null;
@@ -231,6 +730,14 @@ class Agent {
     return raw;
   }
 
+  static String? _safeUrl(Object? raw) {
+    if (raw is! String || raw.isEmpty || raw.length > 2048) return null;
+    final uri = Uri.tryParse(raw);
+    return uri != null && (uri.scheme == 'https' || uri.scheme == 'http')
+        ? raw
+        : null;
+  }
+
   static String? _safeLabel(Object? raw) {
     if (raw is! String || raw.isEmpty) return null;
     return raw.length <= 80 ? raw : raw.substring(0, 80);
@@ -242,6 +749,138 @@ class Agent {
     if (clean.isEmpty) return null;
     return clean.length <= 500 ? clean : clean.substring(0, 500);
   }
+}
+
+/// A domain-specific harness's verdict on an agent's workspace, as the daemon read it off
+/// `.harness/verdict.json` (see `store/spec/README.md`). Counts rather than the findings
+/// themselves: the pane header has room for "3 errors", and the findings live in the
+/// harness's own viewer.
+enum AgentPhaseState { done, active, pending, failed }
+
+/// One phase of a harness's work, as its verdict names it: where the agent is.
+class AgentPhase {
+  const AgentPhase({
+    required this.id,
+    required this.name,
+    this.state = AgentPhaseState.pending,
+    this.artifact,
+  });
+
+  final String id;
+  final String name;
+  final AgentPhaseState state;
+  final String? artifact;
+
+  static AgentPhase? fromJson(Object? raw) {
+    if (raw is! Map) return null;
+    final name = AgentVerdict._safeText(raw['name'], 40);
+    if (name == null || name.isEmpty) return null;
+    final id = AgentVerdict._safeText(raw['id'], 40);
+    final state = switch (raw['state']) {
+      'done' => AgentPhaseState.done,
+      'active' => AgentPhaseState.active,
+      'failed' => AgentPhaseState.failed,
+      _ => AgentPhaseState.pending,
+    };
+    return AgentPhase(
+      id: id == null || id.isEmpty ? name.toLowerCase() : id,
+      name: name,
+      state: state,
+      artifact: AgentVerdict._safeText(raw['artifact'], 1024),
+    );
+  }
+}
+
+@immutable
+class AgentVerdict {
+  const AgentVerdict({
+    required this.ready,
+    this.summary,
+    this.errors = 0,
+    this.warnings = 0,
+    this.artifact,
+    this.phases = const [],
+    this.updatedAt,
+  });
+
+  /// The one machine fact: fab-ready, all gates passed, exam passed.
+  final bool ready;
+
+  /// One line for the header's tooltip.
+  final String? summary;
+  final int errors;
+  final int warnings;
+
+  /// Workspace-relative path of the primary thing to look at, when the harness named one.
+  final String? artifact;
+
+  /// Where the work is, in order — at most twelve; empty when the harness
+  /// names no phases, and then the header draws no strip.
+  final List<AgentPhase> phases;
+  final DateTime? updatedAt;
+
+  /// The phase under way, when one is.
+  AgentPhase? get activePhase =>
+      phases.where((p) => p.state == AgentPhaseState.active).firstOrNull;
+
+  /// The one phase the header shows: the one under way, else the last one
+  /// that has happened — done or failed — else nothing. A status, not a
+  /// history: each new one replaces the last.
+  AgentPhase? get currentPhase {
+    final active = activePhase;
+    if (active != null) return active;
+    for (final phase in phases.reversed) {
+      if (phase.state != AgentPhaseState.pending) return phase;
+    }
+    return null;
+  }
+
+  static AgentVerdict? fromJson(Object? raw) {
+    if (raw is! Map) return null;
+    final ready = raw['ready'];
+    if (ready is! bool) return null;
+    final updated = raw['updatedAt'];
+    return AgentVerdict(
+      ready: ready,
+      summary: _safeText(raw['summary'], 200),
+      errors: _safeCount(raw['errors']),
+      warnings: _safeCount(raw['warnings']),
+      artifact: _safeText(raw['artifact'], 1024),
+      phases: _phases(raw['phases']),
+      updatedAt: updated is String ? DateTime.tryParse(updated) : null,
+    );
+  }
+
+  static List<AgentPhase> _phases(Object? raw) {
+    if (raw is! List) return const [];
+    return [for (final item in raw.take(12)) ?AgentPhase.fromJson(item)];
+  }
+
+  static int _safeCount(Object? raw) {
+    if (raw is! num || raw.isNaN || raw < 0) return 0;
+    return raw > 9999 ? 9999 : raw.toInt();
+  }
+
+  static String? _safeText(Object? raw, int max) {
+    if (raw is! String) return null;
+    final clean = raw.replaceAll(RegExp(r'[\u0000-\u001f\u007f]'), ' ').trim();
+    if (clean.isEmpty) return null;
+    return clean.length <= max ? clean : clean.substring(0, max);
+  }
+
+  @override
+  bool operator ==(Object other) =>
+      other is AgentVerdict &&
+      other.ready == ready &&
+      other.summary == summary &&
+      other.errors == errors &&
+      other.warnings == warnings &&
+      other.artifact == artifact &&
+      other.updatedAt == updatedAt;
+
+  @override
+  int get hashCode =>
+      Object.hash(ready, summary, errors, warnings, artifact, updatedAt);
 }
 
 /// What the daemon answered when asked where a typed task belongs (⌘B).
@@ -370,6 +1009,10 @@ class RouteCandidate {
 
 String _str(Object? value) => value is String ? value : '';
 
+/// How a checkout on no branch reports itself, `Detached 65281563`: the
+/// daemon (cli/src/lib/agentProject.ts) and [LocalGitProjects] both say so.
+const kDetachedBranchPrefix = 'Detached ';
+
 /// Context reported by the owning daemon. Missing on older daemons.
 class AgentProject {
   const AgentProject({
@@ -378,12 +1021,60 @@ class AgentProject {
     this.root,
     this.remote,
     this.branch,
+    this.worktree = false,
+    this.branchPending = false,
   });
   final String name;
   final String cwd;
   final String? root;
   final String? remote;
   final String? branch;
+
+  /// In a linked worktree rather than the repository's own checkout.
+  final bool worktree;
+
+  /// [branch] still has the name Harness made up at Start; it is shown once
+  /// the session's name replaces it.
+  final bool branchPending;
+
+  /// The folder as the person chose it: inside a Git checkout, a subfolder
+  /// shows as itself and the checkout's root as its remote repository name
+  /// (falling back to [name]), even
+  /// when the checkout is a temporary worktree. Outside Git it is [name], the
+  /// folder itself. The branch beside it is the repository's.
+  String get label {
+    final checkout = root;
+    if (checkout == null) return name;
+    String trimmed(String path) => path.replaceFirst(RegExp(r'[/\\]+$'), '');
+    if (trimmed(checkout) == trimmed(cwd)) {
+      final repository = remote == null
+          ? ''
+          : trimmed(remote!)
+                .split('/')
+                .last
+                .replaceFirst(RegExp(r'\.git$', caseSensitive: false), '');
+      return repository.isEmpty ? name : repository;
+    }
+    return cwd
+            .split(RegExp(r'[/\\]'))
+            .where((part) => part.isNotEmpty)
+            .lastOrNull ??
+        name;
+  }
+
+  /// On a commit rather than a branch: an agent reading or testing one.
+  bool get detached => branch?.startsWith(kDetachedBranchPrefix) == true;
+
+  /// The branch worth showing beside the folder: none while Harness's made-up
+  /// name waits for the session's, and none on no branch at all.
+  String? get shownBranch => branchPending || detached ? null : branch;
+
+  /// The branch as a tooltip says it.
+  String? get branchDetail => branch == null
+      ? null
+      : detached
+      ? 'No branch: on commit ${branch!.substring(kDetachedBranchPrefix.length)}'
+      : 'Branch: $branch';
 
   String identity(String machineId) =>
       remote != null ? 'repo:$remote' : 'folder:$machineId:${root ?? cwd}';
@@ -395,9 +1086,12 @@ class AgentProject {
       cwd == other.cwd &&
       root == other.root &&
       remote == other.remote &&
-      branch == other.branch;
+      branch == other.branch &&
+      worktree == other.worktree &&
+      branchPending == other.branchPending;
   @override
-  int get hashCode => Object.hash(name, cwd, root, remote, branch);
+  int get hashCode =>
+      Object.hash(name, cwd, root, remote, branch, worktree, branchPending);
 
   static AgentProject? fromJson(Object? raw) {
     if (raw is! Map) return null;
@@ -420,6 +1114,324 @@ class AgentProject {
       root: field('root'),
       remote: field('remote'),
       branch: field('branch', 256),
+      worktree: raw['worktree'] == true,
+      branchPending: raw['branchPending'] == true,
     );
+  }
+}
+
+/// One model the account's private harness grid can answer right now.
+class GridModel {
+  /// The id an engine is pointed at, verbatim from the grid.
+  final String id;
+
+  /// Which machine serves it. Display only, and empty when the grid does not say — on a private
+  /// grid this is one of the user's own computers, which is the useful part of the answer.
+  final String node;
+
+  /// The grid it is served on — the section it was listed under. Null on an older daemon that
+  /// sends only the own grid's list, which the retarget then targets as it always did.
+  final String? grid;
+
+  /// Set when every computer serving this row seems offline — see [GridModelUnavailable]. Null
+  /// for every other row, and always from a daemon that predates it.
+  final GridModelUnavailable? unavailable;
+
+  const GridModel({
+    required this.id,
+    required this.node,
+    this.grid,
+    this.unavailable,
+  });
+}
+
+/// Why a listed model will not answer, as the daemon labels a row (`unavailable`, sent only to a
+/// client that asked with `rowState: true`).
+///
+/// Only `offline` is a reason this build knows: every computer serving the row read offline twice,
+/// a minute apart. The row is labelled, never removed — the daemon may be wrong about a computer
+/// that is merely asleep, and a move onto it is the person's call. A reason this build has not
+/// heard of is no claim at all, the rule [GridSectionState] follows.
+class GridModelUnavailable {
+  /// The computer's name as the Machines list shows it.
+  final String machine;
+
+  /// When it was first read offline, or null when the daemon did not say.
+  final DateTime? since;
+
+  const GridModelUnavailable({required this.machine, this.since});
+
+  static GridModelUnavailable? fromWire(Object? raw) {
+    if (raw is! Map || raw['reason'] != 'offline') return null;
+    final machine = Agent._safeLabel(raw['machine']);
+    if (machine == null) return null;
+    final since = raw['since'];
+    return GridModelUnavailable(
+      machine: machine,
+      since: since is String ? DateTime.tryParse(since) : null,
+    );
+  }
+}
+
+/// What came of the last explicit wake of a section that did not end in models (`wakeOutcome`).
+///
+/// A wake that shows models leaves nothing — the section is simply awake with them. The daemon
+/// keeps an outcome until a later read finds the section awake with a model, or ten minutes pass.
+enum GridWakeOutcome {
+  /// The section could not be started; it will start on the next message.
+  notStarted,
+
+  /// It started, and nobody is serving a model on it.
+  nobodyServing;
+
+  static GridWakeOutcome? parse(Object? raw) => switch (raw) {
+    'not_started' => GridWakeOutcome.notStarted,
+    'nobody_serving' => GridWakeOutcome.nobodyServing,
+    _ => null,
+  };
+}
+
+/// Why an agent's model will not answer right now, as the daemon notes it on the agent's frame
+/// (`grid.note`): [GridNoteOffline] or [GridNoteNotServed].
+///
+/// Absent when there is nothing to say; the daemon re-pushes the agent when it clears, and never
+/// notes an agent on Auto (no model).
+sealed class GridNote {
+  /// The model the agent is on, as the daemon named it in the note.
+  final String model;
+
+  const GridNote(this.model);
+
+  /// Read defensively: a reason this build does not know, or a note missing the names its
+  /// sentence needs, is no note at all.
+  static GridNote? fromWire(Object? raw) {
+    if (raw is! Map) return null;
+    final model = Agent._safeLabel(raw['model']);
+    if (model == null) return null;
+    final machine = Agent._safeLabel(raw['machine']);
+    return switch (raw['reason']) {
+      'not_served' => GridNoteNotServed(model),
+      'offline' when machine != null => GridNoteOffline(
+        model,
+        machine: machine,
+      ),
+      _ => null,
+    };
+  }
+}
+
+/// Every computer serving the agent's model seems offline.
+final class GridNoteOffline extends GridNote {
+  /// The computer, as the Machines list names it.
+  final String machine;
+
+  const GridNoteOffline(super.model, {required this.machine});
+}
+
+/// The latest list (an awake read, or the sleep record) no longer has the agent's model.
+final class GridNoteNotServed extends GridNote {
+  const GridNoteNotServed(super.model);
+}
+
+/// Which `grid` a machine would run, as its daemon reports beside the model list (`gridCli`).
+///
+/// `managed` is the runtime Harness itself carries and pins; `path` is one the person installed
+/// (runnable, but not the pin); `missing` is nothing to run — the one value that changes what the
+/// picker and the Local model dialog say, because an agent started on that machine would die on
+/// its first `grid`. An older daemon sends no field, read as null: nothing is claimed either way.
+enum GridCli {
+  managed,
+  path,
+  missing;
+
+  static GridCli? parse(Object? raw) => switch (raw) {
+    'managed' => GridCli.managed,
+    'path' => GridCli.path,
+    'missing' => GridCli.missing,
+    _ => null,
+  };
+}
+
+/// What the daemon last learned about one grid, as it reports beside the section (`state`).
+///
+/// The daemon reads grids without waking them, so a section can describe a grid that is resting:
+/// [asleep] keeps its last known models rather than blanking them, [unknown] is a read that failed
+/// some other way (or none yet), and [waking] is reserved for a person asking it to start. An older
+/// daemon sends no field, read as null: nothing is claimed either way, and the section draws as it
+/// always did.
+enum GridSectionState {
+  awake,
+  asleep,
+  waking,
+  unknown;
+
+  static GridSectionState? parse(Object? raw) => switch (raw) {
+    'awake' => GridSectionState.awake,
+    'asleep' => GridSectionState.asleep,
+    'waking' => GridSectionState.waking,
+    'unknown' => GridSectionState.unknown,
+    _ => null,
+  };
+
+  /// Asleep, or on its way up: a message sent now waits for it to start.
+  bool get resting =>
+      this == GridSectionState.asleep || this == GridSectionState.waking;
+}
+
+/// The picker's whole answer: which grid was asked, and what it offers.
+///
+/// One grid the machine is signed into, with what it serves. [own] marks the account's private
+/// grid — the picker calls that one "Local"; a shared grid goes by its name.
+class GridSection {
+  final String name;
+  final bool own;
+  final List<GridModel> models;
+
+  /// How the grid answered the daemon's last look — see [GridSectionState]. Null from an older
+  /// daemon, which draws the section as it always was.
+  final GridSectionState? state;
+
+  /// When the grid was last seen awake, or null.
+  final DateTime? seenAt;
+
+  /// How old [models] is, in seconds, or null when nothing is known.
+  final int? lastKnownAge;
+
+  /// What came of the last explicit wake that showed no models — see [GridWakeOutcome]. Null
+  /// otherwise, and always from a daemon that predates it.
+  final GridWakeOutcome? wakeOutcome;
+
+  const GridSection({
+    required this.name,
+    required this.own,
+    required this.models,
+    this.state,
+    this.seenAt,
+    this.lastKnownAge,
+    this.wakeOutcome,
+  });
+}
+
+/// `gridName` is null when the machine has no grid yet — told apart from "a grid with nothing on
+/// it", because the two need different sentences in front of a person.
+class GridModels {
+  final String? gridName;
+  final List<GridModel> models;
+
+  /// Every grid the machine is signed into, own grid first, each with its live models — the
+  /// picker's sections. Empty on an older daemon, which sends only [models] for the own grid; the
+  /// picker then draws that one section as it always did.
+  final List<GridSection> grids;
+
+  /// The engines a Local model can be offered to at all, as the daemon on that machine names them
+  /// (`localModelEngines`; the set of launch contracts in its `gridLaunch.ts`). Null when the
+  /// daemon is older and sends no such list — read as "offer everything", the behaviour before.
+  final Set<String>? localModelEngines;
+
+  /// New-session model selections are understood by this daemon.
+  final bool supportsModelLaunch;
+
+  /// Which `grid` the machine would run — see [GridCli]. Null when the daemon is older and does
+  /// not say, which claims nothing.
+  final GridCli? gridCli;
+
+  /// Did the machine ANSWER? False when the request failed — offline, timed out, or a daemon too
+  /// old to know the call.
+  ///
+  /// Kept apart from `gridName == null` because the two mean opposite things to a person. "This
+  /// account has no grid" is a fact worth acting on; "we could not ask" is not a fact about the
+  /// account at all, and a UI that folds them together tells a signed-in user to sign in again.
+  final bool reachable;
+
+  const GridModels({
+    required this.gridName,
+    required this.models,
+    this.grids = const [],
+    this.localModelEngines,
+    this.supportsModelLaunch = false,
+    this.gridCli,
+    this.reachable = true,
+  });
+
+  /// The daemon's `grid_models_list` reply — and the `grid_models_changed` push, which carries the
+  /// same document — read defensively: the fields of an older or newer daemon are simply absent or
+  /// ignored, never a failure. `reachable` is false only when the daemon answered with an `error`.
+  factory GridModels.fromReply(Map<String, dynamic> reply) {
+    List<GridModel> parseModels(Object? raw, {String? grid}) =>
+        (raw is List ? raw : const <dynamic>[])
+            .whereType<Map<String, dynamic>>()
+            .map(
+              (m) => GridModel(
+                id: m['id'] is String ? m['id'] as String : '',
+                node: m['node'] is String ? m['node'] as String : '',
+                grid: grid,
+                unavailable: GridModelUnavailable.fromWire(m['unavailable']),
+              ),
+            )
+            .where((m) => m.id.isNotEmpty)
+            .toList();
+    final rawGrids = reply['grids'];
+    final grids = (rawGrids is List ? rawGrids : const <dynamic>[])
+        .whereType<Map<String, dynamic>>()
+        .where((g) => g['name'] is String && (g['name'] as String).isNotEmpty)
+        .map((g) {
+          final name = g['name'] as String;
+          final seen = g['seenAt'];
+          final known = g['lastKnownAge'];
+          return GridSection(
+            name: name,
+            own: g['own'] == true,
+            models: parseModels(g['models'], grid: name),
+            state: GridSectionState.parse(g['state']),
+            seenAt: seen is String ? DateTime.tryParse(seen) : null,
+            lastKnownAge: known is num && known.isFinite && known >= 0
+                ? known.round()
+                : null,
+            wakeOutcome: GridWakeOutcome.parse(g['wakeOutcome']),
+          );
+        })
+        .toList();
+    final capable = reply['localModelEngines'];
+    return GridModels(
+      gridName: reply['gridName'] is String
+          ? reply['gridName'] as String
+          : null,
+      models: parseModels(reply['models']),
+      grids: grids,
+      localModelEngines: capable is List
+          ? capable.whereType<String>().map((e) => e.toLowerCase()).toSet()
+          : null,
+      gridCli: GridCli.parse(reply['gridCli']),
+      supportsModelLaunch: reply['supportsModelLaunch'] == true,
+      reachable: reply['error'] == null,
+    );
+  }
+
+  /// The sections to draw: [grids] when the daemon sent them, else the own grid alone.
+  List<GridSection> get sections => grids.isNotEmpty
+      ? grids
+      : [
+          if (gridName != null)
+            GridSection(name: gridName!, own: true, models: models),
+        ];
+
+  /// The machine could not be asked. Says nothing about the account, because nothing is known —
+  /// including which engines it would have offered, or whether it has a `grid`.
+  const GridModels.unreachable()
+    : gridName = null,
+      models = const [],
+      grids = const [],
+      localModelEngines = null,
+      supportsModelLaunch = false,
+      gridCli = null,
+      reachable = false;
+
+  /// Whether [engine] may be pointed at one of [models]: unknown engines are refused only when the
+  /// daemon gave a list — a picker that guessed would refuse the wrong ones on an older daemon.
+  bool canRunLocally(String? engine) {
+    final capable = localModelEngines;
+    if (capable == null) return true;
+    final id = engine?.trim().toLowerCase();
+    return id != null && capable.contains(id);
   }
 }

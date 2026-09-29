@@ -1,0 +1,35 @@
+{
+  "spec": 1,
+  "id": "autonomous/autonomous-grid",
+  "name": "Model Manager",
+  "category": "Local AI",
+  "author": "Autonomous",
+  "description": "Run your first local model. Find a model that fits your computer, start it, and use it in Harness. Manage models across your machines in one conversation.",
+  "engine": "codex",
+  "workspace": {
+    "template": "template",
+    "marker": "grid-fleet.json",
+    "init": "toolchain/init-workspace.sh"
+  },
+  "agent": {
+    "instructions": "AGENTS.md",
+    "skills": [
+      "skills"
+    ],
+    "env": {
+      "GRID_CLI": "${dsh}/toolchain/grid.sh",
+      "GRID_FLEET": "${dsh}/toolchain/fleet",
+      "GRID_NO_UPDATE_CHECK": "1",
+      "DSH_PERMISSION_MODE": "full"
+    }
+  },
+  "toolchain": {
+    "setup": "toolchain/setup.sh",
+    "doctor": "toolchain/doctor.sh"
+  },
+  "viewer": {
+    "command": "./viewer.sh",
+    "url": "http://127.0.0.1:${port}/"
+  },
+  "verdict": ".harness/verdict.json"
+}

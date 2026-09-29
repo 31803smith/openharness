@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:collection/collection.dart' show compareNatural;
 import 'package:flutter/foundation.dart';
 
 import '../core/local_key_value_store.dart';
@@ -13,9 +14,10 @@ class SwarmAgentRef {
   String get machineId => machine.machine.machineId;
   AgentProject? get project => machine.projectOf(agent);
   String get searchText => [
-    agent.name,
+    agent.displayName,
     agent.engine,
     machine.machine.displayName,
+    project?.label,
     project?.name,
     project?.branch,
     project?.cwd,
@@ -96,7 +98,7 @@ List<SwarmProjectGroup> swarmProjects(
     final id = project.identity(entry.machineId);
     final group = groups.putIfAbsent(
       id,
-      () => SwarmProjectGroup(id: id, name: project.name),
+      () => SwarmProjectGroup(id: id, name: project.label),
     );
     group.agents.add(entry);
     folders['${entry.machineId}\u0000${project.cwd}'] = id;
@@ -118,8 +120,9 @@ List<SwarmProjectGroup> swarmProjects(
       }
     }
   }
-  return groups.values.toList()
-    ..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+  return groups.values.toList()..sort(
+    (a, b) => compareNatural(a.name.toLowerCase(), b.name.toLowerCase()),
+  );
 }
 
 class SwarmProjectStore extends ChangeNotifier {

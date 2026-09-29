@@ -1,3 +1,4 @@
+import 'support/open_harness.dart';
 import 'dart:io';
 import 'dart:ui' as ui;
 
@@ -28,7 +29,7 @@ class _RenderApp extends AppNotifier {
     for (final id in ['local', 'remote']) {
       final machine = Machine(
         machineId: id,
-        name: id == 'local' ? 'MacBook Pro' : 'Workshop',
+        name: id == 'local' ? 'MacBook Pro' : 'Solid',
         authMode: MachineAuthMode.remote,
       );
       machines.add(machine);
@@ -131,7 +132,7 @@ void main() {
             for (final asset in [
               'assets/engine-icons/codex.png',
               'assets/engine-icons/cursor.png',
-              'assets/harness_device_studio.png',
+              'assets/harness_device_studio.jpg',
             ]) {
               await precacheImage(
                 AssetImage(asset),
@@ -197,7 +198,7 @@ void main() {
           }
         }
         await tester.sendKeyEvent(LogicalKeyboardKey.escape);
-        await chord(tester, LogicalKeyboardKey.keyO);
+        await openHarnessPicker(tester);
         await tester.pumpAndSettle();
         await capture('open');
         await tester.sendKeyEvent(LogicalKeyboardKey.escape);
@@ -206,11 +207,17 @@ void main() {
         await capture('new');
         debugDisableShadows = previousShadows;
         expect(tester.takeException(), isNull);
-        for (final label in ['Codex', 'Claude Code', 'Cursor']) {
-          if (tester
-              .renderObject<RenderParagraph>(find.text(label))
-              .didExceedMaxLines) {
-            issues.add('$label is truncated when choosing an agent');
+        // The agent bar's pill names the chosen agent: never cut short.
+        for (final paragraph in tester.renderObjectList<RenderParagraph>(
+          find.descendant(
+            of: find.byKey(const Key('new-agent-agent-choice')),
+            matching: find.byType(RichText),
+          ),
+        )) {
+          if (paragraph.didExceedMaxLines) {
+            issues.add(
+              '${paragraph.text.toPlainText()} is truncated in the agent bar',
+            );
           }
         }
         expect(issues, isEmpty);

@@ -1,5 +1,6 @@
 import 'dotenv/config'
 import { z } from 'zod'
+import { parseDaemonsSwitch } from '../lib/daemonsSwitch.js'
 
 const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
@@ -16,6 +17,9 @@ const envSchema = z.object({
   // Same MongoDB (and database) as the agent-manager — backend owns `users` +
   // `machines`; reads `managers`/`machine_nodes` via raw queries when needed.
   DATABASE_URL: z.string().default('mongodb://localhost:27017/harness?replicaSet=rs0'),
+  // Module availability only. Each account must separately opt in in Experimental;
+  // no settings record means OFF. False disables the whole module for operators.
+  HARNESS_CHANNELS: z.string().default('true').transform(v => v === 'true'),
 
   // Redis for the cross-instance data bus. Behind a load balancer an agent's web socket and its
   // manager socket may land on different backend instances; Redis pub/sub bridges them
@@ -93,13 +97,22 @@ const envSchema = z.object({
   SSO_CLIENT_SECRET: z.string().optional(), // public client (PKCE, auth method 'none') → leave unset
   SSO_SCOPE: z.string().default('openid profile email roles'),
   SSO_PROFILE_URL: z.string().default('https://apiv2.autonomous.ai/api/v1/me/profile'),
+  // The cheap way to prove a token: the same answer shape as SSO_PROFILE_URL with no customer or cart
+  // read behind it. Asked first; SSO_PROFILE_URL is the fallback on a 404 (a BFF that predates the
+  // route). '' turns it off — set that, or your own URL, WHENEVER you move SSO_PROFILE_URL, or tokens
+  // for your host get proved against this one.
+  SSO_IDENTITY_URL: z.string().default('https://apiv2.autonomous.ai/api/v1/me/identity'),
   // Per-user staging override. Production remains the default; these are consulted only after the
   // login transaction/user record explicitly selects `stag`.
   STAGING_SSO_ISSUER: z.string().default('https://auth.staging.autonomousdev.xyz'),
   STAGING_SSO_CLIENT_ID: z.string().optional(),
   STAGING_SSO_CLIENT_SECRET: z.string().optional(),
   STAGING_SSO_PROFILE_URL: z.string().default('https://apiv2.staging.autonomousdev.xyz/api/v1/me/profile'),
+  STAGING_SSO_IDENTITY_URL: z.string().default('https://apiv2.staging.autonomousdev.xyz/api/v1/me/identity'),
   SSO_PROFILE_TIMEOUT_MS: z.coerce.number().int().positive().default(5000),
+  // How long a token the profile API just accepted is trusted without asking again (0 = ask every
+  // time). This is also the longest a token revoked at the SSO keeps working here.
+  SSO_PROFILE_CACHE_TTL_MS: z.coerce.number().int().min(0).default(60_000),
   // Forces the SSO account picker so users can switch accounts (not silently auto-login the last one).
   // Set to '' to disable, or 'login' to force re-entering credentials.
   SSO_PROMPT: z.string().default('select_account'),
@@ -122,6 +135,16 @@ const envSchema = z.object({
   // (`harness auth device`). That path is free and its computer id is self-declared, so this caps the
   // rows one account can mint; 0 disables the check. Hygiene, not a security control.
   HARNESS_DEVICE_AUTH_MACHINE_LIMIT: z.coerce.number().int().min(0).default(20),
+  // Same idea for device rows (`/api/device-ws` resolves-or-creates one per self-declared computer id).
+  // A revoked device is hard-deleted, so the ceiling alone is not enough — see the rates below.
+  HARNESS_DEVICE_LIMIT: z.coerce.number().int().min(0).default(20),
+  // How fast one account may mint NEW machine / device ids (Redis fixed windows, shared by every
+  // replica). A reconnect of an existing id never counts. Ceilings above stop a pile-up; these stop a
+  // create → delete → create loop, which the ceilings cannot see. 0 disables that window.
+  HARNESS_NEW_MACHINE_PER_HOUR: z.coerce.number().int().min(0).default(5),
+  HARNESS_NEW_MACHINE_PER_DAY: z.coerce.number().int().min(0).default(20),
+  HARNESS_NEW_DEVICE_PER_HOUR: z.coerce.number().int().min(0).default(5),
+  HARNESS_NEW_DEVICE_PER_DAY: z.coerce.number().int().min(0).default(20),
   AUTONOMOUS_BFF_URL: z.string().url().default('https://apiv2.autonomous.ai'),
   STAGING_AUTONOMOUS_BFF_URL: z.string().url().default('https://apiv2.staging.autonomousdev.xyz'),
   // Server-to-server subscription snapshots used by the singleton billing worker. These use
@@ -144,7 +167,7 @@ const envSchema = z.object({
   HARNESS_DEVICE_TIMEZONE_DEFAULT: z.string().default('Asia/Saigon'),
   // DEV ONLY. A `provider` machine dials a URL its owner typed, so plain http:// and loopback are
   // refused (see lib/providerUrl.ts). This flag lifts the scheme check so a developer can point a
-  // machine at a local example-provider (autonomous-ai/autonomous-harness). Setting it in production
+  // machine at a local example-provider (autonomous-ai/openharness). Setting it in production
   // disables an SSRF control — boot
   // logs a FATAL-level warning if it is on there.
   PROVIDER_ALLOW_INSECURE_URLS: z.coerce.boolean().default(false),
@@ -155,6 +178,11 @@ const envSchema = z.object({
 
   // Comma-separated emails granted role=admin on first creation.
   ADMIN_EMAILS: z.string().default(''),
+
+  // Server availability, not user opt-in. Accounts must enable the creature in Experimental settings.
+  // Explicit false keeps the module dark; the optional allowlist further limits availability.
+  HARNESS_DAEMONS: z.string().default('true'),
+  HARNESS_DAEMONS_USERS: z.string().default(''),
 
   // Device voice STT (PCM arrives on /api/device-ws → batch STT). VOICE_PROVIDER selects the backend:
   //   'deepgram' → needs DEEPGRAM_API_KEY
@@ -235,3 +263,6 @@ export const env = validateEnv()
 export const ADMIN_EMAILS = new Set(
   env.ADMIN_EMAILS.split(',').map((s) => s.trim().toLowerCase()).filter(Boolean),
 )
+
+/** Server availability (lib/daemonsSwitch.ts). The account's Experimental opt-in defaults off. */
+export const DAEMONS = parseDaemonsSwitch(env.HARNESS_DAEMONS, env.HARNESS_DAEMONS_USERS)

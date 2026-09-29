@@ -126,6 +126,24 @@ export function setVoiceRouterSessions(sessions: Array<{ engine: string }>): voi
   ensureRouterConfigured(next)
 }
 
+/**
+ * One small prompt for the pair brain (pair/triage.ts), on the same warm router worker and model the voice
+ * router classifies with — Haiku for Claude. The caller owns the budget. Null when this machine runs no
+ * engine the router can use; the brain then speaks from its templates.
+ */
+export async function runPairOneShot(
+  prompt: string,
+  opts: { timeoutMs: number; signal?: AbortSignal },
+  sessions: Array<{ engine: string }>,
+): Promise<string | null> {
+  const engine = chooseRouterEngine(sessions) ?? routerEngine
+  if (!engine) return null
+  const options = { prompt, model: routerModelFor(engine), effort: 'low' as const, cwd: ensureRouteScratch(), signal: opts.signal, timeoutMs: opts.timeoutMs }
+  if (engine === 'grok') return (await runGrokOneShot(options)).text ?? ''
+  ensureRouterConfigured(engine)
+  return (await runRouterOneShot(engine, options)).text ?? ''
+}
+
 /** Warm (device connected) / unwarm the router worker — wired to commander presence in cli.ts. */
 export function setVoiceRouterDeviceConnected(connected: boolean): void {
   // Config must be set before the pool spawns a warm worker. With no usable engine there is nothing to
@@ -389,10 +407,19 @@ export async function routeVoiceTask(
   timeoutMs: number = ROUTE_CLASSIFY_MS,
   continuity?: RouterContinuity,
 ): Promise<RouteDecision> {
+  // A SHELL IS NEVER A DESTINATION. Every caller builds its candidates from the same agent list, and
+  // that list carries terminals now — they are tiles the dial can reach. But routing delivers by
+  // typing the words in and pressing Enter, and in a shell that is not a prompt to be edited, it is a
+  // command that has already run. Dropped here, at the one point all three callers pass through, so
+  // no future caller has to remember. The tile's own Voice button is hidden for the same reason.
+  const routable = agents.filter((agent) => agent.engine !== 'terminal')
+  const dropped = agents.length - routable.length
+  agents = routable
   // What the backend handed down, and what it may choose between. Logged before anything can fail, so a
   // route that times out still shows the task and the candidates it was weighing.
   console.log(
     `[voice-route] task "${taskPreview(transcript)}" · candidates=${agents.length}` +
+    `${dropped ? ` (${dropped} terminal${dropped === 1 ? '' : 's'} not routable)` : ''}` +
     `${agents.length ? ` [${agents.map((agent) => `${agent.name}/${agent.engine ?? '?'}`).join(', ')}]` : ''}`,
   )
   if (agents.length === 0) {

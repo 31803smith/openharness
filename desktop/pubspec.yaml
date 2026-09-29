@@ -28,19 +28,36 @@ environment:
 # the latest version available on pub.dev. To see which dependencies have newer
 # versions available, run `flutter pub outdated`.
 dependencies:
+  web: ^1.1.1
+  archive: ^4.0.9
   flutter:
     sdk: flutter
+  flutter_web_plugins:
+    sdk: flutter
+  # Natural ordering for numbered agents, projects, and completion candidates.
+  collection: ^1.19.1
 
   # The following adds the Cupertino Icons font to your application.
   # Use with the CupertinoIcons class for iOS style icons.
   cupertino_icons: ^1.0.8
   lucide_icons_flutter: ^3.1.15
+  flutter_svg: ^2.3.0
   dio: ^5.11.0
   web_socket_channel: ^3.0.3
   flutter_riverpod: ^2.6.1
   go_router: ^17.5.0
   url_launcher: ^6.3.2
   cryptography: ^2.9.0
+  # Unicode normalisation for the viewer's password-linking PAKE: the same
+  # password must hash identically whatever form the keyboard produced it in.
+  # Pure Dart, so it registers no native plugin and leaves the macOS SPM
+  # package list untouched — see CLAUDE.md on what a plugin costs here.
+  unorm_dart: ^0.3.2
+  # The QR in Harness ▸ Add Phone… (`widgets/add_phone_dialog.dart`). The bare
+  # encoder, NOT `qr_flutter`: the dialog paints the modules itself in a few
+  # lines, and pure Dart registers no native plugin — see CLAUDE.md on what a
+  # plugin costs here.
+  qr: ^3.0.2
   # Keep the terminal core in-tree until the upstream circular-buffer ownership
   # fix is released. See third_party/xterm/lib/src/core/buffer/buffer.dart.
   xterm:
@@ -62,6 +79,16 @@ dependencies:
   sqlite3: ^2.4.0
   desktop_drop: ^0.8.4
   path: ^1.9.1
+  # The web pane: a domain harness's viewer (Circuit's board, Workshop's part)
+  # drawn beside its agent's terminal. THE one native plugin this feature adds
+  # — WKWebView via the endorsed `webview_flutter_wkwebview`, which lands in
+  # the macOS SPM package list and GeneratedPluginRegistrant. macOS only for
+  # now; the pane shows the URL as text where no implementation is registered
+  # (Linux, and every `flutter test`). See CLAUDE.md on what a plugin costs.
+  webview_flutter: ^4.14.1
+  # Named directly for the WebKit creation params (muted autoplay in viewer panes).
+  webview_flutter_platform_interface: ^2.15.1
+  webview_flutter_wkwebview: ^3.26.1
 
 dev_dependencies:
   flutter_test:
@@ -84,20 +111,38 @@ dev_dependencies:
 
 # The following section is specific to Flutter packages.
 flutter:
+  fonts:
+    - family: Roboto Mono
+      fonts:
+        - asset: assets/fonts/roboto-mono/RobotoMono.ttf
+        - asset: assets/fonts/roboto-mono/RobotoMono-Italic.ttf
+          style: italic
 
   # The following line ensures that the Material Icons font is
   # included with your application, so that you can use the icons in
   # the material Icons class.
   uses-material-design: true
   assets:
+    - assets/fonts/roboto-mono/OFL.txt
+    - assets/machines.svg
+    - assets/models.svg
+    - assets/harnesses.svg
     - assets/engine-icons/
+    - assets/store/
+    - assets/store/projects/
+    - assets/store/covers/
     # The real app icon, shown in Settings ▸ About. Copied from the macOS
     # icon set (`macos/Runner/Assets.xcassets/AppIcon.appiconset`) rather than
     # loaded from the bundle: Flutter can't read an .icns, and About should show
     # the mark the Dock shows, not a stand-in drawn in Dart.
     - assets/app_icon.png
-    - assets/harness_device.png
-    - assets/harness_device_studio.png
+    # Original stacked-terminal logo, retained for Harness Monitor.
+    - assets/harnesses.png
+    - assets/models.png
+    - assets/model-icons/
+    - assets/octicons/
+    - assets/harness_device_studio.jpg
+    - assets/harness_store_card.jpg
     - assets/swarm-wallpapers/
 
   # To add assets to your application, add an assets section, like this:

@@ -1,12 +1,14 @@
-import 'dart:io' show Platform;
-
 import 'package:flutter/material.dart';
+import 'package:harness/terminal/terminal_text.dart';
 
+import 'app_type.dart';
+export 'app_type.dart';
 import 'color_palette.dart';
 
 /// The app's live brightness — the single source of truth the color tokens below
-/// resolve against. Harness Desktop is dark-only: `_GridTokenScope` (in
-/// `main.dart`) pins this to [Brightness.dark] once, at the top of the tree.
+/// resolve against. The palette decides it: `_GridTokenScope` (in
+/// `app_shell.dart`) sets this from [palette]'s own brightness, so a light
+/// palette ([HarnessPalette.paper], [HarnessPalette.mist]) is a light app.
 ///
 /// Every `AppPalette`/`AppSurface`/`AppGlass`/`AppCard` member is a getter that
 /// switches on this, so a call site like `color: AppPalette.windowBg` follows the
@@ -16,12 +18,6 @@ abstract final class AppTheme {
     Brightness.dark,
   );
 
-  /// Fires when the user's type settings change. Separate from [brightness]
-  /// because the two are independent — a theme flip must not restyle type, and
-  /// changing the font must not repaint as though the palette moved — but read
-  /// through the same [watch], since a widget that reads one token generally
-  /// reads both.
-  static final FontNotifier fonts = FontNotifier();
   static final palette = ValueNotifier(HarnessPalette.graphite);
 
   static bool get isDark => brightness.value == Brightness.dark;
@@ -75,41 +71,17 @@ abstract final class AppTheme {
   /// when the notifier fires — it doesn't rebuild through the widget tree — so
   /// every `const` boundary in between is irrelevant. This is exactly how
   /// `Theme.of(context)` makes a widget follow the theme.
-  /// It also registers for type changes, via [_FontScope]. The two travel
+  /// It also registers for type changes, via [TerminalFontScope]. The two travel
   /// together deliberately: `AppTheme.watch(context)` is the one line a widget
   /// adds to follow the app's appearance, and splitting it into two calls would
   /// mean every widget that already follows the theme still silently ignores the
   /// font — with the exact same symptom (stuck on the value it first built with)
   /// that this method exists to fix.
   static Brightness watch(BuildContext context) {
+    TerminalFontScope.watch(context);
     context.dependOnInheritedWidgetOfExactType<_BrightnessScope>();
-    context.dependOnInheritedWidgetOfExactType<_FontScope>();
     context.dependOnInheritedWidgetOfExactType<_PaletteScope>();
     return brightness.value;
-  }
-}
-
-/// Fires when [AppFont]'s user settings change.
-///
-/// It carries no value: the settings live on [AppFont] as statics, because a
-/// token read like `AppFont.mono` has no context to look one up with. This is
-/// only the signal that they moved.
-class FontNotifier extends ChangeNotifier {
-  /// Push new settings onto [AppFont] and notify, but only if they differ —
-  /// setting the same font twice must not dirty the tree.
-  void apply({
-    String? uiFamily,
-    String? codeFamily,
-    required double uiScale,
-    required double codeSize,
-  }) {
-    final changed = AppFont.apply(
-      uiFamily: uiFamily,
-      codeFamily: codeFamily,
-      uiScale: uiScale,
-      codeSize: codeSize,
-    );
-    if (changed) notifyListeners();
   }
 }
 
@@ -160,10 +132,9 @@ class BrightnessScope extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return _BrightnessScope(
-      notifier: AppTheme.brightness,
-      child: _FontScope(
-        notifier: AppTheme.fonts,
+    return TerminalFontScope(
+      child: _BrightnessScope(
+        notifier: AppTheme.brightness,
         child: _PaletteScope(notifier: AppTheme.palette, child: child),
       ),
     );
@@ -172,10 +143,6 @@ class BrightnessScope extends StatelessWidget {
 
 class _BrightnessScope extends InheritedNotifier<ValueNotifier<Brightness>> {
   const _BrightnessScope({required super.notifier, required super.child});
-}
-
-class _FontScope extends InheritedNotifier<FontNotifier> {
-  const _FontScope({required super.notifier, required super.child});
 }
 
 class _PaletteScope extends InheritedNotifier<ValueNotifier<HarnessPalette>> {
@@ -189,12 +156,22 @@ class _PaletteScope extends InheritedNotifier<ValueNotifier<HarnessPalette>> {
 abstract final class AppPalette {
   // Approved Swarms canvas and native tab-strip palette.
   static Color get swarmField => AppTheme.palette.value.workspace;
+  // Empty tabs join the selected native tab as one continuous surface.
+  static Color get swarmWelcome => AppTheme.palette.value.workspace;
   static Color get swarmTabBar => AppTheme.palette.value.tabBar;
   static Color get swarmAccent => AppTheme.palette.value.accent;
   // Shared with the native search field for a continuous input/results surface.
   static Color get swarmSearchSurface => AppTheme.palette.value.search;
-  static const agentEntrySurface = Color(0xff101113);
-  static const agentEntryField = Color(0xff1d1f22);
+  // Getters, not consts: a light palette brings its own panel and card.
+  static Color get agentEntrySurface =>
+      AppTheme.pick(AppTheme.palette.value.panel, const Color(0xff101113));
+  static Color get agentEntryField =>
+      AppTheme.pick(AppTheme.palette.value.card, const Color(0xff1d1f22));
+  // The command field deliberately stays light, like a browser's new-tab omnibox.
+  static const commandField = Color(0xFFF7F8FA);
+  static const commandInk = Color(0xFF202124);
+  static const commandMuted = Color(0xFF646971);
+  static const commandChip = Color(0xFFE9EBEF);
 
   // the conversation / content area — pure white in light, like Codex.
   //
@@ -204,20 +181,20 @@ abstract final class AppPalette {
   // (#141414) is now *darker* than the page it sits on. Depth in dark is
   // therefore carried by the rim and the shadow, not by the fill — §2's stack
   // still holds, it just has less room to say it in.
-  static Color get windowBg =>
-      AppTheme.pick(const Color(0xFFFFFFFF), AppTheme.palette.value.background);
+  //
+  // These four come from the palette in both themes: a light palette carries
+  // its own light surfaces (color_palette.dart), and it is the palette that
+  // decides the brightness in the first place.
+  static Color get windowBg => AppTheme.palette.value.background;
 
   // sidebar column — a barely-there cool grey (Codex keeps the rail almost white,
   // set apart by a hairline, not a tone) / charcoal panel in dark.
-  static Color get panelBg =>
-      AppTheme.pick(const Color(0xFFF9F9F8), AppTheme.palette.value.panel);
+  static Color get panelBg => AppTheme.palette.value.panel;
 
   // input fills, quiet cards
-  static Color get cardBg =>
-      AppTheme.pick(const Color(0xFFF3F3F2), AppTheme.palette.value.card);
+  static Color get cardBg => AppTheme.palette.value.card;
 
-  static Color get cardBgHover =>
-      AppTheme.pick(const Color(0xFFECECEA), AppTheme.palette.value.hover);
+  static Color get cardBgHover => AppTheme.palette.value.hover;
 
   // A hairline separator. Light: a faint cool black; dark: a faint white — a
   // black divider would vanish on charcoal.
@@ -275,8 +252,7 @@ abstract final class AppPalette {
   /// row, still plainly the same indigo. [accent] can't simply take this value:
   /// it is the fill under white text in ~100 places, and lightening it there
   /// would drop that text to ~3.1:1 — fixing the icon by breaking the buttons.
-  static Color get accentOnSurface =>
-      AppTheme.pick(const Color(0xFF2F5BEA), AppTheme.palette.value.accent);
+  static Color get accentOnSurface => AppTheme.palette.value.accent;
 
   // avatar fill (white text on it); a touch brighter in dark for contrast.
   static Color get accentMuted =>
@@ -339,25 +315,32 @@ abstract final class AppPalette {
   static Color get accentHover =>
       AppTheme.pick(const Color(0xFF2850D8), const Color(0xFF4166F2));
 
+  // These three are drawn as TEXT as often as dots (status labels, ledger
+  // rows), so their light values clear 4.5:1 on the deepest light-palette
+  // ground they meet — Paper's search #E2E2DF / Mist's #DCE4EE — not only on
+  // white: teal 4.90, online 5.02, warn 4.93 there (6.4–6.5 on white).
+
   // "Owner" badge — a teal that stays legible on either surface.
   static Color get teal =>
-      AppTheme.pick(const Color(0xFF0F766E), const Color(0xFF2DD4BF));
+      AppTheme.pick(const Color(0xFF0D6B63), const Color(0xFF2DD4BF));
 
   // green "connected" dot
   static Color get online =>
-      AppTheme.pick(const Color(0xFF15803D), const Color(0xFF3FB950));
+      AppTheme.pick(const Color(0xFF146C34), const Color(0xFF3FB950));
 
   // expiring soon
   static Color get warn =>
-      AppTheme.pick(const Color(0xFFB45309), const Color(0xFFFFB020));
+      AppTheme.pick(const Color(0xFF9A4708), const Color(0xFFFFB020));
 
-  // grey dot
+  // grey dot — a state mark, so ≥3:1 in light (3.14 on Paper's search ground).
   static Color get offline =>
-      AppTheme.pick(const Color(0xFFA3A29C), const Color(0xFF6E6E6E));
+      AppTheme.pick(const Color(0xFF7F7E78), const Color(0xFF6E6E6E));
 
   // Grid brand lightning gold — the live/active ⚡ mark, matching the tray bolt.
+  // Light is a deeper gold than the tray's: #C98A00 was 2.27–2.95:1 on the
+  // light grounds, this is 3.93 at worst.
   static Color get brandBolt =>
-      AppTheme.pick(const Color(0xFFC98A00), const Color(0xFFE0A93B));
+      AppTheme.pick(const Color(0xFF946500), const Color(0xFFE0A93B));
 
   static Color get textPrimary =>
       AppTheme.pick(const Color(0xFF1A1A18), const Color(0xFFF5F5F5));
@@ -365,8 +348,13 @@ abstract final class AppPalette {
   static Color get textSecondary =>
       AppTheme.pick(const Color(0xFF62615B), const Color(0xFFA8A8A2));
 
+  /// Meta text and hints. Light is #7A7973, not the #8E8D86 it was: that one
+  /// was tuned for a white page and fell to 2.57:1 on Paper's search ground
+  /// (#E2E2DF) and 2.60 on Mist's (#DCE4EE). This holds 3.36 / 3.40 there and
+  /// 3.49 / 3.51 on the two workspaces, and stays 1.42:1 apart from
+  /// [textSecondary] so the three steps still read as three.
   static Color get textFaint =>
-      AppTheme.pick(const Color(0xFF8E8D86), const Color(0xFF6E6E68));
+      AppTheme.pick(const Color(0xFF7A7973), const Color(0xFF6E6E68));
 
   /// The page a document is drawn on, and the ink on it.
   ///
@@ -436,9 +424,9 @@ abstract final class AppPalette {
 /// [buildAppTheme] needs the values *before* the global brightness is the one
 /// being built for — see the note at its `scrollbarTheme`. The getters below read
 /// these same four, so there is one set of numbers rather than two that can drift.
-const Color _scrollThumbLight = Color(0xFF8C8C8C);
+const Color _scrollThumbLight = Color(0xFF787878);
 const Color _scrollThumbDark = Color(0xFF686868);
-const Color _scrollThumbHoverLight = Color(0xFF6E6E6E);
+const Color _scrollThumbHoverLight = Color(0xFF5E5E5E);
 const Color _scrollThumbHoverDark = Color(0xFF8A8A8A);
 
 /// Surface tokens for the app's chrome — the sidebar's rows, the composer card,
@@ -506,6 +494,9 @@ abstract final class AppSurface {
   /// barely dents a white one, so reaching 3:1 needs 0.40 in dark and 0.50 in
   /// light. These are those two values resolved — 3.55:1 dark, 3.36:1 light —
   /// stated as colours so a list on the panel measures the same as one on the page.
+  /// Light was since deepened (#8C8C8C → #787878) for the light palettes'
+  /// tinted grounds: the old thumb fell to 2.69:1 on Paper's workspace; this
+  /// one holds 3.53 there and 3.55 on Mist's.
   static Color get scrollThumb =>
       AppTheme.pick(_scrollThumbLight, _scrollThumbDark);
 
@@ -696,12 +687,13 @@ abstract final class AppGlass {
 ///   menuTheme / popupMenuTheme   #1E1E1E         8          6      no
 ///   appMenuStyle()               #2A2A2A        12         10      yes
 ///   tooltipTheme                 #1E1E1E         —         10      yes
-///   AccountFooter, inline        cardBg         18          8      yes
+///   the account footer, inline   cardBg         18          8      yes
 /// ```
 ///
 /// The cost was exactly what a second recipe always costs: the account footer's
-/// `MenuAnchor` passed no style at all, so it opened the rimless themed default
-/// — the surface `appMenuStyle` had been written to replace.
+/// `MenuAnchor` (since removed with the machine rail) passed no style at all, so
+/// it opened the rimless themed default — the surface `appMenuStyle` had been
+/// written to replace.
 ///
 /// ⚠️ The fill is deliberately **not** the themed default. `#1E1E1E` sits within
 /// 1.02:1 of a raised block ([AppGlass.surfaceFill], `#202020`), and in light
@@ -920,20 +912,22 @@ ThemeData buildAppTheme({Brightness brightness = Brightness.light}) {
           outlineVariant: const Color(0x14FFFFFF),
           error: const Color(0xFFF2544B),
         )
-      : const ColorScheme.light(
+      : ColorScheme.light(
           primary: AppPalette.accent,
           onPrimary: Colors.white,
           secondary: AppPalette.accent,
-          // Pure white — matches AppPalette.windowBg so the chat pane (which
-          // paints scheme.surface) reads as clean white, letting the composer's
-          // rim and shadow stand out instead of blending into an off-white wash.
-          surface: Color(0xFFFFFFFF),
-          onSurface: Color(0xFF1A1A18),
-          onSurfaceVariant: Color(0xFF62615B),
-          surfaceContainerHighest: Color(0xFFF3F3F2),
-          outline: Color(0x0F000000),
-          outlineVariant: Color(0x0F000000),
-          error: Color(0xFFB3261E),
+          // The light palette's own ground — matches AppPalette.windowBg, as
+          // the dark scheme's does.
+          surface: AppTheme.palette.value.background,
+          onSurface: AppTheme.palette.value.foreground,
+          onSurfaceVariant: const Color(0xFF62615B),
+          // The field fill. Not the card, which is pure white on both light
+          // palettes: a white field in a white dialog has no edge at all. The
+          // panel tone is the step the old light theme's #F3F3F2 was.
+          surfaceContainerHighest: AppTheme.palette.value.panel,
+          outline: const Color(0x0F000000),
+          outlineVariant: const Color(0x0F000000),
+          error: const Color(0xFFB3261E),
         );
 
   // The chrome fills used by menus, dialogs and toasts. A getter-backed token
@@ -947,9 +941,7 @@ ThemeData buildAppTheme({Brightness brightness = Brightness.light}) {
   // both were `#1E1E1E`, which is [AppCard.base] — a content card's colour, one
   // step *below* the block it was supposed to be.
   final panelFill = isDark ? AppMenu.fillDark : AppMenu.fillLight;
-  final dialogFill = isDark
-      ? AppTheme.palette.value.card
-      : const Color(0xFFFFFFFF);
+  final dialogFill = AppTheme.palette.value.card;
   final textTheme = _appTextTheme(scheme.onSurface, scheme.onSurfaceVariant);
 
   return ThemeData(
@@ -964,7 +956,7 @@ ThemeData buildAppTheme({Brightness brightness = Brightness.light}) {
     // Also stated at ThemeData level, not only inside the ramp: Material builds
     // text of its own (a dialog's semantics label, a field's error line) that
     // never passes through `textTheme`, and without this those fall through to
-    // Roboto — one stray face in an app drawn entirely in San Francisco.
+    // Roboto instead of the system face.
     fontFamily: AppFont.sans,
     fontFamilyFallback: AppFont.sansFallback,
     scaffoldBackgroundColor: scheme.surface,
@@ -1060,15 +1052,8 @@ ThemeData buildAppTheme({Brightness brightness = Brightness.light}) {
                 ),
               ],
       ),
-      // A step under the control font: a tooltip is read *while* looking at the
-      // thing it explains, so it should not compete with it. The line height is
-      // for the long ones — a run of selections is several lines of quoted code,
-      // and set solid it reads as a wall.
-      textStyle: TextStyle(
-        fontSize: 12.5,
-        height: 1.45,
-        color: scheme.onSurface,
-      ),
+      // Room for multiline text.
+      textStyle: AppType.caption(height: 1.45, color: scheme.onSurface),
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
       // Long quoted lines would otherwise take the tooltip out to the window's
       // full width — a panel wider than the conversation it is explaining.
@@ -1105,7 +1090,9 @@ ThemeData buildAppTheme({Brightness brightness = Brightness.light}) {
       trackColor: WidgetStateProperty.resolveWith(
         (s) => s.contains(WidgetState.selected)
             ? AppPalette.accent
-            : (isDark ? const Color(0xFF3A3A3A) : const Color(0xFFA3A29C)),
+            // Light's off track is a UI mark (3:1): #A3A29C was 2.56 on a
+            // white dialog; #858480 is 3.74 there, 3.37 on the panel.
+            : (isDark ? const Color(0xFF3A3A3A) : const Color(0xFF858480)),
       ),
       trackOutlineColor: WidgetStateProperty.all(Colors.transparent),
     ),
@@ -1118,12 +1105,14 @@ ThemeData buildAppTheme({Brightness brightness = Brightness.light}) {
       isDense: true,
       filled: true,
       fillColor: scheme.surfaceContainerHighest,
-      // A field is a control, so its hint takes the control font — 13pt, the
-      // same as the button beside it. (The typed text is set on the field via
+      // A field hint is set like the field's own text.
+      // (The typed text is set on the field via
       // [kFieldTextStyle]; `InputDecorationTheme` has no `style` of its own, so
       // a field's own text can't be themed globally here.)
+      // 75% in light: at 70% the hint sat at 2.999:1 on Mist's panel-toned
+      // fill; this is 3.29 (Mist) / 3.29 (Paper). Dark keeps 70% (3.99:1).
       hintStyle: _fieldTextStyle(
-        scheme.onSurfaceVariant.withValues(alpha: 0.7),
+        scheme.onSurfaceVariant.withValues(alpha: isDark ? 0.7 : 0.75),
       ),
       // Material builds a field for a phone: its default padding, plus the 48px
       // touch target it gives a prefixIcon, rendered this 48 tall next to a 32px
@@ -1141,9 +1130,7 @@ ThemeData buildAppTheme({Brightness brightness = Brightness.light}) {
       contentPadding: EdgeInsets.symmetric(
         horizontal: 10,
         vertical:
-            (AppControl.heightFieldScaled -
-                AppControl.fontSize * 1.35 * AppFont.uiScale) /
-            2,
+            (AppControl.heightFieldScaled - AppControl.fontSize * 1.35) / 2,
       ),
       // The glyph sits on the text's line, not in a tap target of its own. A
       // step above [AppControl.iconSize]: that size is tuned to a button's cap
@@ -1204,6 +1191,8 @@ ThemeData buildAppTheme({Brightness brightness = Brightness.light}) {
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(AppCard.radius),
       ),
+      titleTextStyle: AppType.heading(color: scheme.onSurface),
+      contentTextStyle: AppType.body(color: scheme.onSurface),
     ),
     // ⚠️ [AppPalette.accentOnSurface], NOT `colorScheme.primary`.
     //
@@ -1224,11 +1213,7 @@ ThemeData buildAppTheme({Brightness brightness = Brightness.light}) {
       width: 520,
       // A snackbar floats over everything, so it takes the panel fill.
       backgroundColor: panelFill,
-      contentTextStyle: TextStyle(
-        color: scheme.onSurface,
-        fontSize: 13.5,
-        fontWeight: FontWeight.w600,
-      ),
+      contentTextStyle: AppType.body(color: scheme.onSurface),
       actionTextColor: AppPalette.accent,
       closeIconColor: scheme.onSurfaceVariant,
       elevation: 10,
@@ -1291,20 +1276,15 @@ abstract final class AppControl {
   /// [anchoredMenuPosition] clamps to this by default.
   static const double menuMaxHeight = 240;
 
-  /// The label. 13pt medium is the macOS control font — Apple sets a push
-  /// button's label at medium, not semibold; at 13pt the extra step reads as a
-  /// button trying to be a heading.
-  static const double fontSize = 13;
+  /// A button's label: [AppType.label].
+  static const double fontSize = AppType.bodySize;
   static const FontWeight fontWeight = AppFont.medium;
 
   /// A leading glyph inside a button, sized to sit on the cap height of a 13pt
   /// label rather than tower over it.
   static const double iconSize = 16;
 
-  /// The glyph on a chip — an inline affordance whose label runs smaller than a
-  /// button's (11pt, not 13). [iconSize] is cut to a 13pt cap height and towers
-  /// over an 11pt one, so a chip needs its own step down rather than a number
-  /// picked by eye at each call site.
+  /// A compact glyph for an inline chip.
   static const double iconSizeChip = 13;
 
   /// Horizontal breathing room. Apple pads a push button generously sideways and
@@ -1352,186 +1332,29 @@ abstract final class AppControl {
 
   static EdgeInsets get paddingSmallScaled =>
       EdgeInsets.symmetric(horizontal: 10 * AppFont.uiScale);
-
-  // [fontSize] deliberately has no scaled twin. The label inside a button is a
-  // `Text`, so `MediaQuery`'s text scaler already grows it — scaling the
-  // theme's `textStyle` too would apply the user's setting twice, and a button
-  // set to 19px would render at ~26. The boxes above scale; the type does not.
 }
 
-/// How long the app's UI takes to change, and on what curve.
-///
-/// These aren't new numbers — they're the ones already in use, given a name. The
-/// app had settled on ~130ms for a hover and `Curves.easeOut` almost everywhere
-/// (31 call sites against 8 for the next most common), but every one of them
-/// typed the number in by hand, and the drift had already started: 120, 130, 140
-/// and 160 all appear for the same kind of change. A tile in Plugins even
-/// carries a comment saying its timing "matches the job list's, so a row lifts
-/// the same way everywhere in the app" — an intent with nothing enforcing it.
-///
-/// Motion here is for *continuity*, not decoration: it says the thing you're
-/// looking at is the same thing it was a moment ago. That's why it's this short.
-/// Anything long enough to notice as an animation is too long for a hover.
+/// Desktop feedback is visible on the next frame. Keep these shared names so
+/// hover, selection, panels, and meters cannot grow independent animation delays.
+/// Progress indicators may still animate while real work is in flight.
 abstract final class AppMotion {
-  /// A surface reacting to the pointer — a row's hover fill, a chip warming up.
-  static const Duration hover = Duration(milliseconds: 130);
-
-  /// Content being replaced in place: a list swapping to another set of rows.
-  static const Duration swap = Duration(milliseconds: 160);
-
-  /// A panel folding or unfolding — the sidebar collapsing to its glyphs.
-  ///
-  /// Longer than [swap], and it has to be: what moves is the window's left
-  /// edge and everything to the right of it, over 212px. At [swap] that reads
-  /// as the layout jumping rather than the rail folding, which is the one thing
-  /// the animation exists to prevent.
-  static const Duration fold = Duration(milliseconds: 220);
-
-  /// A meter filling to the figure beside it — the node panel's speed bars.
-  ///
-  /// Longer than [fold] even though what moves is 26px, because this one is not
-  /// a surface getting out of the way: it is a value being drawn, and a reader
-  /// is meant to watch it arrive. Under about a quarter second the bars read as
-  /// having simply appeared at their length, which is the same as no animation
-  /// at all.
-  ///
-  /// Still short enough to survive repetition. These panels open on hover, so
-  /// the fill replays every time the pointer crosses the pill — anything that
-  /// lingers turns into a toll on a gesture people make dozens of times an hour.
-  static const Duration meter = Duration(milliseconds: 300);
-
-  /// A surface acknowledging a click while the button is still down.
-  ///
-  /// Shorter than [hover], and it has to be: hover follows a pointer that is
-  /// merely passing, while this one answers a press the user is *making*. A
-  /// dip that outlasts the click reads as lag in the click itself. Four call
-  /// sites had already converged on this number by hand before it had a name.
-  static const Duration press = Duration(milliseconds: 110);
-
-  /// The app's curve. Fast to start, settling at the end — the thing arrives
-  /// under the pointer rather than drifting toward it.
+  static const Duration hover = Duration.zero;
+  static const Duration swap = Duration.zero;
+  static const Duration fold = Duration.zero;
+  static const Duration meter = Duration.zero;
+  static const Duration press = Duration.zero;
   static const Curve curve = Curves.easeOut;
 }
 
-/// The app's two font stacks, and the rule for which one a given piece of text
-/// gets.
-///
-/// The rule: **mono is for strings the user copies, not for strings they read.**
-/// A model id, an endpoint, a token — those need `l`/`1`/`I` and `0`/`O` to stay
-/// apart, because the user is going to paste them somewhere that cares. Prose
-/// (a heading, a subtitle, a node's name) is *read*, and mono makes reading it
-/// slower while making the surface look like a terminal instead of a product.
-///
-/// Numbers are the case that looks like it wants mono but doesn't: what a stat
-/// actually needs is digits that don't reflow when the value changes, and
-/// [tabularFigures] buys exactly that on the sans stack — no terminal costume
-/// required.
+/// The app's two faces and its weight ladder. Sizes live in [AppType].
 abstract final class AppFont {
-  /// The reading stack — matches the text theme's system font.
-  ///
-  /// A getter, not a const: the user can put a family of their own in front of
-  /// it from Appearance, and a `const` can't be re-resolved. [sansDefault] is
-  /// the shipped value, still a const, and still what everything falls back to.
-  static String get sans => _uiFamily ?? sansDefault;
+  /// The system UI face. See [AppType] for the rule on which face text gets.
+  static String get sans => AppType.sansFamily;
+  static List<String> get sansFallback => AppType.sansFallback;
 
-  /// The shipped reading face, per platform.
-  ///
-  /// A getter now, because the shipped value is not one name: nothing in the
-  /// Apple stack resolves on Linux, so the app was drawn in the engine's own
-  /// default rather than a face anyone chose.
-  ///
-  /// `Ubuntu Sans` (25.04 and later) and `Ubuntu` (before it) lead because they
-  /// are what the desktop itself is set in. Measured on Ubuntu 26.04 they do
-  /// not currently resolve either — both are two-axis variable fonts
-  /// (`wdth,wght`) and measure identically to a family that does not exist,
-  /// while the single-axis `Ubuntu Sans Mono` resolves fine — so today the
-  /// effective face is `Noto Sans`, the next entry. They stay in front because
-  /// they cost nothing and are the right answer the moment the engine can
-  /// reach them; `Noto Sans` and `DejaVu Sans` are what actually carries it.
-  static String get sansDefault =>
-      Platform.isMacOS ? _macSansDefault : _linuxSansDefault;
-
-  static const String _macSansDefault = '.AppleSystemUIFont';
-  static const String _linuxSansDefault = 'Ubuntu Sans';
-
-  /// The fallbacks behind [sans].
-  ///
-  /// When the user has chosen a family, the *system* font goes to the front of
-  /// this list rather than being dropped: a chosen face is usually a display or
-  /// text font with a partial repertoire, and one missing glyph should degrade
-  /// to SF Pro — the thing the app was drawn in — rather than to Arial or to a
-  /// row of tofu boxes.
-  static List<String> get sansFallback => _uiFamily == null
-      ? _sansFallbackDefault
-      : [sansDefault, ..._sansFallbackDefault];
-
-  static List<String> get _sansFallbackDefault =>
-      Platform.isMacOS ? _macSansFallback : _linuxSansFallback;
-
-  static const List<String> _macSansFallback = [
-    'SF Pro Text',
-    'Helvetica Neue',
-    'Arial',
-  ];
-
-  static const List<String> _linuxSansFallback = [
-    'Ubuntu',
-    'Noto Sans',
-    'DejaVu Sans',
-    'sans-serif',
-  ];
-
-  /// The copy-me stack: SF Mono, the system's own code face.
-  ///
-  /// The name matters. `'SF Mono'` does **not** resolve — CoreText returns nil
-  /// for it, so Flutter quietly falls through to the next entry (that's what the
-  /// login screen's `fontFamily: 'SF Mono'` has always done: it renders Menlo).
-  /// The face is only reachable under its internal name, below. Verified with
-  /// `NSFont(name:size:)` + `CTFontGetBoundingRectsForGlyphs`; a `flutter test`
-  /// probe can't confirm this — the headless test font manager resolves every
-  /// family to the same test face and reports monospace metrics for all of them.
-  ///
-  /// Menlo is the fallback, not a compromise: its glyphs measure within 0.01pt
-  /// of SF Mono's at 13px. SF Mono leads only for a slashed zero and a tailed
-  /// `l`, which is exactly what a model id needs. Avoid Monaco — it lacks a
-  /// slashed zero.
-  static String get mono => _codeFamily ?? monoDefault;
-
-  /// The shipped code face, per platform — same argument as [sansDefault], and
-  /// a worse failure when it is wrong: on Linux the whole Apple stack down to
-  /// `Courier New` resolved to a PROPORTIONAL face, so anything set in "mono"
-  /// was not monospaced at all. The Linux chain is the terminal's own default
-  /// (see `lib/terminal/terminal_typography.dart` for why DejaVu leads).
-  static String get monoDefault =>
-      Platform.isMacOS ? _macMonoDefault : _linuxMonoDefault;
-
-  static const String _macMonoDefault = '.AppleSystemUIFontMonospaced';
-  static const String _linuxMonoDefault = 'DejaVu Sans Mono';
-
-  /// The fallbacks behind [mono]. The system's own mono goes in front of them
-  /// once a family is chosen, for the reason given on [sansFallback] — and it
-  /// matters more here: a code block that falls through to a proportional face
-  /// stops being a code block.
-  static List<String> get monoFallback => _codeFamily == null
-      ? _monoFallbackDefault
-      : [monoDefault, ..._monoFallbackDefault];
-
-  static List<String> get _monoFallbackDefault =>
-      Platform.isMacOS ? _macMonoFallback : _linuxMonoFallback;
-
-  static const List<String> _macMonoFallback = [
-    'Menlo',
-    'Monaco',
-    'Courier New',
-    'monospace',
-  ];
-
-  static const List<String> _linuxMonoFallback = [
-    'Ubuntu Sans Mono',
-    'Noto Sans Mono',
-    'Liberation Mono',
-    'monospace',
-  ];
+  /// The terminal's face, used for terminal chrome and copyable strings.
+  static String get mono => AppType.monoFamily;
+  static List<String> get monoFallback => AppType.monoFallback;
 
   /// Digits that hold a fixed width, so a stat doesn't reflow as its value
   /// changes and a column of numbers lines up.
@@ -1569,132 +1392,22 @@ abstract final class AppFont {
   /// ladder was introduced to fix. Reach for [medium] first.
   static const FontWeight semibold = FontWeight.w600;
 
-  /// The tracking a given size wants, in logical pixels.
-  ///
-  /// SF Pro is an optically-sized family: on Apple's own platforms the system
-  /// re-spaces it as it scales, opening the letters up at caption sizes and
-  /// pulling them in at display sizes. Flutter asks CoreText for one static
-  /// face, so none of that happens for free and every size came out at the
-  /// metrics of whatever master got picked — which is why small text read as
-  /// cramped and large headings read as one solid mass.
-  ///
-  /// The curve below follows Apple's own SF Pro tracking table, rounded to the
-  /// steps this app actually uses:
-  ///
-  /// ```
-  ///   ≥ 28pt   -0.4   display / greeting
-  ///   ≥ 20pt   -0.25  screen titles
-  ///   ≥ 17pt   -0.1   section headings
-  ///   ≥ 15pt    0     body — the neutral point the app was drawn at
-  ///   ≥ 13pt   +0.05  control labels
-  ///   < 13pt   +0.12  captions, chips, meta
-  /// ```
-  ///
-  /// The numbers are small on purpose. Tracking is not a style knob — at half a
-  /// pixel it is already the difference between a line that breathes and one
-  /// that doesn't, and anything larger starts to look like a logotype.
-  static double trackingFor(double size) {
-    if (size >= 28) return -0.4;
-    if (size >= 20) return -0.25;
-    if (size >= 17) return -0.1;
-    if (size >= 15) return 0;
-    if (size >= 13) return 0.05;
-    return 0.12;
-  }
+  /// Tracking for the sans face; see [AppType.trackingFor].
+  static double trackingFor(double size) => AppType.trackingFor(size);
 
-  // — the user's type settings, mirrored here so a token read resolves them —
-  //
-  // These are set from one place (`FontSync` in `grid_app.dart`, fed by
-  // `fontPrefsProvider`) and read from everywhere, exactly like
-  // `AppTheme.brightness`. A widget reading them must call [AppTheme.watch] to
-  // be rebuilt when they change — see that method for why a top-down rebuild
-  // isn't enough in this app.
+  /// The UI no longer scales with the terminal's size setting: ⌘+ and ⌘−
+  /// resize the terminal alone, so control geometry stays as drawn.
+  static const double uiScale = 1;
 
-  static String? _uiFamily;
-  static String? _codeFamily;
-  static double _uiScale = 1;
-  static double _codeSize = _codeSizeDefault;
+  /// The terminal's size, for a surface that shows terminal output verbatim.
+  static double get codeSize => terminalFontStore.size;
 
-  static const double _codeSizeDefault = 12.5;
-
-  /// The UI size the app was DRAWN at, and therefore the denominator of
-  /// [uiScale]: a setting of 14 gives a scale of exactly 1, which is the only
-  /// value at which every control keeps the geometry this file specifies.
-  ///
-  /// Public because the settings screen has to divide by it to turn a size the
-  /// user picked into the scale [apply] takes, and a second copy of the number
-  /// on that side is a second thing to forget.
-  static const double uiSizeDefault = 14;
-
-  /// What every UI dimension is multiplied by: 1.0 is the size the app was
-  /// drawn at.
-  static double get uiScale => _uiScale;
-
-  /// The size code is set at, in logical pixels.
-  ///
-  /// Absolute, not scaled: the UI scale reaches code through `MediaQuery`'s text
-  /// scaler like it reaches everything else, so a code surface that also
-  /// multiplied by [uiScale] would apply it twice. Code surfaces wrap themselves
-  /// in `MediaQuery.withNoTextScaling` and use this number as-is.
-  static double get codeSize => _codeSize;
-
-  /// Apply the user's type settings. Returns true when something actually
-  /// changed, so the caller only fires listeners on a real change.
-  static bool apply({
-    String? uiFamily,
-    String? codeFamily,
-    required double uiScale,
-    required double codeSize,
-  }) {
-    if (uiFamily == _uiFamily &&
-        codeFamily == _codeFamily &&
-        uiScale == _uiScale &&
-        codeSize == _codeSize) {
-      return false;
-    }
-    _uiFamily = uiFamily;
-    _codeFamily = codeFamily;
-    _uiScale = uiScale;
-    _codeSize = codeSize;
-    return true;
-  }
-
-  /// The style for a surface made of code — a diff, a log, a code block, a
-  /// model id the user is going to paste somewhere.
-  ///
-  /// Carries the user's code family *and* their code size, so a caller gets
-  /// both from one place instead of remembering to read the second. [scale]
-  /// is for the few call sites drawn deliberately smaller than body code (a
-  /// caption under a block, a chip): it keeps them proportional to the user's
-  /// choice rather than pinned to a number that stops matching once the setting
-  /// moves.
-  ///
-  /// Pair this with `MediaQuery.withNoTextScaling` on the surface — see
-  /// [codeSize] for why.
+  /// A block of code or a log: the terminal face at the UI's mono size.
   static TextStyle codeStyle({
     Color? color,
-    double scale = 1,
     double? height,
     FontWeight? fontWeight,
-  }) => TextStyle(
-    fontFamily: mono,
-    fontFamilyFallback: monoFallback,
-    fontSize: codeSize * scale,
-    color: color,
-    height: height,
-    fontWeight: fontWeight,
-  );
-
-  /// Put the type settings back to the shipped defaults.
-  ///
-  /// For tests: the fields are static, so one test that changes the font would
-  /// otherwise leak into every test that runs after it in the same process.
-  static void reset() {
-    _uiFamily = null;
-    _codeFamily = null;
-    _uiScale = 1;
-    _codeSize = _codeSizeDefault;
-  }
+  }) => AppType.mono(color: color, height: height, fontWeight: fontWeight);
 }
 
 /// A text field's rim at one state. Radius matches [AppControl.radius] so a
@@ -1705,38 +1418,20 @@ OutlineInputBorder _fieldBorder(Color color, {double width = 1}) =>
       borderSide: BorderSide(color: color, width: width),
     );
 
-/// The label style shared by every button, carrying the UI font: a
-/// `ButtonStyle.textStyle` does **not** inherit `fontFamily` from the text
-/// theme, so a button that sets only a size silently drops SF Pro.
-///
-/// A getter, not a const: it reads [AppFont.sans], which the user can change.
-TextStyle get _buttonTextStyle => TextStyle(
-  fontFamily: AppFont.sans,
-  fontFamilyFallback: AppFont.sansFallback,
-  fontSize: AppControl.fontSize,
-  fontWeight: AppControl.fontWeight,
-  // From the same ramp as the text theme, rather than a flat 0: a button's
-  // label is 13pt, which is small enough to want its letters opened up.
-  letterSpacing: AppFont.trackingFor(AppControl.fontSize),
-);
+/// The label style shared by every button: a `ButtonStyle.textStyle` does
+/// **not** inherit `fontFamily` from the text theme, so a button must receive
+/// the UI font explicitly.
+TextStyle get _buttonTextStyle =>
+    AppType.label(fontWeight: AppControl.fontWeight);
 
-/// A text field's own text: the macOS control font, so a field sits at the same
-/// scale as the button next to it.
-///
-/// Material's default field text is `bodyLarge` — 16pt, sized for a phone. On a
-/// desktop row that puts a visibly larger search box beside a 13pt button.
+/// A text field's own text: [AppType.mono] — what the user types is set the
+/// way a terminal sets it, at the scale of the button beside it.
 /// `InputDecorationTheme` has no `style` slot (it themes the *decoration*, not
 /// the editable text), so a field must be handed this explicitly:
 /// `TextField(style: kFieldTextStyle, ...)`.
 TextStyle get kFieldTextStyle => _fieldTextStyle(AppPalette.textPrimary);
 
-TextStyle _fieldTextStyle(Color color) => TextStyle(
-  fontFamily: AppFont.sans,
-  fontFamilyFallback: AppFont.sansFallback,
-  fontSize: AppControl.fontSize,
-  letterSpacing: AppFont.trackingFor(AppControl.fontSize),
-  color: color,
-);
+TextStyle _fieldTextStyle(Color color) => AppType.mono(color: color);
 
 /// A field's leading glyph — the magnifier on a search box, and its kind.
 ///
@@ -1769,6 +1464,7 @@ ButtonStyle dangerButtonStyle() => FilledButton.styleFrom(
 );
 
 ButtonStyle _filledButtonStyle() => FilledButton.styleFrom(
+  animationDuration: Duration.zero,
   minimumSize: Size(0, AppControl.heightScaled),
   padding: AppControl.paddingScaled,
   shape: _buttonShape,
@@ -1789,6 +1485,7 @@ ButtonStyle _filledButtonStyle() => FilledButton.styleFrom(
 /// The secondary action: a hairline rim, no fill — Apple's "bordered" button.
 ButtonStyle _outlinedButtonStyle(ColorScheme scheme) =>
     OutlinedButton.styleFrom(
+      animationDuration: Duration.zero,
       minimumSize: Size(0, AppControl.heightScaled),
       padding: AppControl.paddingScaled,
       shape: _buttonShape,
@@ -1801,6 +1498,7 @@ ButtonStyle _outlinedButtonStyle(ColorScheme scheme) =>
 
 /// The tertiary action: text only, for the quiet way out of a dialog.
 ButtonStyle _textButtonStyle() => TextButton.styleFrom(
+  animationDuration: Duration.zero,
   minimumSize: Size(0, AppControl.heightScaled),
   padding: AppControl.paddingSmallScaled,
   shape: _buttonShape,
@@ -1823,49 +1521,29 @@ ButtonStyle _textButtonStyle() => TextButton.styleFrom(
 );
 
 TextTheme _appTextTheme(Color primary, Color secondary) {
-  final base = TextStyle(
-    fontFamily: AppFont.sans,
-    fontFamilyFallback: AppFont.sansFallback,
-    color: primary,
-    height: 1.34,
-    fontWeight: AppFont.regular,
-  );
-
-  /// One step of the ramp, with its tracking derived from its size.
-  TextStyle step(double size, {FontWeight? weight, Color? color}) =>
-      base.copyWith(
-        fontSize: size,
-        fontWeight: weight,
-        color: color,
-        letterSpacing: AppFont.trackingFor(size),
-      );
-
-  // The ramp splits along one line: type that *is* a heading keeps semibold,
-  // type that merely names a control drops to medium.
-  //
-  // Large sizes carry weight optically — 25pt at semibold is already emphatic,
-  // and taking it to medium would leave a screen title reading as body copy that
-  // happens to be big. Small sizes are the opposite: at 12–14pt semibold turns
-  // into ink rather than emphasis, and it was on *every* label, so nothing was
-  // emphasised relative to anything else.
+  // Material's fifteen roles folded onto [AppType]'s steps: headings and
+  // labels in mono, body in sans. A heading keeps semibold; a role that names a
+  // control drops to medium.
+  final display = AppType.display(color: primary);
+  final title = AppType.title(color: primary);
+  final heading = AppType.heading(color: primary);
+  final body = AppType.body(color: primary);
+  final label = AppType.label(color: primary);
   return TextTheme(
-    displayLarge: step(57, weight: AppFont.semibold),
-    displayMedium: step(45, weight: AppFont.semibold),
-    displaySmall: step(36, weight: AppFont.semibold),
-    headlineLarge: step(32, weight: AppFont.semibold),
-    headlineMedium: step(29, weight: AppFont.semibold),
-    headlineSmall: step(25, weight: AppFont.semibold),
-    titleLarge: step(22, weight: AppFont.semibold),
-    titleMedium: step(17, weight: AppFont.semibold),
-    // 14.5 is where a "title" stops out-ranking anything and becomes a row
-    // label, so this is the first step down.
-    titleSmall: step(14.5, weight: AppFont.medium),
-    bodyLarge: step(16.5),
-    bodyMedium: step(15),
-    bodySmall: step(13.5, color: secondary),
-    // Every `label*` names a control. Medium, like the controls themselves.
-    labelLarge: step(14.5, weight: AppFont.medium),
-    labelMedium: step(13, weight: AppFont.medium),
-    labelSmall: step(12, weight: AppFont.medium),
+    displayLarge: display,
+    displayMedium: display,
+    displaySmall: display,
+    headlineLarge: title,
+    headlineMedium: title,
+    headlineSmall: title,
+    titleLarge: title,
+    titleMedium: heading,
+    titleSmall: label,
+    bodyLarge: body,
+    bodyMedium: body,
+    bodySmall: body.copyWith(color: secondary),
+    labelLarge: label,
+    labelMedium: label,
+    labelSmall: AppType.monoMeta(color: primary, fontWeight: AppFont.medium),
   );
 }

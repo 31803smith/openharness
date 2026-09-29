@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
+import 'package:harness/terminal/terminal_text.dart';
 
 import '../core/app_version.dart';
 import '../shared/theme/app_theme.dart' as grid;
@@ -39,6 +40,10 @@ class UpdateNotice extends StatelessWidget {
     if (update == null) return const SizedBox.shrink();
 
     final installing = notifier.isInstallingUpdate;
+    // Null until the first bytes land, and again while the download is being
+    // verified and unpacked — the bar is honest about not knowing then.
+    final fraction = installing ? notifier.updateDownloadFraction : null;
+    final percent = installing ? notifier.updateDownloadPercent : null;
     final error = notifier.updateError;
     final failed = error != null && !installing;
 
@@ -127,19 +132,31 @@ class UpdateNotice extends StatelessWidget {
                               message,
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
+                              style: grid.AppType.body(
                                 color: grid.AppPalette.textPrimary,
-                                fontSize: 12.5,
                               ),
                             ),
                           ),
-                          if (!installing && !failed && update.size > 0) ...[
+                          // The size answers "how long will this take?" before
+                          // the download; the percent answers it during, and
+                          // says it alone — the two together read as arithmetic
+                          // homework in a band this narrow.
+                          if (percent != null) ...[
+                            const SizedBox(width: 8),
+                            Text(
+                              '· $percent%',
+                              style: grid.AppType.monoMeta(
+                                color: grid.AppPalette.textFaint,
+                              ),
+                            ),
+                          ] else if (!installing &&
+                              !failed &&
+                              update.size > 0) ...[
                             const SizedBox(width: 8),
                             Text(
                               '· ${formatDownloadSize(update.size)}',
-                              style: TextStyle(
+                              style: grid.AppType.monoMeta(
                                 color: grid.AppPalette.textFaint,
-                                fontSize: 11.5,
                               ),
                             ),
                           ],
@@ -157,8 +174,9 @@ class UpdateNotice extends StatelessWidget {
                         key: const Key('retry-update-button'),
                         label: 'Try again',
                         kind: _ActionKind.ghost,
-                        onPressed: () =>
-                            unawaited(notifier.installAvailableUpdate()),
+                        onPressed: () => unawaited(
+                          notifier.installAvailableUpdate(update: update),
+                        ),
                       ),
                     ] else ...[
                       _NoticeAction(
@@ -166,7 +184,8 @@ class UpdateNotice extends StatelessWidget {
                         label: 'Skip this version',
                         onPressed: installing
                             ? null
-                            : notifier.skipAvailableUpdate,
+                            : () =>
+                                  notifier.skipAvailableUpdate(update: update),
                       ),
                       const SizedBox(width: 6),
                       _NoticeAction(
@@ -175,22 +194,25 @@ class UpdateNotice extends StatelessWidget {
                         kind: _ActionKind.primary,
                         onPressed: installing
                             ? null
-                            : () =>
-                                  unawaited(notifier.installAvailableUpdate()),
+                            : () => unawaited(
+                                notifier.installAvailableUpdate(update: update),
+                              ),
                       ),
                     ],
                   ],
                 ),
               ),
-              // Indeterminate on purpose: downloadAndStage() resolves once, with
-              // no byte counter to read, so a percentage here would be invented.
+              // Determinate while the bytes are arriving; indeterminate for the
+              // verify-and-unpack tail, which has nothing to count.
               if (installing)
                 Positioned(
                   left: 0,
                   right: 0,
                   bottom: 0,
                   child: LinearProgressIndicator(
+                    key: const ValueKey('update-progress-bar'),
                     minHeight: 2,
+                    value: fraction,
                     backgroundColor: Colors.transparent,
                     color: grid.AppPalette.accentOnSurface,
                   ),
@@ -241,8 +263,7 @@ class _NoticeAction extends StatelessWidget {
               ? BorderSide(color: grid.AppGlass.hair)
               : BorderSide.none,
         ),
-        textStyle: TextStyle(
-          fontSize: 12,
+        textStyle: grid.AppType.label(
           fontWeight: primary ? grid.AppFont.semibold : grid.AppFont.regular,
         ),
       ),
@@ -251,88 +272,198 @@ class _NoticeAction extends StatelessWidget {
   }
 }
 
-/// Opens the result of a manual check from the Harness menu. It never downloads
+final _manualChecks = Expando<Future<void>>('manual desktop update checks');
+
+/// The native menu and About share one check and one result dialog per window.
+/// Invoking the other entry while a check is pending cannot stack two dialogs.
+Future<void> checkForUpdatesAndShowResult(
+  BuildContext context,
+  AppNotifier notifier,
+) {
+  final navigator = Navigator.of(context, rootNavigator: true);
+  final pending = _manualChecks[navigator];
+  if (pending != null) return pending;
+  // Schedule after assigning ownership, before notifying check-state listeners.
+  final operation = Future<void>(() async {
+    final result = await notifier.checkForUpdates();
+    if (context.mounted) {
+      await showUpdateCheckDialog(context, notifier, result);
+    }
+  }).whenComplete(() => _manualChecks[navigator] = null);
+  _manualChecks[navigator] = operation;
+  return operation;
+}
+
+/// Opens the result of a manual check. It never downloads
 /// a release until the user chooses the primary action.
 Future<void> showUpdateCheckDialog(
   BuildContext context,
   AppNotifier notifier,
   ManualUpdateCheck result,
 ) {
-  final update = result.update;
-  if (update == null) {
-    return showAppDialog<void>(
-      context: context,
-      builder: (context) => const _UpdateDialog(
-        icon: LucideIcons.circleCheck300,
-        tone: _DialogTone.ok,
-        title: 'You’re up to date',
-        body: 'This copy of Harness already has the latest version.',
-      ),
-    );
-  }
+  Future<String>? installedVersion;
   return showAppDialog<void>(
     context: context,
-    barrierDismissible: false,
     builder: (dialogContext) {
+      var current = result;
+      var checking = false;
       var installing = false;
       return StatefulBuilder(
-        builder: (context, setState) => _UpdateDialog(
-          icon: LucideIcons.arrowDownToLine300,
-          title: installing
-              ? 'Installing Harness ${update.version}…'
-              : 'Harness ${update.version} is available',
-          body: installing
-              ? 'Don’t quit Harness. It will restart on its own.'
-              : result.isSkipped
-              ? 'You skipped this version earlier. You can still install it.'
-              : 'Download and install it now? Harness will restart when it '
-                    'finishes.',
-          busy: installing,
-          update: installing ? null : update,
-          actions: installing
-              ? const []
-              : [
-                  _DialogAction(
-                    key: const Key('close-update-dialog-button'),
-                    label: 'Close',
-                    onPressed: () async {
-                      Navigator.of(dialogContext).pop();
-                    },
-                  ),
-                  _DialogAction(
-                    label: result.isSkipped
-                        ? 'Not now'
-                        : 'Skip ${update.version}',
-                    onPressed: () async {
-                      if (!result.isSkipped) {
-                        await notifier.skipAvailableUpdate();
-                      }
-                      if (dialogContext.mounted) {
-                        Navigator.of(dialogContext).pop();
-                      }
-                    },
-                  ),
-                  _DialogAction(
-                    label: 'Update',
-                    primary: true,
-                    onPressed: () async {
-                      setState(() => installing = true);
-                      final installed = await notifier.installAvailableUpdate();
-                      // A successful install never returns — the process is
-                      // replaced. Reaching here means it failed, and the banner
-                      // behind this dialog is already showing why.
-                      if (!dialogContext.mounted || installed) return;
-                      Navigator.of(dialogContext).pop();
-                    },
-                  ),
-                ],
-        ),
+        builder: (context, setState) {
+          if (checking) {
+            return const _UpdateDialog(
+              icon: LucideIcons.refreshCw300,
+              title: 'Checking for updates…',
+              body: 'Looking for a newer version of Harness.',
+              busy: true,
+            );
+          }
+          if (current.status == DesktopUpdateCheckStatus.failed) {
+            return _UpdateDialog(
+              icon: LucideIcons.triangleAlert300,
+              tone: _DialogTone.warning,
+              title: 'Couldn’t check for updates',
+              body:
+                  'Harness couldn’t read the latest version. '
+                  'Check your connection and try again.',
+              actions: [
+                _DialogAction(
+                  label: 'Close',
+                  onPressed: () async => Navigator.of(dialogContext).pop(),
+                ),
+                _DialogAction(
+                  label: 'Retry',
+                  primary: true,
+                  onPressed: () async {
+                    setState(() => checking = true);
+                    final next = await notifier.checkForUpdates();
+                    if (!context.mounted) return;
+                    setState(() {
+                      current = next;
+                      checking = false;
+                    });
+                  },
+                ),
+              ],
+            );
+          }
+          if (current.status == DesktopUpdateCheckStatus.disabled) {
+            return const _UpdateDialog(
+              icon: LucideIcons.info300,
+              title: 'Updates are off for this build',
+              body: 'This build does not check for or install desktop updates.',
+            );
+          }
+          final update = current.update;
+          if (update == null) {
+            return FutureBuilder<String>(
+              future: installedVersion ??= runningAppVersion(),
+              builder: (context, snapshot) => _UpdateDialog(
+                icon: LucideIcons.circleCheck300,
+                tone: _DialogTone.ok,
+                title: 'You’re up to date',
+                body: snapshot.hasData
+                    ? 'Harness ${snapshot.data} is the latest version.'
+                    : 'This copy of Harness already has the latest version.',
+              ),
+            );
+          }
+          return PopScope(
+            canPop: !installing,
+            // The percentage moves while this dialog is up, and the
+            // StatefulBuilder above only rebuilds on ITS own setState — which
+            // the download never calls. Listening to the notifier is what lets
+            // the number here count along with the band behind it.
+            child: ListenableBuilder(
+              listenable: notifier,
+              builder: (context, _) {
+                // Update re-reads the manifest and installs the newest build,
+                // which may be newer than the one this dialog opened on. Name
+                // the one going in, not the one that was reviewed.
+                final installingVersion =
+                    notifier.availableUpdate?.version ?? update.version;
+                return _UpdateDialog(
+                  icon: LucideIcons.arrowDownToLine300,
+                  title: installing
+                      ? 'Installing Harness $installingVersion…'
+                      : 'Harness ${update.version} is available',
+                  body: installing
+                      ? [
+                          if (notifier.updateDownloadPercent
+                              case final percent?)
+                            'Downloading… $percent%.',
+                          'Don’t quit Harness. It will restart on its own.',
+                        ].join(' ')
+                      : current.isSkipped
+                      ? 'You skipped this version earlier. You can still install it.'
+                      : 'Download and install it now? Harness will restart when it '
+                            'finishes.',
+                  busy: installing,
+                  update: installing ? null : update,
+                  actions: installing
+                      ? const []
+                      : [
+                          _DialogAction(
+                            key: const Key('close-update-dialog-button'),
+                            label: 'Close',
+                            onPressed: () async {
+                              Navigator.of(dialogContext).pop();
+                            },
+                          ),
+                          if (!current.isSkipped)
+                            _DialogAction(
+                              label: 'Skip ${update.version}',
+                              onPressed: () async {
+                                await notifier.skipAvailableUpdate(
+                                  update: update,
+                                );
+                                if (dialogContext.mounted) {
+                                  Navigator.of(dialogContext).pop();
+                                }
+                              },
+                            ),
+                          _DialogAction(
+                            label: 'Update',
+                            primary: true,
+                            onPressed: () async {
+                              setState(() => installing = true);
+                              final installed = await notifier
+                                  .installAvailableUpdate(update: update);
+                              // A successful install never returns — the process is
+                              // replaced. Reaching here means it did not happen.
+                              if (!context.mounted || installed) return;
+                              // The install re-reads the manifest, and the build
+                              // can be gone from it by then. There is no error to
+                              // show for that and no offer left to carry one, so
+                              // say the true thing here rather than closing on
+                              // nothing.
+                              if (notifier.availableUpdate == null) {
+                                setState(() {
+                                  installing = false;
+                                  current = const ManualUpdateCheck(
+                                    check: DesktopUpdateCheck.upToDate(),
+                                  );
+                                });
+                                return;
+                              }
+                              // Otherwise it failed, and the banner behind this
+                              // dialog is already showing why.
+                              setState(() => installing = false);
+                              Navigator.of(dialogContext).pop();
+                            },
+                          ),
+                        ],
+                );
+              },
+            ),
+          );
+        },
       );
     },
   );
 }
 
-enum _DialogTone { accent, ok }
+enum _DialogTone { accent, ok, warning }
 
 class _DialogAction {
   final Key? key;
@@ -370,9 +501,11 @@ class _UpdateDialog extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     grid.AppTheme.watch(context);
-    final mark = tone == _DialogTone.ok
-        ? grid.AppPalette.online
-        : grid.AppPalette.accentOnSurface;
+    final mark = switch (tone) {
+      _DialogTone.ok => grid.AppPalette.online,
+      _DialogTone.warning => grid.AppPalette.warn,
+      _DialogTone.accent => grid.AppPalette.accentOnSurface,
+    };
 
     return Dialog(
       // No backgroundColor, no shape: `dialogTheme` supplies both, at
@@ -380,98 +513,105 @@ class _UpdateDialog extends StatelessWidget {
       // carry is gone with them — §1 allows exactly one border in the app and
       // it belongs to the menu panel, not to a dialog.
       child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 372),
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(18, 18, 18, 14),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Container(
-                width: 34,
-                height: 34,
-                decoration: BoxDecoration(
-                  color: mark.withValues(alpha: 0.13),
-                  borderRadius: BorderRadius.circular(grid.AppCard.insetRadius),
+        constraints: BoxConstraints(
+          maxWidth: 372 * grid.appTextScaleOf(context),
+        ),
+        child: SingleChildScrollView(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(18, 18, 18, 14),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Container(
+                  width: 34,
+                  height: 34,
+                  decoration: BoxDecoration(
+                    color: mark.withValues(alpha: 0.13),
+                    borderRadius: BorderRadius.circular(
+                      grid.AppCard.insetRadius,
+                    ),
+                  ),
+                  alignment: Alignment.center,
+                  child: busy
+                      ? SizedBox(
+                          width: 17,
+                          height: 17,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: mark,
+                          ),
+                        )
+                      : Icon(icon, size: 18, color: mark),
                 ),
-                alignment: Alignment.center,
-                child: busy
-                    ? SizedBox(
-                        width: 17,
-                        height: 17,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          color: mark,
-                        ),
-                      )
-                    : Icon(icon, size: 18, color: mark),
-              ),
-              const SizedBox(height: 12),
-              Text(
-                title,
-                style: TextStyle(
-                  color: grid.AppPalette.textPrimary,
-                  fontSize: 15,
-                  fontWeight: grid.AppFont.semibold,
-                ),
-              ),
-              const SizedBox(height: 5),
-              Text(
-                body,
-                style: TextStyle(
-                  color: grid.AppPalette.textSecondary,
-                  fontSize: 12.5,
-                  height: 1.5,
-                ),
-              ),
-              if (update != null) ...[
                 const SizedBox(height: 12),
-                Divider(height: 1, color: grid.AppGlass.hair),
-                const SizedBox(height: 10),
-                _Fact(label: 'Installed', value: _InstalledVersion()),
-                const SizedBox(height: 6),
-                _Fact(label: 'New version', value: Text(update!.version)),
-                if (update!.size > 0) ...[
+                Text(
+                  title,
+                  style: grid.AppType.heading(
+                    color: grid.AppPalette.textPrimary,
+                  ),
+                ),
+                const SizedBox(height: 5),
+                Text(
+                  body,
+                  style: grid.AppType.body(
+                    color: grid.AppPalette.textSecondary,
+                    height: 1.5,
+                  ),
+                ),
+                if (update != null) ...[
+                  const SizedBox(height: 12),
+                  Divider(height: 1, color: grid.AppGlass.hair),
+                  const SizedBox(height: 10),
+                  _Fact(label: 'Installed', value: _InstalledVersion()),
                   const SizedBox(height: 6),
-                  _Fact(
-                    label: 'Download',
-                    value: Text(formatDownloadSize(update!.size)),
+                  _Fact(label: 'New version', value: Text(update!.version)),
+                  if (update!.size > 0) ...[
+                    const SizedBox(height: 6),
+                    _Fact(
+                      label: 'Download',
+                      value: Text(formatDownloadSize(update!.size)),
+                    ),
+                  ],
+                ],
+                if (actions.isNotEmpty) ...[
+                  const SizedBox(height: 15),
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: Wrap(
+                      alignment: WrapAlignment.end,
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        for (final action in actions) ...[
+                          _NoticeAction(
+                            key: action.key,
+                            label: action.label,
+                            kind: action.primary
+                                ? _ActionKind.primary
+                                : _ActionKind.quiet,
+                            onPressed: () => unawaited(action.onPressed()),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                ],
+                if (actions.isEmpty && !busy) ...[
+                  const SizedBox(height: 15),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.end,
+                    children: [
+                      _NoticeAction(
+                        label: 'Close',
+                        kind: _ActionKind.ghost,
+                        onPressed: () => Navigator.of(context).pop(),
+                      ),
+                    ],
                   ),
                 ],
               ],
-              if (actions.isNotEmpty) ...[
-                const SizedBox(height: 15),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.end,
-                  children: [
-                    for (final action in actions) ...[
-                      if (action != actions.first) const SizedBox(width: 8),
-                      _NoticeAction(
-                        key: action.key,
-                        label: action.label,
-                        kind: action.primary
-                            ? _ActionKind.primary
-                            : _ActionKind.quiet,
-                        onPressed: () => unawaited(action.onPressed()),
-                      ),
-                    ],
-                  ],
-                ),
-              ],
-              if (actions.isEmpty && !busy) ...[
-                const SizedBox(height: 15),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.end,
-                  children: [
-                    _NoticeAction(
-                      label: 'Close',
-                      kind: _ActionKind.ghost,
-                      onPressed: () => Navigator.of(context).pop(),
-                    ),
-                  ],
-                ),
-              ],
-            ],
+            ),
           ),
         ),
       ),
@@ -493,20 +633,21 @@ class _Fact extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         SizedBox(
-          width: 96,
+          width: 96 * grid.appTextScaleOf(context),
           child: Text(
             label,
-            style: TextStyle(color: grid.AppPalette.textFaint, fontSize: 11.5),
+            style: grid.AppType.body(color: grid.AppPalette.textFaint),
           ),
         ),
-        DefaultTextStyle(
-          style: TextStyle(
-            color: grid.AppPalette.textSecondary,
-            fontSize: 11.5,
-            fontFamily: grid.AppFont.mono,
-            fontFamilyFallback: grid.AppFont.monoFallback,
+        Expanded(
+          // Versions and sizes: copied into a report, so set in mono.
+          child: DefaultTextStyle(
+            style: grid.AppType.monoLabel(
+              fontWeight: FontWeight.w400,
+              color: grid.AppPalette.textSecondary,
+            ),
+            child: value,
           ),
-          child: value,
         ),
       ],
     );
@@ -524,22 +665,25 @@ class _InstalledVersionState extends State<_InstalledVersion> {
   late final Future<String> _info = runningAppVersion();
 
   @override
-  Widget build(BuildContext context) => FutureBuilder<String>(
-    future: _info,
-    builder: (context, snapshot) {
-      final version = snapshot.data;
-      if (version == null) {
-        // Still reading: a blank measured against the ambient mono style the
-        // row sets, so it and the version it becomes are the same line.
-        // Answered with nothing: the dash, which is a value.
-        return snapshot.connectionState == ConnectionState.done
-            ? const Text('—')
-            : SkeletonText(
-                style: DefaultTextStyle.of(context).style,
-                width: 44,
-              );
-      }
-      return Text(version);
-    },
-  );
+  Widget build(BuildContext context) {
+    TerminalFontScope.watch(context);
+    return FutureBuilder<String>(
+      future: _info,
+      builder: (context, snapshot) {
+        final version = snapshot.data;
+        if (version == null) {
+          // Still reading: a blank measured against the ambient mono style the
+          // row sets, so it and the version it becomes are the same line.
+          // Answered with nothing: the dash, which is a value.
+          return snapshot.connectionState == ConnectionState.done
+              ? const Text('—')
+              : SkeletonText(
+                  style: DefaultTextStyle.of(context).style,
+                  width: 44,
+                );
+        }
+        return Text(version);
+      },
+    );
+  }
 }

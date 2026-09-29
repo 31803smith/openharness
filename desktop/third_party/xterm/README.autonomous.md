@@ -13,6 +13,45 @@ fix and the regression in `test/terminal_session_test.dart` passes against it.
 
 ## Local patches
 
+- **OSC 8 hyperlinks are kept per cell** (`lib/src/core/escape/parser.dart`,
+  `lib/src/core/cursor.dart`, `lib/src/core/buffer/line.dart`,
+  `lib/src/core/buffer/buffer.dart`, `lib/src/terminal.dart`). Upstream drops
+  OSC 8, so a Claude Code markdown link printed as just its label (`!125`)
+  had no address to open. The target rides on `CursorStyle.hyperlink`, which
+  SGR resets leave alone, and `BufferLine.getHyperlink` reads it back; the
+  per-line array is allocated only once a linked cell is written. Regressions:
+  the `OSC 8 hyperlinks` group in `test/terminal_links_test.dart`.
+
+- **Pane-local wheel coordinates** (`lib/src/terminal_view.dart`). Convert the
+  pointer's global position to renderer-local coordinates before constructing
+  alternate-screen mouse-wheel reports. Offset panes otherwise report the
+  wrong cell (often clamped to the bottom/right edge), so a TUI can receive a
+  wheel event over its prompt instead of its scrollable content. Regression:
+  `test/swarm_terminal_scroll_test.dart` checks every four-pane preset, exact
+  emitted coordinates, and normal-buffer history scrolling.
+
+- **Browser accessibility input and editor switching**
+  (`lib/src/ui/custom_text_edit.dart`). The browser's text-input strategy needs
+  an editable semantics node when accessibility is enabled. The custom adapter
+  now publishes its editing value and focus through one such node, while the
+  enclosing `Focus` omits duplicate semantics. That prevents switching between
+  terminal and remote-viewer editors from deactivating the new DOM editor.
+  Read-only surfaces stay read-only; native input uses its existing path.
+  `semanticLabel` lets the viewer reuse the IME adapter. Validation includes
+  the native input regressions and `desktop/scripts/check-workspace.cjs`, which
+  checks actual received terminal bytes and remote viewer input after switching.
+
+- **Linux clipboard and Meta keys leave shell editing intact**
+  (`lib/src/ui/shortcut/shortcuts.dart`, `lib/src/terminal_view.dart`,
+  `lib/src/core/input/handler.dart`). Linux uses Ctrl-Shift-C/V/A for clipboard
+  copy/paste/select-all, preserving Ctrl-A and Ctrl-V for the program in the
+  terminal. Left-Alt printable keys send an escape prefix with the actual
+  keyboard-layout character, preserving case and punctuation; AltGr and macOS
+  Option remain native text composition. The fallback letter handler respects
+  Shift and emits lowercase otherwise. Desktop creates Linux-target terminals
+  on Linux. Regressions: `test/terminal_clipboard_test.dart`, with existing IME
+  coverage in `test/terminal_view_interaction_test.dart`.
+
 - **Remote grids survive viewport resizing** (`lib/src/terminal_view.dart`,
   `lib/src/ui/render.dart`). `TerminalView.resizeBuffer` defaults to true;
   Harness sets it to false so a smaller local pane reports its desired size
@@ -73,8 +112,14 @@ it if one is dropped.
    such channel method and names `GDK_KEY_BackSpace` explicitly to ignore it —
    correct for an `EditableText`, wrong for the bare `TextInputClient` here —
    so upstream's unconditional version dropped the key entirely on Linux and no
-   byte reached the pty. Regression: the macOS/Linux pair in
-   `test/terminal_view_interaction_test.dart`.
+   byte reached the pty. ⌥⌫ is excluded from the hand-off for the mirror-image
+   reason: AppKit answers it with `deleteWordBackward:`, a selector
+   `CustomTextEdit` does not implement, so the chord reached neither the
+   platform nor the pty and deleted nothing at all. It falls through to
+   `keyInput`, where `AltAsMetaInputHandler` makes it `ESC` + `\x7f`.
+   Regression: the macOS/Linux pair in
+   `test/terminal_view_interaction_test.dart`, and the ⌥⌫ pane tests in
+   `test/terminal_input_test.dart`.
 
 3. **A Meta chord is left for the app on every platform, not just Apple**
    (`lib/src/terminal_view.dart`). Every shortcut in
@@ -136,3 +181,96 @@ it if one is dropped.
    vertical scrolling and app-owned Meta shortcuts keep their bindings.
    Regression: the macOS/Linux pair in `test/terminal_panel_focus_test.dart`
    exercises physical key events through `TerminalPanel` to binary PTY input.
+
+9. **A software keyboard is allowed to compose**
+   (`lib/src/ui/custom_text_edit.dart`). The strict
+   `autocorrect: false` / `enableSuggestions: false` this connection attached
+   with is right for a hardware keyboard — a desktop IME composes through
+   marked text, which neither flag touches — but on a phone those two flags ARE
+   the IME: iOS maps `autocorrect` onto `UITextAutocorrectionTypeNo` and
+   Android maps `enableSuggestions` onto `TYPE_TEXT_FLAG_NO_SUGGESTIONS`, and
+   with no pre-edit buffer to work in a Vietnamese Telex keyboard converted
+   nothing — `hoom` reached the pty as four raw letters instead of `hôm`, and a
+   CJK candidate window never opened. iOS and Android now attach with
+   composition left on (iOS needs `autocorrect`, the only knob it has; Android
+   needs `enableSuggestions` and keeps autocorrection itself off), and smart
+   dashes and quotes — which default to ENABLED, and which iOS only acts on
+   once autocorrect is on — are switched off on every platform so `"` and
+   `--flag` stay syntax rather than typography. Regression:
+   `mobile/test/terminal_ime_input_test.dart`, the only build that reaches the
+   mobile branch.
+
+10. **Return does not leave the line it just sent sitting in the prompt**
+    (`lib/src/ui/custom_text_edit.dart`). iOS answers the Return key by calling
+    `performAction` and then inserting the `\n` into its own buffer anyway:
+    `shouldChangeTextInRange:` returns YES for the default return key
+    (`FlutterTextInputPlugin.mm`). So an editing value the terminal has ALREADY
+    acted on arrives right after the action — by which point
+    `resetEditingState` has emptied the mirror, so the diff retyped the whole
+    line into the pty and followed it with a literal LF. A TUI reads that as
+    Ctrl+J, a soft newline rather than a submit, so the message the user just
+    sent reappeared in the prompt underneath its own answer. That one value is
+    now recognised by its shape, dropped, and the native buffer put back on the
+    state the action left. It is one shot, so real typing after a submit is
+    never swallowed, and Android performs its editor action without the second
+    insert so nothing there matches. Regression:
+    `mobile/test/terminal_ime_input_test.dart`.
+11. **Block Elements (U+2580–U+259F) are painted as rectangles, not font
+    glyphs** (`lib/src/ui/block_glyphs.dart`, `lib/src/ui/painter.dart`,
+    `lib/src/ui/render.dart`, `lib/src/terminal_view.dart`). A cell is
+    `TerminalStyle.height` (1.2) times the font size, rounded to whole pixels
+    by SkParagraph (13 pt → 16 px), but a font's block glyphs only cover the
+    face's own ascent and descent — and SF Mono's don't reach the cell's edges
+    horizontally either — so anything drawn with blocks (Claude Code's mascot,
+    progress bars, TUI borders) showed a dark band under every row and seams
+    between columns. `paintCellForeground` now hands those code points to
+    `paintBlockGlyph`, which fills the cell's own rectangle(s) with every edge
+    snapped to a device pixel (the view feeds the painter
+    `MediaQuery.devicePixelRatioOf`) and anti-aliasing off; the snapping is
+    what makes neighbours tile on Impeller, which ignores the flag. The three
+    shade characters are a full cell at 25/50/75 % coverage, and inverse/faint
+    follow the text path. Box drawing (U+2500–U+257F) still comes from the
+    font. Regression: `test/terminal_block_glyph_test.dart`, which also
+    rasterises through the real painter.
+
+12. **Only lines that changed are drawn again** (`lib/src/core/buffer/line.dart`,
+    `lib/src/ui/line_picture_cache.dart`, `lib/src/ui/painter.dart`,
+    `lib/src/ui/render.dart`). Every frame with output — and every cursor blink,
+    twice a second — drew each visible cell again, one paragraph per glyph,
+    though usually one line had changed. `BufferLine.paintVersion` now moves
+    whenever anything a line draws changes (colours too, unlike `textVersion`),
+    but not when a cell is rewritten with the value it already holds, because a
+    TUI redrawing its screen rewrites mostly identical cells. The renderer keeps
+    each visible line's drawing as a `Picture` keyed by the line object and
+    replays it while the version holds; lines keep their identity as they
+    scroll (patch 1), so streaming output records only the newest line. A line
+    is recorded at its sub-device-pixel phase and replayed moved by whole device
+    pixels, so block-glyph snapping (patch 11) lands exactly where a direct
+    paint would put it even at a fractional pixel ratio. The
+    cache holds only what the last frame drew and is cleared with the theme,
+    font, text scale, pixel ratio, and whenever the view stops rendering.
+    Regression: `test/terminal_line_paint_cache_test.dart`, including a
+    pixel-for-pixel comparison of replayed and directly painted lines.
+
+13. **A line's backgrounds are filled a run at a time, before its glyphs**
+    (`lib/src/ui/painter.dart`). Neighbouring cells with the same background
+    colour share one rectangle — the same area, one-pixel overlap included —
+    and a single `Paint` serves them all. Painting every background before any
+    glyph also means a glyph that overhangs its cell (italic, a wide face) now
+    shows over a coloured neighbour just as it always did over the default
+    background, instead of being clipped by that neighbour's fill. Regression:
+    `test/terminal_line_paint_cache_test.dart` (backgrounds identical to the
+    per-cell fill; glyph edges the only difference).
+
+14. **Plain ASCII in one style is drawn as one paragraph**
+    (`lib/src/ui/painter.dart`). Two or more neighbouring printable-ASCII,
+    single-width cells with the same colours and attributes are laid out and
+    drawn together, with ligatures, contextual alternates and kerning disabled
+    so each glyph keeps its cell. A weight/slant is only batched when every
+    printable ASCII character measures exactly one cell wide in it, so a face
+    whose bold or italic runs wider (or a proportional face) stays cell by
+    cell. Wide characters, non-ASCII, block glyphs and the substituted U+23FA
+    still go through `paintCellForeground`. Runs of bare spaces draw nothing,
+    as before; underlined spaces become U+00A0 as in the per-cell path.
+    Regression: `test/terminal_line_paint_cache_test.dart` (where runs are cut,
+    and a rendering within antialiasing of the per-cell one).

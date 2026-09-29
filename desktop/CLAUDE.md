@@ -46,13 +46,19 @@ flutter build macos --release
 flutter build linux --release                     # Ubuntu build host only — no cross-compiling
 ```
 
-Integration tests (`integration_test/`) need a device: `flutter test integration_test/native_terminal_e2e_test.dart -d macos`
-(swap `-d linux` on an Ubuntu host).
-`local_terminal_e2e_test.dart` and `prod_terminal_e2e_test.dart` still import `package:harness/e2ee/*`
-and `widgets/remote_setup_screen.dart`, which no longer exist, and `native_terminal_e2e_test.dart`
-builds `TerminalPanel` without its required `focused` argument — all three fail `flutter analyze` and
-are the only analyzer errors in the repo (everything else is `info` inside `third_party/xterm`). Fix or
-delete them before relying on them.
+Native integration fixtures need a device and the test-mode environment:
+
+```bash
+FLUTTER_TEST=1 flutter test -d macos --no-pub integration_test/native_terminal_e2e_test.dart
+FLUTTER_TEST=1 flutter test -d macos --no-pub integration_test/native_workspace_e2e_test.dart
+```
+
+Both use in-memory state and fake terminal traffic; the workspace fixture also simulates agent
+creation and machine-link responses. They refuse to run without `FLUTTER_TEST=1`, which disables
+production-only pollers and persistence. The workspace fixture exercises the native macOS titlebar; its injected
+Flutter keys do not establish physical AppKit keyboard/IME behavior. A fixture build replaces
+`Harness.app`, so rebuild the normal review artifact afterward with
+`flutter build macos --debug --no-pub --target lib/main.dart`.
 
 Local stack / E2E scripts (the CLI comes from this repo's `../cli`; the backend from a sibling
 `autonomous-code` checkout next to `autonomous-harness` — override with `AUTONOMOUS_CODE_ROOT` /
@@ -87,22 +93,82 @@ its consumer is now the `harness` installer rather than this app.
 
 ## Architecture
 
-### The app talks only to the local `harness` CLI
+### One Flutter UI, native and browser transports
 
-This is the single most important thing to know. The desktop app **never** dials the cloud backend or
-holds an SSO token:
+`lib/main.dart` serves both targets; its signed-in workspace is a conditional import
+(`desktop_workspace.dart`, or `web/web_entry.dart` when `dart.library.js_interop`), so the
+web build **is mouse-first** (product decision, 2026-09-29): every action
+desktop keeps in native menus or chords must be clickable. Keys keep working but are not
+advertised. Browser-only UI lives in `lib/web/` and is never imported by desktop code;
+it plugs into shared screens through additive seams whose default is today's desktop
+behavior (e.g. `SwarmScreen.chrome` / `WorkspaceChrome` in `state/workspace_chrome.dart`,
+which runs the same `_commands` table keys use, adds a bar over the picker, and turns off
+`KeyHints` — `widgets/key_hints.dart`, absent means hints shown). Do not change desktop behavior for the
+web, and do not copy shared screens into `lib/web/` — add a seam instead.
+
+`kViewerMode` is true on the web:
+the browser owns its OAuth session, peer links, and end-to-end relay encryption.
+`viewer/browser_login.dart` validates the same-tab callback against the backend's
+PKCE transaction; conditional adapters handle storage and native-only services.
+`platform_auth_web.dart` serializes shared login/refresh/logout with Web Locks
+and reloads other tabs when the account changes. Auth and E2EE keys persist in
+origin-local storage; only the OAuth transaction is in session storage.
+Shared sessions use `ObserverRelayCodec` and `/api/observer-ws`, verifying the
+owner and permitting only observation and authenticated comments. `/s/:id#key=…`
+opens `SharedAgentPage` without restoring the visitor's workspace. Public links
+allow anonymous viewing; private links require an invited account. Preserve the
+fragment identity pin through sign-in and reload: `startHarness` disables Flutter
+hash routing, while the sign-in adapter owns the callback and return URL.
+The owner daemon stores comments and enforces link/invitation access on every
+request. Reuse `ShareHarnessDialog` and `HarnessComments` for both app targets.
+See [README.md](README.md#web-development) for origin setup, browser storage
+lifetime, capability limits, and Chrome checks. Browser tests must set
+`--dart-define=HARNESS_TEST=true` so no production pollers or analytics run.
+
+### Native desktop talks to the local `harness` CLI
+
+The native desktop target uses the CLI for cloud access and SSO tokens:
 
 - **Auth** lives in the CLI. `lib/auth/cli_login.dart` shells out to `harness auth status --json` and
   drives `harness login --json` (NDJSON event stream); `cli_link.dart` wraps `harness link create/import/list`.
+  Sign-out owns its CLI process, checks its exit, and terminates it on timeout. `AppNotifier` joins
+  repeated sign-out requests and blocks another sign-in until credential and connection cleanup
+  finish; failure offers keyboard-focused Retry sign out. Development fixture disconnects never
+  sign out the real CLI. Viewer builds use `viewer/direct_login.dart` and `viewer/direct_auth.dart`
+  instead: login attempts and token refreshes have session revisions, credential writes are
+  serialized, and cancelled or superseded responses cannot restore or clear another account.
+  Sign-out and runtime expiry clear live panes, inventory, and history without saving an empty
+  layout over the user's desk. Sign-in waits for old transports to close, then restores the saved
+  tabs, focus, pins, zoom, and layouts. Every layout read checks both account and layout revisions.
 - **REST** (`lib/api/api_client.dart`, Dio) goes to `AppConfig.localCliBaseUrl` (`http://127.0.0.1:18473`),
   and the CLI proxies to the backend with its own session. Responses are `{success, data|error}` and
   unwrapped into `ApiException`.
+  Machine responses carry their own cache freshness (`MachineInventory`). Sharing fallback is
+  cleared on account changes; only the latest request can publish inventory or clear its error.
+  `refreshMachines()` returns whether its result was applied, and retry uses that public path.
+  `machineInventoryLoaded` distinguishes an initial wait from a completed inventory with no row
+  for a restored pane. Missing, cached, and failed inventories give distinct recovery guidance;
+  Retry stays mounted and joins any pending retry, preserving its keyboard focus and position.
+  Agent discovery and terminal capabilities also belong to a machine's current connection
+  revision. Disconnect/reconnect releases obsolete discovery and recovery futures immediately;
+  late replies and timeouts cannot overwrite the replacement connection. Reconnect releases old
+  terminal stream IDs while retaining their renderer and output until the new keyframe arrives.
 - **WebSocket** (`lib/ws/`) — `WsPool` owns one `WsConn` per machine. Every real connection uses
   `WsTransportKind.localPlaintext` against the CLI daemon's loopback WS (discovered/started by
   `LocalCliDiscovery`, which runs `harness start` when needed). The CLI terminates E2EE for relayed
   machines; the app carries no crypto. Close code `4404`/`NO_PEER_LINK` means the machine needs
   `harness link import` — surfaced as `MachineState.needsLink` and polled via `_linkRetryTimers`.
-- The **only** direct-to-backend path is `LocalManualFixture` (`lib/main_local_manual.dart`), a
+- **Both REST and the local WS prefer the daemon's Unix socket** (`lib/ws/local_daemon_transport.dart`;
+  CLI `lib/localSocket.ts`): `~/.harness/cli/data/daemon-<port>.sock`, 0600, named for the port in
+  `localCliBaseUrl` so it always leads to the same daemon as the TCP fallback. The loopback port takes
+  any local user's process; the socket only this user's. One `LocalDaemonTransport`, owned by
+  `LocalCliDiscovery`, is shared by `ApiClient` (a Dio adapter that only routes the daemon's own
+  address) and `WsPool`/`WsConn`. Discovery probes the socket first and the port second; a request or
+  dial that cannot reach the socket retries on the port, and each WS connect re-checks whether the
+  socket file exists, so a daemon restart does not strand the app on TCP. Windows and paths over 96
+  bytes have no socket. The CLI, engine hooks and the dashboard stay on TCP. Under `flutter test`
+  `LocalDaemonTransport.detect` finds no socket, so tests never reach a real daemon.
+- Besides viewer builds, a direct-to-backend test path is `LocalManualFixture` (`lib/main_local_manual.dart`), a
   compile-time-gated dev entrypoint fed by `scripts/start-terminal-local-manual.sh`. It fails closed
   unless every `--dart-define` is present.
 
@@ -134,6 +200,21 @@ transaction (its clock-skew repair) and the one Terminal handoff. Gating readine
 was what sent a computer whose tmux ran fine into Terminal to reinstall developer tools after a macOS
 upgrade — the screen renders `plan`, it does not infer one.
 
+Installer-log polling reads only the last 64 KiB and keeps at most 200 lines, tolerating partial
+UTF-8 output. Truncated diagnostics include the full log path; the original file remains intact.
+A missing, unreadable, or partial Terminal result stays pending until a complete exit code or
+successful live probes establish the outcome. Copy failures in setup remain visible beside Retry,
+and only the latest clipboard attempt can update its feedback. The setup render fixture checks
+both themes and enlarged text at the minimum window size without running an installer.
+
+Read-only dependency probes own their subprocesses and have a ten-second deadline covering startup,
+exit, and output-pipe closure. A timeout reports a failed check, not a missing tool; Retry after the
+initial check stays read-only. Only an explicit install action permits automatic installation to
+continue after a Terminal handoff, and a failed recheck stops that continuation. Readiness requires
+the final ready phase and every required step, so old successful step values cannot flash a ready
+screen during a new verification. The preflight status is a live region and uses a static waiting
+icon when Reduce Motion is enabled.
+
 ### Boot and state
 
 `lib/main.dart`: `CrashLog.install()` → `loadPersistedSettings()` (theme mode + terminal font, awaited
@@ -147,8 +228,32 @@ injection point (`main_local_manual.dart` overrides it). `bootstrap()` → `_pre
 `cliLogin.checkStatus()` → `_finishBootstrapSignedIn()` (restore pane layout, create `WsPool`, ensure
 the daemon, `api.me()`, `refreshMachines()`).
 
+Experimental switches are account state. `AppNotifier.experimentalFeatures` binds after `api.me()`
+identifies the account, clears on sign-out/account change, and rejects stale responses. It uses
+`/api/experimental-settings`, refreshes on account invalidations and a 30-second fallback poll, and
+shows changes only after server acknowledgement. Do not restore the old unscoped local keys at startup.
+Swarm collaboration keeps its existing account settings RPC. The creature switch opens the account's
+`ZooController` collection; disabling it hides the creature without deleting eggs, individuals or progress.
+Window-only preview collections are test/render fixtures, not a user setting.
+
 Per-machine runtime state is `MachineState` (connection status, transport mode, agents, `nodeOnline`
 from `node_status` pushes — distinct from our own socket status, pending offline agent, turn activity).
+
+### Command dock
+
+For workspace presentation, follow the [terminal workspace design system](design/terminal-workspace.md).
+For dialog presentation, follow the [terminal dialog design system](design/terminal-dialogs.md):
+fixed cells, plain text, one-line selection. Cmd-N and Cmd-O are the reference implementations.
+
+`SwarmSearchController` owns search and selection; `SwarmSearchResults` keeps a bounded cache of
+visible/recent row controls. Query-dependent match text listens separately, so typing does not
+rebuild unchanged row controls and arrows rebuild only changed highlights. The cache still
+invalidates for row metadata, availability, action, geometry, theme, and font changes. Keep focus,
+semantics, and traversal on the row; do not replace them with paint-only search results.
+Creation and draft precedence are documented in `design/new-harness-entry-rules.md` and exercised
+by its listed tests. Cmd-T/Cmd-O retarget the same draft/search; Store requests own their explicit
+product and machine. `test/benchmarks/swarm_benchmark.dart` measures large synthetic inventories;
+its headless debug timings do not establish native display or network latency.
 
 ### Terminals
 
@@ -190,9 +295,27 @@ from `node_status` pushes — distinct from our own socket status, pending offli
   `grid.AppTheme.brightness`, which `_GridTokenScope` in `main.dart` sets from `Theme.of(context)`.
   Chrome widgets call `grid.AppTheme.watch(context)` at the top of `build` so `const` subtrees still
   repaint on a theme flip.
+- The [workspace status bar](design/workspace-status-bar.md) places compact numbered tabs and global actions at the top,
+  with focused machine/repo/branch/PR at the bottom left and the model at the bottom right. Automatic names use the strongest shared harness type,
+  project, or machine, preferring traits that distinguish tabs and excluding dependent viewers.
+  The context follows a viewer's owner and uses the compact project label, never a worktree path
+  or marker. User-renamed tabs always retain their saved name. Customize Harness → Status
+  selects shell-inspired text or Powerline themes; the focused PR label uses that same theme.
+  The single focused PR reader is `state/workspace_pull_request.dart`.
 - `lib/theme/app_theme.dart` (`AppColors`, `AppTheme.terminalLight/terminalDark`) is a set of
   adapters over those tokens. Nothing here is `const` on purpose — freezing a colour is how light mode
   silently breaks. Do not add a parallel palette.
+- **Type** is `AppType` (`lib/shared/theme/app_type.dart`): one size scale (display 28, title 20,
+  heading 15, label/mono 13, monoLabel 12, caption/monoMeta 11) across two faces. The terminal's
+  face leads — headings, labels, buttons, rows, fields, tabs, shortcuts and anything copied are
+  mono — and the system sans is kept for prose alone (`body`, `caption`), which is what stops a
+  screen reading as a wall of mono. Ordinary UI stays on the `AppType` scale and uses
+  `appTextScaleOf` for geometry. The terminal grid, composer, find field, empty tab's welcome
+  page, and terminal-workspace dialogs follow the selected terminal size (⌘+/⌘−). Dialogs use
+  `terminalContentStyle()` and `terminalCellSizeOf(context)` for the exact font and character grid;
+  see [the dialog guide](design/terminal-dialogs.md). Workspace tabs, status text, pane
+  titles, and model selectors use `workspaceBarTextStyle()`: fixed 13 pt SF Mono regular
+  on macOS, platform monospace elsewhere. Native menus keep the system menu font.
 - `ThemeModeStore` and `TerminalFontStore` are `ValueNotifier` singletons (they must resolve above the
   provider scope and before sign-in).
 
@@ -202,32 +325,18 @@ from `node_status` pushes — distinct from our own socket status, pending offli
   strings behind `LocalKeyValueStore`): connection config, skipped update version, theme, font, pane
   layout. `~/.harness/computer-id` is the machine identity shared with the CLI.
 - The window is frameless on macOS via `window_manager` (`lib/core/desktop_window.dart`, same size and
-  `TitleBarStyle.hidden` as Grid). The traffic lights float over the rail's head, which leaves
-  `railTopInset` above the wordmark and is a `DragToMoveArea`; so are the pane headers. A screen that
+  `TitleBarStyle.hidden` as Grid). On macOS the tabs are native, in the title bar beside the traffic
+  lights (`SwarmTitlebar.swift`); the pane headers are a `DragToMoveArea`. A screen that
   fills the window goes through `FullWindowScreen` (`lib/widgets/window_chrome.dart`) for its drag
   strip, and a full-width band at the top edge pads by `trafficLightClearance`.
 - `macos/Runner/MainFlutterWindow.swift` installs native menu items and calls into Dart over the
   `harness/app_menu` MethodChannel (`checkForUpdates`, `flashFirmware`, `showShortcuts`, terminal font
   size). Keep the menu in Swift; only the handler lives in `RootShell`.
-- **The status rail is where the app polls** (`lib/widgets/status_rail/`): a 26px full-bleed strip
-  along the window's bottom edge carrying what the agent accounts have spent, right-aligned against
-  the key hints (`key_hints.dart`). The hover/pin surface is `rail_figure.dart` + `rail_panel.dart`.
-  The `UsageController` behind it is owned by `_HomeScreenState`, not by the rail, because the rail
-  unmounts when the sidebar folds and a poller living in it would restart on every unfold.
-- **Agent-account usage is what the rail reads** (`lib/usage/`, `widgets/status_rail/usage_readout.dart`
-  + `usage_panel.dart`): what the Claude and Codex accounts on this machine — and on the remote
-  machines that answer `usage_read` — have spent. **The strip prints ONE figure per account — the WEEKLY
-  window** (`ProviderUsage.railWindow`, deliberately not `tightest`): Claude answers with three
-  windows and Codex with one, so printing them all made one account three figures wide and the
-  other one — two readouts that read as different KINDS of thing rather than the same thing about
-  two accounts. Weekly rather than the tightest, because the rail wants the figure worth a GLANCE
-  and the five-hour window refills all day: it is back to nothing by the time anybody reads it.
-  `tightest` stays for the question it actually answers, which limit stops the work first. A
-  provider reporting no weekly window falls back to it — one figure is the rule, and a blank strip
-  is a worse answer than the wrong window. `kWeeklyWindowLabel` is written down once because the
-  rail MATCHES on it and the two sources spell it separately; the panel behind the figure still
-  shows every window. The block sits at the RIGHT end of the strip, beside the key hints: furniture
-  you only read belongs at the edge you are not reaching for.
+- **Agent-account usage is what the native Models menu reads** (`lib/usage/`,
+  `usage/models_menu_controller.dart`, `SwarmSubscriptionView` in `SwarmTitlebar.swift`): what the
+  Claude and Codex accounts on this machine — and on the remote machines that answer `usage_read` —
+  have spent. Each account shows its `tightest` window, the limit that stops the work first. Opening
+  the menu reads the cached snapshot and refreshes at most once a minute; nothing polls on startup.
   **Remote machines' accounts arrive through `usage_read`** (`AppNotifier.readRemoteUsage`,
   `usage/remote_usage.dart`, `usage/usage_accounts.dart`; CLI side `cli/src/lib/accountUsage.ts`).
   A remote machine may be signed in to a DIFFERENT subscription, and the only honest way to read
@@ -267,12 +376,9 @@ from `node_status` pushes — distinct from our own socket status, pending offli
   That is also what keeps `flutter test` honest: `kUnderTest` (`core/test_run.dart`, shared with
   `AnalyticsConfig`) stops the poll auto-starting, since a `Timer.periodic` is a `pumpAndSettle` that
   never settles and these sources would otherwise shell out to `security` and open real sockets.
-  The rail figure and `UsageBar` share one pair of thresholds through `usagePressureOf`
-  (`usage/usage_pressure.dart`) — amber from 80%, red from 90% — so a window cannot be amber in the
-  strip and plain in the panel that expands it.
 - **The token ledger is the OTHER usage feature, and the two must not be merged** (`lib/usage/ledger/`,
-  Settings ▸ Usage in `settings/sections/usage_section.dart` + `usage_panels.dart`). The rail's readout
-  above asks the vendors *how much of your rate limit is left* — a percentage, scoped to an **account**,
+  Settings ▸ Usage in `settings/sections/usage_section.dart` + `usage_panels.dart`). The Models menu's
+  readout above asks the vendors *how much of your rate limit is left* — a percentage, scoped to an **account**,
   true whichever machine burned it. This counts **tokens**, scoped to **this machine**, with a history:
   it reads the logs the agent CLIs already wrote to this disk and calls nobody. Ported from Orca
   (`src/main/{claude,codex,opencode}-usage/`); keep the pricing tables in step with its
@@ -294,22 +400,32 @@ from `node_status` pushes — distinct from our own socket status, pending offli
   Claude and Codex are priced from `model_pricing.dart`, and a model that matches no row leaves
   `hasUnpricedModel` set so the panel calls the figure a floor. A Grid session records a real `0.0`
   (Grid inference is free, grid ADR 0039 D-g) and that measurement must not render like an unpriced
-  model. Same rule as the rail: `LedgerStatus.unavailable` is kept apart from `failed`, because a
+  model. Same rule as account usage: `LedgerStatus.unavailable` is kept apart from `failed`, because a
   machine with no OpenCode is never fixed by retrying.
   **Off is the resting state**, per provider, persisted through `LocalKeyValueStore`: these transcripts
   hold every prompt, path and branch a session touched and this feature wants only the counts, so
   nothing is read until somebody switches it on — and switching one off deletes its snapshot from disk
-  as well as from memory. Scans are incremental against a `{path, mtime, size}` fingerprint cached in
-  `~/.harness/desktop-app/usage-ledger-<provider>.json`, and `kLedgerStaleAfter` (5 min) keeps opening
+  as well as from memory. JSONL scans are incremental against a `{path, mtime, size}` fingerprint cached in
+  `~/.harness/desktop-app/usage-ledger-<provider>.json`. OpenCode instead queries a committed SQLite
+  snapshot on each scan: the main database's metadata can stay unchanged while its WAL changes.
+  SQLite reads run in a worker isolate. `kLedgerStaleAfter` (5 min) keeps opening
   the pane from re-walking the disk; a cold Claude scan is ~3s over 71 transcripts, which is why
   neither of those is optional. Nothing polls — a ledger only moves when an agent writes here.
+  An unreadable OpenCode source is failed, not missing. If other databases are readable, the result
+  is partial and the UI marks its figures incomplete. Partial results are kept in memory, but never
+  restored as a fresh complete snapshot; reopening or Retry rescans them.
+  Claude/Codex share the same failure rules in `jsonl_ledger_scan.dart`: a failed read is never cached
+  as an empty successful source. Snapshot format 3 discards old snapshots that could contain that
+  mistake. Reads stop at the captured file size and tolerate an unfinished UTF-8 suffix while an
+  agent appends, preserving earlier complete records; completed corrupt text remains an error.
+  Model-name normalization has a small bounded cache, while per-turn token/tier pricing stays dynamic.
   ⚠️ **Local only, by decision.** Agents launched onto remote machines write their transcripts there and
   nothing here reaches them; the pane's subtitle says so, because a total that silently excluded most of
   a team's work would be worse than no total. `UsageSource` in `usage/usage_source.dart` is where a
   per-machine source would arrive if that changes.
   `sqlite3` is a **Dart-only FFI** dependency (never `sqlite3_flutter_libs`): it dlopens the system
   library, so it registers no native plugin and leaves the macOS SPM package list alone. `kUnderTest`
-  keeps `UsageSection` from auto-loading, for the same reason the rail's poller does not start there.
+  keeps `UsageSection` from auto-loading, for the same reason `UsageController`'s poll does not start there.
   ⚠️ **The snapshot goes through `SnapshotStore` (`core/snapshot_store.dart`), and a test MUST pass
   `MemorySnapshotStore`** — this is not tidiness. A real `File.writeAsString` never completes inside
   `testWidgets`' fake-async zone, so a store awaiting one hangs the whole run until the shell is
@@ -458,27 +574,28 @@ from `node_status` pushes — distinct from our own socket status, pending offli
   `AppSurface.recess` and `recessHover`, never a shimmer sweep, frozen at the **peak** under Reduce
   Motion because a block held at 40% reads as disabled. A spinner is still right where the shape is
   genuinely unknown (boot, a button mid-action); a list, table, card, row or figure gets a skeleton.
-  Three rules the call sites keep, all guarded by `test/skeleton_test.dart` and
-  `test/skeleton_sites_test.dart`: a placeholder is measured from the real content (`SkeletonText`
+  Three rules the call sites keep, guarded by `test/skeleton_test.dart`: a placeholder is measured from the real content (`SkeletonText`
   lays out the style with a `TextPainter` rather than trusting arithmetic — see `AppMenuRowMetrics`
   for why), it wears the real row's surface and padding, and it is never **taller** than the answer
   usually is, since a skeleton that shrinks jumps the page upward. **"Loading" and "answered with
   nothing" must not render the same** — hence `AppNotifier.machinesLoading`, which is set on the
-  first fetch only so a refresh keeps the rows already on screen. Same reason the status rail blanks
-  its figures only before the first reading.
-- `lib/shortcuts/app_shortcuts.dart` is the one list that feeds both the live bindings and the ⌘/
-  sheet. `shortcutRows()` there is that list as the UI prints it — one row per action, so the two
-  activators on "focus the next pane" (`⌘]`, `⌃⇥`) fold into one line, and `⌘1`–`⌘9` join as one.
-  `shortcuts/shortcuts_list.dart` renders those rows in the two shapes the app needs and nothing
-  else: `ShortcutsList` (the ⌘/ sheet's column, inside a 420px dialog) and `ShortcutsDeck` (Settings
-  ▸ Keyboard shortcuts, group cards reflowed across the pane, plus the recessed "the terminal keeps"
-  card built from `kTerminalOwnedKeys`). Same rows behind both, so they cannot disagree; keycaps come
-  from `shortcuts/key_cap.dart`. Every shortcut is ⌘-based — Ctrl belongs to the shell/tmux, ⌥ is a
-  Meta prefix for the pty (⌥⏎ only — `MetaEnterInputHandler` in
-  `lib/terminal/terminal_input.dart` turns it into `ESC` + Return so the engine's prompt breaks the
-  line instead of submitting; ⌥ stays the compose key everywhere else, and the composer answers the
-  same chord by writing the newline itself), and ⌘C/⌘V/⌘A are owned by xterm — with one pinned
-  exception, `⌃⇥`/`⌃⇧⇥` for the panes, which the terminal is made to let past.
+  first fetch only so a refresh keeps the rows already on screen.
+- `lib/shortcuts/app_shortcuts.dart` and `keymap_commands.dart` supply the live shortcut catalog.
+  `shortcuts/shortcuts_browser.dart` shares searchable, grouped rows between the ⌘/ dialog and
+  Settings ▸ Keyboard shortcuts. It reads resolved bindings through `keyboardLessons()`, so remaps
+  appear immediately; clicking a row or pressing Enter opens keyboard practice without dispatching
+  that action. Labels and keycaps use the selected terminal font and size. ⇧⌘P opens commands with
+  the query `>`; ⌘P opens the unified picker. On Linux these use Ctrl+Shift+P and Ctrl+P. `shortcuts/key_cap.dart` uses the app type scale elsewhere.
+  Other workspace shortcuts are ⌘-based — Ctrl otherwise belongs to the shell/tmux, ⌥ is a
+  Meta prefix for the pty (⌥⏎ and ⌥⌫ only — `AltAsMetaInputHandler` in
+  `lib/terminal/terminal_input.dart` turns them into `ESC` + Return and `ESC` + `\x7f`, so the
+  engine's prompt breaks the line instead of submitting and kills the word behind the cursor
+  instead of hearing nothing; ⌥ stays the compose key everywhere else), and ⌘C/⌘V/⌘A are owned by
+  xterm — with two pinned exceptions: `⌃⇥`/`⌃⇧⇥` for the panes, which the terminal is made to let
+  past, and ⌘⌫, which `TerminalPanel._onTerminalKey` takes back off the app and sends to the pty as
+  `^U` because a ⌘ chord never reaches xterm's input handler at all. The composer answers all four
+  line-editing chords too: it writes ⌥⏎'s newline itself, binds `^W`/`^U`, and lets Flutter's own
+  macOS text-editing shortcuts serve ⌥⌫ and ⌘⌫.
 - `lib/flash/` flashes the ESP32-S3 dial through the CLI runner; `SerialPortLease` pauses daemon
   supervision while the port is held so `harness start` cannot steal it mid-write.
 - `lib/update/desktop_updater.dart` self-updates from the GCS manifest (sha256-verified, strictly

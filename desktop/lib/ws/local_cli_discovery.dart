@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:dio/dio.dart';
+import 'package:dio/io.dart';
 import 'package:flutter/foundation.dart';
 
 import '../core/serial_port_lease.dart';
@@ -9,6 +10,7 @@ import '../core/config.dart';
 import '../core/harness_cli_runner.dart';
 import '../core/harness_file_store.dart';
 import '../core/models.dart';
+import 'local_daemon_transport.dart';
 
 const localWsProtocolVersion = 1;
 const localTerminalProtocolVersion = 3;
@@ -19,16 +21,35 @@ class LocalCliEndpoint {
   final int protocolVersion;
   final int terminalProtocolVersion;
 
+  /// The machine this daemon serves, as the daemon itself says (`/api/status.machineId`) — the id
+  /// its local WS answers `machine_select` for. Null from a daemon too old to report one.
+  ///
+  /// This is what lets the app stand up "this computer" with no backend: a machine row built from
+  /// it attaches over the loopback exactly like one the backend listed.
+  final String? machineId;
+
+  /// Whether the daemon currently holds its socket to the backend. NOT part of readiness: a daemon
+  /// with no backend still serves every agent on this computer, and that is most of what the app
+  /// does. False means remote machines and the profile are unavailable for now, nothing more.
+  final bool backendOnline;
+
   /// Older daemons report local working folders in status before they support
   /// project metadata in agent frames. This snapshot never describes a peer.
   final Map<String, AgentProject> agentProjects;
+
+  /// The daemon's Unix socket when it answered there, or null when it answered
+  /// on the loopback port. [wsUri] names the same endpoint either way.
+  final String? socketPath;
 
   const LocalCliEndpoint({
     required this.computerId,
     required this.wsUri,
     required this.protocolVersion,
     required this.terminalProtocolVersion,
+    this.machineId,
+    this.backendOnline = true,
     this.agentProjects = const {},
+    this.socketPath,
   });
 }
 
@@ -172,12 +193,20 @@ class LocalCliDiscovery {
   final LocalMachineIdentity identity;
   final Future<void> Function() _spawnCommand;
 
+  /// Which way the daemon is reached — its socket or the loopback port. Shared
+  /// with REST and the local WebSocket; [probe] decides it.
+  final LocalDaemonTransport transport;
+
   LocalCliDiscovery({
     required this.config,
     Dio? dio,
     LocalMachineIdentity? identity,
     Future<void> Function()? spawnCommand,
+    LocalDaemonTransport? transport,
   }) : identity = identity ?? LocalMachineIdentity(),
+       transport =
+           transport ??
+           LocalDaemonTransport.detect(Uri.parse(config.localCliBaseUrl)),
        _spawnCommand = spawnCommand ?? _defaultSpawnCommand,
        _dio =
            dio ??
@@ -273,8 +302,9 @@ class LocalCliDiscovery {
   /// and a spawn into that gap is a wasted process (the CLI's own lock refuses it), not a fix.
   ///
   /// Never surfaces ORDINARY failures to the caller (no exceptions, no
-  /// [AppNotifier]-visible error); [onSignedOut] is the single exception, for the one state no
-  /// amount of respawning can recover from —
+  /// [AppNotifier]-visible error); [onSignedOut] is the single exception, and it is a NOTICE rather
+  /// than a failure — the account is gone, the daemon comes back signed out and goes on serving this
+  /// computer, and the window should say so —
   /// this runs unattended in the background for the app's whole lifetime; callers that need a
   /// one-shot "start now and tell me if it worked" should use [ensureRunning] instead. Cancel the
   /// timer to stop supervising — this never touches the daemon process itself (it self-daemonizes and
@@ -295,11 +325,16 @@ class LocalCliDiscovery {
     void Function()? onSignedOut,
     void Function(LocalCliEndpoint endpoint)? onReady,
     void Function(LocalCliEndpoint endpoint)? onSnapshot,
+    void Function(bool online)? onBackendOnline,
   }) {
     var backoff = initialBackoff;
     var nextSpawnAllowedAt = DateTime.now();
     var quietTicks = 0;
     var wasReady = false;
+    // The daemon's backend link as last observed. Reported on every CHANGE, including the first
+    // ready probe, so the app learns "offline" at boot and "back" the moment the daemon reconnects —
+    // this tick is the only poll of `/api/status` there is, and it is the right cadence for it.
+    bool? backendOnline;
     // A spawn+grace-window cycle can outlast `checkInterval` — without this, an overlapping tick
     // would race a second `harness start` before the first cycle's backoff state even lands (the same
     // "port already in use" failure mode a second concurrent spawn hits today).
@@ -317,6 +352,11 @@ class LocalCliDiscovery {
         onSnapshot?.call(seen.endpoint!);
         if (!wasReady) onReady?.call(seen.endpoint!);
         wasReady = true;
+        final online = seen.endpoint!.backendOnline;
+        if (online != backendOnline) {
+          backendOnline = online;
+          onBackendOnline?.call(online);
+        }
         return;
       }
       wasReady = false;
@@ -344,17 +384,34 @@ class LocalCliDiscovery {
           if (DateTime.now().isBefore(nextSpawnAllowedAt)) return;
           if (!(spawnAllowedAt?.call(DateTime.now()) ?? true)) return;
           // A daemon that signed itself OUT — its machine was deleted from another machine, or its
-          // session expired — deletes its session file and exits. Respawning it is the one failure
-          // this loop cannot fix: every replacement starts without a session and exits again,
-          // forever, silently. Stop instead, and let the caller send the user somewhere that helps.
+          // session expired — deletes its session file. It used to exit and refuse to start again
+          // without one, which made respawning it the one failure this loop could not fix; a daemon
+          // now STARTS signed out and serves this computer, so the respawn goes ahead below. The
+          // caller is still told: the window it is holding has become a guest, and should say so.
           //
           // Asked here and not on every tick because it costs a `harness auth status` process, and
           // the respawn point is already rate-limited by the backoff above — so this runs once per
           // spawn attempt rather than once every [checkInterval].
-          if (stillSignedIn != null && !await stillSignedIn()) {
-            timer.cancel();
-            onSignedOut?.call();
-            return;
+          //
+          // Asked BESIDE the spawn, never before it: the spawn goes ahead whatever the answer, so
+          // waiting for it only delays the one thing that brings the terminals back. It used to be
+          // awaited first, and a check that threw — `auth status` sitting out the refresh lock a
+          // dying daemon left behind, 30s, the app's own timeout for it — skipped the spawn and left
+          // the terminals dark until something else happened to start the daemon (measured
+          // 2026-09-28 18:47: a minute and eight seconds). A slow answer still arrives and is still
+          // told; a failed one is not a sign-out.
+          final signedInCheck = stillSignedIn?.call();
+          if (signedInCheck != null) {
+            unawaited(
+              signedInCheck.then(
+                (signedIn) {
+                  if (!signedIn) onSignedOut?.call();
+                },
+                onError: (Object error) => debugPrint(
+                  'LocalCliDiscovery.startSupervising: auth check failed: $error',
+                ),
+              ),
+            );
           }
           try {
             await _spawnCommand();
@@ -399,14 +456,71 @@ class LocalCliDiscovery {
       return const LocalCliProbe.down('computer id mismatch');
     }
     final base = Uri.parse(config.localCliBaseUrl);
+    // The socket first: only this user can have opened it. A daemon that
+    // answers there — ready or not — is the daemon; one that does not may
+    // predate the socket, so the port is asked next.
+    final socket = transport.candidate;
+    if (socket != null && transport.socketPresent) {
+      final viaSocket = await _probeStatus(
+        _socketDio(socket),
+        Uri.parse('http://localhost/api/status'),
+        base,
+        localComputerId,
+        socketPath: socket,
+      );
+      if (viaSocket.state != LocalCliProbeState.down) {
+        transport.useSocket();
+        return viaSocket;
+      }
+    }
+    transport.useTcp();
     if (base.host != '127.0.0.1' && base.host != 'localhost') {
       return const LocalCliProbe.down('the local CLI address is not loopback');
     }
+    return _probeStatus(
+      _dio,
+      base.resolve('/api/status'),
+      base,
+      localComputerId,
+      socketPath: null,
+    );
+  }
+
+  Dio? _socketProbe;
+  String? _socketProbePath;
+
+  Dio _socketDio(String path) {
+    if (_socketProbe == null || _socketProbePath != path) {
+      _socketProbe?.close(force: true);
+      _socketProbePath = path;
+      _socketProbe =
+          Dio(
+              BaseOptions(
+                connectTimeout: const Duration(milliseconds: 400),
+                receiveTimeout: const Duration(milliseconds: 400),
+                sendTimeout: const Duration(milliseconds: 400),
+              ),
+            )
+            ..httpClientAdapter = IOHttpClientAdapter(
+              createHttpClient: () => unixHttpClient(path),
+            );
+    }
+    return _socketProbe!;
+  }
+
+  /// Reads and validates `/api/status` from [statusUri] with [dio]. [base] is
+  /// the loopback address the WebSocket URI is named from, whichever way the
+  /// status was read.
+  Future<LocalCliProbe> _probeStatus(
+    Dio dio,
+    Uri statusUri,
+    Uri base,
+    String localComputerId, {
+    required String? socketPath,
+  }) async {
     final Map<String, dynamic>? body;
     try {
-      final response = await _dio.getUri<Map<String, dynamic>>(
-        base.resolve('/api/status'),
-      );
+      final response = await dio.getUri<Map<String, dynamic>>(statusUri);
       body = response.data;
     } on DioException catch (error) {
       switch (error.type) {
@@ -461,18 +575,14 @@ class LocalCliDiscovery {
         version: version,
       );
     }
-    // `discoveryReady` is local-only (tmux/agent-process scanning) and can go true well before the
-    // daemon has actually connected to the backend — `/api/machines` and friends proxy straight to
-    // it, so treating discovery-ready as "ready" raced the handshake and surfaced as a bogus 30s
-    // receive-timeout right after boot. `connected` is the daemon's own backend-socket state
-    // (missing field ⇒ older CLI ⇒ accepted, same idiom as above).
-    if (body['connected'] == false) {
-      return LocalCliProbe.notReady(
-        'not connected to the backend yet',
-        pid: pid,
-        version: version,
-      );
-    }
+    // `connected` is the daemon's own backend-socket state. It used to gate readiness — so a
+    // computer that could not reach the backend never got past "Starting local service…", with a
+    // daemon, tmux and every agent sitting right there on the loopback. It is reported instead
+    // (`backendOnline`), and the app decides what it cannot do without it. Missing field ⇒ older
+    // CLI ⇒ online, same idiom as `discoveryReady`. The daemon bounds its own backend proxies
+    // (PROXY_BACKEND_TIMEOUT_MS) and serves its cached machine list meanwhile.
+    final backendOnline = body['connected'] != false;
+    final machineId = body['machineId'];
     final advertisedComputerId = _normalizeComputerId(body['computerId']);
     final advertised = body['localWs'];
     if (advertisedComputerId != localComputerId) {
@@ -512,10 +622,15 @@ class LocalCliDiscovery {
             .replace(scheme: base.scheme == 'https' ? 'wss' : 'ws'),
         protocolVersion: protocolVersion as int,
         terminalProtocolVersion: terminalProtocolVersion as int,
+        machineId: machineId is String && machineId.isNotEmpty
+            ? machineId
+            : null,
+        backendOnline: backendOnline,
         agentProjects: _localAgentProjects(
           body['sessions'],
           identity.environment,
         ),
+        socketPath: socketPath,
       ),
       pid: pid,
       version: version,

@@ -8,6 +8,17 @@ enum PaneResizeAxis { x, y }
 class PaneArrangement {
   PaneArrangement(Iterable<Rect> tiles) : tiles = List.unmodifiable(tiles);
   final List<Rect> tiles;
+
+  /// The split a harness tab opens with: the viewer on the left at two
+  /// thirds, its terminal on the right. A third of a laptop window is the
+  /// narrowest a coding agent's interface reads well at (they are laid out
+  /// for 80 columns); a board, a part or a slide has enough at two thirds.
+  /// One shared instance, so the code that opened the pair can tell its own
+  /// split from one the user dragged.
+  static final viewerBesideTerminal = PaneArrangement(const [
+    Rect.fromLTRB(0, 0, 2 / 3, 1),
+    Rect.fromLTRB(2 / 3, 0, 1, 1),
+  ]);
   static const _epsilon = 0.000001;
 
   late final List<PaneDivider> dividers = _findDividers();
@@ -18,10 +29,43 @@ class PaneArrangement {
     required Size minimum,
   }) {
     if (index < 0 || index >= tiles.length || tiles.length >= 64) return null;
-    final tile = tiles[index];
     final x = axis == PaneResizeAxis.x;
-    if (x ? tile.width / 2 < minimum.width : tile.height / 2 < minimum.height) {
-      return null;
+    var layout = tiles;
+    var tile = layout[index];
+    final floor = x ? minimum.width : minimum.height;
+    final length = x ? tile.width : tile.height;
+    // A small pane still splits: insert room along its band, then normalize
+    // the expanded canvas. Other bands keep their physical size. Stretching
+    // the whole layout on every split would grow it exponentially.
+    final extra = math.max(0.0, 2 * floor - length);
+    if (extra > 0) {
+      final start = x ? tile.left : tile.top;
+      final end = x ? tile.right : tile.bottom;
+      double expand(double value) =>
+          (value +
+              (value <= start
+                  ? 0
+                  : value >= end
+                  ? extra
+                  : (value - start) / length * extra)) /
+          (1 + extra);
+      layout = [
+        for (final current in layout)
+          x
+              ? Rect.fromLTRB(
+                  expand(current.left),
+                  current.top,
+                  expand(current.right),
+                  current.bottom,
+                )
+              : Rect.fromLTRB(
+                  current.left,
+                  expand(current.top),
+                  current.right,
+                  expand(current.bottom),
+                ),
+      ];
+      tile = layout[index];
     }
     final first = x
         ? Rect.fromLTRB(tile.left, tile.top, tile.center.dx, tile.bottom)
@@ -30,10 +74,10 @@ class PaneArrangement {
         ? Rect.fromLTRB(tile.center.dx, tile.top, tile.right, tile.bottom)
         : Rect.fromLTRB(tile.left, tile.center.dy, tile.right, tile.bottom);
     return PaneArrangement([
-      ...tiles.take(index),
+      ...layout.take(index),
       first,
       second,
-      ...tiles.skip(index + 1),
+      ...layout.skip(index + 1),
     ]);
   }
 

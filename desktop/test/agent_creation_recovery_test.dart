@@ -1,3 +1,4 @@
+import 'support/open_harness.dart';
 import 'support/new_agent_project.dart';
 
 import 'dart:async';
@@ -63,6 +64,7 @@ class _Connection extends WsConn {
     Duration timeout = const Duration(seconds: 20),
   }) {
     if (type == 'engines_probe') return Future.value({'engines': []});
+    if (type == 'dsh_list') return Future.value({'dsh': []});
     if (type == 'codex_profiles_list') return Future.value({'profiles': []});
     final request = _Request(type, Map.of(payload));
     calls.add(request);
@@ -89,7 +91,12 @@ Future<void> _timeOut(
 }
 
 void main() {
-  for (final entry in ['header', 'shortcut', 'search shortcut', 'start page']) {
+  for (final entry in [
+    'new pane',
+    'shortcut',
+    'search shortcut',
+    'new swarm',
+  ]) {
     for (final dismissal in ['outside', 'escape']) {
       testWidgets('$entry creation dismisses once on $dismissal', (
         tester,
@@ -103,15 +110,17 @@ void main() {
         final keymap = AppKeymap();
         await runtime.mount(tester, app, keymap);
         switch (entry) {
-          case 'header':
-            await tester.tap(
-              find.byKey(const ValueKey('swarm-new-agent-button')),
-            );
-          case 'start page':
+          case 'new pane':
+            await openHarnessPicker(tester);
+            await tester.pump();
+            await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+            expect(find.byType(AlertDialog), findsNothing);
+            await chord(tester, LogicalKeyboardKey.keyN);
+          case 'new swarm':
             await chord(tester, LogicalKeyboardKey.keyT);
-            await tester.tap(find.byKey(const ValueKey('harness-start-new')));
+            await chord(tester, LogicalKeyboardKey.keyN);
           case 'search shortcut':
-            await chord(tester, LogicalKeyboardKey.keyO);
+            await openHarnessPicker(tester);
             await tester.enterText(
               find.byKey(const ValueKey('swarm-search-input')),
               'Agent 12',
@@ -132,17 +141,13 @@ void main() {
         await tester.pumpAndSettle();
         expect(find.byType(AlertDialog), findsNothing);
         expect(find.byType(SwarmSearchResults), findsNothing);
-        if (entry == 'start page') {
+        if (entry == 'new swarm') {
           expect(app.swarms, hasLength(2));
-          expect(app.activeSwarmId, isNot(original));
-          final field = tester.widget<TextField>(
-            find.byKey(const ValueKey('harness-start-search')),
-          );
-          expect(field.focusNode!.hasFocus, isFalse);
-          // The unused page remains usable and closes without a history entry.
+          expect(app.panes, isEmpty);
           await chord(tester, LogicalKeyboardKey.keyW);
         }
         expect(app.focusedPane, same(pane));
+        expect(app.activeSwarmId, original);
         expect(app.swarms, hasLength(1));
         expect(app.closedHistory, isEmpty);
         expect(connection.calls, isEmpty);
@@ -184,6 +189,30 @@ void main() {
     app.dispose();
   });
 
+  test('a creation receipt opens its exact agent instead of an older matching-engine pane', () async {
+    final connection = _Connection();
+    final app = createApp(connectionForTest: (_) => connection);
+    addTearDown(app.dispose);
+    final stale = app.adoptSessionForTest(
+      terminal('stale-codex', <TerminalBinaryFrame>[]),
+    );
+
+    final creating = app.createAgent('m', engine: 'codex', folder: '/work');
+    final request = connection.calls.single;
+    request.reply.complete({
+      'creationId': request.creationId,
+      'state': 'created',
+      'agent': {'id': 'fresh-codex', 'name': 'Fresh Codex', 'engine': 'codex'},
+    });
+
+    expect(await creating, isNull);
+    expect(app.panes.map((pane) => pane.agentId), [
+      'stale-codex',
+      'fresh-codex',
+    ]);
+    expect(app.panes.first, same(stale));
+  });
+
   for (final entry in ['Open', 'Split right', 'Split down']) {
     testWidgets(
       'New from $entry preserves its destination without stacking search',
@@ -200,7 +229,7 @@ void main() {
         await mount(tester, app);
         final field = find.byKey(const ValueKey('swarm-search-input'));
         if (entry == 'Open') {
-          await chord(tester, LogicalKeyboardKey.keyO);
+          await openHarnessPicker(tester);
         } else {
           await chord(tester, LogicalKeyboardKey.keyP, shift: true);
           await tester.enterText(field, '> $entry');
@@ -215,9 +244,9 @@ void main() {
         expect(find.byType(SwarmSearchResults), findsNothing);
         expect(
           find.text(switch (entry) {
-            'Split right' => 'New Agent to the right',
-            'Split down' => 'New Agent below',
-            _ => 'New Agent',
+            'Split right' => 'New Harness to the right',
+            'Split down' => 'New Harness below',
+            _ => 'New Harness',
           }),
           findsWidgets,
         );
@@ -280,7 +309,7 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('Close'), findsOneWidget);
       expect(find.text('Back to Search'), findsNothing);
-      expect(find.widgetWithText(TextButton, 'Find an agent'), findsNothing);
+      expect(find.widgetWithText(TextButton, 'Find a harness'), findsNothing);
       if (change == 'switch' || change == 'closed') app.newSwarm();
       if (change == 'closed') await app.closeSwarm(original.id);
       if (change == 'stale split') {
@@ -317,7 +346,7 @@ void main() {
       expect(app.activeSwarmId, current);
       if (change == 'closed' || change == 'stale split') {
         expect(app.allPanes.any((p) => p.agentId == 'created'), isFalse);
-        expect(app.lastError, contains('Open Agent'));
+        expect(app.lastError, contains('New Pane'));
       } else {
         expect(original.panes.first, same(originalPane));
         expect(original.panes.last.agentId, 'created');
@@ -344,7 +373,7 @@ void main() {
     final input = <TerminalBinaryFrame>[];
     final pane = app.adoptSessionForTest(terminal('a0', input));
     await mount(tester, app);
-    await chord(tester, LogicalKeyboardKey.keyO);
+    await openHarnessPicker(tester);
     await chord(tester, LogicalKeyboardKey.keyN);
     await tester.pumpAndSettle();
     await browseNewAgentProject(tester);
@@ -370,7 +399,7 @@ void main() {
     await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
     await tester.pump();
     expect(input.single.bytes, [27, 91, 66]);
-    await chord(tester, LogicalKeyboardKey.keyO);
+    await openHarnessPicker(tester);
     expect(find.byType(SwarmSearchResults), findsOneWidget);
     expect(find.byKey(const ValueKey('create-agent-submit')), findsNothing);
     expect(connection.calls, hasLength(1));
@@ -590,7 +619,7 @@ void main() {
       app.stateOf('m')!.agents.any((agent) => agent.id == 'created'),
       isTrue,
     );
-    expect(app.lastError, contains('Open Agent'));
+    expect(app.lastError, contains('New Pane'));
   });
 
   testWidgets(
@@ -629,14 +658,23 @@ void main() {
       );
       await tester.pumpAndSettle();
       expect(find.text('work'), findsOneWidget);
-      expect(find.widgetWithText(FilledButton, 'Create'), findsNothing);
+      expect(
+        find.descendant(
+          of: find.byKey(const ValueKey('create-agent-submit')),
+          matching: find.text('New Harness'),
+        ),
+        findsNothing,
+      );
       final action = tester.widget<FilledButton>(
         find.widgetWithText(FilledButton, 'Check status'),
       );
       expect(action.focusNode!.hasFocus, isTrue);
       expect(find.text('Close'), findsOneWidget);
       // The original settings remain locked while the request is uncertain.
-      await tester.tap(find.text('Codex'), warnIfMissed: false);
+      await tester.tap(
+        find.byKey(const Key('new-agent-agent-field')),
+        warnIfMissed: false,
+      );
       await tester.pump();
       await tester.sendKeyEvent(LogicalKeyboardKey.enter);
       await tester.pump();
@@ -653,4 +691,45 @@ void main() {
       app.dispose();
     },
   );
+
+  // The three refusals a grid launch can raise before anything starts, each with the sentence the
+  // daemon actually sends beside its code (`backendSocket.ts` / `launchOverrides.ts`). What the
+  // person reads must be that sentence, never the bare code.
+  for (final (code, detail) in const [
+    ('INVALID_GRID', 'grid is missing networkId, apiKey'),
+    (
+      'TMUX_TOO_OLD_FOR_GRID',
+      "this machine's tmux is older than 3.2, which is the first version that can give a pane its own environment — so claude could not be pointed at grid Team grid.",
+    ),
+    (
+      'GRID_CONFIG_FAILED',
+      "could not write pi's grid configuration · EACCES: permission denied",
+    ),
+  ]) {
+    test('a $code refusal reads as a sentence, not a code', () async {
+      final connection = _Connection();
+      final app = createApp(connectionForTest: (_) => connection);
+      addTearDown(app.dispose);
+      final attempt = AgentCreationAttempt();
+      final create = app.createAgent(
+        'm',
+        engine: 'claude',
+        folder: '/work',
+        attempt: attempt,
+      );
+      connection.calls.last.reply.completeError(
+        WsRequestFailure(
+          responseType: 'agent_create_result',
+          code: code,
+          detail: detail,
+        ),
+      );
+      final message = await create;
+      expect(message, isNotNull);
+      expect(message, contains(detail));
+      expect(message, isNot(contains(code)));
+      // Refused before a launch: nothing to recover, and a second Create is safe.
+      expect(attempt.awaitingConfirmation, isFalse);
+    });
+  }
 }

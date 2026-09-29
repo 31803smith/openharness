@@ -1,4 +1,6 @@
-import 'dart:io' show Platform;
+import '../core/apple_fonts.dart';
+
+import 'package:flutter/foundation.dart' show kIsWeb;
 
 /// The default terminal face, per platform.
 ///
@@ -56,6 +58,9 @@ const macTerminalFontFallback = <String>[
 /// goes ragged in exactly the places a coding agent puts its output.
 const linuxTerminalFontFamily = 'DejaVu Sans Mono';
 
+/// Bundled with the app: CanvasKit cannot resolve the browser's system fonts.
+const webTerminalFontFamily = 'Roboto Mono';
+
 const linuxTerminalFontFallback = <String>[
   'Ubuntu Sans Mono',
   'Noto Sans Mono',
@@ -68,11 +73,13 @@ const linuxTerminalFontFallback = <String>[
 /// A getter, not a `const`: the answer depends on the host. The per-platform
 /// constants above stay `const` so `TerminalFontChoice` can still name them
 /// from its const constructor.
-String get terminalFontFamily =>
-    Platform.isMacOS ? macTerminalFontFamily : linuxTerminalFontFamily;
+String get terminalFontFamily => kIsWeb
+    ? webTerminalFontFamily
+    : (hasAppleFonts ? macTerminalFontFamily : linuxTerminalFontFamily);
 
-List<String> get terminalFontFallback =>
-    Platform.isMacOS ? macTerminalFontFallback : linuxTerminalFontFallback;
+List<String> get terminalFontFallback => kIsWeb
+    ? const []
+    : (hasAppleFonts ? macTerminalFontFallback : linuxTerminalFontFallback);
 
 /// The default terminal font size — the same on every platform.
 const terminalFontSize = 13.0;

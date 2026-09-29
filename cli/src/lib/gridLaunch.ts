@@ -46,20 +46,24 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import type { AgentEngine } from '../engines/types.js'
 import {
-  CLAUDE_DISALLOW_WEB_SEARCH_ARG,
+  CLAUDE_ALLOW_WEB_TOOLS_ARG,
+  CLAUDE_DISALLOW_WEB_TOOLS_ARG,
+  claudeGridPromptArgs,
+  CODEX_DISABLE_WEB_SEARCH_ARGS,
   mcpServersConfig,
   codexMcpArgs,
   GRID_MCP_AUTH_VAR,
-  GRID_MCP_SERVER_NAME,
   GROK_CONFIG_FILE,
   GROK_GRID_HOME_LINKS,
   GROK_HOME_VAR,
   grokGridConfig,
   HERMES_MANAGED_CONFIG_FILE,
   HERMES_MANAGED_DIR_VAR,
+  HERMES_SYSTEM_MANAGED_DIR,
   hermesManagedConfig,
   mcpAuthorizationHeader,
 } from './gridWebMcp.js'
+import { HARNESS_MCP_SERVER_NAME } from './harnessWebTools.js'
 
 /** Where Pi keeps the skills the user manages, handed back through our own settings.json. */
 function userPiSkillsDir(): string {
@@ -107,6 +111,45 @@ export interface GridLaunchOverride {
    * Absent means no web tools, which is exactly what an older desktop sends.
    */
   mcpUrl?: string
+  /**
+   * The model's context window in tokens, as the grid's relay reports it (`context_window` on its
+   * `/models` row) — the size the engine serving it was actually started with.
+   *
+   * ⚠️ Every coding agent here assumes a window for a model it does not recognise, and a grid model
+   * is never one it recognises: Claude Code assumes 200K, Codex and OpenCode know nothing at all. An
+   * agent that does not know the real window never compacts before it — the server rejects the
+   * request as too long first, and the session dies where it should have summarised. So each engine
+   * is TOLD, in its own dialect ([contextWindowHint] and the contracts below).
+   *
+   * Absent means the relay did not say, and each engine keeps its own assumption, as before.
+   */
+  contextWindow?: number
+}
+
+/**
+ * The `networkId` of a launch onto a saved API (`apiModels.ts`) rather than a grid: `api:<connection id>`.
+ * The same contracts below run it — an OpenAI-compatible API such as OpenRouter is reached exactly the
+ * way a grid's relay is — but nothing grid-specific (waking, the grid's picture) applies to it.
+ */
+export const API_NETWORK_PREFIX = 'api:'
+
+export function isApiLaunch(launch: Pick<GridLaunchOverride, 'networkId'> | null | undefined): boolean {
+  return !!launch?.networkId.startsWith(API_NETWORK_PREFIX)
+}
+
+/** The smallest window believed. Anything below it is not a model a coding agent can run on, and a
+ *  value that small is likelier a misreport than a real engine — better to say nothing than to have
+ *  an agent compact every turn. */
+const MIN_CONTEXT_WINDOW = 4096
+/** The largest believed: no engine serves more, and a bigger number is a unit error. */
+const MAX_CONTEXT_WINDOW = 16 * 1024 * 1024
+
+/** A context window worth handing an engine, or undefined. Lenient on purpose, unlike every other
+ *  field here: this is a hint, and a malformed one must cost only the hint — refusing the whole
+ *  override would strand a persisted launch that is otherwise fine. */
+export function contextWindowHint(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= MIN_CONTEXT_WINDOW && value <= MAX_CONTEXT_WINDOW
+    ? value : undefined
 }
 
 export type GridOverrideParse =
@@ -180,6 +223,7 @@ export function parseGridLaunchOverride(raw: unknown): GridOverrideParse {
   if (hasMcpUrl && !mcpUrl) return { state: 'invalid', reason: 'grid mcpUrl must be a non-empty string' }
   const badMcpUrl = mcpUrl ? urlProblem('mcpUrl', mcpUrl) : null
   if (badMcpUrl) return { state: 'invalid', reason: badMcpUrl }
+  const contextWindow = contextWindowHint(source.contextWindow)
   return {
     state: 'ok',
     override: {
@@ -189,6 +233,7 @@ export function parseGridLaunchOverride(raw: unknown): GridOverrideParse {
       apiKey: apiKey as string,
       ...(model ? { model } : {}),
       ...(mcpUrl ? { mcpUrl } : {}),
+      ...(contextWindow ? { contextWindow } : {}),
     },
   }
 }
@@ -244,6 +289,19 @@ export function gridProviderId(networkName: string): string {
 }
 
 /**
+ * The provider id OpenCode's generated config declares for [override].
+ *
+ * A saved API is `api-<connection id>`, never its bare name: OpenCode ships built-in providers under
+ * names like `openrouter`, and a config block with the same id is merged into the built-in one rather
+ * than replacing it.
+ */
+function opencodeProviderId(override: GridLaunchOverride): string {
+  return isApiLaunch(override)
+    ? `api-${gridProviderId(override.networkId.slice(API_NETWORK_PREFIX.length))}`
+    : gridProviderId(override.networkName)
+}
+
+/**
  * The provider block OpenCode reads, as JSON.
  *
  * Four things here are load-bearing, each of which breaks the engine differently when got wrong:
@@ -259,11 +317,21 @@ export function gridProviderId(networkName: string): string {
  *     the literal is recommended, because an unset variable silently becomes an empty string and a
  *     human-launched OpenCode has no guarantee the variable is set. Here it IS guaranteed: the
  *     daemon puts it in the pane's environment with `tmux new-session -e` before the engine starts.
- *  4. **No `limit` block.** OpenCode requires `context` and `output` TOGETHER and rejects the config
- *     if only one is present. The relay reports a context window per model but this module is not
- *     the thing that read it, and inventing one would be worse than the defaults OpenCode already
- *     uses.
+ *  4. **`limit` only when the window is known, and then BOTH halves.** OpenCode requires `context`
+ *     and `output` together and rejects the config given only one. It is how OpenCode knows how much
+ *     room is left, so without it a session ran on until the relay refused a request as too long,
+ *     never having compacted. Absent when the relay did not report a window: inventing one would be
+ *     worse than OpenCode's own defaults. `output` is a quarter of the window, capped at OpenCode's
+ *     own 32K output ceiling — it is also what OpenCode holds back from the window for the reply, so
+ *     a larger share would compact a small window after every other turn.
  */
+/** OpenCode's own ceiling on a reply, which it also reserves out of the window. */
+const OPENCODE_OUTPUT_MAX = 32_000
+
+function opencodeOutputLimit(contextWindow: number): number {
+  return Math.min(OPENCODE_OUTPUT_MAX, Math.floor(contextWindow / 4))
+}
+
 function opencodeGridConfig(
   provider: string,
   override: GridLaunchOverride,
@@ -278,7 +346,14 @@ function opencodeGridConfig(
   // may rewrite. One model here makes the answer a fact about a file that cannot change under us.
   //
   // Choosing a different model is what every other engine here does too: per agent, at creation.
-  const models: Record<string, { name: string }> = { [model]: { name: model } }
+  const models: Record<string, { name: string; limit?: { context: number; output: number } }> = {
+    [model]: {
+      name: model,
+      ...(override.contextWindow
+        ? { limit: { context: override.contextWindow, output: opencodeOutputLimit(override.contextWindow) } }
+        : {}),
+    },
+  }
   return `${JSON.stringify({
     $schema: 'https://opencode.ai/config.json',
     provider: {
@@ -299,7 +374,7 @@ function opencodeGridConfig(
     ...(override.mcpUrl
       ? {
         mcp: {
-          [GRID_MCP_SERVER_NAME]: {
+          [HARNESS_MCP_SERVER_NAME]: {
             type: 'remote',
             url: override.mcpUrl,
             enabled: true,
@@ -332,12 +407,58 @@ export interface GridConfigFile {
   content: string
 }
 
+/**
+ * Whether the agent this launch produces can search the web, in the words the app shows.
+ *
+ *  * `on` — the MCP url was present and the engine's contract wired the server in.
+ *  * `unavailable` — no url reached the launch: the grid could not be asked for one (an outdated or
+ *    missing `grid` CLI, no sign-in, an unknown grid — `gridMcpUrl.ts` logs which). Inference still
+ *    goes to the grid; asking again later can fix it.
+ *  * `unsupported` — the engine cannot take the server on this machine at all: Pi has no MCP client,
+ *    and Hermes on a machine whose settings are pinned in [HERMES_SYSTEM_MANAGED_DIR] cannot be handed
+ *    the overlay without replacing them. Nothing about the grid changes this.
+ *
+ * Decided HERE, by the same code that decides whether the server is wired, so the two cannot
+ * disagree — and stored with the launch rather than re-derived, so a reconnect or a restart reports
+ * what the launch actually did. The app reads it as `grid.webSearch` on every agent frame.
+ */
+export type GridWebSearchStatus = 'on' | 'unavailable' | 'unsupported'
+
+/**
+ * A grid launch as the registry keeps it: the override to repeat it with, and what building it
+ * decided about web search. One object so the two are written and cleared together — a status
+ * without its launch, or a launch without its status, is a row the app would read wrongly.
+ */
+export interface GridLaunchRecord {
+  override: GridLaunchOverride
+  webSearch: GridWebSearchStatus
+}
+
+/**
+ * Facts about THIS machine a contract cannot read for itself.
+ *
+ * A contract is pure — the module comment on [userGrokHome] says why: one that stats the filesystem
+ * answers differently on two machines, and its spec would follow. So the caller reads the machine
+ * and hands the answer in, and the contract decides from it. What it decides stays here, where every
+ * caller (create, retarget, restore) gets the same answer from the same code.
+ */
+export interface GridLaunchMachine {
+  /**
+   * Whether an administrator pinned Hermes settings in [HERMES_SYSTEM_MANAGED_DIR]. Hermes's web
+   * tools ride a managed-scope overlay that REPLACES that directory rather than adding to it, so on
+   * such a machine the overlay is dropped and the agent launches without web tools.
+   */
+  hermesSystemManaged: boolean
+}
+
 /** How one engine is launched against a grid. */
 export interface GridEngineLaunch {
   /** Layered over the engine's inherited environment. This is where the key goes, always. */
   env: Record<string, string>
   /** Appended to the engine's argv. Never carries the key — `ps` is world-readable. */
   args: string[]
+  /** What this launch gives the agent by way of web search. See [GridWebSearchStatus]. */
+  webSearch: GridWebSearchStatus
   /**
    * For an engine that reads its provider out of a config directory rather than an environment
    * variable: files the daemon writes into a directory IT owns, and the variable that points the
@@ -371,7 +492,7 @@ export interface GridEngineLaunch {
 }
 
 interface GridEngineContract {
-  build: (override: GridLaunchOverride) => GridEngineLaunch
+  build: (override: GridLaunchOverride, machine: GridLaunchMachine) => GridEngineLaunch
   /** The engine cannot start against a grid without being told which model to ask for. */
   requiresModel?: boolean
 }
@@ -386,6 +507,13 @@ const GRID_KEY_VAR = 'GRID_API_KEY'
 
 /** The provider id our generated config declares. Pi selects it as `--model <id>/<model>`. */
 const GRID_PROVIDER_ID = 'grid'
+
+/**
+ * The status for an engine whose contract wires the server whenever there is a url to wire — which
+ * is every contract but Pi's, and Hermes's only when the machine lets it.
+ */
+const webSearchWhenWired = (override: GridLaunchOverride): GridWebSearchStatus =>
+  override.mcpUrl ? 'on' : 'unavailable'
 
 /**
  * Every variable any contract in this file uses to point an engine somewhere.
@@ -440,7 +568,7 @@ export const GRID_CONFLICTING_ENV_VARS: readonly string[] = [
  * Set-then-unset would be a bug, so the two sets are computed from one another rather than listed
  * twice — a contract that gains a variable stops clearing it in the same edit.
  */
-export function gridConflictingEnvToClear(launch: GridEngineLaunch): string[] {
+export function gridConflictingEnvToClear(launch: Pick<GridEngineLaunch, 'env' | 'configDir'>): string[] {
   const provided = new Set(Object.keys(launch.env))
   if (launch.configDir) provided.add(launch.configDir.envVar)
   return GRID_CONFLICTING_ENV_VARS.filter((name) => !provided.has(name))
@@ -457,7 +585,7 @@ export function gridConflictingEnvToClear(launch: GridEngineLaunch): string[] {
  * serves. The context/cost numbers are Pi's own bookkeeping for its display; the grid decides what
  * the model really takes.
  */
-function piModelsJson(baseUrl: string, model: string): string {
+function piModelsJson(baseUrl: string, model: string, contextWindow?: number): string {
   return JSON.stringify({
     providers: {
       [GRID_PROVIDER_ID]: {
@@ -471,7 +599,9 @@ function piModelsJson(baseUrl: string, model: string): string {
           name: model,
           reasoning: false,
           input: ['text'],
-          contextWindow: 200000,
+          // The real window when the relay reported one — the same fault as every engine here:
+          // told 200K, Pi never compacted before a smaller server refused the request.
+          contextWindow: contextWindow ?? 200000,
           maxTokens: 8192,
           cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
         }],
@@ -503,29 +633,48 @@ const GRID_ENGINE_CONTRACTS: Partial<Record<AgentEngine, GridEngineContract>> = 
   // The grid CLI's own launch target (`autonomous-grid/shared/launch/claude.py`), so these are the
   // vendor's names as that team verified them rather than this repo's reading of them.
   claude: {
-    build: (override) => ({
-      env: {
-        ANTHROPIC_BASE_URL: anthropicBaseUrl(override.baseUrl),
-        // The bearer variable, and ONLY it. Claude Code warns when ANTHROPIC_AUTH_TOKEN and
-        // ANTHROPIC_API_KEY are both set, and the relay prefers the Bearer header anyway — so
-        // ANTHROPIC_API_KEY would decide nothing, while colliding with the variable a user's own
-        // Anthropic key lives in.
-        ANTHROPIC_AUTH_TOKEN: override.apiKey,
-        // `grid launch claude` deliberately sets no model variable, on the grounds that a launcher
-        // has no standing to choose a user's model. That reasoning does not carry here: the desktop
-        // app ASKED, and this is the answer. Left unset when the user picked no model.
-        ...(override.model ? { ANTHROPIC_MODEL: override.model } : {}),
-        // Only when there are web tools to reach: the variable exists to be referenced by the config
-        // below, and setting it otherwise would leave a key in the pane that nothing reads.
-        ...(override.mcpUrl ? { [GRID_KEY_VAR]: override.apiKey } : {}),
-      },
-      args: [
-        // On every grid launch, web tools or not: the built-in search is an Anthropic server tool
-        // that no grid runs. See `CLAUDE_DISALLOW_WEB_SEARCH_ARG`.
-        CLAUDE_DISALLOW_WEB_SEARCH_ARG,
-        ...(override.mcpUrl ? ['--mcp-config', mcpServersConfig(override.mcpUrl, GRID_KEY_VAR)] : []),
-      ],
-    }),
+    build: (override) => {
+      const webSearch = webSearchWhenWired(override)
+      return {
+        env: {
+          ANTHROPIC_BASE_URL: anthropicBaseUrl(override.baseUrl),
+          // The bearer variable, and ONLY it. Claude Code warns when ANTHROPIC_AUTH_TOKEN and
+          // ANTHROPIC_API_KEY are both set, and the relay prefers the Bearer header anyway — so
+          // ANTHROPIC_API_KEY would decide nothing, while colliding with the variable a user's own
+          // Anthropic key lives in.
+          ANTHROPIC_AUTH_TOKEN: override.apiKey,
+          // `grid launch claude` deliberately sets no model variable, on the grounds that a launcher
+          // has no standing to choose a user's model. That reasoning does not carry here: the desktop
+          // app ASKED, and this is the answer. Left unset when the user picked no model.
+          ...(override.model ? { ANTHROPIC_MODEL: override.model } : {}),
+          // The window to compact within. A grid model's id is one Claude Code does not recognise, so
+          // it assumes 200K and compacts only near that — on a smaller server, never, because the
+          // server refuses the request first. This is the documented variable for exactly that
+          // case (code.claude.com/docs/en/model-config, "unrecognized model IDs").
+          ...(override.contextWindow ? { CLAUDE_CODE_MAX_CONTEXT_TOKENS: String(override.contextWindow) } : {}),
+          // Only when there are web tools to reach: the variable exists to be referenced by the config
+          // below, and setting it otherwise would leave a key in the pane that nothing reads.
+          ...(override.mcpUrl ? { [GRID_KEY_VAR]: override.apiKey } : {}),
+        },
+        args: [
+          // On every grid launch, web tools or not: the built-in search is an Anthropic server tool
+          // that no grid runs, and the built-in fetch summarises through a model the grid does not
+          // serve. See `CLAUDE_DISALLOW_WEB_TOOLS_ARG`.
+          CLAUDE_DISALLOW_WEB_TOOLS_ARG,
+          // With the server comes its approval: a tool the daemon wired in and a permission mode then
+          // refuses is worse than no tool at all. See `CLAUDE_ALLOW_WEB_TOOLS_ARG`.
+          ...(override.mcpUrl
+            ? ['--mcp-config', mcpServersConfig(override.mcpUrl, GRID_KEY_VAR), CLAUDE_ALLOW_WEB_TOOLS_ARG]
+            : []),
+          // And the words. An agent moved here mid-conversation reads `WebSearch` off its own history
+          // before it reads the list, so the prompt names what is gone and — when one was wired — what
+          // replaces it, delivered past the recorded prompt a resume would otherwise replay. See
+          // `claudeGridPromptArgs`.
+          ...claudeGridPromptArgs(webSearch === 'on'),
+        ],
+        webSearch,
+      }
+    },
   },
 
   // Codex configures its provider entirely on the command line — `-c key=value` overrides anything
@@ -549,9 +698,22 @@ const GRID_ENGINE_CONTRACTS: Partial<Record<AgentEngine, GridEngineContract>> = 
         '-c', 'model_providers.grid.wire_api="responses"',
         // The relay streams HTTP SSE, not WebSocket.
         '-c', 'model_providers.grid.supports_websockets=false',
+        // On every grid launch, web tools or not: the native search is a Responses-API feature no
+        // grid serves. See `CODEX_DISABLE_WEB_SEARCH_ARGS`.
+        ...CODEX_DISABLE_WEB_SEARCH_ARGS,
         ...(override.mcpUrl ? codexMcpArgs(override.mcpUrl) : []),
         ...(override.model ? ['-m', override.model] : []),
+        // The window, and where to compact inside it. Codex knows neither for a model it does not
+        // recognise, so it never compacted and the relay refused the request as too long instead.
+        // 90% leaves the summary request itself room to fit.
+        ...(override.contextWindow
+          ? [
+            '-c', `model_context_window=${override.contextWindow}`,
+            '-c', `model_auto_compact_token_limit=${Math.floor(override.contextWindow * 0.9)}`,
+          ]
+          : []),
       ],
+      webSearch: webSearchWhenWired(override),
     }),
   },
 
@@ -578,7 +740,7 @@ const GRID_ENGINE_CONTRACTS: Partial<Record<AgentEngine, GridEngineContract>> = 
   // models are the grid's own ids. The user's `~/.config/opencode/opencode.json` is never opened.
   opencode: {
     build: (override) => {
-      const provider = gridProviderId(override.networkName)
+      const provider = opencodeProviderId(override)
       // No model chosen means the grid routes — `Auto` is the router's own id, and the relay serves
       // it (verified: 200). It is a real id to OpenCode either way, which is what matters: the
       // provider block has to name something, and leaving the model out entirely puts OpenCode back
@@ -599,6 +761,7 @@ const GRID_ENGINE_CONTRACTS: Partial<Record<AgentEngine, GridEngineContract>> = 
             content: opencodeGridConfig(provider, override, model),
           }],
         },
+        webSearch: webSearchWhenWired(override),
       }
     },
   },
@@ -629,31 +792,43 @@ const GRID_ENGINE_CONTRACTS: Partial<Record<AgentEngine, GridEngineContract>> = 
   // between grids moves its model but leaves its requests on whatever relay config.yaml names. The
   // only lever left is `HERMES_HOME`, which would take state.db and the user's skills with it and
   // break the resume this move depends on.
+  //
+  // ⚠️ The overlay is the ONE thing here a machine can refuse. `HERMES_MANAGED_DIR` REPLACES
+  // `/etc/hermes` rather than adding to it — so on a machine where an administrator pinned Hermes
+  // settings there, writing ours would take their policy away for as long as the agent runs. The
+  // agent still launches on the grid; it launches without web tools, which is the smaller loss and
+  // the one the app can say out loud (`unsupported`). The machine fact arrives from the caller
+  // (`GridLaunchMachine`); the decision is made here so create, retarget and restore cannot differ.
   hermes: {
-    build: (override) => ({
-      env: {
-        OPENAI_BASE_URL: relayBaseUrl(override.baseUrl),
-        OPENAI_API_KEY: override.apiKey,
-        ...(override.model ? { HERMES_INFERENCE_MODEL: override.model } : {}),
-        // Referenced by the overlay below, so it exists only when there is an overlay to read it.
-        ...(override.mcpUrl ? { [GRID_KEY_VAR]: override.apiKey } : {}),
-      },
-      args: override.model ? ['-m', override.model] : [],
-      // Hermes reads its MCP servers from one config file and takes no flag for them, so the web
-      // tools arrive as a managed-scope overlay merged over the user's own — see `gridWebMcp.ts`,
-      // including why this is `HERMES_MANAGED_DIR` and not `HERMES_HOME`.
-      ...(override.mcpUrl
-        ? {
-          configDir: {
-            envVar: HERMES_MANAGED_DIR_VAR,
-            files: [{
-              name: HERMES_MANAGED_CONFIG_FILE,
-              content: hermesManagedConfig(override.mcpUrl, GRID_KEY_VAR),
-            }],
-          },
-        }
-        : {}),
-    }),
+    build: (override, machine) => {
+      const overlay = !machine.hermesSystemManaged && override.mcpUrl
+        ? hermesManagedConfig(override.mcpUrl, GRID_KEY_VAR)
+        : undefined
+      return {
+        env: {
+          OPENAI_BASE_URL: relayBaseUrl(override.baseUrl),
+          OPENAI_API_KEY: override.apiKey,
+          ...(override.model ? { HERMES_INFERENCE_MODEL: override.model } : {}),
+          // Referenced by the overlay below, so it exists only when there is an overlay to read it.
+          ...(overlay ? { [GRID_KEY_VAR]: override.apiKey } : {}),
+        },
+        args: override.model ? ['-m', override.model] : [],
+        // Hermes reads its MCP servers from one config file and takes no flag for them, so the web
+        // tools arrive as a managed-scope overlay merged over the user's own — see `gridWebMcp.ts`,
+        // including why this is `HERMES_MANAGED_DIR` and not `HERMES_HOME`.
+        ...(overlay
+          ? {
+            configDir: {
+              envVar: HERMES_MANAGED_DIR_VAR,
+              files: [{ name: HERMES_MANAGED_CONFIG_FILE, content: overlay }],
+            },
+          }
+          : {}),
+        // The pin outranks the url: a machine that cannot take the overlay cannot take it whether or
+        // not the grid offered one, and that is the fact a person can act on.
+        webSearch: machine.hermesSystemManaged ? 'unsupported' : webSearchWhenWired(override),
+      }
+    },
   },
 
   // xAI's own Grok CLI (the one this repo discovers under `~/.grok`, whose transcripts carry the
@@ -725,6 +900,7 @@ const GRID_ENGINE_CONTRACTS: Partial<Record<AgentEngine, GridEngineContract>> = 
           }],
           links: GROK_GRID_HOME_LINKS.map((name) => ({ name, target: join(userGrokHome(), name) })),
         },
+        webSearch: webSearchWhenWired(override),
       }
     },
   },
@@ -750,10 +926,12 @@ const GRID_ENGINE_CONTRACTS: Partial<Record<AgentEngine, GridEngineContract>> = 
         configDir: {
           envVar: 'PI_CODING_AGENT_DIR',
           files: [
-            { name: 'models.json', content: piModelsJson(relayBaseUrl(override.baseUrl), model) },
+            { name: 'models.json', content: piModelsJson(relayBaseUrl(override.baseUrl), model, override.contextWindow) },
             { name: 'settings.json', content: piSettingsJson(userPiSkillsDir()) },
           ],
         },
+        // Pi has no MCP client, so there is nothing to hand the server to — with or without a url.
+        webSearch: 'unsupported',
       }
     },
   },
@@ -779,6 +957,7 @@ const GRID_ENGINE_CONTRACTS: Partial<Record<AgentEngine, GridEngineContract>> = 
       args: override.mcpUrl
         ? ['--additional-mcp-config', mcpServersConfig(override.mcpUrl, GRID_KEY_VAR)]
         : [],
+      webSearch: webSearchWhenWired(override),
     }),
   },
 }
@@ -800,6 +979,7 @@ const GRID_ENGINE_REFUSALS: Partial<Record<AgentEngine, string>> = {
   devin: 'Devin runs on its own hosted service and documents no endpoint override',
   muse: 'Muse Code documents no way to change its endpoint',
   commandcode: 'Command Code documents no way to change its endpoint',
+  terminal: 'a terminal runs no engine to point at a grid — start one inside it and it will use its own login',
 }
 
 /** Engines that can be pointed at a grid today, for error text that names what to pick instead. */
@@ -811,8 +991,18 @@ export type GridLaunchResult =
   | { ok: true; launch: GridEngineLaunch }
   | { ok: false; error: string; detail: string }
 
-/** How `engine` must be launched to reach `override`, or why it cannot be. */
-export function buildGridEngineLaunch(engine: AgentEngine, override: GridLaunchOverride): GridLaunchResult {
+/**
+ * How `engine` must be launched to reach `override` on a machine like `machine`, or why it cannot be.
+ *
+ * `machine` is required rather than defaulted on purpose: the one fact in it is a policy an
+ * administrator set, and a caller that forgot to read it would write the overlay that policy exists
+ * to refuse — the exact failure moving the decision in here was meant to end.
+ */
+export function buildGridEngineLaunch(
+  engine: AgentEngine,
+  override: GridLaunchOverride,
+  machine: GridLaunchMachine,
+): GridLaunchResult {
   const contract = GRID_ENGINE_CONTRACTS[engine]
   if (!contract) {
     const reason = GRID_ENGINE_REFUSALS[engine] ?? 'it has no known way to change its endpoint'
@@ -831,13 +1021,36 @@ export function buildGridEngineLaunch(engine: AgentEngine, override: GridLaunchO
         + `Pick one for ${override.networkName} and try again.`,
     }
   }
-  return { ok: true, launch: contract.build(override) }
+  return { ok: true, launch: contract.build(override, machine) }
 }
 
-/** One log line naming where an agent was sent — grid, model, engine. Never the key. */
-export function describeGridLaunch(engine: AgentEngine, override: GridLaunchOverride): string {
+/**
+ * Why a launch has no web search, in the daemon log's words — for the two answers this module
+ * decides itself. `unavailable` is decided elsewhere (`gridMcpUrl.ts`), which logs its own reason
+ * the moment it gives up, so nothing is repeated here.
+ */
+function webSearchReason(engine: AgentEngine, webSearch: GridWebSearchStatus): string | null {
+  if (webSearch !== 'unsupported') return null
+  if (engine === 'pi') return 'Pi has no MCP client'
+  if (engine === 'hermes') {
+    return `${HERMES_SYSTEM_MANAGED_DIR} pins this machine's Hermes settings, and the overlay carrying `
+      + 'the web tools would replace it'
+  }
+  return null
+}
+
+/** One log line naming where an agent was sent — grid, model, engine, and whether it got web
+ *  search (with the reason when this module is the one that took it away). Never the key, never
+ *  the MCP url. */
+export function describeGridLaunch(
+  engine: AgentEngine,
+  override: GridLaunchOverride,
+  webSearch: GridWebSearchStatus,
+): string {
+  const reason = webSearchReason(engine, webSearch)
   return `[grid] ${engine} -> ${override.networkName} (${override.networkId})`
-    + ` · ${override.model ?? 'model chosen by the engine'}`
+    + ` · ${override.model ?? 'model chosen by the engine'} · web search ${webSearch}`
+    + (reason ? ` (${reason})` : '')
 }
 
 /** A placeholder override, used only to ask a contract which variables it sets. Never launched. */
@@ -851,6 +1064,9 @@ const PROBE_OVERRIDE: GridLaunchOverride = {
   // this answers, and a probe that left them out would move an agent to another grid while its old
   // grid's MCP credential stayed in the pane — the exact staleness the doc comment below warns of.
   mcpUrl: 'https://example.invalid/v1/grid/web-mcp/',
+  // Present for the same reason: a launch that knew its window sets a variable (Claude Code's), and
+  // moving back to the own login must take it out of the pane with the rest.
+  contextWindow: 131072,
 }
 
 /**
@@ -864,7 +1080,9 @@ const PROBE_OVERRIDE: GridLaunchOverride = {
  * Empty for an engine that has no contract — there is nothing to clear because nothing was set.
  */
 export function gridEnvVarNames(engine: AgentEngine): string[] {
-  const built = buildGridEngineLaunch(engine, PROBE_OVERRIDE)
+  // No pin, for the same reason the probe carries an MCP url: this asks which variables a launch
+  // WITH web tools sets, so that clearing them covers the fullest launch this engine can get.
+  const built = buildGridEngineLaunch(engine, PROBE_OVERRIDE, { hermesSystemManaged: false })
   if (!built.ok) return []
   const names = Object.keys(built.launch.env)
   if (built.launch.configDir) names.push(built.launch.configDir.envVar)

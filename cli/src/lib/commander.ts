@@ -1,6 +1,6 @@
 /**
- * CommanderMirror — derives the paired hardware device's `commander_event` stream from the same LiveEvent
- * stream the web receives, and produces the per-turn RECAP the way the hosted runtime does:
+ * CommanderMirror — shares completed-turn decisions between desktop and device,
+ * and derives the device's live `commander_event` stream from LiveEvents:
  *
  *   turn_started            → {kind:'processing'}                    (tile busy)
  *   tool_start              → {kind:'tool', text, recap, color, detail}
@@ -10,7 +10,7 @@
  *   turn_ended (device on)  → {kind:'processing', text:'Summarizing…'} then, once the LLM one-shot
  *                             returns, {kind:'summary', text:body, recap} (persisted per session,
  *                             and handed to the NEXT turn's summariser as its previous recap)
- *   turn_ended (no device)  → nothing (device-gated; the summary map is left untouched)
+ *   turn_ended (no device)  → local recap + desktop notification when notifyWithoutDevice is on
  *   turn_ended (empty text) → {kind:'done'}                          (clear busy)
  *
  * Every frame carries top-level `agentId` + `dbSessionId` (= the tmux session id). The recap
@@ -21,6 +21,8 @@
 import { mkdirSync, readFileSync, writeFileSync } from 'fs'
 import { join } from 'path'
 import type { LastTurnText, LiveEvent } from './normalize.js'
+import { AgentNotifications } from './agentNotifications.js'
+import { deriveTurnSummary } from './deviceRecap.js'
 
 export type CommanderFrame = {
   type: 'commander_event'
@@ -30,6 +32,10 @@ export type CommanderFrame = {
 }
 
 export interface CommanderMirrorOpts {
+  /** Shared with QuestionWatcher; both screens receive this policy's decision. */
+  notifications?: AgentNotifications
+  /** Produce desktop results without a device, using a free local excerpt. */
+  notifyWithoutDevice?: boolean
   /** Device-audience frame (commander_event cards). */
   send: (frame: CommanderFrame) => void
   /** Web-audience frame (turn_summary_pending / turn_summary — the "Summarizing…" indicator). */
@@ -59,9 +65,26 @@ export interface CommanderMirrorOpts {
    *  `/clear` rotation); `dbSessionId` stays the engine session, which is what the device echoes back to
    *  cancel a turn and what the backend keys its voice queue on. */
   agentIdFor?: (sessionId: string) => string | undefined
+  /**
+   * True for a session whose turn end is nobody's news: an Orchestrator specialist, or its Director while
+   * specialists are still out. The terminal cards (`done`, `summary`, `error`) then carry `subagent: true`
+   * and the dial redraws the tile without the beep or a drawer row (cable_client.c). The person asked for
+   * one notification per project — the main agent's — not one per sub-agent (owner, 2026-09-21).
+   */
+  isSubagent?: (sessionId: string) => boolean
+  /**
+   * Whether a sub-agent of this session is still at work — its transcript
+   * (`<session>/subagents/agent-<id>.jsonl`) written recently. Consulted while a turn end is held, so a
+   * long sub-agent keeps the hold and only a silent one is given up on. Absent → the hold is bounded by
+   * time alone, as before.
+   */
+  subagentActive?: (sessionId: string, agentId: string) => boolean
   dataDir: string
   recapForce?: boolean
-  alwaysGenerate?: boolean
+  /** A function when it can change while the daemon runs — the pair brain switches it on with pairing. */
+  alwaysGenerate?: boolean | (() => boolean)
+  /** Every recap that is stored, as it is stored — the pair sensor journals it (pair/sensor.ts). */
+  onSummary?: (sessionId: string, summary: { recap: string; body: string }) => void
 }
 
 interface SessionState {
@@ -80,6 +103,8 @@ interface SessionState {
   agents: Array<{ id: string; desc: string; startedAt: number; doneMs: number | null; carried?: true }>
   /** A turn_ended is being HELD because sub-agents this turn spawned are still running (see below). */
   endPending: boolean
+  /** The hold was given up on (a sub-agent went quiet), not completed: the recap goes out silent. */
+  abandoned: boolean
   /** Fires the held turn-end once the last sub-agent has finished AND the wrap-up text has stopped. */
   endSettle: NodeJS.Timeout | null
   /** Backstop: a sub-agent that never reports back must not cost the turn its recap. */
@@ -170,8 +195,17 @@ const ASYNC_LAUNCH_ACK = /Async agent launched successfully/i
  */
 const SUBAGENT_SETTLE_MS = 12_000
 const SUBAGENT_TEXT_SETTLE_MS = 2_000
-/** A sub-agent that never reports back must not cost the turn its recap forever. */
+/**
+ * A sub-agent that never reports back must not cost the turn its recap forever — but a sub-agent that IS
+ * still writing is not "never": a fixed ten minutes released the hold under long sub-agents, which rang
+ * the dial for a turn that was not over and then rang it again when it was. So the deadline is checked
+ * every minute against the sub-agents' own transcripts (`subagentActive`): held while any of them wrote
+ * in the last SUBAGENT_IDLE_MS, given up only once all of them have gone quiet for that long. Without
+ * the probe, the old ten minutes stand.
+ */
 const SUBAGENT_MAX_WAIT_MS = 10 * 60_000
+export const SUBAGENT_IDLE_MS = 2 * 60_000
+const SUBAGENT_CHECK_MS = 60_000
 
 /**
  * The device renders ONE line per sub-agent and does no formatting of its own: `› desc` while it runs,
@@ -250,6 +284,7 @@ function clipBytes(text: string, max: number): string {
 }
 
 export class CommanderMirror {
+  private readonly notifications: AgentNotifications
   private states = new Map<string, SessionState>()
   private summaries = new Map<string, string>() // sessionId → "recap\n\nbody" (the LATEST turn)
   /**
@@ -294,6 +329,7 @@ export class CommanderMirror {
   private saveTimer: NodeJS.Timeout | null = null
 
   constructor(private opts: CommanderMirrorOpts) {
+    this.notifications = opts.notifications ?? new AgentNotifications()
     this.file = join(opts.dataDir, 'summaries.json')
     this.historyFile = join(opts.dataDir, 'summaries-history.json')
     this.fullTextFile = join(opts.dataDir, 'summaries-fulltext.json')
@@ -304,7 +340,7 @@ export class CommanderMirror {
   private stateFor(sessionId: string): SessionState {
     let st = this.states.get(sessionId)
     if (!st) {
-      st = { lastAssistantText: '', lastUserMessage: '', turnOpen: false, everOpened: false, summarizing: false, lastTool: null, lastTodos: null, agents: [], endPending: false, endSettle: null, endDeadline: null, abort: null }
+      st = { lastAssistantText: '', lastUserMessage: '', turnOpen: false, everOpened: false, summarizing: false, lastTool: null, lastTodos: null, agents: [], endPending: false, abandoned: false, endSettle: null, endDeadline: null, abort: null }
       this.states.set(sessionId, st)
     }
     return st
@@ -325,7 +361,11 @@ export class CommanderMirror {
     if (!terminal && !active && !this.opts.recapForce) return
     // Agent name on the summary's outer frame → background-machine device notif line 2 (see nameFor).
     const name = terminal && this.opts.nameFor ? this.opts.nameFor(sessionId) : undefined
-    this.opts.send({ type: 'commander_event', agentId: this.opts.agentIdFor?.(sessionId) ?? sessionId, dbSessionId: sessionId, ...(name ? { name } : {}), payload })
+    // A sub-agent's turn end is not announced: the flag rides the terminal cards only, so the live stream
+    // (processing/tool/todos) is untouched and the tile still moves.
+    const ending = payload.kind === 'summary' || payload.kind === 'done' || payload.kind === 'error'
+    const subagent = ending && ((this.opts.isSubagent?.(sessionId) ?? false) || (this.states.get(sessionId)?.abandoned ?? false))
+    this.opts.send({ type: 'commander_event', agentId: this.opts.agentIdFor?.(sessionId) ?? sessionId, dbSessionId: sessionId, ...(name ? { name } : {}), payload: subagent ? { ...payload, subagent: true } : payload })
   }
 
   /** Recap diagnostics stay in the adapter log; the web only gets summary pending/done state. */
@@ -333,12 +373,38 @@ export class CommanderMirror {
     ;(isError ? console.error : console.log)(`[recap] ${line}`)
   }
 
+  /**
+   * Tool calls started and not yet answered, per session, exactly as the transcript has them: the pair's
+   * floor (pair/classify.ts) reads a permission prompt from the call it is about, not from its wrapped paint.
+   */
+  private readonly toolCalls = new Map<string, Map<string, { name: string; input: unknown }>>()
+
+  /** The session's open tool calls (started, no result yet), oldest first. */
+  openTools(sessionId: string): Array<{ name: string; input: unknown }> {
+    return [...(this.toolCalls.get(sessionId)?.values() ?? [])]
+  }
+
+  private trackTool(sessionId: string, e: LiveEvent): void {
+    if (e.type === 'turn_started' || e.type === 'turn_ended') { this.toolCalls.delete(sessionId); return }
+    if (e.type === 'tool_start') {
+      let open = this.toolCalls.get(sessionId)
+      if (!open) { open = new Map(); this.toolCalls.set(sessionId, open) }
+      open.set(String(e.payload.id), { name: String(e.payload.tool || ''), input: e.payload.input })
+      if (open.size > 32) open.delete(open.keys().next().value as string)
+    } else if (e.type === 'tool_end') {
+      this.toolCalls.get(sessionId)?.delete(String(e.payload.id))
+    }
+  }
+
   /** Fold one session's LiveEvents into device commander_event frames (live cards + async recap). */
-  ingest(events: LiveEvent[], sessionId: string): void {
+  ingest(events: LiveEvent[], sessionId: string, options?: { replay?: boolean }): void {
     const st = this.stateFor(sessionId)
+    if (!options?.replay && st.turnOpen) this.notifications.continued(sessionId)
     for (const e of events) {
+      this.trackTool(sessionId, e)
       switch (e.type) {
         case 'turn_started':
+          this.notifications.started(sessionId, options?.replay)
           st.abort?.abort() // supersede any in-flight recap from the previous turn
           st.abort = null
           // A new prompt supersedes a held turn-end outright: its sub-agents belong to the turn the user
@@ -362,6 +428,7 @@ export class CommanderMirror {
           this.rememberAsk(sessionId, e.payload.userMessage || '')
           st.turnOpen = true
           st.everOpened = true
+          st.abandoned = false
           st.lastTool = null
           st.lastTodos = null
           // Drop the previous turn's finished rows, KEEP the ones still running. Two reasons, both
@@ -424,6 +491,7 @@ export class CommanderMirror {
         }
 
         case 'turn_ended':
+          if (options?.replay) this.notifications.cancelled(sessionId)
           // A killed turn takes the cancel path, not the recap path: clear the tile and stay silent. There
           // is nothing to summarize, and a beep for output the user just threw away is worse than nothing.
           if (e.payload.aborted) {
@@ -484,11 +552,36 @@ export class CommanderMirror {
     const running = st.agents.filter(holdsTurn).length
     console.log(`[subagents] ${sessionId.slice(0, 8)} turn-end HELD · ${running} sub-agent(s) still running`)
     this.clearEndTimers(st)
+    this.armDeadline(sessionId, st, Date.now())
+  }
+
+  /**
+   * The hold's backstop. With `subagentActive` the question is asked every minute — is any held sub-agent
+   * still writing? — and the hold outlives the old cap for as long as the answer is yes; a sub-agent quiet
+   * for SUBAGENT_IDLE_MS is abandoned and the hold released without one. Without the probe, one timer at
+   * the old cap, as before.
+   */
+  private armDeadline(sessionId: string, st: SessionState, heldAt: number): void {
+    const probe = this.opts.subagentActive
+    const wait = probe ? SUBAGENT_CHECK_MS : SUBAGENT_MAX_WAIT_MS
     st.endDeadline = setTimeout(() => {
-      const stuck = st.agents.filter(holdsTurn).map((a) => a.desc).join(', ')
+      st.endDeadline = null
+      if (!st.endPending) return
+      const held = st.agents.filter(holdsTurn)
+      const elapsed = Date.now() - heldAt
+      if (probe && elapsed < SUBAGENT_MAX_WAIT_MS) { this.armDeadline(sessionId, st, heldAt); return }
+      if (probe && held.some((a) => probe(sessionId, a.id))) {
+        console.log(`[subagents] ${sessionId.slice(0, 8)} turn-end still HELD after ${Math.round(elapsed / 60_000)}m · a sub-agent is still writing`)
+        this.armDeadline(sessionId, st, heldAt)
+        return
+      }
+      const stuck = held.map((a) => a.desc).join(', ')
       console.log(`[subagents] ${sessionId.slice(0, 8)} turn-end RELEASED by timeout · still running: ${stuck}`)
+      // Given up on, not done: the person did not get their answer, and a beep for that is the very ring
+      // this exists to remove. The tile still gets the recap.
+      st.abandoned = true
       this.releaseTurnEnd(sessionId, st)
-    }, SUBAGENT_MAX_WAIT_MS)
+    }, wait)
     st.endDeadline.unref?.()
   }
 
@@ -570,7 +663,9 @@ export class CommanderMirror {
     //     because replayAll() only re-emits stored recaps and never regenerates a past turn.
     // Cost: with SUMMARY_MODE=model this is one engine one-shot per turn, per agent, forever — the very
     // cost the device gate used to avoid. SUMMARY_MODE=local makes it free (no model, same-tick excerpt).
-    if (!device && !this.opts.recapForce && !this.opts.alwaysGenerate) {
+    const alwaysGenerate = typeof this.opts.alwaysGenerate === 'function' ? this.opts.alwaysGenerate() : this.opts.alwaysGenerate
+    const localOnly = !device && !this.opts.recapForce && !alwaysGenerate
+    if (localOnly && !this.opts.notifyWithoutDevice) {
       // Console-only: no device and generation is off, so there is no recap flow to watch.
       console.log(`[recap] ${sid} turn-end · SKIP (no device connected) · textLen=${fallbackText.length}`)
       return
@@ -585,12 +680,12 @@ export class CommanderMirror {
     void this.resolveTurnText(sessionId, fallbackText, fallbackUserMessage)
       .then(({ text, userMessage, source }) => {
         if (ac.signal.aborted) return
-        this.startSummary(sessionId, st, ac, t0, sid, text, userMessage, device, source)
+        this.startSummary(sessionId, st, ac, t0, sid, text, userMessage, device, source, localOnly)
       })
       .catch((err) => {
         if (ac.signal.aborted) return
-        this.trace(sessionId, `${sid} JSON session read failed: ${err instanceof Error ? err.message : String(err)} — using live buffer`, true)
-        this.startSummary(sessionId, st, ac, t0, sid, fallbackText, fallbackUserMessage, device, 'live')
+        this.trace(sessionId, `${sid} JSON session read failed: ${err instanceof Error ? err.message : String(err)} — no verified final result`, true)
+        this.startSummary(sessionId, st, ac, t0, sid, '', fallbackUserMessage, device, 'session-json', localOnly)
       })
   }
 
@@ -600,12 +695,17 @@ export class CommanderMirror {
     fallbackUserMessage: string,
   ): Promise<{ text: string; userMessage: string; source: 'session-json' | 'live' }> {
     const turn = this.opts.readLastTurn ? await this.opts.readLastTurn(sessionId) : null
-    if (turn?.assistantText.trim()) {
+    if (turn) {
       return {
         text: turn.assistantText.trim(),
         userMessage: turn.userMessage || fallbackUserMessage,
         source: 'session-json',
       }
+    }
+    // A configured engine reader is authoritative, including "no final answer".
+    // Falling back to live commentary here created empty/premature alerts.
+    if (this.opts.readLastTurn) {
+      return { text: '', userMessage: fallbackUserMessage, source: 'session-json' }
     }
     return { text: fallbackText, userMessage: fallbackUserMessage, source: 'live' }
   }
@@ -620,6 +720,7 @@ export class CommanderMirror {
     userMessage: string,
     device: boolean,
     source: 'session-json' | 'live',
+    localOnly = false,
   ): void {
     if (!text) {
       // No assistant TEXT block accumulated this turn (thinking/tools don't count) → nothing to
@@ -642,13 +743,16 @@ export class CommanderMirror {
     // Both are skipped when the summary is derived locally: it lands in the same tick, so the card
     // would be a flash of "Summarizing…" replaced before anyone could read it — a waiting state for a
     // wait that no longer happens.
-    if (!this.opts.summarizeIsLocal) {
+    const local = localOnly || this.opts.summarizeIsLocal
+    if (!local) {
       this.emit(sessionId, { kind: 'processing', text: 'Summarizing…' })
       this.opts.sendWeb({ type: 'turn_summary_pending', dbSessionId: sessionId, payload: { sessionId } })
     }
 
-    this.opts
-      .summarize(text, ac.signal, userMessage, sessionId, previousRecap)
+    const summary = localOnly
+      ? Promise.resolve(deriveTurnSummary(text))
+      : this.opts.summarize(text, ac.signal, userMessage, sessionId, previousRecap)
+    summary
       .then((summary) => {
         const ms = Date.now() - t0
         if (ac.signal.aborted) { this.trace(sessionId, `${sid} superseded after ${ms}ms (newer turn) — dropping result`); return }
@@ -661,14 +765,21 @@ export class CommanderMirror {
           this.rememberFullText(sessionId, text)
           this.saveSoon()
           const { recap, body } = splitSummary(summary)
+          const notification = this.notifications.completed(sessionId, body || recap,
+            (this.opts.isSubagent?.(sessionId) ?? false) || st.abandoned)
+          try { this.opts.onSummary?.(sessionId, { recap, body }) } catch { /* an observer never costs the recap */ }
           this.trace(sessionId, `${sid} done in ${ms}ms · recap="${recap}" · bodyLen=${body.length}`)
           this.emit(sessionId, { kind: 'done', text: 'done' })
-          this.emit(sessionId, { kind: 'summary', text: body || recap, recap })
-          this.opts.sendWeb({ type: 'turn_summary', dbSessionId: sessionId, payload: { summary, sessionId } })
+          // One decision feeds both clients. A silent recap still updates the
+          // device's tile; only real completed results create inbox entries.
+          this.emit(sessionId, { kind: 'summary', text: body || recap, recap,
+            notification, ...(!notification ? { subagent: true } : {}) })
+          this.opts.sendWeb({ type: 'turn_summary', agentId: this.opts.agentIdFor?.(sessionId) ?? sessionId,
+            dbSessionId: sessionId, payload: { summary, sessionId, notification } })
         } else {
           this.trace(sessionId, `${sid} summarizer returned NULL after ${ms}ms → done`)
           this.emit(sessionId, { kind: 'done', text: 'done' })
-          if (!this.opts.summarizeIsLocal) {
+          if (!local) {
             this.opts.sendWeb({ type: 'turn_summary_pending', dbSessionId: sessionId, payload: { sessionId, done: true } })
           }
         }
@@ -703,6 +814,12 @@ export class CommanderMirror {
    *  window (Summarizing…) — the device clears a busy tile only via a live terminal, and has a busy-timeout
    *  watchdog that fires if these stop arriving. Returns true while the session is busy (turnOpen ||
    *  summarizing) so the caller knows when to self-cancel the timer; false (emitting nothing) when idle. */
+  /** A turn is open on this session right now. Summarising after one does not count: the transcript is
+   *  complete, which is what a fork needs. */
+  isBusy(sessionId: string): boolean {
+    return this.states.get(sessionId)?.turnOpen === true
+  }
+
   heartbeat(sessionId: string): boolean {
     const st = this.states.get(sessionId)
     if (!st) return false
@@ -793,6 +910,7 @@ export class CommanderMirror {
    *  the device treats as "clear the processing status, keep the last card" (no recap, no beep). The session
    *  stays alive; the next prompt reopens a fresh turn. Mirrors forget() but WITHOUT dropping the state. */
   cancel(sessionId: string): void {
+    this.notifications.cancelled(sessionId)
     const st = this.states.get(sessionId)
     if (!st) return
     st.abort?.abort()
@@ -833,11 +951,13 @@ export class CommanderMirror {
    * can reuse it via recent()/project_recent instead of losing the last device recap. SessionEnd alone
    * does not call this; process discovery owns lifetime. */
   forget(sessionId: string): void {
+    this.notifications.forget(sessionId)
     const st = this.states.get(sessionId)
     st?.abort?.abort()
     // The state object is about to be dropped; a held turn-end timer would fire against a dead session.
     if (st) this.clearEndTimers(st)
     this.states.delete(sessionId)
+    this.toolCalls.delete(sessionId)
     // NB: intentionally do NOT delete this.summaries[sessionId] — reuse it on the next resume.
     this.emit(sessionId, { kind: 'done', text: 'done' })
   }

@@ -10,9 +10,41 @@ import 'package:flutter/material.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import '../../shared/theme/app_theme.dart';
+import '../../shared/widgets/skeleton.dart';
 import '../../stats/harness_stats.dart';
 import '../../usage/ledger/ledger_types.dart';
 import '../../usage/ledger/usage_overview.dart';
+
+/// Waiting is distinct from an answered, empty range or a switched-off source.
+class UsageLoadingState extends StatelessWidget {
+  const UsageLoadingState({super.key, required this.message});
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    AppTheme.watch(context);
+    return Semantics(
+      liveRegion: true,
+      child: Container(
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: AppGlass.surfaceFill,
+          borderRadius: BorderRadius.circular(14),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(message, style: AppType.body(color: AppPalette.textSecondary)),
+            const SizedBox(height: 12),
+            SkeletonText(style: AppType.title(height: 1.1), widthFactor: .45),
+            const SizedBox(height: 8),
+            SkeletonText(style: AppType.body(), widthFactor: .7),
+          ],
+        ),
+      ),
+    );
+  }
+}
 
 /// The app's own three counters, and the date they start from.
 ///
@@ -22,9 +54,7 @@ import '../../usage/ledger/usage_overview.dart';
 /// keeping for the sake of matching.
 class StatsSummaryCards extends StatelessWidget {
   const StatsSummaryCards({super.key, required this.summary});
-
   final StatsSummary summary;
-
   @override
   Widget build(BuildContext context) {
     AppTheme.watch(context);
@@ -39,21 +69,20 @@ class StatsSummaryCards extends StatelessWidget {
         ),
         child: Center(
           child: Text(
-            'Start your first agent to begin tracking.',
-            style: TextStyle(fontSize: 12.5, color: AppPalette.textSecondary),
+            'Start your first harness to begin tracking.',
+            style: AppType.body(color: AppPalette.textSecondary),
           ),
         ),
       );
     }
-
     final cards = [
       UsageStatCard(
-        label: 'Agents spawned',
+        label: 'Harnesses started',
         value: '${summary.agentsSpawned}',
         icon: LucideIcons.bot300,
       ),
       UsageStatCard(
-        label: 'Time agents worked',
+        label: 'Time harnesses worked',
         value: formatWorkedTime(summary.timeWorked),
         icon: LucideIcons.clock300,
       ),
@@ -63,7 +92,6 @@ class StatsSummaryCards extends StatelessWidget {
         icon: LucideIcons.messagesSquare300,
       ),
     ];
-
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -84,7 +112,7 @@ class StatsSummaryCards extends StatelessWidget {
           const SizedBox(height: 8),
           Text(
             'Tracking since ${_trackingDate(since)}',
-            style: TextStyle(fontSize: 11, color: AppPalette.textFaint),
+            style: AppType.caption(color: AppPalette.textFaint),
           ),
         ],
       ],
@@ -135,7 +163,6 @@ class UsageStatCard extends StatelessWidget {
     required this.icon,
     this.footnote,
   });
-
   final String label;
   final String value;
   final IconData icon;
@@ -144,7 +171,6 @@ class UsageStatCard extends StatelessWidget {
   /// because most figures need none and a card that always carried one would
   /// train the eye to skip it.
   final String? footnote;
-
   @override
   Widget build(BuildContext context) {
     AppTheme.watch(context);
@@ -166,10 +192,7 @@ class UsageStatCard extends StatelessWidget {
               Expanded(
                 child: Text(
                   label,
-                  style: TextStyle(
-                    fontSize: 11.5,
-                    color: AppPalette.textSecondary,
-                  ),
+                  style: AppType.caption(color: AppPalette.textSecondary),
                 ),
               ),
             ],
@@ -177,18 +200,17 @@ class UsageStatCard extends StatelessWidget {
           const SizedBox(height: 8),
           Text(
             value,
-            style: TextStyle(
-              fontSize: 20,
-              fontWeight: FontWeight.w600,
+            style: AppType.title(
               color: AppPalette.textPrimary,
               height: 1.1,
+              fontFeatures: AppFont.tabularFigures,
             ),
           ),
           if (footnote != null) ...[
             const SizedBox(height: 3),
             Text(
               footnote!,
-              style: TextStyle(fontSize: 11, color: AppPalette.textFaint),
+              style: AppType.caption(color: AppPalette.textFaint),
             ),
           ],
         ],
@@ -267,27 +289,21 @@ class DailyIntensityGrid extends StatelessWidget {
             children: [
               Text(
                 days.isEmpty ? '' : _shortDate(days.first.day),
-                style: TextStyle(fontSize: 11, color: AppPalette.textFaint),
+                style: AppType.caption(color: AppPalette.textFaint),
               ),
               const Spacer(),
-              Text(
-                'Less',
-                style: TextStyle(fontSize: 11, color: AppPalette.textFaint),
-              ),
+              Text('Less', style: AppType.caption(color: AppPalette.textFaint)),
               const SizedBox(width: 6),
               for (var level = 0; level <= 4; level++) ...[
                 _IntensityCell(level: level, size: 9),
                 const SizedBox(width: 3),
               ],
               const SizedBox(width: 3),
-              Text(
-                'More',
-                style: TextStyle(fontSize: 11, color: AppPalette.textFaint),
-              ),
+              Text('More', style: AppType.caption(color: AppPalette.textFaint)),
               const Spacer(),
               Text(
                 days.isEmpty ? '' : _shortDate(days.last.day),
-                style: TextStyle(fontSize: 11, color: AppPalette.textFaint),
+                style: AppType.caption(color: AppPalette.textFaint),
               ),
             ],
           ),
@@ -401,10 +417,7 @@ class TokenMixBar extends StatelessWidget {
                     child: Text(
                       '${slice.label}: ${formatTokens(slice.tokens)}',
                       overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: AppPalette.textSecondary,
-                      ),
+                      style: AppType.caption(color: AppPalette.textSecondary),
                     ),
                   ),
                 ],
@@ -464,12 +477,11 @@ class _PanelCard extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(title, style: Theme.of(context).textTheme.titleSmall),
+                    Text(title, style: AppType.heading()),
                     const SizedBox(height: 2),
                     Text(
                       subtitle,
-                      style: TextStyle(
-                        fontSize: 11.5,
+                      style: AppType.body(
                         height: 1.35,
                         color: AppPalette.textSecondary,
                       ),
@@ -490,8 +502,7 @@ class _PanelCard extends StatelessWidget {
                   ),
                   child: Text(
                     label,
-                    style: TextStyle(
-                      fontSize: 10.5,
+                    style: AppType.caption(
                       height: 1.25,
                       color: AppPalette.textSecondary,
                     ),
@@ -581,58 +592,64 @@ class ProviderUsageRow extends StatelessWidget {
                   padding: const EdgeInsets.symmetric(horizontal: 10),
                   tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                 ),
-                child: Text(
-                  state.enabled ? 'Turn off' : 'Enable',
-                  style: const TextStyle(fontSize: 12),
-                ),
+                child: Text(state.enabled ? 'Turn off' : 'Enable'),
               ),
             ],
           ),
           const SizedBox(height: 4),
           if (_detail() case final detail?)
-            Text(
-              detail,
-              style: TextStyle(fontSize: 11.5, color: AppPalette.textSecondary),
-            ),
-          const SizedBox(height: 10),
-          Row(
-            children: [
-              Expanded(
-                child: Text(
-                  '${formatTokens(ledger.totals.total)} tokens',
-                  style: TextStyle(fontSize: 12, color: AppPalette.textPrimary),
-                ),
-              ),
-              Text(
-                formatCost(ledger.costUsd),
-                style: TextStyle(
-                  fontSize: 12,
-                  color: AppPalette.textPrimary,
-                  fontFeatures: const [FontFeature.tabularFigures()],
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          ClipRRect(
-            borderRadius: BorderRadius.circular(3),
-            child: SizedBox(
-              height: 5,
-              child: Row(
-                children: [
-                  if (share > 0)
-                    Expanded(
-                      flex: (share * 1000).round(),
-                      child: ColoredBox(color: AppPalette.accent),
+            Text(detail, style: AppType.body(color: AppPalette.textSecondary)),
+          if (state.status == LedgerStatus.scanning && !ledger.hasData) ...[
+            const SizedBox(height: 10),
+            SkeletonText(style: AppType.body(), widthFactor: .55),
+          ],
+          if (state.enabled &&
+              (state.status == LedgerStatus.ok ||
+                  (state.status == LedgerStatus.partial && ledger.hasData) ||
+                  (state.status == LedgerStatus.scanning &&
+                      ledger.hasData))) ...[
+            const SizedBox(height: 10),
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    '${formatTokens(ledger.totals.total)} tokens',
+                    style: AppType.body(
+                      color: AppPalette.textPrimary,
+                      fontFeatures: AppFont.tabularFigures,
                     ),
-                  Expanded(
-                    flex: (1000 - share * 1000).round().clamp(0, 1000),
-                    child: ColoredBox(color: AppSurface.recess),
                   ),
-                ],
+                ),
+                Text(
+                  formatCost(ledger.costUsd),
+                  style: AppType.body(
+                    color: AppPalette.textPrimary,
+                    fontFeatures: const [FontFeature.tabularFigures()],
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(3),
+              child: SizedBox(
+                height: 5,
+                child: Row(
+                  children: [
+                    if (share > 0)
+                      Expanded(
+                        flex: (share * 1000).round(),
+                        child: ColoredBox(color: AppPalette.accent),
+                      ),
+                    Expanded(
+                      flex: (1000 - share * 1000).round().clamp(0, 1000),
+                      child: ColoredBox(color: AppSurface.recess),
+                    ),
+                  ],
+                ),
               ),
             ),
-          ),
+          ],
         ],
       ),
     );
@@ -650,14 +667,16 @@ class ProviderUsageRow extends StatelessWidget {
   String? _detail() {
     if (!state.enabled) return null;
     return switch (state.status) {
-      LedgerStatus.scanning => null,
+      LedgerStatus.scanning =>
+        state.hasIncompleteFigures ? state.message : null,
+      LedgerStatus.partial => state.message ?? 'Figures are incomplete.',
       LedgerStatus.unavailable ||
       LedgerStatus.failed => state.message ?? 'No figures.',
       LedgerStatus.disabled => null,
       LedgerStatus.ok =>
         ledger.hasData
             ? '${ledger.sessionCount} '
-                  '${ledger.sessionCount == 1 ? 'session' : 'sessions'}'
+                  '${ledger.sessionCount == 1 ? 'conversation' : 'conversations'}'
             : 'Nothing spent here yet.',
     };
   }
@@ -675,6 +694,7 @@ class _StatusPill extends StatelessWidget {
         ? state.status
         : LedgerStatus.disabled) {
       LedgerStatus.ok => ('On', AppPalette.online),
+      LedgerStatus.partial => ('Incomplete', AppPalette.warn),
       LedgerStatus.scanning => ('Scanning', AppPalette.accentOnSurface),
       LedgerStatus.unavailable => ('Not found', AppPalette.textFaint),
       LedgerStatus.failed => ('Failed', AppPalette.warn),
@@ -686,10 +706,7 @@ class _StatusPill extends StatelessWidget {
         color: color.withValues(alpha: 0.12),
         borderRadius: BorderRadius.circular(6),
       ),
-      child: Text(
-        label,
-        style: TextStyle(fontSize: 10.5, color: color, height: 1.3),
-      ),
+      child: Text(label, style: AppType.caption(color: color, height: 1.3)),
     );
   }
 }
@@ -701,9 +718,7 @@ class _StatusPill extends StatelessWidget {
 /// somebody hunting for the switch it is describing.
 class UsageEmptyState extends StatelessWidget {
   const UsageEmptyState({super.key, required this.onEnable});
-
   final ValueChanged<LedgerProvider> onEnable;
-
   @override
   Widget build(BuildContext context) {
     AppTheme.watch(context);
@@ -738,8 +753,7 @@ class UsageEmptyState extends StatelessWidget {
               'Switch on a provider to read the logs its CLI already keeps on '
               'this computer, and build the token ledger from them. Nothing is '
               'read until you do, and nothing leaves this machine.',
-              style: TextStyle(
-                fontSize: 12.5,
+              style: AppType.body(
                 height: 1.45,
                 color: AppPalette.textSecondary,
               ),
@@ -757,10 +771,7 @@ class UsageEmptyState extends StatelessWidget {
                     minimumSize: const Size(0, 30),
                     padding: const EdgeInsets.symmetric(horizontal: 14),
                   ),
-                  child: Text(
-                    'Enable ${provider.label}',
-                    style: const TextStyle(fontSize: 12.5),
-                  ),
+                  child: Text('Enable ${provider.label}'),
                 ),
             ],
           ),

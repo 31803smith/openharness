@@ -122,6 +122,15 @@ describe('remote-password link + relay session crypto (interop with the real E2e
       expect(crypto.handleWelcome(welcome.payload as Record<string, unknown>)).toBe(true)
       expect(crypto.ready).toBe(true)
       expect(crypto.terminalP2pVersion).toBe(1)
+      expect(crypto.strictDown).toBe(true)
+
+      // A daemon that says strictDown gets the formerly-plaintext RPCs sealed, and opens them.
+      const install = { requestId: 'dsh-1', url: 'https://example.invalid/harness.git' }
+      const sealedInstall = crypto.wrapOutgoing({ type: 'dsh_install', payload: install })
+      expect(sealedInstall.payload).not.toHaveProperty('url')
+      expect(manager.unwrapDown('session-conn', sealedInstall)?.payload).toEqual(install)
+      // …and nothing unsealed is opened: a plaintext frame is the relay's, not the client's.
+      expect(manager.unwrapDown('session-conn', { type: 'message', payload: { content: 'x', agentId: 'a' } })).toBeNull()
 
       // Outgoing: client encrypts a down-type frame; manager decrypts it via unwrapDown.
       const outgoing = crypto.wrapOutgoing({ type: 'terminal_input', payload: { requestId: 'r1', foo: 'bar' } })
@@ -129,6 +138,29 @@ describe('remote-password link + relay session crypto (interop with the real E2e
       const decrypted = manager.unwrapDown('session-conn', outgoing)
       expect(decrypted).not.toBeNull()
       expect((decrypted!.payload as Record<string, unknown>).foo).toBe('bar')
+
+      const gridRequest = { requestId: 'grid-1', args: ['chat', 'private prompt'] }
+      const sealedGrid = crypto.wrapOutgoing({ type: 'grid_fleet_run', payload: gridRequest })
+      expect(sealedGrid.payload).not.toHaveProperty('args')
+      expect(manager.unwrapDown('session-conn', sealedGrid)?.payload).toEqual(gridRequest)
+      const gridResult = { requestId: 'grid-1', stdout: 'private answer', code: 0 }
+      const sealedResult = manager.wrapTarget('session-conn', 'grid_fleet_run_result', gridResult)!
+      expect(sealedResult.payload).not.toHaveProperty('stdout')
+      expect(crypto.unwrapIncoming(sealedResult)?.payload).toEqual(gridResult)
+
+      // Team capabilities, peer context, and answers stay opaque to the relay in both directions.
+      for (const type of ['team', 'team_delivery']) {
+        const request = { requestId: `private-${type}`, memberKey: 'member-capability', text: 'private peer question' }
+        const sealed = crypto.wrapOutgoing({ type, payload: request })
+        expect(JSON.stringify(sealed)).not.toContain('member-capability')
+        expect(JSON.stringify(sealed)).not.toContain('private peer question')
+        expect(manager.unwrapDown('session-conn', sealed)?.payload).toEqual(request)
+        expect(manager.unwrapDown('session-conn', sealed)).toBeNull() // replay
+        const answer = { requestId: request.requestId, text: 'private correlated answer' }
+        const response = manager.wrapTarget('session-conn', `${type}_result`, answer)!
+        expect(JSON.stringify(response)).not.toContain('private correlated answer')
+        expect(crypto.unwrapIncoming(response)?.payload).toEqual(answer)
+      }
 
       // Creation recovery must take the same encrypted route as creation; its result contains
       // the agent's name and working folder. The relay sees neither the receipt nor those fields.
@@ -140,6 +172,28 @@ describe('remote-password link + relay session crypto (interop with the real E2e
       const statusReply = manager.wrapTarget('session-conn', 'agent_create_status_result', status)!
       expect(statusReply.payload).not.toHaveProperty('agent')
       expect(crypto.unwrapIncoming(statusReply)?.payload).toEqual(status)
+
+      const resume = { requestId: 'resume-1', agentId: 'saved-work', creationId: 'resume-fixture-001' }
+      const resumeRequest = crypto.wrapOutgoing({ type: 'agent_resume', payload: resume })
+      expect(resumeRequest.payload).not.toHaveProperty('agentId')
+      expect(manager.unwrapDown('session-conn', resumeRequest)?.payload).toEqual(resume)
+      const resumed = { ...resume, state: 'created', agent: { id: 'saved-work', cwd: '/private/work' } }
+      const resumeReply = manager.wrapTarget('session-conn', 'agent_resume_result', resumed)!
+      expect(resumeReply.payload).not.toHaveProperty('agent')
+      expect(crypto.unwrapIncoming(resumeReply)?.payload).toEqual(resumed)
+
+      // Pause takes the same route, and is the half that was never covered: a relayed harness is
+      // paused by `agent_delete`, and the relay must see neither the agent id nor the reply's
+      // confirmation. Without this the whole Pause/Resume round trip over a remote machine had one
+      // end tested and the other assumed.
+      const stop = { requestId: 'stop-1', agentId: 'saved-work' }
+      const stopRequest = crypto.wrapOutgoing({ type: 'agent_delete', payload: stop })
+      expect(stopRequest.payload).not.toHaveProperty('agentId')
+      expect(manager.unwrapDown('session-conn', stopRequest)?.payload).toEqual(stop)
+      const stopped = { ...stop, deleted: true }
+      const stopReply = manager.wrapTarget('session-conn', 'agent_delete_result', stopped)!
+      expect(stopReply.payload).not.toHaveProperty('deleted')
+      expect(crypto.unwrapIncoming(stopReply)?.payload).toEqual(stopped)
 
       const lowerDown = crypto.wrapOutgoing({ type: 'terminal_resize', payload: { streamId: 's', cols: 80 } })
       const higherDown = crypto.wrapOutgoing({ type: 'terminal_resize', payload: { streamId: 's', cols: 120 } })
@@ -191,12 +245,13 @@ describe('remote-password link + relay session crypto (interop with the real E2e
 
   /** Spin up the same fake `/api/web-ws` (machine_select -> connected, then e2e_* frame relay) used
    *  above, wired to a fresh real E2eeManager, and return both plus a cleanup function. */
-  function fakeMachine(): { manager: InstanceType<typeof E2eeManagerCtor>; wsBase: Promise<string>; close: () => Promise<void> } {
+  function fakeMachine(onPeerLinked?: (peer: import('./manager.js').LinkedPeer) => void): { manager: InstanceType<typeof E2eeManagerCtor>; wsBase: Promise<string>; close: () => Promise<void> } {
     const wss = new WebSocketServer({ port: 0 })
     const manager = new E2eeManagerCtor({
       machineId: MACHINE_ID,
       sendTo: (_connId, frame) => { for (const client of wss.clients) client.send(JSON.stringify(frame)) },
       isConnected: () => true,
+      onPeerLinked,
     })
     wss.on('connection', (ws) => {
       let selected = false
@@ -219,6 +274,96 @@ describe('remote-password link + relay session crypto (interop with the real E2e
     })
     return { manager, wsBase, close: () => new Promise<void>((resolve) => wss.close(() => resolve())) }
   }
+
+  it('a machine joiner that says who it is is trusted with its machineId and reported for pin-back (mutual link)', async () => {
+    const JOINER_ID = 'a1b2c3d4e5f60718293a4b5c6d7e8f90'
+    const linked: Array<import('./manager.js').LinkedPeer> = []
+    const { manager, wsBase, close } = fakeMachine((peer) => linked.push(peer))
+    try {
+      await manager.setRemotePassword(REMOTE_PASSWORD)
+      const joiner = C.newIdentity()
+      const result = await connectWithPassword({
+        targetMachineId: MACHINE_ID,
+        password: REMOTE_PASSWORD,
+        selfIdentity: joiner,
+        accessToken: 'unused',
+        backendWsBase: await wsBase,
+        autonomousEnv: 'prod',
+        timeoutMs: 5_000,
+        self: { kind: 'machine', machineId: JOINER_ID, label: 'studio-mac' },
+      })
+      expect(result.ok).toBe(true)
+      if (!result.ok) return
+      expect(result.mutual).toBe(true)
+      expect(linked).toEqual([{ pub: C.b64e(joiner.pub), machineId: JOINER_ID, kind: 'machine', label: 'studio-mac' }])
+      const paired = manager.pairedPeers().find((p) => p.identityPub === C.b64e(joiner.pub))
+      expect(paired).toMatchObject({ machineId: JOINER_ID, kind: 'machine', label: 'studio-mac', role: 'web' })
+    } finally {
+      await close()
+    }
+  }, PW_SCRYPT_TEST_TIMEOUT_MS)
+
+  it('an older joiner (no self description) still links one-way under the default label', async () => {
+    const linked: Array<import('./manager.js').LinkedPeer> = []
+    const { manager, wsBase, close } = fakeMachine((peer) => linked.push(peer))
+    try {
+      await manager.setRemotePassword(REMOTE_PASSWORD)
+      const joiner = C.newIdentity()
+      const result = await connectWithPassword({
+        targetMachineId: MACHINE_ID,
+        password: REMOTE_PASSWORD,
+        selfIdentity: joiner,
+        accessToken: 'unused',
+        backendWsBase: await wsBase,
+        autonomousEnv: 'prod',
+        timeoutMs: 5_000,
+      })
+      expect(result.ok).toBe(true)
+      expect(linked).toEqual([{ pub: C.b64e(joiner.pub), kind: undefined, machineId: undefined, label: 'harness link' }])
+      const paired = manager.pairedPeers().find((p) => p.identityPub === C.b64e(joiner.pub))
+      expect(paired?.machineId).toBeUndefined()
+      expect(paired?.kind).toBeUndefined()
+    } finally {
+      await close()
+    }
+  }, PW_SCRYPT_TEST_TIMEOUT_MS)
+
+  it('a machine joiner with a malformed machineId is not taken for a machine', async () => {
+    const linked: Array<import('./manager.js').LinkedPeer> = []
+    const { manager, wsBase, close } = fakeMachine((peer) => linked.push(peer))
+    try {
+      await manager.setRemotePassword(REMOTE_PASSWORD)
+      const result = await connectWithPassword({
+        targetMachineId: MACHINE_ID,
+        password: REMOTE_PASSWORD,
+        selfIdentity: C.newIdentity(),
+        accessToken: 'unused',
+        backendWsBase: await wsBase,
+        autonomousEnv: 'prod',
+        timeoutMs: 5_000,
+        self: { kind: 'machine', machineId: '../../etc/passwd' },
+      })
+      expect(result.ok).toBe(true)
+      expect(linked[0].kind).toBeUndefined()
+      expect(linked[0].machineId).toBeUndefined()
+    } finally {
+      await close()
+    }
+  }, PW_SCRYPT_TEST_TIMEOUT_MS)
+
+  it('trustPeer makes a linked machine able to open a session here (the mutual half)', async () => {
+    const other = C.newIdentity()
+    const hello = async (): Promise<Frame> => new RelaySessionCrypto({ machineId: MACHINE_ID, selfIdentity: other, peerPub: C.newIdentity().pub }).helloFrame()
+    const frames: Frame[] = []
+    const manager = new E2eeManagerCtor({ machineId: MACHINE_ID, sendTo: (_c, f) => frames.push(f), isConnected: () => true })
+    manager.handleFrame('c1', await hello())
+    expect(frames.at(-1)?.type).toBe('e2e_denied')
+    manager.trustPeer({ pub: C.b64e(other.pub), machineId: 'a1b2c3d4e5f60718293a4b5c6d7e8f90', kind: 'machine', label: 'b' })
+    manager.handleFrame('c2', await hello())
+    expect(frames.at(-1)?.type).toBe('e2e_welcome')
+    expect(manager.untrustPeer(C.b64e(other.pub))).toBe(true)
+    expect(manager.untrustPeer(C.b64e(other.pub))).toBe(false)
+  })
 
   it('NO_REMOTE_PASSWORD when the target machine never set one', async () => {
     const { manager, wsBase, close } = fakeMachine()
@@ -338,6 +483,57 @@ describe('remote-password link + relay session crypto (interop with the real E2e
 describe('RemoteRelayPool drops a peer the responder no longer trusts', () => {
   // A fake AuthSessionManager — RemoteRelayPool only ever calls .accessToken({force}).
   const fakeAuth = { accessToken: async () => 'unused-in-this-fake' } as unknown as import('../authSession.js').AuthSessionManager
+
+  it('isolates concurrent fleet clients from each other and the desktop connection', async () => {
+    const wss = new WebSocketServer({ port: 0 })
+    const sockets = new Map<string, import('ws').WebSocket>()
+    const manager = new E2eeManagerCtor({
+      machineId: MACHINE_ID, isConnected: () => true,
+      sendTo: (id, frame) => sockets.get(id)?.send(JSON.stringify(frame)),
+    })
+    let next = 0
+    wss.on('connection', ws => {
+      const id = `client-${++next}`; sockets.set(id, ws)
+      ws.on('close', () => { sockets.delete(id); manager.dropSession(id) })
+      ws.on('message', raw => {
+        const frame = JSON.parse(raw.toString())
+        if (frame.type === 'machine_select') ws.send(JSON.stringify({ type: 'connected', payload: { machineId: MACHINE_ID } }))
+        else if (frame.type.startsWith('e2e_')) manager.handleFrame(id, frame)
+        else if (frame.type === 'grid_fleet_run') {
+          expect(frame.payload).not.toHaveProperty('args')
+          const clear = manager.unwrapDown(id, frame)
+          ws.send(JSON.stringify(manager.wrapTarget(id, 'grid_fleet_run_result', clear!.payload as Record<string, unknown>)))
+        }
+      })
+    })
+    const base = `ws://127.0.0.1:${(wss.address() as AddressInfo).port}`
+    const identity = C.newIdentity()
+    await manager.setRemotePassword(REMOTE_PASSWORD)
+    const claim = await connectWithPassword({ targetMachineId: MACHINE_ID, password: REMOTE_PASSWORD, selfIdentity: identity, accessToken: 'unused', backendWsBase: base, autonomousEnv: 'prod', timeoutMs: 5000 })
+    expect(claim.ok).toBe(true)
+    if (!claim.ok) throw new Error('pairing failed')
+    const peers = new MachinePeerStore(); peers.pin(MACHINE_ID, C.b64e(claim.peerPub), 'test')
+    const pool = new RemoteRelayPool(fakeAuth, base, identity, peers)
+    const inboxes: Frame[][] = [[], [], []]
+    const select = { type: 'machine_select', payload: { machineId: MACHINE_ID } }
+    const sink = (i: number) => ({ sendFrame: (f: Frame) => { inboxes[i].push(f); return true }, sendBinary: () => true })
+    const desktop = await pool.acquire(MACHINE_ID, 'prod', select, sink(0), () => {})
+    const a = await pool.acquireIsolated(MACHINE_ID, 'prod', select, sink(1), () => {})
+    const b = await pool.acquireIsolated(MACHINE_ID, 'prod', select, sink(2), () => {})
+    try {
+      await Promise.all([desktop, a, b].map((s, i) => s.send({ type: 'grid_fleet_run', payload: { requestId: `r-${i}`, args: [`model-${i}`] } })))
+      await new Promise(resolve => setTimeout(resolve, 100))
+      inboxes.forEach((inbox, i) => expect(inbox.filter(f => f.type === 'grid_fleet_run_result').map(f => f.payload)).toEqual([{ requestId: `r-${i}`, args: [`model-${i}`] }]))
+      a.detach()
+      await desktop.send({ type: 'grid_fleet_run', payload: { requestId: 'still-connected', args: ['version'] } })
+      await new Promise(resolve => setTimeout(resolve, 100))
+      expect(inboxes[0].at(-1)?.payload).toMatchObject({ requestId: 'still-connected' })
+    } finally {
+      a.detach(); b.detach(); pool.invalidate(MACHINE_ID)
+      for (const ws of wss.clients) ws.terminate()
+      await new Promise<void>(resolve => wss.close(() => resolve()))
+    }
+  }, PW_SCRYPT_TEST_TIMEOUT_MS)
 
   it('e2e_denied during the handshake unlinks the peer and surfaces NO_PEER_LINK', async () => {
     const wss = new WebSocketServer({ port: 0 })

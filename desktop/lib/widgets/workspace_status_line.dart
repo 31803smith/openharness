@@ -1,0 +1,134 @@
+import 'dart:math' as math;
+
+import 'package:flutter/material.dart';
+
+import '../shared/theme/status_line_style.dart';
+import '../shared/theme/app_theme.dart' as grid;
+import '../terminal/terminal_theme.dart';
+import '../terminal/terminal_theme_store.dart';
+import '../shared/theme/workspace_bar_style.dart';
+import 'status_line.dart';
+import 'workspace_bar_control.dart';
+
+typedef StatusLineLink = ({String label, VoidCallback? onPressed});
+
+List<double> workspaceStatusLineWidthsOf(
+  BuildContext context,
+  StatusLineParts parts,
+) {
+  final cell = workspaceBarCellSizeOf(context);
+  return [
+    for (final component in parts.components)
+      component.parts.segments.fold(
+            0.0,
+            (width, segment) =>
+                width +
+                workspaceBarTextSizeOf(context, segment.text).width +
+                (segment.branchSymbol ? cell.width * 2 : 0),
+          ) +
+          (parts.style.segmented
+              ? component.parts.segments.length * cell.width * 3
+              : 0),
+  ];
+}
+
+// Shorten a branch before squeezing machine/project. Below twelve cells the
+// ordinary shared cap takes over so no field can crowd out all the others.
+List<double> _fitContextWidths(
+  StatusLineParts parts,
+  List<double> natural,
+  double available,
+  double cell,
+) {
+  final widths = [...natural];
+  var excess = math.max(0.0, widths.fold(0.0, (a, b) => a + b) - available);
+  final components = parts.components;
+  for (var i = 0; i < widths.length; i++) {
+    if (components[i].field != StatusLineField.branch) continue;
+    final reduction = math.min(excess, math.max(0.0, widths[i] - cell * 12));
+    widths[i] -= reduction;
+    excess -= reduction;
+  }
+  return fitStatusLineWidths(widths, available);
+}
+
+/// Fields retain individual click targets even when a long branch is shortened.
+class WorkspaceStatusLine extends StatelessWidget {
+  const WorkspaceStatusLine({
+    super.key,
+    required this.parts,
+    required this.links,
+    required this.color,
+    this.nextBackground,
+  });
+  final StatusLineParts parts;
+  final Map<StatusLineField, StatusLineLink> links;
+  final bool color;
+  final Color? nextBackground;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = terminalThemeFor(
+      grid.AppTheme.palette.value,
+      terminalThemeStore.value,
+    );
+    final cell = workspaceBarCellSizeOf(context);
+    final height = workspaceBarControlHeight(context);
+    final components = parts.components;
+    final widths = workspaceStatusLineWidthsOf(context, parts);
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final fitted = _fitContextWidths(
+          parts,
+          widths,
+          constraints.maxWidth,
+          cell.width,
+        );
+        return Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            for (var i = 0; i < components.length; i++)
+              (() {
+                final component = components[i];
+                final link = links[component.field];
+                Widget body(BuildContext context, bool emphasized) => SizedBox(
+                  width: fitted[i],
+                  height: height,
+                  child: Center(
+                    child: StatusLine(
+                      parts: component.parts,
+                      middleEllipsis: component.field == StatusLineField.branch,
+                      color: color,
+                      workspaceBar: true,
+                      emphasized: emphasized,
+                      textAlign: TextAlign.left,
+                      segmentOffset: component.offset,
+                      nextBackground: i == components.length - 1
+                          ? nextBackground
+                          : statusLinePaintSegments(
+                              components[i + 1].parts,
+                              theme,
+                              color: color,
+                              segmentOffset: components[i + 1].offset,
+                            ).firstOrNull?.background,
+                    ),
+                  ),
+                );
+                return link == null
+                    ? body(context, false)
+                    : WorkspaceBarControl(
+                        key: ValueKey(
+                          'workspace-context-${component.field!.name}',
+                        ),
+                        label: link.label,
+                        tooltip: link.label,
+                        onPressed: link.onPressed,
+                        builder: body,
+                      );
+              })(),
+          ],
+        );
+      },
+    );
+  }
+}

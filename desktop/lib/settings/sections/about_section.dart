@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:harness/terminal/terminal_text.dart';
 
 import '../../core/app_version.dart';
 import '../../core/build_identity.dart';
@@ -6,6 +8,7 @@ import '../../shared/theme/app_theme.dart' as grid;
 import '../../shared/widgets/section_scaffold.dart';
 import '../../shared/widgets/skeleton.dart';
 import '../../state/app_state.dart';
+import '../../update/desktop_updater.dart';
 import '../../widgets/flash_firmware_dialog.dart';
 import '../../widgets/update_notice.dart';
 
@@ -20,9 +23,8 @@ import '../../widgets/update_notice.dart';
 /// door — which is what the pane was missing when it was label-and-value text
 /// floating on the window.
 ///
-/// The check runs through [AppNotifier.checkForUpdates] and reports through
-/// [showUpdateCheckDialog] — the same pair the "Check for Updates…" menu item
-/// drives, so the menu and this button can't answer differently. The card's
+/// [checkForUpdatesAndShowResult] is also used by the native menu, so asking
+/// from both places shares a check and a single result dialog. The card's
 /// pill is the quiet half of that: the dialog is the answer to a question you
 /// asked, the pill is the state you can see without asking.
 ///
@@ -42,21 +44,8 @@ class AboutSection extends StatefulWidget {
 }
 
 class _AboutSectionState extends State<AboutSection> {
-  /// Held here rather than on [AppNotifier]: a check started from this button
-  /// is this screen's business, and the notifier already carries the state that
-  /// outlives it (the update found, the install running, the error).
-  bool _checking = false;
-
-  Future<void> _check() async {
-    setState(() => _checking = true);
-    try {
-      final result = await widget.notifier.checkForUpdates();
-      if (!mounted) return;
-      await showUpdateCheckDialog(context, widget.notifier, result);
-    } finally {
-      if (mounted) setState(() => _checking = false);
-    }
-  }
+  Future<void> _check() =>
+      checkForUpdatesAndShowResult(context, widget.notifier);
 
   @override
   Widget build(BuildContext context) {
@@ -78,17 +67,20 @@ class _AboutSectionState extends State<AboutSection> {
                 listenable: widget.notifier,
                 builder: (context, _) => _AboutCard(
                   notifier: widget.notifier,
-                  checking: _checking,
+                  checking: widget.notifier.isCheckingForUpdate,
                   onCheck: _check,
                 ),
               ),
               const SizedBox(height: 12),
               Text(
-                'Harness checks for a newer build when it starts, and every '
-                'six hours after that.',
-                style: TextStyle(
+                kIsWeb
+                    ? 'Refresh the page to load the latest version.'
+                    : widget.notifier.updateChecksEnabled
+                    ? 'Harness checks for a newer build when it starts, '
+                          'and every six hours after that.'
+                    : 'Updates are disabled in this build.',
+                style: grid.AppType.body(
                   color: grid.AppPalette.textFaint,
-                  fontSize: 11.5,
                   height: 1.45,
                 ),
               ),
@@ -134,12 +126,14 @@ class _AboutCard extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           _Identity(state: _PillState.of(notifier, checking: checking)),
-          const SizedBox(height: 18),
-          Container(height: 1, color: grid.AppPalette.divider),
-          const SizedBox(height: 14),
-          _CheckRow(checking: checking, onCheck: onCheck),
-          const SizedBox(height: 12),
-          const _FlashRow(),
+          if (!kIsWeb) ...[
+            const SizedBox(height: 18),
+            Container(height: 1, color: grid.AppPalette.divider),
+            const SizedBox(height: 14),
+            _CheckRow(checking: checking, onCheck: onCheck),
+            const SizedBox(height: 12),
+            const _FlashRow(),
+          ],
         ],
       ),
     );
@@ -173,12 +167,7 @@ class _Identity extends StatelessWidget {
             children: [
               Text(
                 desktopAppName,
-                style: TextStyle(
-                  color: grid.AppPalette.textPrimary,
-                  fontSize: 16,
-                  fontWeight: grid.AppFont.semibold,
-                  letterSpacing: -0.1,
-                ),
+                style: grid.AppType.heading(color: grid.AppPalette.textPrimary),
               ),
               const SizedBox(height: 4),
               _VersionLine(state: state),
@@ -216,13 +205,15 @@ class _VersionLineState extends State<_VersionLine> {
   @override
   Widget build(BuildContext context) {
     grid.AppTheme.watch(context);
-    final style = TextStyle(
+    TerminalFontScope.watch(context);
+    final style = grid.AppType.monoLabel(
       color: grid.AppPalette.textSecondary,
-      fontSize: 12.5,
-      fontFamily: grid.AppFont.mono,
-      fontFamilyFallback: grid.AppFont.monoFallback,
+      fontWeight: FontWeight.w400,
     );
-    return Row(
+    return Wrap(
+      spacing: 9,
+      runSpacing: 6,
+      crossAxisAlignment: WrapCrossAlignment.center,
       children: [
         FutureBuilder<String>(
           future: _info,
@@ -240,8 +231,7 @@ class _VersionLineState extends State<_VersionLine> {
             return Text(version, style: style);
           },
         ),
-        const SizedBox(width: 9),
-        _StatusPill(state: state),
+        if (!kIsWeb) _StatusPill(state: state),
       ],
     );
   }
@@ -283,12 +273,13 @@ class _StatusPill extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 6),
-          Text(
-            state.label,
-            style: TextStyle(
-              color: state.color,
-              fontSize: 11,
-              fontWeight: grid.AppFont.medium,
+          Flexible(
+            child: Text(
+              state.label,
+              style: grid.AppType.caption(
+                color: state.color,
+                fontWeight: grid.AppFont.medium,
+              ),
             ),
           ),
         ],
@@ -311,14 +302,20 @@ class _PillState {
 
   static _PillState of(AppNotifier notifier, {required bool checking}) {
     if (notifier.isInstallingUpdate) {
+      // The same number the banner and the dialog show; without one the
+      // download has not started reporting yet, or is being unpacked.
+      final percent = notifier.updateDownloadPercent;
       return _PillState(
-        'Installing…',
+        percent == null ? 'Installing…' : 'Installing… $percent%',
         grid.AppPalette.accentOnSurface,
         wash: true,
       );
     }
     if (notifier.updateError != null) {
       return _PillState('Update failed', grid.AppPalette.warn);
+    }
+    if (checking || notifier.isCheckingForUpdate) {
+      return _PillState('Checking…', grid.AppPalette.textSecondary);
     }
     final update = notifier.availableUpdate;
     if (update != null) {
@@ -328,10 +325,28 @@ class _PillState {
         wash: true,
       );
     }
-    if (checking || notifier.isCheckingForUpdate) {
-      return _PillState('Checking…', grid.AppPalette.textSecondary);
-    }
-    return _PillState('Up to date', grid.AppPalette.online);
+    return switch (notifier.lastUpdateCheck?.status) {
+      DesktopUpdateCheckStatus.upToDate => _PillState(
+        'Up to date',
+        grid.AppPalette.online,
+      ),
+      DesktopUpdateCheckStatus.available => _PillState(
+        'Update skipped',
+        grid.AppPalette.textSecondary,
+      ),
+      DesktopUpdateCheckStatus.failed => _PillState(
+        'Check failed',
+        grid.AppPalette.warn,
+      ),
+      DesktopUpdateCheckStatus.disabled => _PillState(
+        'Updates off',
+        grid.AppPalette.textSecondary,
+      ),
+      null => _PillState(
+        notifier.updateChecksEnabled ? 'Not checked' : 'Updates off',
+        grid.AppPalette.textSecondary,
+      ),
+    };
   }
 }
 
@@ -350,27 +365,13 @@ class _CheckRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     grid.AppTheme.watch(context);
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.center,
-      children: [
-        Expanded(
-          child: Text(
-            'It updates itself in the background — this is where you can ask '
-            'early.',
-            style: TextStyle(
-              color: grid.AppPalette.textSecondary,
-              fontSize: 12,
-              height: 1.45,
-            ),
-          ),
-        ),
-        const SizedBox(width: 18),
-        OutlinedButton(
-          key: const Key('settings-check-updates-button'),
-          onPressed: checking ? null : () => onCheck(),
-          child: Text(checking ? 'Checking…' : 'Check for updates'),
-        ),
-      ],
+    return _AboutAction(
+      description: 'Choose when to install a new version.',
+      action: OutlinedButton(
+        key: const Key('settings-check-updates-button'),
+        onPressed: checking ? null : () => onCheck(),
+        child: Text(checking ? 'Checking…' : 'Check for updates'),
+      ),
     );
   }
 }
@@ -383,26 +384,51 @@ class _FlashRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     grid.AppTheme.watch(context);
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.center,
-      children: [
-        Expanded(
-          child: Text(
-            'The hardware dial takes its firmware over USB.',
-            style: TextStyle(
-              color: grid.AppPalette.textSecondary,
-              fontSize: 12,
-              height: 1.45,
-            ),
+    return _AboutAction(
+      description: 'Update your hardware dial over USB.',
+      action: OutlinedButton(
+        key: const Key('settings-flash-firmware-button'),
+        onPressed: () => showFlashFirmwareDialog(context),
+        child: const Text('Flash dial firmware…'),
+      ),
+    );
+  }
+}
+
+/// Put the action below its explanation when larger text needs the full row.
+class _AboutAction extends StatelessWidget {
+  const _AboutAction({required this.description, required this.action});
+
+  final String description;
+  final Widget action;
+
+  @override
+  Widget build(BuildContext context) {
+    grid.AppTheme.watch(context);
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final text = Text(
+          description,
+          style: grid.AppType.body(
+            color: grid.AppPalette.textSecondary,
+            height: 1.45,
           ),
-        ),
-        const SizedBox(width: 18),
-        OutlinedButton(
-          key: const Key('settings-flash-firmware-button'),
-          onPressed: () => showFlashFirmwareDialog(context),
-          child: const Text('Flash dial firmware…'),
-        ),
-      ],
+        );
+        final scale = grid.appTextScaleOf(context);
+        if (constraints.maxWidth < 420 * scale) {
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [text, const SizedBox(height: 10), action],
+          );
+        }
+        return Row(
+          children: [
+            Expanded(child: text),
+            const SizedBox(width: 18),
+            action,
+          ],
+        );
+      },
     );
   }
 }

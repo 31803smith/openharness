@@ -1,4 +1,5 @@
 import 'keymap.dart';
+import 'keymap_commands.dart' show harnessCommandActive;
 
 enum KeymapKeyPhase { down, repeat, up }
 
@@ -88,8 +89,24 @@ class KeymapDispatch {
       return const KeymapDispatchResult(handled: true);
     }
     cancel();
-    final command = match.command;
+    // A command this window does not have now (the daemon's, while daemons
+    // are off) is not bound: its key goes where it went before.
+    final command =
+        match.command != null && harnessCommandActive(match.command!)
+        ? match.command
+        : null;
     if (command != null) {
+      // In the workspace a matched key is consumed even when its command is
+      // unavailable: it must not fall through and type into a terminal. In a
+      // PICKER the thing underneath is a text field, and swallowing a key
+      // nothing handles there takes it from the editor for no one's benefit —
+      // ⌥1–⌥9 pick a row in a list, and on the task field (no rows) they ate
+      // ¡ ™ £ ¢ ∞ § ¶ • ª out of a 2000-character message. A single stroke
+      // that nothing here can run is left to the field. (Part of a sequence
+      // is still consumed: its first strokes already were.)
+      if (context.isPicker && !wasPending && !canExecute(command)) {
+        return const KeymapDispatchResult(handled: false);
+      }
       _pressed.add(physicalKey);
       return KeymapDispatchResult(
         handled: true,

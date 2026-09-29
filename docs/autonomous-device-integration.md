@@ -1,5 +1,10 @@
 # Autonomous device ↔ Mac: direct discovery and original Harness E2EE
 
+## Store discovery and agent preparation (v1)
+
+Paired robots can negotiate Store discovery and durable agent preparation separately from task delivery. See the [shared OS contract](autonomous-device-store.md), including JSON schemas, recovery rules and the Blender walkthrough. Older clients keep the operations below unchanged.
+
+
 The Mac discovers Autonomous OS on the local network and connects **directly to the device**.
 No manual IP address, device backend credentials, cloud device registration, or backend relay is
 involved in this path. The existing Harness Mac login/start behavior is unchanged; an already
@@ -60,7 +65,7 @@ All routes remain on the credential-checked loopback hook server. There is no ne
 
 | Route | Input/result |
 |---|---|
-| GET `/api/autonomous-device/discover` | `{devices:[{id,name,host,port}]}` discovered candidates |
+| GET `/api/autonomous-device/discover` | `{devices:[{id,name,host,port}]}` discovered candidates; 503 `LOCAL_NETWORK_BLOCKED` when the OS refused the multicast query and nothing answered (macOS Local Network privacy) |
 | POST `/api/autonomous-device/pair/start` | `{code,device:<discovery-id>}` → `{state:"paired",label,fingerprint}` |
 | GET `/api/autonomous-device/pair/status` | existing pending device status idle/waiting/running |
 | GET `/api/autonomous-device/status` | `{transport:"direct",connected,paired,sessions,proto:1}`; connected/sessions count authenticated application-ready direct sessions only |
@@ -76,6 +81,13 @@ When the device revokes its own local trust, it sends the authenticated applicat
 The CLI then removes that exact device identity and its reconnect metadata. A socket close without
 this request remains `offline`, rather than being treated as a revoke, so transient LAN failures do
 not unpair the device.
+
+Revoke is bidirectional. When the app removes the device (`harness unpair`, `harness unpair --all`,
+`harness autonomous-device revoke`, or the dashboard) while the device's direct session is open, the
+CLI seals `{type:"pair.revoke",machineId:<this computer's machineId>}` as an `autonomous_device_event`
+over that same E2EE session, then closes the socket gracefully and deletes local trust. It is
+best-effort: a send failure never blocks local removal. A device that is offline at that moment
+learns it on reconnect, when its pinned `e2e_hello` is answered with `e2e_denied` (`unpaired`).
 
 ## Existing encrypted wire, unchanged
 
@@ -127,6 +139,8 @@ a duplicate may return any retained receipt state. Supported operations:
 |---|---|---|
 | `focus.ensure` | none | Same snapshot as `focus.get`; enable-time first-agent fallback acknowledged by Desktop |
 | `focus.get` | none | `focus:null\|{machineId,agentId,name?},focusRevision` |
+| `focus.step` | `direction:"next"\|"previous",idempotencyKey,focusRevision` | Same snapshot as `focus.get`, after Desktop acknowledged the new agent — see *Stepping focus* |
+| `scroll` | `phase:"down"\|"move"\|"up",dy?,velocity?` | none — see *Scrolling the focused terminal* |
 | `agents.list` | none | `machineId,agents:[{machineId,agentId,name,engine,state,recap?}]` — `recap` is the agent's newest turn headline (≤200 chars, the same string `recap` returns as `turns[0].recap`); absent until a turn has been summarised |
 | `status` | `machineId,agentId` | `machineId,agentId,state,openQuestion:null\|{requestId,questions}` |
 | `recap` | `machineId,agentId,n?` (default 3, integer 1–5) | `machineId,agentId,turns:[{kind,text,recap?,fullText?}]` |
@@ -181,9 +195,12 @@ completed/rejected receipt is evicted, even if younger than 30 minutes; retentio
 both capacity and TTL. Outstanding/unknown entries are never silently evicted: if all 512 are
 unresolved, new mutations receive `BACKPRESSURE`. Evicting these entries would permit a duplicate
 live prompt; this explicit exception takes precedence over unconditional oldest-entry eviction.
-A retired key may be treated as new, so never auto-resend after `receipt:null`. All receipts/events are
-RAM-only. Every daemon start has a new UUID `serverInstanceId`; no mutation auto-replay is safe
-across restart. Revoke clears the old device's receipts and event replay history.
+A retired key may be treated as new, so never auto-resend after `receipt:null`. The CLI now persists
+reservations, receipts and proven native Device results atomically in `device-results.json`.
+Each daemon start has a new transport `serverInstanceId`; restored in-flight receipts are unknown,
+not redispatched. Immutable results retain their originating payload instance. Revoke clears the
+old device's receipts, retained results and event replay history. See
+[summary correlation and recovery](autonomous-device-result-correlation.md).
 
 Events are encrypted full objects:
 
@@ -194,8 +211,12 @@ Events are encrypted full objects:
 Kinds include `receipt.updated`, `turn.started`, `turn.done`, `turn.error`, `turn.summary`,
 `turn.tool`, `agent.error`, `question.open`, `question.close`.
 
-`turn.summary` payload and `recap` turn entries carry three views of one answer, and a consumer should
-prefer `turns[].fullText`, then `turn.summary.fullText`, then `text`:
+For an enriched `turn.summary` with resultId/correlation, use that event's fullText exclusively;
+never fetch latest recap to identify its result. The [summary contract](autonomous-device-result-correlation.md)
+defines membership, dedupe, stable replay and a 32 KiB serialized payload bound without truncation.
+The following recap/preview rules describe the unchanged **legacy** summary path:
+
+`turn.summary` payload and `recap` turn entries carry three views of one answer:
 
 | Field | Limit | What it is |
 |---|---|---|
@@ -217,16 +238,18 @@ is UTF-8 safe and marked with a trailing `…`. `text` and `recap` are unchanged
 shared `commander_event` card is not widened — the USB dial's encoder throws above an 8 KiB frame, so the
 field is added only to the events this service emits. Question-open payload is
 `{questionRequestId,questions}`. Status uses `openQuestion.requestId` for that same identifier.
-Only device-origin turns with known correlation include `idempotencyKey`/`turnId`.
+Only single-input device-origin turns with known correlation include singular `idempotencyKey`/`turnId`.
+A group uses `payload.correlation.inputs` and never selects one arbitrary member key.
 Ring capacity 500; cursor is `(serverInstanceId,eventId)`. Matching retained cursor replays newer
 events. Changed instance or stale cursor returns encrypted `{type:"resync",reason:
 "instance_changed"|"cursor_too_old",serverInstanceId,cursor}`. First connect also requests resync.
-OS re-reads agents/status and reconciles outstanding keys using receipt.get. Queued means wait;
+After resync, retained enriched summaries are replayed with fresh transport event IDs; dedupe by
+originating payload instance/resultId. OS re-reads agents/status and reconciles outstanding keys using receipt.get. Queued means wait;
 delivered/started/completed means adopt; rejected means report; unknown/null means inspect and ask
 before resending. Never automatically replay mutations on reconnect.
 
 Application errors include `INVALID_REQUEST`, `UNSUPPORTED_CAPABILITY`, `MISSING_TARGET`,
-`MACHINE_MISMATCH`, `AGENT_NOT_FOUND`, `FOCUS_CHANGED`, `PAYLOAD_TOO_LARGE`, `QUESTION_STALE`,
+`MACHINE_MISMATCH`, `AGENT_NOT_FOUND`, `NO_AGENTS`, `FOCUS_UNAVAILABLE`, `FOCUS_CHANGED`, `PAYLOAD_TOO_LARGE`, `QUESTION_STALE`,
 `IDEMPOTENCY_CONFLICT`, `BACKPRESSURE`, `RATE_LIMITED`, `REVOKED`, `INTERNAL`.
 A per-relay-connection token bucket permits burst 20, refilling one request/second, with at most four async
 requests in flight; a new relay connection starts a new quota. Excess returns an error result.
@@ -263,3 +286,73 @@ so a delayed request cannot open a pane after the wait. This operation is for en
 never for recovering a missing target during an utterance. Older CLIs without this capability require
 an explicit app selection. `focus.get`, events, pairing, and normal turn dispatch remain unchanged.
 The automatic app acknowledgment carries its original focus revision; CLI discards it if a newer explicit selection arrived while the request was in flight.
+
+### Stepping focus
+
+`focus.step` is one tick of the USB dial's carousel, requested by the paired device instead of a thumb:
+
+```json
+{"type":"focus.step","requestId":"<uuid>","idempotencyKey":"<uuid per gesture>","direction":"next","focusRevision":"<from focus.get>"}
+```
+
+`direction` is `next` or `previous`; `idempotencyKey` matches `[A-Za-z0-9_-]{1,64}`; `focusRevision`
+is required. Success is the same `{focus,focusRevision}` snapshot `focus.get` returns, read **after**
+Desktop acknowledged the new selection through its ordinary `app_focus` frame; a `focus.changed` event
+carries the same snapshot, as for any other change. No headless target is invented.
+
+The walk is the dial's: the Desktop window's open tiles in tile order (with no window, every agent in
+rail order — this computer first, then other machines in wheel order), wrapping at both ends. Agents
+without a tile are never stepped onto. With nothing focused, `next` starts at the first tile and
+`previous` at the last. A desk of one agent answers with the current snapshot at once; nothing moves.
+The move itself is the same `dial_focus` forward the cable dial uses, so the app decides what a
+selection means exactly as it does for the dial.
+
+Order of checks: a retained result for `(deviceId,idempotencyKey)` is returned first, success or
+error, so a retried gesture is one tick, never two (same key with a different `direction` or
+`focusRevision` → `IDEMPOTENCY_CONFLICT`). Only a new key is then checked against the current
+revision: a stale `focusRevision` returns `FOCUS_CHANGED` and nothing moves. Retained results are
+RAM-only, capped at 512 per daemon, evicted oldest first, and cleared by revoke like receipts.
+
+Errors: `NO_AGENTS` when the walk is empty; `FOCUS_UNAVAILABLE` when no Desktop window is connected
+or it did not acknowledge within two seconds (the daemon does not retry — read `focus.get` before
+sending again); `INVALID_REQUEST` for a bad direction, key or revision.
+
+Target limits are unchanged. The walk may step onto a tile that belongs to another machine, because
+the window can show one; the local daemon then reports the app's focus leaving this machine
+(`focus:null`, new revision, or the remote target if Desktop announces it here), and `turn.send`
+to that target still returns `MACHINE_MISMATCH`. The OS remains responsible for showing that a
+remote target is not supported for dispatch. Pairing, transport, credentials and task dispatch are
+untouched; older CLIs do not list `focus.step` in hello capabilities.
+
+### Scrolling the focused terminal
+
+`scroll` is one report of a finger on the paired device's glass, forwarded to the terminal Desktop
+has in front — the same `dial_scroll` frame the USB dial sends, so the app treats both alike:
+
+```json
+{"type":"scroll","requestId":"<uuid>","phase":"move","dy":-24}
+{"type":"scroll","requestId":"<uuid>","phase":"up","dy":-3,"velocity":-900}
+```
+
+The device is a touchpad here: it reports **movement**, not a position, because it cannot know how
+tall the terminal is; the terminal owns the scrollback and does the arithmetic. A stroke is sent in
+pieces — `down` when the finger lands (the window stops any coasting), `move`s carrying `dy` device
+pixels travelled since the last report (positive = down the glass), and `up` when it lifts, whose
+`velocity` (device px/s, signed like `dy`) becomes the fling. `dy` and `velocity` default to 0 and
+must be integers within ±4096 and ±100000. Send `up` for every `down`: a stroke that never closes
+holds a drag open on the app side until the next `down`.
+
+A stroke is a stream, not a mutation: there is no `idempotencyKey`, no receipt, nothing retained, and
+nothing to retry — a lost `move` is a shorter scroll. Success is an empty `scroll_result`. Only the
+terminal Desktop has focused scrolls; a viewer pane does not. Errors: `FOCUS_UNAVAILABLE` when no
+Desktop window is connected; `INVALID_REQUEST` for a bad phase, a non-integer or out-of-range value,
+or any other field. Older CLIs do not list `scroll` in hello capabilities.
+
+## Input during a running task
+
+Claude/Codex `turn.send` now uses native input while the agent is working, with a serialized
+terminal writer and independent delivery tracking. `input.status.v1` advertises optional
+`receipt.input` scheduling/acceptance details. Existing receipt states retain their meanings;
+acceptance is not completion. Overlapping starts without engine correlation remain unknown.
+See [engine behavior, tests, and required OS coordination](in-flight-agent-input.md), especially
+the prohibition on assigning an uncorrelated session summary/latest recap to a pending message.

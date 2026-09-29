@@ -2,9 +2,9 @@
 #
 # Pass extra arguments to a target's script via ARGS, e.g.:
 #   make install-cli ARGS="--no-restart"
-#   make upload-cli  ARGS="0.1.0"
+#   make release-cli ARGS="--dry-run"
 
-.PHONY: cli-test install-cli upload-cli upload-cli-install-sh release-cli release-backend release-desktop remote-machine upload-circle device-test
+.PHONY: cli-test install-cli upload-cli-install-sh release-cli release-backend release-desktop release-web remote-machine upload-circle device-test
 
 ## cli-test: typecheck + run the CLI test suite.
 cli-test:
@@ -31,6 +31,13 @@ release-backend:
 release-desktop:
 	bash desktop/scripts/release-desktop.sh $(ARGS)
 
+## release-web: ship the browser app to harness.autonomous.ai — tag this commit vX.Y.Z_web; CI builds
+## the Flutter bundle into website/'s image and pushes it (ArgoCD deploys). Re-run with the same version
+## to resume waiting on a tag that already exists.
+## ARGS="--dry-run" to preview, ARGS="--minor" or ARGS="X.Y.Z" to bump differently.
+release-web:
+	bash desktop/scripts/release-web.sh $(ARGS)
+
 ## install-cli: bundle the CLI from THIS working tree and install it into ~/.harness/cli — the local dev
 ## loop, nothing published. Restarts the daemon on the new bytes. Self-update stays ON: the build is
 ## labelled with the published version, which the release you are level with cannot outrank, so your bytes
@@ -38,16 +45,11 @@ release-desktop:
 install-cli:
 	bash cli/scripts/install-cli.sh $(ARGS)
 
-## upload-cli: bump version -> bundle -> publish the CLI. MAINTAINER ONLY — it writes to the release
-## bucket, so it needs an authenticated `gcloud storage` (or gsutil) with write access on it, plus
-## node/npm for the bundle step.
-## Running daemons pick the new version up within ~1 min.
-upload-cli:
-	bash cli/scripts/upload-cli.sh $(ARGS)
-
 ## upload-cli-install-sh: publish cli/scripts/install.sh — the `curl ... | bash` installer — to
 ## harness/cli/install.sh in the release bucket (-> https://cdn.autonomous.ai/harness/cli/install.sh).
-## One static file, no version; MAINTAINER ONLY, same credential as upload-cli. Verify the CDN edge
+## One static file, no version; MAINTAINER ONLY (an authenticated `gcloud storage` with write access
+## on the bucket). The CLI bundle itself is never published from a laptop: `make release-cli` tags,
+## and CI runs cli/scripts/upload-cli.sh from the tag (.github/workflows/release.yml). Verify the CDN edge
 ## serves the new bytes afterwards (the script prints the command).
 upload-cli-install-sh:
 	bash cli/scripts/upload-install-sh.sh
@@ -68,17 +70,17 @@ remote-machine:
 ##
 ## NOT a tag-triggered release like the three above, and deliberately so: this builds with a local
 ## ESP-IDF toolchain and writes straight to the GCS bucket every running dial polls, so it needs an
-## authenticated gsutil and a sourced IDF env on the machine that runs it. There is no CI runner with
-## a board attached to check the result. See device/esp32-circle/RELEASE.md.
+## authenticated `gcloud storage` and a sourced IDF env on the machine that runs it. There is no CI runner with
+## a board attached to check the result. See devices/harness-device/firmware/RELEASE.md.
 ##
 ## ARGS="--dry-run" to preview, ARGS="X.Y.Z" for an explicit version, ARGS="--no-bump" to rebuild and
 ## upload what version.txt already says.
 upload-circle:
-	bash device/esp32-circle/scripts/upload-firmware.sh $(ARGS)
+	bash devices/harness-device/firmware/scripts/upload-firmware.sh $(ARGS)
 
 ## device-test: the firmware's host-side unit tests — frame codec, machine list, carousel ring.
 ##
 ## Plain `cc` on the host, no board and no ESP-IDF: the parts worth testing here are arithmetic and
 ## parsing, and a test that needed hardware attached is a test nobody runs.
 device-test:
-	bash device/esp32-circle/test/run.sh
+	bash devices/harness-device/firmware/test/run.sh

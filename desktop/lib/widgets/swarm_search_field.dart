@@ -1,5 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:harness/terminal/terminal_text.dart';
+
+import '../shared/theme/app_theme.dart' as grid;
+import '../shared/theme/app_type.dart';
+
+Color get _rim => grid.AppTheme.pick(grid.AppPalette.textFaint, Colors.white24);
 
 class SwarmSearchField extends StatefulWidget {
   const SwarmSearchField({
@@ -8,7 +14,7 @@ class SwarmSearchField extends StatefulWidget {
     this.onSubmitted,
     this.onMove,
     this.autofocus = false,
-    this.hintText = 'Find an agent',
+    this.hintText = 'Search harnesses',
     this.controller,
     this.focusNode,
   });
@@ -26,8 +32,7 @@ class SwarmSearchField extends StatefulWidget {
 class _SwarmSearchFieldState extends State<SwarmSearchField> {
   FocusNode? _ownedFocus;
   FocusNode get _focus =>
-      widget.focusNode ??
-      (_ownedFocus ??= FocusNode(debugLabel: 'Find agent'));
+      widget.focusNode ?? (_ownedFocus ??= FocusNode(debugLabel: 'Find agent'));
 
   @override
   void initState() {
@@ -51,6 +56,7 @@ class _SwarmSearchFieldState extends State<SwarmSearchField> {
 
   @override
   Widget build(BuildContext context) {
+    TerminalFontScope.watch(context);
     final onMove = widget.onMove;
     final onSubmitted = widget.onSubmitted;
     return CallbackShortcuts(
@@ -84,23 +90,35 @@ class _SwarmSearchFieldState extends State<SwarmSearchField> {
         autofocus: widget.autofocus,
         onChanged: widget.onChanged,
         onSubmitted: (_) => onSubmitted?.call(),
-        style: const TextStyle(fontSize: 13),
+        style: AppType.mono(),
         decoration: InputDecoration(
           hintText: widget.hintText,
+          // Dark palettes keep the navy well this field was tuned in; on a
+          // light one it would be a dark hole under dark ink, so the field
+          // takes the search surface, a faint-ink rim and the secondary hint.
+          hintStyle: AppType.mono(
+            color: grid.AppTheme.pick(
+              grid.AppPalette.textSecondary,
+              Colors.white60,
+            ),
+          ),
           prefixIcon: const Icon(Icons.search, size: 18),
           filled: true,
-          fillColor: const Color(0xa6111521),
+          fillColor: grid.AppTheme.pick(
+            grid.AppPalette.swarmSearchSurface,
+            const Color(0xa6111521),
+          ),
           contentPadding: const EdgeInsets.symmetric(
             horizontal: 14,
             vertical: 14,
           ),
           border: OutlineInputBorder(
             borderRadius: BorderRadius.circular(8),
-            borderSide: const BorderSide(color: Colors.white24),
+            borderSide: BorderSide(color: _rim),
           ),
           enabledBorder: OutlineInputBorder(
             borderRadius: BorderRadius.circular(8),
-            borderSide: const BorderSide(color: Colors.white24),
+            borderSide: BorderSide(color: _rim),
           ),
         ),
       ),

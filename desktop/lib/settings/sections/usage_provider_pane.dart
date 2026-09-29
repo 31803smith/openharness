@@ -16,13 +16,13 @@ import 'package:flutter/material.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import '../../shared/theme/app_theme.dart';
-import '../../shared/widgets/app_select_field.dart';
 import '../../usage/ledger/ledger_types.dart';
 import '../../usage/ledger/usage_ledger_store.dart';
 import '../../usage/ledger/usage_overview.dart';
 import '../../usage/ledger/usage_report.dart';
 import 'usage_detail_panels.dart';
 import 'usage_panels.dart';
+import 'usage_header.dart';
 
 class UsageProviderPane extends StatefulWidget {
   const UsageProviderPane({super.key, required this.store});
@@ -68,9 +68,16 @@ class _UsageProviderPaneState extends State<UsageProviderPane> {
           onDisable: () => unawaited(store.setEnabled(false)),
         ),
         const SizedBox(height: 12),
+        if (state.hasIncompleteFigures && report.hasData) ...[
+          _Notice(message: state.message ?? 'Figures are incomplete.'),
+          const SizedBox(height: 12),
+        ],
         if (state.status == LedgerStatus.unavailable ||
-            state.status == LedgerStatus.failed)
+            state.status == LedgerStatus.failed ||
+            (state.status == LedgerStatus.partial && !report.hasData))
           _Notice(message: state.message ?? 'No figures.')
+        else if (state.status == LedgerStatus.scanning && !report.hasData)
+          UsageLoadingState(message: 'Scanning ${provider.label} logs…')
         else if (!report.hasData)
           _Notice(message: 'No ${provider.label} usage in this range.')
         else ...[
@@ -79,7 +86,7 @@ class _UsageProviderPaneState extends State<UsageProviderPane> {
           Text(
             'Cache reuse rate is cache read tokens / (fresh input + cache read '
             'tokens).',
-            style: TextStyle(fontSize: 11, color: AppPalette.textFaint),
+            style: AppType.caption(color: AppPalette.textFaint),
           ),
           const SizedBox(height: 12),
           UsageDailyChart(
@@ -96,7 +103,7 @@ class _UsageProviderPaneState extends State<UsageProviderPane> {
           const SizedBox(height: 12),
           UsageBreakdownCard(
             title: 'By project',
-            subtitle: 'Grouped by the folder each session ran in.',
+            subtitle: 'Grouped by the folder each conversation ran in.',
             rows: breakdownByProject(provider, entries),
           ),
           const SizedBox(height: 12),
@@ -149,7 +156,7 @@ class _Figures extends StatelessWidget {
         footnote: 'read nothing from cache',
       ),
       UsageStatCard(
-        label: 'Sessions / turns',
+        label: 'Conversations / turns',
         value: '${report.sessions} / ${report.turns}',
         icon: LucideIcons.folderKanban300,
       ),
@@ -200,42 +207,25 @@ class _Header extends StatelessWidget {
   Widget build(BuildContext context) {
     AppTheme.watch(context);
     final scanning = state.status == LedgerStatus.scanning;
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                '${provider.label} usage',
-                style: Theme.of(context).textTheme.titleSmall,
-              ),
-              const SizedBox(height: 2),
-              Text(
-                // The range is named here as well as in the picker, because the
-                // figures below mean nothing without it and the picker is a
-                // control the eye skips.
-                'All local ${provider.label} usage · ${range.label}',
-                style: TextStyle(
-                  fontSize: 11.5,
-                  color: AppPalette.textSecondary,
-                ),
-              ),
-            ],
+    return UsageHeader(
+      title: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('${provider.label} usage', style: AppType.heading()),
+          const SizedBox(height: 2),
+          Text(
+            // The range is named here as well as in the picker, because the
+            // figures below mean nothing without it and the picker is a
+            // control the eye skips.
+            scanning
+                ? '${range.label} · Scanning local logs…'
+                : 'All local ${provider.label} usage · ${range.label}',
+            style: AppType.body(color: AppPalette.textSecondary),
           ),
-        ),
-        const SizedBox(width: 12),
-        AppSelectField<UsageRange>(
-          value: range,
-          width: 150,
-          options: [
-            for (final option in UsageRange.values)
-              SelectOption(value: option, label: option.label),
-          ],
-          onChanged: onRangeChanged,
-        ),
-        const SizedBox(width: 4),
+        ],
+      ),
+      controls: [
+        UsageRangeField(value: range, onChanged: onRangeChanged),
         IconButton(
           onPressed: scanning ? null : onRefresh,
           iconSize: 15,
@@ -275,19 +265,15 @@ class _DisabledCard extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            '${provider.label} usage',
-            style: Theme.of(context).textTheme.titleSmall,
-          ),
+          Text('${provider.label} usage', style: AppType.heading()),
           const SizedBox(height: 6),
           ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 520),
             child: Text(
               'Reads the logs the ${provider.label} CLI already keeps on this '
-              'computer to show token, model and session figures. Nothing is '
+              'computer to show token, model and conversation figures. Nothing is '
               'read until you switch it on.',
-              style: TextStyle(
-                fontSize: 12.5,
+              style: AppType.body(
                 height: 1.45,
                 color: AppPalette.textSecondary,
               ),
@@ -300,10 +286,7 @@ class _DisabledCard extends StatelessWidget {
               minimumSize: const Size(0, 30),
               padding: const EdgeInsets.symmetric(horizontal: 14),
             ),
-            child: Text(
-              'Enable ${provider.label}',
-              style: const TextStyle(fontSize: 12.5),
-            ),
+            child: Text('Enable ${provider.label}'),
           ),
         ],
       ),
@@ -313,9 +296,7 @@ class _DisabledCard extends StatelessWidget {
 
 class _Notice extends StatelessWidget {
   const _Notice({required this.message});
-
   final String message;
-
   @override
   Widget build(BuildContext context) {
     AppTheme.watch(context);
@@ -327,7 +308,7 @@ class _Notice extends StatelessWidget {
       ),
       child: Text(
         message,
-        style: TextStyle(fontSize: 12.5, color: AppPalette.textSecondary),
+        style: AppType.body(color: AppPalette.textSecondary),
       ),
     );
   }

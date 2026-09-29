@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../shared/theme/app_type.dart';
 import '../shared/widgets/command_row.dart';
 import '../state/app_state.dart';
 import '../theme/app_theme.dart';
@@ -42,7 +43,7 @@ class _HarnessJoinGuideScreenState extends State<HarnessJoinGuideScreen> {
   @override
   Widget build(BuildContext context) {
     final isLocal = widget.machineState.isLocalMachine;
-    return Center(
+    final content = Center(
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 460),
         child: Container(
@@ -61,11 +62,7 @@ class _HarnessJoinGuideScreenState extends State<HarnessJoinGuideScreen> {
               const SizedBox(height: 14),
               Text(
                 'Harness is offline',
-                style: TextStyle(
-                  color: AppColors.text,
-                  fontSize: 18,
-                  fontWeight: FontWeight.w700,
-                ),
+                style: AppType.heading(color: AppColors.text),
               ),
               const SizedBox(height: 8),
               Text(
@@ -77,8 +74,8 @@ class _HarnessJoinGuideScreenState extends State<HarnessJoinGuideScreen> {
               const SizedBox(height: 14),
               Text(
                 isLocal
-                    ? 'The Harness daemon on this machine isn\'t running. Start it — it reuses the SSO session already saved here. The selected agent will attach automatically when it comes online.'
-                    : 'The Harness CLI on ${widget.machineState.machine.displayName} appears to be offline. Start it there, then this agent will attach automatically when it comes back online.',
+                    ? 'The Harness daemon on this machine isn\'t running. Start it — it reuses the SSO session already saved here. The selected harness will attach automatically when it comes online.'
+                    : 'The Harness CLI on ${widget.machineState.machine.displayName} appears to be offline. Start it there, then this harness will attach automatically when it comes back online.',
                 style: TextStyle(color: AppColors.textSoft, height: 1.45),
               ),
               const SizedBox(height: 18),
@@ -114,6 +111,20 @@ class _HarnessJoinGuideScreenState extends State<HarnessJoinGuideScreen> {
               ),
             ],
           ),
+        ),
+      ),
+    );
+    // The compact tab bar can expose this card near its size breakpoint.
+    // Keep its instructions and Retry reachable when text needs more height.
+    return LayoutBuilder(
+      builder: (context, constraints) => SingleChildScrollView(
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            minHeight: constraints.maxHeight.isFinite
+                ? constraints.maxHeight
+                : 0,
+          ),
+          child: content,
         ),
       ),
     );
