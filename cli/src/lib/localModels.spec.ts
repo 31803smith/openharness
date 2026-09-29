@@ -802,6 +802,26 @@ describe('local model discovery and lifecycle', () => {
     expect(snapshot.freeDiskBytes).toBeGreaterThan(0)
   })
 
+  it("tells the catalog the machine's measured bandwidth and compute, which its speed estimates rest on", async () => {
+    const original = run.getMockImplementation()!
+    run.mockImplementation(async (args, output) => args[0] === 'device-info'
+      ? ok({ device_class: 'apple-silicon', backend: 'metal', usable_bytes: 54 * 1024 ** 3, memory: { total_gb: 64 },
+        mem_bandwidth_gbps: 400, compute_gflops: 15600 })
+      : original(args, output))
+    await service.list('home')
+    const sent = request.mock.calls.find(([url]) => String(url).includes('/catalog'))!
+    expect(JSON.parse(String(sent[1]?.body)).device).toEqual({ device_class: 'apple-silicon', usable_bytes: 54 * 1024 ** 3,
+      backend: 'metal', mem_bandwidth_gbps: 400, compute_gflops: 15600 })
+  })
+
+  it('leaves out a measurement the machine did not report, so the catalog falls back to its own', async () => {
+    await service.list('home')
+    const sent = request.mock.calls.find(([url]) => String(url).includes('/catalog'))!
+    const device = JSON.parse(String(sent[1]?.body)).device
+    expect(device).not.toHaveProperty('mem_bandwidth_gbps')
+    expect(device).not.toHaveProperty('compute_gflops')
+  })
+
   it('names one model the same whatever its quantization', () => {
     for (const name of ['Qwen3.6-35B-A3B', 'unsloth/Qwen3.6-35B-A3B-GGUF', 'Qwen3.6-35B-A3B-UD-Q5_K_XL.gguf', 'Qwen3.6-35B-A3B-Q4_K_M',
       'qwen3.6-35b-a3b-bf16', 'Qwen3.6-35B-A3B-IQ4_XS', 'Qwen3.6-35B-A3B-MXFP4_MOE']) {

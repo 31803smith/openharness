@@ -281,10 +281,16 @@ export class LocalModels {
     // Match `grid catalog`/`list` (cli/models.py `_fetch_pullable`): browse the
     // catalog service's first page of ranked "popular" models for this device,
     // not every compatible row across all pages — the picker shows one page.
+    // ⚠️ The machine's measured memory bandwidth and compute go too: the service estimates speed
+    // from them (grid_cli/catalog/ranking.py) and, without them, assumes 150 GB/s and 4 TFLOPS for
+    // any Mac — an M1 Max's 400 GB/s read as 2.7x slower than it is, and the models whose prompt it
+    // then judged too slow to process were not offered at all.
+    const bandwidth = num(device.mem_bandwidth_gbps), compute = num(device.compute_gflops)
     const response = await this.request(url, {
       method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
       body: JSON.stringify({ browse: true, page: 1, page_size: 50, device: {
         device_class: device.device_class, usable_bytes: device.usable_bytes, backend: device.backend,
+        ...(bandwidth ? { mem_bandwidth_gbps: bandwidth } : {}), ...(compute ? { compute_gflops: compute } : {}),
       } }), signal: AbortSignal.timeout(20_000), redirect: 'error',
     })
     if (!response.ok) throw new Error('Compatible models are unavailable. Try again.')
