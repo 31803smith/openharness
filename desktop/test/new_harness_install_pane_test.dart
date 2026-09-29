@@ -89,7 +89,11 @@ class _Notifier extends AppNotifier {
   /// The machine's side of an install: a fresh run, then whatever the test
   /// narrates through [narrate], then [pendingInstall]'s answer.
   @override
-  Future<String?> installDsh(String machineId, String id) async {
+  Future<String?> installDsh(
+    String machineId,
+    String id, {
+    bool trustUnverified = false,
+  }) async {
     installs.add(id);
     final machine = machineStates[machineId]!;
     machine.dsh.runs.remove(id);
@@ -497,6 +501,11 @@ void main() {
       await tester.pump();
       await startHarness(tester);
       await tester.pump();
+      expect(
+        find.byKey(const ValueKey('new-harness-progress')),
+        findsOneWidget,
+        reason: 'compact install progress keeps the busy action visible',
+      );
       notifier.narrate(_circuit.id, 'setup', line: 'npm ci');
       notifier.narrate(_circuit.id, 'failed', code: 'DSH_BUSY');
       notifier.pendingInstall!.complete('another install holds the lock');

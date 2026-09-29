@@ -21,17 +21,30 @@ class ModelManagerController extends ChangeNotifier {
     this.app, {
     LocalKeyValueStore? storage,
     this.poll = true,
-    this.targetMachineId,
-  }) : _storage = storage ?? (kUnderTest ? null : HarnessFileStore.shared);
+    String? targetMachineId,
+  }) : _targetMachineId =
+           targetMachineId ??
+           (app.viewer == null
+               ? null
+               : app.ownedActionMachine?.machine.machineId),
+       _followsBrowserChoice = targetMachineId == null && app.viewer != null,
+       _storage = storage ?? (kUnderTest ? null : HarnessFileStore.shared);
   final AppNotifier app;
   final LocalKeyValueStore? _storage;
   final bool poll;
 
   /// A remote host uses the same inventory and lifecycle RPCs, without setting
   /// up a Model Manager harness or reading another copy of the shared catalog.
-  final String? targetMachineId;
+  String? _targetMachineId;
+  final bool _followsBrowserChoice;
+  String? get targetMachineId {
+    if (_targetMachineId != null || app.viewer == null) return _targetMachineId;
+    return _targetMachineId = app.ownedActionMachine?.machine.machineId;
+  }
+
   ApiConnectionsController? _apis;
-  ApiConnectionsController get apis => _apis ??= ApiConnectionsController(app);
+  ApiConnectionsController get apis =>
+      _apis ??= ApiConnectionsController(app, machineId: targetMachineId);
   static const introKey = 'models.introduction.dismissed';
   MachineState? _machine;
   Future<void>? _preparing, _opening, _refreshing;
@@ -47,6 +60,9 @@ class ModelManagerController extends ChangeNotifier {
   GridModels? models;
   List<LocalModel> localModels = const [];
   double? memoryBytes;
+
+  /// Free space where downloads land, or null when the daemon did not say.
+  double? freeDiskBytes;
   String? hardware, error, _managerError;
   bool preparing = false, opening = false, scanning = false, loaded = false;
   bool inventoryAvailable = false, operationBusy = false;
@@ -57,7 +73,7 @@ class ModelManagerController extends ChangeNotifier {
   bool pendingDownload = false;
 
   MachineState? get machine => targetMachineId == null
-      ? app.localMachineState
+      ? app.ownedActionMachine
       : app.stateOf(targetMachineId!);
   Agent? get manager => machine?.agents
       .where((a) => a.dsh == AppNotifier.gridHarness)
@@ -158,6 +174,7 @@ class ModelManagerController extends ChangeNotifier {
       models = null;
       localModels = const [];
       memoryBytes = null;
+      freeDiskBytes = null;
       hardware = null;
       error = null;
       _managerError = null;
@@ -348,6 +365,18 @@ class ModelManagerController extends ChangeNotifier {
   }
 
   void setPanelVisible(bool visible) {
+    if (visible &&
+        !_panelVisible &&
+        _followsBrowserChoice &&
+        !busy &&
+        !(_apis?.saving ?? false)) {
+      final next = app.ownedActionMachine?.machine.machineId;
+      if (next != null && next != targetMachineId) {
+        _targetMachineId = next;
+        _apis?.useMachine(next);
+        _observe();
+      }
+    }
     _panelVisible = visible;
   }
 
@@ -417,6 +446,10 @@ class ModelManagerController extends ChangeNotifier {
           final memory = answer['memoryBytes'];
           memoryBytes = memory is num && memory.isFinite && memory > 0
               ? memory.toDouble()
+              : null;
+          final disk = answer['freeDiskBytes'];
+          freeDiskBytes = disk is num && disk.isFinite && disk >= 0
+              ? disk.toDouble()
               : null;
           hardware = answer['hardware'] as String?;
           operationBusy = answer['busy'] == true;

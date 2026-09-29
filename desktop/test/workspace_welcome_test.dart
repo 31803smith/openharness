@@ -121,12 +121,15 @@ void main() {
       ]) {
         await tester.tap(find.byKey(ValueKey('welcome-$command')));
       }
+      // The phone, on its own line under the list: it has no shortcut.
+      await tester.tap(find.text('Work from your phone'));
       expect(commands, [
         'agent.new',
         'harnesses.list',
         'models.list',
         'machines.list',
         'app.store',
+        'app.add_phone',
       ]);
       await capture(tester, 'new-tab-$tab');
     }
@@ -148,7 +151,7 @@ void main() {
 
     keymap.apply('{"bindings":[{"keys":"cmd+p","command":null}]}');
     await tester.pump();
-    expect(find.text('Manage all your agents'), findsOneWidget);
+    expect(find.text('Manage all your harnesses'), findsOneWidget);
     await tester.tap(find.byKey(const ValueKey('welcome-harnesses.list')));
     expect(commands, ['harnesses.list', 'harnesses.list']);
     expect(tester.takeException(), isNull);

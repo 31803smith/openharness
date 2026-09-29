@@ -7,6 +7,9 @@ import '../core/models.dart';
 import '../core/test_run.dart';
 import '../shortcuts/app_keymap.dart';
 import '../shortcuts/keymap.dart';
+import '../models/api_connections_controller.dart'
+    show ApiModels, contextWindowLabel;
+import '../models/local_model.dart';
 import '../models/model_search_catalog.dart';
 import '../shared/theme/app_theme.dart' as grid;
 import '../state/app_state.dart';
@@ -22,6 +25,7 @@ import 'api_picker_form.dart';
 import 'swarm_search_preview.dart';
 import 'swarm_preview_scroll.dart';
 import 'terminal_text_action.dart';
+import 'key_hints.dart';
 
 const resourcePickerCommands = {
   'picker.resource_toggle',
@@ -141,6 +145,19 @@ class _SwarmResourcePreviewState extends State<SwarmResourcePreview> {
     search.setQuery('@');
     final index = search.rows.indexWhere((row) => row.isCreate);
     if (index >= 0) search.move(index - search.cursor);
+    widget.onRefocus();
+  }
+
+  bool _isOnline(MachineState machine) =>
+      machine.nodeOnline != false &&
+      !machine.needsLink &&
+      machine.connectionStatus == ConnectionStatus.connected;
+
+  /// Scope the picker to this machine's harnesses — the same list Enter on
+  /// a project/machine group opens, so Rename/Delete are not the only doors.
+  void _viewMachine() {
+    final selected = row;
+    if (selected == null || !widget.search.scopeToGroup(selected.id)) return;
     widget.onRefocus();
   }
 
@@ -328,8 +345,11 @@ class _SwarmResourcePreviewState extends State<SwarmResourcePreview> {
         action?.onPressed?.call();
         return true;
       }
+      // Get on a model the harness can run is Get and Use in one step: the choose path, as Use is.
       if (widget.search.canSelectModel(row) ||
-          widget.search.isModelDownloadsRow(row)) {
+          widget.search.canGetModelForUse(row) ||
+          widget.search.isModelDownloadsRow(row) ||
+          widget.search.canExpandApi(row)) {
         _open();
         return true;
       }
@@ -397,17 +417,17 @@ class _SwarmResourcePreviewState extends State<SwarmResourcePreview> {
       for (final filter in SessionFilter.values)
         _ResourceAction(
           switch (filter) {
-            SessionFilter.all => 'Show all sessions',
-            SessionFilter.needsInput => 'Show sessions needing input',
-            SessionFilter.running => 'Show running sessions',
-            SessionFilter.paused => 'Show paused sessions',
+            SessionFilter.all => 'Show all harnesses',
+            SessionFilter.needsInput => 'Show harnesses needing input',
+            SessionFilter.running => 'Show running harnesses',
+            SessionFilter.paused => 'Show paused harnesses',
           },
           () => widget.search.setSessionFilter(filter),
           command: 'picker.filter.${filter.name}',
         ),
       for (final sort in SessionSort.values)
         _ResourceAction(
-          'Sort sessions: ${sort.label}',
+          'Sort harnesses: ${sort.label}',
           () => widget.search.setSessionSort(sort),
           command: 'picker.sort.${sort.name}',
         ),
@@ -432,6 +452,7 @@ class _SwarmResourcePreviewState extends State<SwarmResourcePreview> {
           title:
               {
                     'picker.resource_toggle',
+                    'picker.resource_view',
                     'picker.resource_rename',
                     'picker.resource_settings',
                     'picker.resource_remove',
@@ -629,20 +650,21 @@ class _SwarmResourcePreviewState extends State<SwarmResourcePreview> {
           key('picker.control_next') != null)
         '${key('picker.control_previous')}/${key('picker.control_next')} move',
       if (starting)
-        'Starting…'
+        widget.search.usingLabel ?? 'Starting…'
       else if (key('picker.accept') case final enter?
           when managing ||
               row?.isModel != true ||
               widget.search.canSelectModel(row) ||
               widget.search.canGetModel(row) ||
-              widget.search.isModelDownloadsRow(row))
+              widget.search.isModelDownloadsRow(row) ||
+              widget.search.canExpandApi(row))
         '$enter ${managing
             ? 'select'
             : widget.search.canSelectModel(row)
             ? 'Use'
             : widget.search.canGetModel(row)
             ? 'Get'
-            : widget.search.isModelDownloadsRow(row)
+            : widget.search.isModelDownloadsRow(row) || widget.search.canExpandApi(row)
             ? widget.search.actionLabel(row)
             : _isManagement
             ? _machineSetup
@@ -666,9 +688,7 @@ class _SwarmResourcePreviewState extends State<SwarmResourcePreview> {
       child: Text(
         hints.join('  ·  '),
         key: const ValueKey('resource-control-hints'),
-        style: terminalContentStyle(
-          color: theme.foreground.withValues(alpha: .54),
-        ),
+        style: terminalContentStyle(color: theme.muted),
       ),
     );
   }
@@ -760,7 +780,7 @@ class _SwarmResourcePreviewState extends State<SwarmResourcePreview> {
                         (get
                             ? local.canStart
                             : search.canSelectModel(selected)))
-                ? !stop && !get
+                ? !stop && (!get || search.canGetModelForUse(selected))
                       ? _open
                       : () => unawaited(
                           _run(() async {
@@ -776,8 +796,23 @@ class _SwarmResourcePreviewState extends State<SwarmResourcePreview> {
           ),
         ];
       }
+      if (model?.apiModel != null) {
+        return [
+          _ResourceAction(
+            'Use',
+            !busy && search.canSelectModel(selected) ? _open : null,
+            command: 'picker.accept',
+          ),
+        ];
+      }
       if (api != null) {
         return [
+          if (search.canExpandApi(selected))
+            _ResourceAction(
+              search.actionLabel(selected),
+              _open,
+              command: 'picker.accept',
+            ),
           _ResourceAction(
             'Edit',
             busy ? null : () => _editApi(api.id),
@@ -810,6 +845,12 @@ class _SwarmResourcePreviewState extends State<SwarmResourcePreview> {
       if (machine == null) return [];
       final secondary = _secondaryActions();
       return [
+        if (_isOnline(machine))
+          _ResourceAction(
+            'View',
+            _viewMachine,
+            command: 'picker.resource_view',
+          ),
         ...secondary.where((a) => a.command == 'picker.resource_connect'),
         ...secondary.where((a) => a.command == 'picker.resource_settings'),
         if (!machine.machine.isShared)
@@ -883,6 +924,9 @@ class _SwarmResourcePreviewState extends State<SwarmResourcePreview> {
       _apiFormOpen = false;
       _apiResource = null;
     });
+    // The editor owned the keys, and a removed widget reports no focus change: hand them back to
+    // the list, or arrows keep acting for a pane that is no longer there.
+    widget.search.setManaging(false);
     if (id?.isNotEmpty == true) {
       final search = widget.search;
       if (!search.rows.any((row) => row.modelId == 'model:api:$id')) {
@@ -1010,10 +1054,18 @@ class _SwarmResourcePreviewState extends State<SwarmResourcePreview> {
   Widget _modelPreview() {
     final catalog = widget.search.models!;
     if (widget.search.isModelDownloadsRow(row)) {
-      return _details([
-        'Get models',
-        'Browse models available to download on your machines.',
-      ], controls: true);
+      return _details(
+        widget.search.modelDownloadsVisible
+            ? [
+                'Show fewer',
+                'Keep only the catalog\'s top ${SwarmSearchController.shownDownloads} in the list.',
+              ]
+            : [
+                'More models',
+                'The rest of the models the grid catalog ranks for this machine, best first.',
+              ],
+        controls: true,
+      );
     }
     final entry = model;
     if (entry == null) {
@@ -1021,88 +1073,310 @@ class _SwarmResourcePreviewState extends State<SwarmResourcePreview> {
         catalog.manager.scanning ? 'Finding models…' : 'No matching models',
       ]);
     }
+    final cell = terminalCellSizeOf(context);
+    final theme = terminalThemeFor(
+      grid.AppTheme.palette.value,
+      terminalThemeStore.value,
+    );
     final local = entry.local;
     final owner = entry.controller ?? catalog.manager;
     final operation = local == null ? null : owner.operationFor(local);
     final pending = local != null && owner.pendingId == local.id;
-    String window(double seconds) => seconds % 86400 == 0
-        ? '${(seconds / 86400).toInt()}d'
-        : seconds % 3600 == 0
-        ? '${(seconds / 3600).toInt()}h'
-        : '${seconds.toInt()}s';
+    final opActive = operation?.active == true;
+    // API entries have their own dedicated preview; keep main's dispatch.
+    if (entry.api != null) return _apiPreview(entry);
+
+    String windowLabel(double? seconds) {
+      if (seconds == null) return '—';
+      if (seconds > 0 && seconds % 86400 == 0) {
+        return '${(seconds / 86400).toInt()}d';
+      }
+      if (seconds > 0 && seconds % 3600 == 0) {
+        return '${(seconds / 3600).toInt()}h';
+      }
+      return '${(seconds / 60).round()}m';
+    }
+
+    final inUse = widget.search.modelRowInUse(row!);
+    // The daemon refuses a download without its size and a gigabyte to spare; say so before Get.
+    final size = local?.sizeBytes, free = owner.freeDiskBytes;
+    final diskShort =
+        local != null &&
+        !local.downloaded &&
+        !pending &&
+        !opActive &&
+        size != null &&
+        free != null &&
+        size + _kGiB > free;
+    // "this Mac" in a sentence, "This Mac" as a value; another machine by its name.
+    final machineName =
+        identical(owner, catalog.manager) &&
+            (owner.machine?.isLocalMachine ?? true)
+        ? thisComputerName()
+        : entry.node ?? 'its machine';
+    final machineTitle = machineName == thisComputerName()
+        ? '${machineName[0].toUpperCase()}${machineName.substring(1)}'
+        : machineName;
+
+    // The status word is the catalog's own [localStatus] so the pane and the
+    // list row can never disagree (both come from the same [_refresh] snapshot);
+    // no re-derivation from a possibly-stale operation on the pane side.
+    final statusWord = local != null
+        ? catalog.localStatus(local, controller: owner)
+        : entry.status;
+
+    Widget labelValue(String label, String value) {
+      return Padding(
+        padding: EdgeInsets.only(bottom: cell.height * .6),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.baseline,
+          textBaseline: TextBaseline.alphabetic,
+          children: [
+            SizedBox(
+              width: cell.width * 9,
+              child: Text(
+                label,
+                style: terminalContentStyle(color: theme.muted),
+              ),
+            ),
+            Expanded(
+              child: Text(
+                value,
+                style: terminalContentStyle(color: theme.foreground),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    Widget errorLine(String text) {
+      return Padding(
+        padding: EdgeInsets.only(top: cell.height),
+        child: Text(text, style: terminalContentStyle(color: theme.yellow)),
+      );
+    }
+
+    return ListView(
+      controller: _scroll,
+      padding: EdgeInsets.symmetric(
+        horizontal: cell.width * 2,
+        vertical: cell.height,
+      ),
+      children: [
+        Text(
+          entry.name,
+          style: terminalContentStyle(color: theme.foreground)
+              .copyWith(fontWeight: FontWeight.bold),
+        ),
+        SizedBox(height: cell.height),
+        Text(
+          inUse ? '$statusWord · this harness is on it' : statusWord,
+          style: terminalContentStyle(color: theme.foreground),
+        ),
+        if (widget.search.modelUseErrorId == entry.id &&
+            widget.search.modelUseError != null)
+          errorLine(widget.search.modelUseError!),
+        SizedBox(height: cell.height),
+        if (local != null) ...[
+          // What decides between models: what it costs to get, whether it fits, how fast it answers.
+          if (local.sizeBytes case final size?)
+            labelValue(
+              local.downloaded ? 'Size' : 'Download',
+              [
+                gigabytesLabel(size),
+                if (!local.downloaded && owner.freeDiskBytes != null)
+                  '${gigabytesLabel(owner.freeDiskBytes!)} free',
+              ].join(' · '),
+            ),
+          if ((local.sizeBytes, owner.memoryBytes) case (
+            final size?,
+            final memory?,
+          ))
+            labelValue(
+              'Memory',
+              '${size <= memory ? 'fits' : 'needs ${gigabytesLabel(size)}'} · '
+                  '$machineName has ${gigabytesLabel(memory)}',
+            ),
+          if (local.running && local.tokensPerSecond != null)
+            labelValue(
+              'Speed',
+              '${local.tokensPerSecond!.toStringAsFixed(1)} tok/s',
+            )
+          else if (local.estTokS case final estimate?)
+            labelValue(
+              'Speed',
+              '~${estimate.round()} tok/s on $machineName (estimate)',
+            ),
+          if (local.contextWindow case final window?)
+            labelValue('Context', contextWindowLabel(window.toInt())),
+          if (local.paramsB case final params?)
+            labelValue(
+              'Params',
+              '${params == params.roundToDouble() ? params.toInt() : params}B',
+            ),
+          labelValue('Quant', local.quantization ?? '—'),
+          labelValue('Machine', machineTitle),
+          if (local.running &&
+              local.requests != null &&
+              local.windowSeconds != null)
+            labelValue(
+              'Window',
+              '${local.requests!.toInt()} req / ${windowLabel(local.windowSeconds)}',
+            ),
+          if (local.resting)
+            labelValue('State', 'Resting until your next message'),
+          if (diskShort)
+            errorLine('Free up disk space on $machineName to get it.')
+          else if (!local.downloaded &&
+              !owner.supportsDownload &&
+              local.canStart &&
+              !pending &&
+              !opActive)
+            errorLine(
+              'Downloads and starts on ${entry.node ?? 'this machine'}.',
+            ),
+          if (_enterSentence(local) case final sentence?) ...[
+            SizedBox(height: cell.height * .4),
+            Text(
+              sentence,
+              style: terminalContentStyle(color: theme.foreground),
+            ),
+          ],
+        ] else ...[
+          labelValue(
+            'Machine',
+            entry.node ??
+                (entry.source == 'Local' ? machineTitle : entry.source),
+          ),
+          if (entry.subscription case final subscription?) ...[
+            ...((subscription['details'] as List?) ?? const [])
+                .map((d) => '$d')
+                .where((d) => d != entry.status)
+                .take(3)
+                .map((d) => labelValue('Detail', d)),
+          ],
+          labelValue('Source', entry.source),
+        ],
+        if (widget.search.modelUseReason(row) case final reason?
+            when reason != 'No active harness' &&
+                reason != entry.status &&
+                reason != 'Tools only' &&
+                reason != 'Download first')
+          errorLine(switch (reason) {
+            'Claude only' => 'Use this subscription in a Claude harness.',
+            'Codex only' => 'Use this subscription in a Codex harness.',
+            'Other account' =>
+              'This account is not signed in on the harness’s machine.',
+            'Not serving' => 'Not serving on ${entry.node ?? 'its host'}.',
+            _ => reason,
+          }),
+        if (entry.own && local == null && owner.scanning)
+          errorLine('Finding model controls…'),
+        if (!identical(owner, catalog.manager)) ...[
+          if (owner.machine?.connectionStatus != ConnectionStatus.connected)
+            errorLine('Connect to ${entry.node} to manage its models.')
+          else if (owner.error case final err?)
+            errorLine(err),
+        ],
+        if (operation?.error case final err?) errorLine(err),
+        if (catalog.manager.error case final err?) errorLine(err),
+        SizedBox(height: cell.height),
+        _actionButtons(),
+      ],
+    );
+  }
+
+  static const _kGiB = 1024 * 1024 * 1024;
+
+  /// What Enter does on a model of yours, in words, under its facts. Nothing when it does nothing.
+  String? _enterSentence(LocalModel local) {
+    final search = widget.search;
+    final selected = row;
+    if (selected == null || search.modelRowInUse(selected)) return null;
+    // One local model runs at a time: a second one waits for the first to stop.
+    final other = search.otherRunningModel(selected)?.name;
+    if (search.canGetModelForUse(selected)) {
+      return 'Get downloads it, starts it, and moves this harness onto it.';
+    }
+    if (search.canGetModel(selected)) {
+      return other == null
+          ? 'Get downloads it.'
+          : 'Get downloads it. Stop $other to run it: one local model runs at a time.';
+    }
+    if (search.canSelectModel(selected)) {
+      return local.running
+          ? 'Use moves this harness onto it.'
+          : other == null
+          ? 'Use starts it and moves this harness onto it.'
+          : 'Stop $other first: one local model runs at a time.';
+    }
+    return null;
+  }
+
+  static const _kDetailLabelColumns = 9;
+
+  /// A saved API, or one of its models: a summary line, then labelled facts, then what it is for.
+  Widget _apiPreview(ModelSearchEntry entry) {
+    final api = entry.api!;
+    final listed = widget.search.models!.manager.apis.models[api.id];
+    final model = entry.apiModel;
+    if (model != null) {
+      final reason = widget.search.modelUseReason(row);
+      return _details([
+        entry.name,
+        [
+          api.name,
+          if (model.contextWindow case final window?)
+            '${contextWindowLabel(window)} context',
+        ].join(' · '),
+        '',
+        if (model.name case final name?) ('Name', name),
+        ('Via', '${api.name} · ${api.host}'),
+        '',
+        if (reason == null)
+          'Use runs this harness on it, with the key saved on '
+              '${widget.search.models!.manager.apis.hostLabel}.'
+        else if (reason == 'Other machine')
+          'Its key is saved on ${widget.search.models!.manager.apis.hostLabel}, '
+              'so only the harnesses there can run on it.'
+        else
+          reason,
+      ], controls: true);
+    }
+    final count = listed?.models.length ?? 0;
+    // One line for what the API is for: a harness runs on its models (Use), or harness agents call
+    // it (Tools) — fal.ai, Replicate, and any API that lists no models a coding agent can run on.
+    final summary = !api.servesModels || count > 0
+        ? null
+        : switch (listed) {
+            ApiModels(loading: true) => 'Loading models…',
+            ApiModels(error: _?) => 'Models unavailable',
+            _ => null,
+          };
     return _details([
       entry.name,
-      if (widget.search.modelUseErrorId == entry.id)
-        ?widget.search.modelUseError,
-      [
-        if (local == null) entry.source,
-        ?entry.node,
-        if (local?.sizeBytes case final size?)
-          '${(size / (1024 * 1024 * 1024)).toStringAsFixed(1)} GB',
-      ].join(' · '),
-      if (local != null) ...[
-        if (local.running &&
-            (local.tokensPerSecond != null || local.requests != null))
-          [
-            if (local.tokensPerSecond case final speed?)
-              '${speed.toStringAsFixed(1)} tok/s',
-            if (local.requests != null && local.windowSeconds != null)
-              '${local.requests!.toInt()} requests / ${window(local.windowSeconds!)}',
-          ].join(' · '),
-        if (local.resting) 'Resting until your next message',
-        if (pending || operation?.active == true || operation?.failed == true)
-          catalog.localStatus(local, controller: owner),
-        ?operation?.error,
-        if (!local.downloaded &&
-            !owner.supportsDownload &&
-            local.canStart &&
-            !pending &&
-            operation?.active != true)
-          'Downloads and starts on ${entry.node ?? 'this machine'}.',
-      ] else if (entry.status != 'Available')
-        entry.status,
-      if (widget.search.modelUseReason(row) case final reason?
-          when reason != 'No active harness' &&
-              reason != entry.status &&
-              reason != 'Tools only' &&
-              reason != 'Download first')
-        switch (reason) {
-          'Claude only' => 'Use this subscription in a Claude harness.',
-          'Codex only' => 'Use this subscription in a Codex harness.',
-          'Other account' =>
-            'This account is not signed in on the harness’s machine.',
-          'Not serving' => 'Not serving on ${entry.node ?? 'its host'}.',
-          _ => reason,
-        },
-      if (entry.own && local == null && owner.scanning)
-        'Finding model controls…',
-      if (!identical(owner, catalog.manager)) ...[
-        if (owner.machine?.connectionStatus != ConnectionStatus.connected)
-          'Connect to ${entry.node} to manage its models.'
-        else
-          ?owner.error,
-      ],
-      if (entry.api case final api?) ...[
-        api.baseUrl,
-        api.keyEnv,
-        'Available to harness tools on this computer.',
-      ],
-      if (entry.subscription case final subscription?) ...[
-        ...((subscription['details'] as List?) ?? const [])
-            .map((detail) => '$detail')
-            .where((detail) => detail != entry.status),
-      ],
+      ['API', ?summary].join(' · '),
+      '',
+      ('URL', api.baseUrl),
+      if (count > 0)
+        (
+          'Use',
+          'pick one of its $count ${count == 1 ? 'model' : 'models'} to run a harness on it',
+        )
+      else if (summary == null)
+        (
+          'Tools',
+          'harness agents on this computer can call it with the saved key',
+        ),
+      if (listed?.error case final error?) ...['', error],
     ], controls: true);
   }
 
   Widget _machinePreview() {
     final machine = app.stateOf(row!.machineId!);
     if (machine == null) return _details([row!.title, 'Unavailable']);
-    final online =
-        machine.nodeOnline != false &&
-        !machine.needsLink &&
-        machine.connectionStatus == ConnectionStatus.connected;
-    final resources = online
+    final resources = _isOnline(machine)
         ? widget.search.machineResources[row!.machineId]
         : null;
     final status = machine.nodeOnline == false
@@ -1133,12 +1407,15 @@ class _SwarmResourcePreviewState extends State<SwarmResourcePreview> {
     ], controls: true);
   }
 
-  Widget _details(List<String> lines, {bool controls = false}) {
+  /// The preview's lines: the first is the title, `''` is a blank row, and a `(label, value)`
+  /// pair is a labelled row — [_kDetailLabelColumns] columns of label, the value wrapping beside it.
+  Widget _details(List<Object> lines, {bool controls = false}) {
     final cell = terminalCellSizeOf(context);
     final theme = terminalThemeFor(
       grid.AppTheme.palette.value,
       terminalThemeStore.value,
     );
+    final muted = terminalContentStyle(color: theme.muted);
     return ListView(
       controller: _scroll,
       padding: EdgeInsets.symmetric(
@@ -1147,17 +1424,30 @@ class _SwarmResourcePreviewState extends State<SwarmResourcePreview> {
       ),
       children: [
         for (var i = 0; i < lines.length; i++)
-          if (lines[i].isEmpty)
-            SizedBox(height: cell.height)
-          else
-            Text(
-              lines[i],
-              style: terminalContentStyle(
-                color: i == 0
-                    ? theme.foreground
-                    : theme.foreground.withValues(alpha: .54),
-              ),
+          switch (lines[i]) {
+            '' => SizedBox(height: cell.height),
+            (final String label, final String value) => Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                SizedBox(
+                  width: cell.width * _kDetailLabelColumns,
+                  child: Text(label, style: muted),
+                ),
+                Expanded(
+                  child: Text(
+                    value,
+                    style: terminalContentStyle(color: theme.foreground),
+                  ),
+                ),
+              ],
             ),
+            final line => Text(
+              '$line',
+              style: i == 0
+                  ? terminalContentStyle(color: theme.foreground)
+                  : muted,
+            ),
+          },
         if (controls) ...[SizedBox(height: cell.height), _actionButtons()],
       ],
     );
@@ -1194,7 +1484,7 @@ class _SwarmResourcePreviewState extends State<SwarmResourcePreview> {
                   widget.onRefocus();
                 },
                 style: TextButton.styleFrom(
-                  foregroundColor: theme.foreground.withValues(alpha: .54),
+                  foregroundColor: theme.muted,
                   textStyle: terminalContentStyle(),
                   padding: EdgeInsets.zero,
                   minimumSize: Size.zero,
@@ -1265,9 +1555,7 @@ class _SwarmResourcePreviewState extends State<SwarmResourcePreview> {
                 ),
                 child: Text(
                   'Working…',
-                  style: terminalContentStyle(
-                    color: theme.foreground.withValues(alpha: .54),
-                  ),
+                  style: terminalContentStyle(color: theme.muted),
                 ),
               ),
             if (_errors[row?.id] case final error?)
@@ -1345,7 +1633,7 @@ class _SwarmResourcePreviewState extends State<SwarmResourcePreview> {
                   ),
                   child: _actionButtons(),
                 ),
-              _controlHints(),
+              if (KeyHints.visibleOf(context)) _controlHints(),
             ],
           ],
         );
