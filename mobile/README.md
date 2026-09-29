@@ -35,7 +35,7 @@ The app it runs now lives under `lib/`, in the same folders the desktop app uses
 | `lib/auth/`, `lib/viewer/` | SSO, device linking, and the viewer's stand-ins for the harness CLI |
 | `lib/e2ee/` | the end-to-end encryption this app terminates itself |
 | `lib/terminal/`, `lib/widgets/` | the xterm session, the terminal panel and its chrome |
-| `lib/shared/`, `lib/analytics/`, `lib/logging/` | design system, analytics, file logs |
+| `lib/shared/`, `lib/logging/` | design system, file logs |
 | `third_party/xterm/` | the vendored, patched xterm 4.0.0 (see its `README.autonomous.md`) |
 
 Two folders are this package's own, and have no counterpart on the desktop:

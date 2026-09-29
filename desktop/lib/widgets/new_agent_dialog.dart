@@ -6,7 +6,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
-import '../analytics/analytics.dart';
 import '../state/pane_arrangement.dart';
 import '../core/desktop_window.dart';
 import '../core/engine_availability.dart';
@@ -95,7 +94,6 @@ Future<NewAgentDialogResult?> showNewAgentDialog(
             .machineId ??
         '';
   }
-  analytics.newAgentOpened(source: source);
   // This dialog uses a separate route. Carry the live picker bindings with
   // it; showGeneralDialog does not capture inherited themes for us.
   final activeKeymap = keymap ?? KeymapTheme.of(context, listen: false);
@@ -766,11 +764,6 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
       });
       return;
     }
-    analytics.agentCreated(
-      engine: choice,
-      bypassPermission: bypassPermission,
-      permissionMode: permissionMode,
-    );
     // What New Harness lists first next time, before anything is typed.
     unawaited(
       widget.notifier.agentPreference.remember(choice, harnessId: _harnessId),

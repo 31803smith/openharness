@@ -14,7 +14,6 @@ import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:xterm/xterm.dart' show TerminalTheme;
 
 import '../core/runtime_platform.dart';
-import '../analytics/analytics.dart';
 import '../api/api_client.dart';
 import '../core/desktop_window.dart';
 import '../core/harness_file_store.dart';
@@ -2733,7 +2732,6 @@ class _SwarmScreenState extends State<SwarmScreen> {
     }
     if (_search != null) _closeSearch(restoreFocus: false);
     _closeCommandBar(restoreFocus: false);
-    analytics.newAgentOpened(source: 'swarm_box');
     _searchReturnFocus ??= FocusManager.instance.primaryFocus;
     if (_native) _preparePaneFocus();
     _canvasFocus.descendantsAreFocusable = false;

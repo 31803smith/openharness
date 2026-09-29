@@ -59,7 +59,6 @@ comma-separated `WEB_ORIGINS`, and register that origin's `/auth/callback` with 
 Any `SSO_REDIRECT_URI` override must point to that same hosted callback. Tests use a
 synthetic authorization service. An alternate backend can be selected with
 `--dart-define=HARNESS_API_URL=https://your-backend.example` on run/build.
-Use `--dart-define=HARNESS_ANALYTICS_DISABLED=true` for isolated previews.
 
 ### Production release
 
