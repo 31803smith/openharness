@@ -69,16 +69,27 @@ tmux. `run-shell` lines run too: a plugin's `tmux …` reaches hn (the `tmux` on
 never a tmux server you have running.
 
 Splits, `resize-pane`, the seven layouts, `swap-pane`, `rotate-window`, `join-pane`, `break-pane`
-and `select-pane` are tmux 3.5a's own arithmetic (layout.c, window.c): the same sizes, the same
-pane numbers and the same active pane after each. Use `set -g @hn-animations off` to keep
+and `select-pane` are tmux 3.5a's own arithmetic (layout.c, window.c): the same split sizes, the same
+pane numbers and the same active pane after each. hn draws these layouts as pane surfaces
+with one-cell gaps, inset terminal content and a thin outline around the focused pane. The
+surfaces follow the terminal's light/dark theme: the focused pane keeps full contrast;
+inactive dark panes use `rgb(64, 64, 64)` with softer text. Light terminals keep a light counterpart.
+Explicit program colors and user styles stay intact. The muted green status bar has a continuous
+background, with tabs ordered `number:name* status` (previous window: `number:name- status`).
+Quota warnings read `Claude 100%`, with amber or red only on the percentage. Padding
+shrinks automatically in small panes. The space between panes remains a resize handle; mouse
+coordinates, copy selection and PTY dimensions follow the inset content. `window_layout` keeps
+the original split structure. Use `set -g @hn-animations off` to keep
 working and loading indicators still. Some defaults differ, and your `.tmux.conf`
-overrides each: `pane-border-status top` (each pane's title row: its harness's state and name, and
+overrides each: `pane-border-status top` (each pane's title row: its harness's name and state, and
 its project and branch where the pane has room), `allow-set-title off` (a pane's title is its
 harness's name, not what the program sets), `history-limit 10000` (agents print a lot; tmux keeps
 2000), `mouse on`, `set-titles on` (the terminal's title: `?2 Fix flaky login test — Harness`, the
-harnesses waiting on you and the one in front; `set-titles-string` changes it), and the status line: each window's most urgent harness state before its name,
-and on the right the focused pane's machine (when it is another one), project and branch —
-`gpu-box:ml-lab git:(main)` — where tmux shows the pane's title. One key differs on purpose: ⇧⏎
+harnesses waiting on you and the one in front; `set-titles-string` changes it), and the status line:
+each window's most urgent harness state follows its name and tmux marker. Connection, quota,
+fleet counts, `machine:folder` and clock sit on the right. The git branch stays in its pane
+header, written `⑂ branch` without redundant punctuation.
+One key differs on purpose: ⇧⏎
 reaches the pane as `CSI 13;2u` (a new line in an agent's prompt; tmux, without `extended-keys`,
 sends a plain Enter).
 
@@ -179,22 +190,25 @@ pane counts as done and unread (`✓`) until you go to that pane.
 All of this is in options, which `show -g`, `show -gw` and `C-b C` print as they are:
 `status-left`, `status-right`, the window formats and each pane's title row
 (`pane-border-format`). Set them in your `~/.tmux.conf` as you would for tmux; what you set
-replaces hn's. `set -g @hn-look tmux` puts back all of tmux's own: no title rows, tmux's status
-line and window list.
+replaces hn's. The default is `set -g @hn-look panes`. `set -g @hn-look classic` restores hn's
+previous line borders. `set -g @hn-look tmux` uses tmux's appearance and
+content dimensions: no padding or title rows, and tmux's status line and window list. Changing
+the look takes effect immediately and preserves pane identities and the split structure.
 
 For your own formats: `#{fleet}` (the status line's counts, ready to drop into your theme) and
 `#{fleet_needs}` `#{fleet_failed}` `#{fleet_done}` `#{fleet_working}` `#{fleet_idle}`, `#{spinner}`,
 `#{pane_agent_icon}` and `#{pane_agent_state}` (needs, working, done, idle, starting, failed,
 paused, offline), `#{pane_agent_mark}` (the icon in its colour, as the title row draws it),
 `#{window_agent_icon}` and `#{window_agent_state}` (its most urgent pane's), `#{pane_project}`,
-`#{pane_branch}`, `#{pane_where}` (`project git:(branch) #123` as far as it fits beside the title),
+`#{pane_branch}`, `#{pane_where}` (`project ⑂ branch #123` as far as it fits beside the title),
 `#{pane_pr}` `#{pane_pr_state}` `#{pane_pr_url}` (the pull request for its branch), `#{pane_tokens}`
 and `#{fleet_tokens}` (what it, and all of them, have used: `1.2M`), `#{pane_lines}` (`+340 −52`),
 `#{pane_asked}` and `#{pane_did}` (what it was last asked, and what its last turn came to),
 `#{pane_todos}` (its plan's progress, `3/7`) and `#{pane_subagents}` (how many it has running),
 `#{usage}` (the agent accounts' rate limits on the focused pane's machine: `claude 5h 42% week
-18% · codex 5h 3%`) and `#{usage_high}` (the one nearest its limit, from 80%; the status line shows
-it reversed, so you know before you start more agents),
+18% · codex 5h 3%`) and `#{usage_high}` (the one nearest its limit, from 80%). The status line uses
+`#{usage_high_mark}`: `Claude 80%`, with amber on the percentage from 80%, red from 100%.
+The raw `usage` and `usage_high` formats retain the reset window. Other formats:
 `#{pane_machine}`, `#{pane_far}` (another machine's), `#{pane_watched}` and `#{pane_watcher}`
 (another window has the pane to type in, and who), and `#{waiting}` (the harnesses waiting on
 you).
