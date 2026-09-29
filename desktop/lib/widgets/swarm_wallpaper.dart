@@ -154,7 +154,13 @@ class _CustomImage extends StatelessWidget {
         child: Text(
           'Image missing, choose again',
           textAlign: TextAlign.center,
-          style: grid.AppType.label(color: const Color(0xffdededb)),
+          // On the workspace grey, so a light palette needs dark ink here.
+          style: grid.AppType.label(
+            color: grid.AppTheme.pick(
+              grid.AppPalette.textSecondary,
+              const Color(0xffdededb),
+            ),
+          ),
         ),
       );
     }

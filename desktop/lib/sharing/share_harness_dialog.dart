@@ -549,7 +549,7 @@ class _ShareHarnessDialogState extends State<ShareHarnessDialog> {
           terminalThemeStore.value,
         );
         final style = terminalContentStyle(color: theme.foreground);
-        final muted = theme.foreground.withValues(alpha: .54);
+        final muted = theme.muted;
         Widget surface(Key key, Widget child) => Material(
           key: key,
           color: theme.background,

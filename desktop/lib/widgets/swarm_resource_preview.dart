@@ -670,9 +670,7 @@ class _SwarmResourcePreviewState extends State<SwarmResourcePreview> {
       child: Text(
         hints.join('  ·  '),
         key: const ValueKey('resource-control-hints'),
-        style: terminalContentStyle(
-          color: theme.foreground.withValues(alpha: .54),
-        ),
+        style: terminalContentStyle(color: theme.muted),
       ),
     );
   }
@@ -1320,9 +1318,7 @@ class _SwarmResourcePreviewState extends State<SwarmResourcePreview> {
       grid.AppTheme.palette.value,
       terminalThemeStore.value,
     );
-    final muted = terminalContentStyle(
-      color: theme.foreground.withValues(alpha: .54),
-    );
+    final muted = terminalContentStyle(color: theme.muted);
     return ListView(
       controller: _scroll,
       padding: EdgeInsets.symmetric(
@@ -1391,7 +1387,7 @@ class _SwarmResourcePreviewState extends State<SwarmResourcePreview> {
                   widget.onRefocus();
                 },
                 style: TextButton.styleFrom(
-                  foregroundColor: theme.foreground.withValues(alpha: .54),
+                  foregroundColor: theme.muted,
                   textStyle: terminalContentStyle(),
                   padding: EdgeInsets.zero,
                   minimumSize: Size.zero,
@@ -1462,9 +1458,7 @@ class _SwarmResourcePreviewState extends State<SwarmResourcePreview> {
                 ),
                 child: Text(
                   'Working…',
-                  style: terminalContentStyle(
-                    color: theme.foreground.withValues(alpha: .54),
-                  ),
+                  style: terminalContentStyle(color: theme.muted),
                 ),
               ),
             if (_errors[row?.id] case final error?)

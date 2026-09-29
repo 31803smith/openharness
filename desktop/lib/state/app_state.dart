@@ -2398,7 +2398,7 @@ class AppNotifier extends ChangeNotifier {
   /// The colours the panes are actually painted with — the terminal theme in
   /// force, not the app palette by assumption (Tango is its own scheme).
   static Map<String, String> terminalThemeColours() {
-    final theme = terminalThemeFor(
+    final theme = terminalScreenThemeFor(
       grid.AppTheme.palette.value,
       terminalThemeStore.value,
     );

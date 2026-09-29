@@ -19,6 +19,7 @@ import '../shortcuts/app_keymap.dart';
 import '../shortcuts/keymap.dart';
 import '../shortcuts/keymap_commands.dart';
 import '../terminal/terminal_text.dart';
+import '../terminal/terminal_theme.dart' show lightTerminalTheme;
 
 /// A quiet terminal welcome. Opening a command is always an explicit action.
 ///
@@ -168,8 +169,12 @@ class _WorkspaceWelcomeState extends State<WorkspaceWelcome> {
     final ink = hasArtwork
         ? const Color(0xffdededb)
         : palette.foreground.withValues(alpha: .75);
-    // The welcome surface uses a dark workspace palette in both theme modes.
-    const accent = Color(0xffa5d786);
+    // Keys in the terminal's green. Artwork is dark, so over it — and on a dark
+    // palette — the pale one; on a light palette's plain field, the light
+    // terminal ramp's (5.9:1, where the pale one is 1.4:1).
+    final accent = hasArtwork || palette.isDark
+        ? const Color(0xffa5d786)
+        : lightTerminalTheme.green;
     // The page stands where a terminal will, so it is set like one: the
     // terminal's face at the terminal's size, following ⌘+ and ⌘−.
     final style = terminalTextStyle(
@@ -485,7 +490,7 @@ class _WorkspaceWelcomeState extends State<WorkspaceWelcome> {
       style: TextButton.styleFrom(
         foregroundColor: ink,
         backgroundColor: selected
-            ? Colors.white.withValues(alpha: .07)
+            ? ink.withValues(alpha: .07)
             : Colors.transparent,
         textStyle: style,
         padding: const EdgeInsets.symmetric(vertical: 2),
