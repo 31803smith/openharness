@@ -15,6 +15,7 @@ import 'package:xterm/xterm.dart';
 
 import '../clipboard/native_clipboard.dart';
 import '../core/models.dart';
+import '../core/runtime_platform.dart';
 import '../state/app_state.dart';
 import '../state/model_start_watch.dart';
 
@@ -1741,8 +1742,13 @@ class _TerminalPanelState extends State<TerminalPanel>
     // quoted-insert, so the agent image-paste fallback would change its mode.
     if (isTerminalEngine(target.engineId)) return;
     final machine = widget.notifier.stateOf(target.machineId);
+    // A local engine reads its own clipboard on Ctrl-V — except under WSL,
+    // where WSLg leaves a Windows screenshot there as BMP or not at all, and
+    // Codex/Claude Code find no image (openharness#107). There the app reads
+    // the image itself and hands it to the daemon like a remote paste; the
+    // daemon, knowing it is on WSL too, pastes the saved file's path.
     if (machine != null &&
-        !machine.isLocalMachine &&
+        (!machine.isLocalMachine || RuntimePlatform.isWsl) &&
         machine.terminalImagePasteAvailable) {
       final imageBytes = await NativeClipboard.readImagePng();
       if (!stillOwnsPaste()) return;
