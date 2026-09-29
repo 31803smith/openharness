@@ -115,6 +115,7 @@ import '../teams/team_workspace.dart';
 import '../state/workspace_learning.dart';
 import '../state/workspace_onboarding.dart';
 import '../state/workspace_chrome.dart';
+import '../widgets/key_hints.dart';
 import '../daemons/daemon_brain.dart';
 import '../daemons/daemon_face.dart';
 import '../daemons/daemon_plate_client.dart';
@@ -4953,6 +4954,22 @@ class _SwarmScreenState extends State<SwarmScreen> {
     // Search keeps keyboard focus while commands target the selected result.
     Widget ordered(double order, Widget child) =>
         FocusTraversalOrder(order: NumericFocusOrder(order), child: child);
+    final chrome = widget.chrome;
+    final bar = chrome?.pickerBar?.call(
+      context,
+      WorkspacePicker(
+        search: search,
+        focus: _focusSearch,
+        close: _dismissSearch,
+      ),
+    );
+    Widget withBar(Widget input) => bar == null
+        ? input
+        : Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [bar, input],
+          );
     final panel = Material(
       key: const ValueKey('swarm-search-results'),
       elevation: 0,
@@ -4977,30 +4994,33 @@ class _SwarmScreenState extends State<SwarmScreen> {
                   terminal: true,
                   bios: true,
                   previewBuilder: preview,
-                  header: Semantics(
-                    label: search.hint,
-                    child: ReadlineKeys(
-                      controller: _searchText,
-                      onChanged: search.setQuery,
-                      child: SwarmSearchInput(
-                        key: _searchInputKey,
-                        inputKey: const ValueKey('swarm-search-input'),
+                  header: withBar(
+                    Semantics(
+                      label: search.hint,
+                      child: ReadlineKeys(
                         controller: _searchText,
-                        focusNode: _searchFocus,
-                        search: search,
-                        onClose: _dismissSearch,
                         onChanged: search.setQuery,
-                        onOpen: _focusSearch,
-                        terminal: true,
-                        bios: true,
-                        cursorWidth: 2,
-                        hintText: search.hint,
+                        child: SwarmSearchInput(
+                          key: _searchInputKey,
+                          inputKey: const ValueKey('swarm-search-input'),
+                          controller: _searchText,
+                          focusNode: _searchFocus,
+                          search: search,
+                          onClose: _dismissSearch,
+                          onChanged: search.setQuery,
+                          onOpen: _focusSearch,
+                          terminal: true,
+                          bios: true,
+                          cursorWidth: 2,
+                          hintText: search.hint,
+                        ),
                       ),
                     ),
                   ),
                 )
               : Column(
                   children: [
+                    ?bar,
                     if (search.title != search.placement?.title)
                       Padding(
                         padding: const EdgeInsets.fromLTRB(14, 9, 14, 2),
@@ -5102,7 +5122,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
           selectionColor: terminalTheme.selection,
           selectionHandleColor: terminalTheme.cursor,
         ),
-        child: panel,
+        child: KeyHints(visible: chrome?.showsKeyHints ?? true, child: panel),
       ),
     );
     return Offstage(

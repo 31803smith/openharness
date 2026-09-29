@@ -102,7 +102,8 @@ desktop keeps in native menus or chords must be clickable. Keys keep working but
 advertised. Browser-only UI lives in `lib/web/` and is never imported by desktop code;
 it plugs into shared screens through additive seams whose default is today's desktop
 behavior (e.g. `SwarmScreen.chrome` / `WorkspaceChrome` in `state/workspace_chrome.dart`,
-which runs the same `_commands` table keys use). Do not change desktop behavior for the
+which runs the same `_commands` table keys use, adds a bar over the picker, and turns off
+`KeyHints` — `widgets/key_hints.dart`, absent means hints shown). Do not change desktop behavior for the
 web, and do not copy shared screens into `lib/web/` — add a seam instead.
 
 `kViewerMode` is true on the web:

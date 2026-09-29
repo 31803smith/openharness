@@ -11,17 +11,7 @@ import '../../terminal/terminal_theme.dart';
 import '../../terminal/terminal_theme_store.dart';
 import '../../widgets/pane_menu.dart';
 import '../../widgets/workspace_bar_control.dart';
-import 'web_machine_choice.dart';
 import 'web_menu_items.dart';
-
-/// The web build's workspace chrome: one menu button before the tabs, and a
-/// connected machine for New Harness, since a browser is not a machine.
-WorkspaceChrome webWorkspaceChrome(AppNotifier app) => WorkspaceChrome(
-  leadingWidth: WebAppMenuButton.widthOf,
-  leading: (context, commands) =>
-      WebAppMenuButton(app: app, commands: commands),
-  newHarnessMachine: () => webNewHarnessMachine(app),
-);
 
 /// The browser has no native menu bar, so everything desktop keeps there is
 /// one click away here. Rows run the same workspace commands keys do.

@@ -24,6 +24,7 @@ import 'api_picker_form.dart';
 import 'swarm_search_preview.dart';
 import 'swarm_preview_scroll.dart';
 import 'terminal_text_action.dart';
+import 'key_hints.dart';
 
 const resourcePickerCommands = {
   'picker.resource_toggle',
@@ -1559,7 +1560,7 @@ class _SwarmResourcePreviewState extends State<SwarmResourcePreview> {
                   ),
                   child: _actionButtons(),
                 ),
-              _controlHints(),
+              if (KeyHints.visibleOf(context)) _controlHints(),
             ],
           ],
         );

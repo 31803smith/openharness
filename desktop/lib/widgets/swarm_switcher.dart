@@ -32,6 +32,7 @@ import 'engine_identity.dart';
 import 'swarm_icon.dart';
 import 'swarm_search_preview.dart';
 import 'swarm_resource_preview.dart';
+import 'key_hints.dart';
 
 Future<SwarmSearchSelection?> showSwarmHistory(
   BuildContext context,
@@ -671,11 +672,14 @@ class _SwarmSearchResultsState extends State<SwarmSearchResults> {
     );
     final scale = MediaQuery.textScalerOf(context);
     final cell = widget.bios ? terminalCellSizeOf(context) : Size.zero;
-    final acceptKey = effectiveCommandHint(
-      context,
-      'picker.accept',
-      contextKind: KeymapContext.picker,
-    );
+    final keyHints = KeyHints.visibleOf(context);
+    final acceptKey = keyHints
+        ? effectiveCommandHint(
+            context,
+            'picker.accept',
+            contextKind: KeymapContext.picker,
+          )
+        : null;
     final selected = search.selected;
     final unavailable =
         search.sessionUnavailable(selected) == null &&
@@ -892,7 +896,7 @@ class _SwarmSearchResultsState extends State<SwarmSearchResults> {
                                 key: const ValueKey('swarm-row-action'),
                                 style: boxMonoStyle(color: kBoxFaint),
                               )
-                            : row.shortcut == null
+                            : row.shortcut == null || !keyHints
                             ? null
                             : Text(
                                 row.shortcut!,
