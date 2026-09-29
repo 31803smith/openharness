@@ -1129,7 +1129,7 @@ class _TerminalPanelState extends State<TerminalPanel>
                         // (cb47ba35 → TestFlight build 11), which is why
                         // test/terminal_panel_backspace_test.dart pins it.
                         deleteDetection: true,
-                        theme: terminalThemeFor(
+                        theme: terminalScreenThemeFor(
                           grid.AppTheme.palette.value,
                           terminalThemeStore.value,
                         ),
