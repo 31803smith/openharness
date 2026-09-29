@@ -13,11 +13,13 @@ viewer after sign-in. The existing website root rewrite serves it without a new 
 Publish the browser build before the corresponding native hn release so the entry point
 recognizes the viewer destination.
 
-The browser target uses this same Flutter package and `lib/main.dart`: workspace,
-swarms, pickers, settings, state, and the patched xterm renderer are shared. Browser
-support is available as a public preview at
-[harness.autonomous.ai](https://harness.autonomous.ai); there is no separate web UI
-to keep in sync.
+The browser target uses this same Flutter package: swarms, pickers, settings, state and
+the patched xterm renderer are shared. `lib/main.dart` picks the browser's workspace at
+compile time (a conditional import of `lib/web/web_entry.dart`), composed for a mouse:
+every action desktop keeps in its native menus is clickable (keys still work, they are
+just not the way in). Browser-only UI lives in `lib/web/`, and desktop never imports it.
+Browser support is available as a public preview at
+[harness.autonomous.ai](https://harness.autonomous.ai).
 
 ## Web development
 
@@ -57,7 +59,6 @@ comma-separated `WEB_ORIGINS`, and register that origin's `/auth/callback` with 
 Any `SSO_REDIRECT_URI` override must point to that same hosted callback. Tests use a
 synthetic authorization service. An alternate backend can be selected with
 `--dart-define=HARNESS_API_URL=https://your-backend.example` on run/build.
-Use `--dart-define=HARNESS_ANALYTICS_DISABLED=true` for isolated previews.
 
 ### Production release
 

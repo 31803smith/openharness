@@ -2792,7 +2792,7 @@ class _AttachingState extends State<_Attaching> with TickerProviderStateMixin {
     final lineHeight = fontSize * style.height;
     // Resolved exactly as [TerminalPanel] resolves it for the view underneath,
     // so the skeleton's ground and the terminal's are the same colour.
-    final ground = terminalThemeFor(
+    final ground = terminalScreenThemeFor(
       AppTheme.palette.value,
       terminalThemeStore.value,
     ).background;

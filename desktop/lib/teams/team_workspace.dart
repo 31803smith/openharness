@@ -1062,7 +1062,12 @@ class _TeamWorkspaceState extends State<TeamWorkspace> {
         );
         cell = terminalCellSizeOf(context);
         foreground = theme.foreground;
-        muted = foreground.withValues(alpha: .6);
+        // Read off the scheme's own ground, not the app palette's: Tango stays
+        // dark under a light palette. Near-black at .6 on a light ground is
+        // 3.9:1, so a light scheme takes .7 (≥5.4:1); a dark one keeps .6.
+        muted = foreground.withValues(
+          alpha: theme.background.computeLuminance() > .5 ? .7 : .6,
+        );
         selection = theme.selection;
         final title = _creating
             ? 'Connect a team'
