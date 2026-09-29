@@ -36,6 +36,8 @@ import 'widgets/update_notice.dart';
 import 'widgets/window_chrome.dart';
 import 'sharing/shared_agent_location.dart';
 import 'sharing/shared_agent_page.dart';
+import 'viewer/viewer_location.dart';
+import 'viewer/viewer_page.dart';
 import 'viewer/pending_pair.dart';
 import 'viewer/pending_pair_store.dart';
 import 'widgets/add_machine_dialog.dart';
@@ -367,7 +369,18 @@ class _RootShellState extends ConsumerState<RootShell>
             _holdPhoneLink(app);
           case AppStatus.authenticated:
             _webQrStarted = false;
-            screen = widget.authenticatedScreen(app);
+            final viewerLocation = kIsWeb
+                ? ViewerLocation.parse(Uri.base)
+                : null;
+            screen = viewerLocation != null
+                ? ViewerPage(app: app, location: viewerLocation)
+                : kIsWeb && ViewerLocation.isRoute(Uri.base)
+                ? const Center(
+                    child: Text(
+                      'This viewer link is incomplete. Run hn view again.',
+                    ),
+                  )
+                : widget.authenticatedScreen(app);
             _askAboutPendingPair(app);
         }
         // Preserve the fragment pin while dialogs navigate; an OAuth callback can restore it later.

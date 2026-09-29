@@ -20,6 +20,7 @@ import '../api/api_client.dart';
 import '../viewer/sign_in_browser.dart';
 import '../viewer/direct_link.dart';
 import '../viewer/viewer_services.dart';
+import '../viewer/viewer_location.dart';
 import '../e2ee/bytes.dart' show b64d;
 import '../e2ee/keys.dart' show fingerprint;
 import '../viewer/group_sync.dart'
@@ -1956,6 +1957,7 @@ class AppNotifier extends ChangeNotifier {
     PeerLinkClient? peerLinks,
     ViewerServices? viewer,
     PaneLayoutStore? paneLayoutStore,
+    this.workspaceEnabled,
     this.turnActivityTimeout = const Duration(seconds: 12),
     AlertSounds? alerts,
     AgentAlerts? agentAlerts,
@@ -2083,6 +2085,10 @@ class AppNotifier extends ChangeNotifier {
   /// the developer's own ~/.harness state file. Production passes one; see
   /// [appStateProvider].
   final PaneLayoutStore? _paneLayout;
+
+  /// A viewer companion uses auth and machine connections without restoring, claiming or
+  /// writing workspace panes. Read after OAuth has restored the browser destination.
+  final bool Function()? workspaceEnabled;
 
   /// The dial on this desk, for the rail's device row. Fed by `dial_status`
   /// frames from the local daemon; its own notifier, so the row rebuilds
@@ -11540,8 +11546,9 @@ class AppNotifier extends ChangeNotifier {
 
   int _layoutRevision = 0;
 
-  Future<void> flushPaneLayout() =>
-      _paneLayout?.flushSwarms() ?? Future<void>.value();
+  Future<void> flushPaneLayout() => workspaceEnabled?.call() == false
+      ? Future<void>.value()
+      : _paneLayout?.flushSwarms() ?? Future<void>.value();
 
   // ── desk sync ────────────────────────────────────────────────────────────
 
@@ -11615,6 +11622,7 @@ class AppNotifier extends ChangeNotifier {
   /// the desk are given desk ids and seeded (every machine's tabs land; the
   /// person closes the extras), and the merged desk is applied.
   Future<void> _deskStart(int authRevision) async {
+    if (workspaceEnabled?.call() == false) return;
     if (_deskJoining != null) return _deskJoining;
     final run = _deskJoin(authRevision);
     _deskJoining = run;
@@ -11631,6 +11639,7 @@ class AppNotifier extends ChangeNotifier {
   /// backend link coming back — because a daemon whose backend was offline
   /// answered the first read with an error, not with a desk.
   void _deskEnsure(int authRevision) {
+    if (workspaceEnabled?.call() == false) return;
     if (_desk.enabled || _deskJoining != null) return;
     unawaited(_deskStart(authRevision));
   }
@@ -12026,6 +12035,7 @@ class AppNotifier extends ChangeNotifier {
   }
 
   void _persistLayout() {
+    if (workspaceEnabled?.call() == false) return;
     for (final pane in allPanes) {
       if (pane.agentId case final id?) {
         rememberOpenedHarness(pane.machineId, id);
@@ -12082,6 +12092,7 @@ class AppNotifier extends ChangeNotifier {
   /// [TerminalPane.claimOnFirstAttach]. False for a restore that is merely
   /// bookkeeping (a machine re-keyed under the window), which nobody asked for.
   Future<void> _restorePaneLayout({bool claimOnAttach = false}) async {
+    if (workspaceEnabled?.call() == false) return;
     final store = _paneLayout;
     if (store == null) return;
     final initialSwarm = activeSwarm;
@@ -13482,6 +13493,8 @@ final appStateProvider = Provider<AppNotifier>((ref) {
     authSession: AuthSession(),
     configStore: ConfigStore(),
     paneLayoutStore: PaneLayoutStore(),
+    workspaceEnabled: () =>
+        !kIsWeb || ViewerLocation.workspaceAllowed(Uri.base),
   );
   app.bootstrap();
   return app;
