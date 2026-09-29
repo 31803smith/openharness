@@ -47,6 +47,7 @@ import '../core/project_preview.dart';
 import '../core/repository_clone.dart';
 import '../core/retry.dart';
 import '../settings/config_store.dart';
+import '../settings/experimental_features.dart';
 import '../stats/harness_stats.dart';
 import '../terminal/terminal_session.dart';
 import '../terminal/terminal_theme.dart';
@@ -360,7 +361,7 @@ class MachineState {
   /// failed, so the daemon can say who (and not about the pane in front).
   final recentTurnEnds = <({String agentId, bool failed})>[];
 
-  /// Open harnesses whose last turn failed, until their next turn starts or
+  /// Known harnesses whose last turn failed, until their next turn starts or
   /// ends well: the daemon's `fail` face while it lasts.
   final failedTurnAgents = <String>{};
 
@@ -542,6 +543,9 @@ class AppNotifier extends ChangeNotifier {
   /// Which agents have news nobody has looked at. Marked on the same two
   /// moments and NOT behind the banner or sound switches — see [AgentUnread].
   final AgentUnread agentUnread;
+  // Delivery deduplication only. The daemon owns notification eligibility for
+  // both desktop and device; a raw turn_ended is not a completed result.
+  final Set<String> _deliveredNotifications = {};
 
   AppConfig config;
   late ApiClient api;
@@ -864,7 +868,35 @@ class AppNotifier extends ChangeNotifier {
   );
 
   AppStatus status = AppStatus.bootstrapping;
-  CurrentUserProfile? currentUser;
+  CurrentUserProfile? _currentUser;
+  CurrentUserProfile? get currentUser => _currentUser;
+  set currentUser(CurrentUserProfile? profile) {
+    _currentUser = profile;
+    final id = profile?.id;
+    experimentalFeatures.bind(
+      id,
+      transport: id == null ? null : _experimentTransport,
+    );
+  }
+
+  final experimentalFeatures = ExperimentalFeaturesStore(
+    pollInterval: kUnderTest ? Duration.zero : const Duration(seconds: 30),
+  );
+  final ExperimentalSettingsTransport? experimentalSettingsTransport;
+  ApiClient? _experimentApi;
+  ExperimentalSettingsTransport? _apiExperimentTransport;
+  ExperimentalSettingsTransport? get _experimentTransport {
+    if (experimentalSettingsTransport != null) {
+      return experimentalSettingsTransport;
+    }
+    if (kUnderTest) return null;
+    if (!identical(_experimentApi, api)) {
+      _experimentApi = api;
+      _apiExperimentTransport = ApiExperimentalSettingsTransport(api);
+    }
+    return _apiExperimentTransport;
+  }
+
   List<Machine> machines = [];
   final Map<String, MachineState> machineStates = {};
   final Set<String> expandedMachines = {};
@@ -1913,6 +1945,7 @@ class AppNotifier extends ChangeNotifier {
     AgentAlerts? agentAlerts,
     AgentUnread? agentUnread,
     SystemNotifications? systemNotifications,
+    this.experimentalSettingsTransport,
   }) : alerts = alerts ?? AlertSounds(store: alertSoundStore),
        agentAlerts = agentAlerts ?? AgentAlerts(),
        systemNotifications =
@@ -2499,10 +2532,10 @@ class AppNotifier extends ChangeNotifier {
   /// The dial belongs to whichever daemon owns the cable, and only a complete
   /// roster lets that one judge; the others store a list they never use, which
   /// costs nothing and saves the window from having to know which is which.
-  /// THE WHOLE UNREAD LIST, for a dial that has just lost its own.
+  /// The newest eight unread harnesses, for a dial that has lost its drawer.
   ///
   /// The dial keeps its drawer in RAM, so a reboot — an OTA, a replug, a flash —
-  /// wipes it while this window still holds every mark. Measured: a turn ended
+  /// wipes it while this window still holds its marks. Measured: a turn ended
   /// at 17:46:19, the dial came back at 17:46:26, a question arrived at
   /// 17:46:28, and the two screens then read 2 and 1 forever.
   ///
@@ -2510,12 +2543,13 @@ class AppNotifier extends ChangeNotifier {
   /// can hand it over the moment a cable attaches, without a round trip to a
   /// window that may be busy. Ids and kinds only — the daemon already knows each
   /// agent's name, machine and last recap, and re-deriving them here would be a
-  /// second place for them to be wrong.
+  /// second place for them to be wrong. The desktop inbox can retain more than
+  /// the dial's eight rows; sending only that window preserves the wire limit.
   void _announceUnreadToDial() {
     final pool = _pool;
     if (pool == null) return;
     final items = [
-      for (final mark in agentUnread.newestFirst)
+      for (final mark in agentUnread.newestFirst.take(8))
         {
           'agentId': mark.agentId,
           'machineId': mark.machineId,
@@ -3892,6 +3926,7 @@ class AppNotifier extends ChangeNotifier {
   /// Remove the old account's live objects without overwriting its saved desk.
   /// In particular, multiple emptied tabs must not prevent the next restore.
   void _clearAccountWorkspace() {
+    experimentalFeatures.bind(null);
     ++_layoutRevision;
     // Sign-out sends the desk nothing: the tabs closing here are this window
     // leaving the account, not the person closing them.
@@ -5212,6 +5247,7 @@ class AppNotifier extends ChangeNotifier {
           prev.engineIconHint != agent.engineIconHint ||
           prev.codexHome != agent.codexHome ||
           prev.modelName != agent.modelName ||
+          prev.modelEffort != agent.modelEffort ||
           prev.parentAgentId != agent.parentAgentId ||
           prev.project != agent.project ||
           prev.gitContext != agent.gitContext ||
@@ -7212,10 +7248,12 @@ class AppNotifier extends ChangeNotifier {
 
   Iterable<({String machineId, String agentId})> _visibleOnTab() {
     if (lifecycle() != AppLifecycleState.resumed) return const [];
+    if (activeSwarm.isStore || activeSwarm.isOrchestrator) return const [];
     return [
       for (final pane in activeSwarm.panes)
-        if (pane.agentId case final agentId?)
-          (machineId: pane.machineId, agentId: agentId),
+        if (zoomedPaneId == null || pane.id == zoomedPaneId)
+          if (pane.agentId case final agentId?)
+            (machineId: pane.machineId, agentId: agentId),
     ];
   }
 
@@ -7238,7 +7276,8 @@ class AppNotifier extends ChangeNotifier {
       // times its tab came to the front, and a badge that stopped counting it
       // would be saying the work was done because somebody glanced at it. It
       // goes when the question is ANSWERED (`commander_question_close`).
-      if (agentUnread.kindFor(w.machineId, w.agentId) != AlertKind.done) {
+      final kind = agentUnread.kindFor(w.machineId, w.agentId);
+      if (kind == null || kind == AlertKind.needsYou) {
         continue;
       }
       _forgetUnread(w.machineId, w.agentId);
@@ -7380,7 +7419,8 @@ class AppNotifier extends ChangeNotifier {
   /// Same rule as the sweep: arriving at a blocked harness is not answering it,
   /// so its mark stays. See [seeWatchedAgents].
   void markAgentSeen(String machineId, String agentId) {
-    if (agentUnread.kindFor(machineId, agentId) != AlertKind.done) return;
+    final kind = agentUnread.kindFor(machineId, agentId);
+    if (kind == null || kind == AlertKind.needsYou) return;
     _forgetUnread(machineId, agentId);
   }
 
@@ -7535,7 +7575,11 @@ class AppNotifier extends ChangeNotifier {
     modelStarts.start(machineId, agentId);
   }
 
-  void _cancelTurnActivity(String machineId, String agentId) {
+  void _cancelTurnActivity(
+    String machineId,
+    String agentId, {
+    bool clearQuestion = true,
+  }) {
     final key = _turnActivityKey(machineId, agentId);
     _turnActivityWatchdogs.remove(key)?.cancel();
     // Every ordinary end of a turn comes through here — `turn_ended`, a
@@ -7548,11 +7592,9 @@ class AppNotifier extends ChangeNotifier {
     modelStarts.end(machineId, agentId);
     final machine = machineStates[machineId];
     machine?.processingAgentIds.remove(agentId);
-    // A question cannot outlive its own turn — the daemon's watcher says the
-    // same thing from the other end, tearing down and announcing a close when
-    // the turn ends. Clearing here as well means the row cannot survive a close
-    // frame that was dropped, and this is also the path a deleted agent takes.
-    machine?.blockedAgents.remove(agentId);
+    // Raw turn endings do not decide whether a question is answered. The
+    // shared daemon question-close event does. Disconnect/deletion still clear.
+    if (clearQuestion) machine?.blockedAgents.remove(agentId);
   }
 
   void _clearMachineActivity(MachineState machine) {
@@ -10178,7 +10220,15 @@ class AppNotifier extends ChangeNotifier {
   /// the way a rail click does — that is an open, not a focus, and it claims
   /// only its own terminal.
   Future<void> focusAgentFromDevice(String machineId, String agentId) async {
-    final existing = paneOfAgent(machineId, agentId);
+    // Device focus can name a pane on another tab. The current-tab lookup
+    // alone turns that focus into an Add and copies the view into this tab.
+    final existing =
+        paneOfAgent(machineId, agentId) ??
+        allPanes
+            .where(
+              (pane) => pane.machineId == machineId && pane.agentId == agentId,
+            )
+            .firstOrNull;
     if (existing == null) {
       await _fromDevice(
         () =>
@@ -12556,6 +12606,8 @@ class AppNotifier extends ChangeNotifier {
         unawaited(_rereadMachinesInBackground(pushed: true));
         break;
       case 'desk_changed':
+        unawaited(experimentalFeatures.refresh());
+        if (_swarmSettings case final settings?) unawaited(settings.refresh());
         // Another window — on another computer, or this one — changed the
         // tabs. The payload is only the revision; the document is fetched.
         final deskRevision = payload['revision'];
@@ -12778,46 +12830,12 @@ class AppNotifier extends ChangeNotifier {
         final requestId = payload['requestId'];
         if (agentId != null) {
           final open = machine.blockedAgents[agentId];
-          // A stale close must not wipe the question that REPLACED it when a
-          // dialog advanced to its next page. That is the only thing the id
-          // guards, so it is asked as its own question and nothing else hangs
-          // off it.
-          final supersededByANewerQuestion =
-              open != null &&
-              requestId is String &&
-              requestId.isNotEmpty &&
-              open.requestId != requestId;
-          if (!supersededByANewerQuestion) {
+          if (open != null && open.requestId == requestId) {
             machine.blockedAgents.remove(agentId);
-            // A question stops being unread when it is ANSWERED, wherever that
-            // happened — here, in the pane by hand, on the dial, in another
-            // window. Being looked at is not enough: the badge counts what is
-            // still waiting on a person.
-            //
-            // ⚠️ NOT nested inside "the dialog is still open". It was, and the
-            // mark then outlived its own question: answering makes the turn end
-            // too, `_cancelTurnActivity` clears `blockedAgents` on the way past,
-            // and whichever of the two frames lands first decides whether this
-            // runs at all. The close is the authoritative word that the question
-            // is answered; the dialog bookkeeping is a separate thing that may
-            // already have been tidied.
-            //
-            // WHATEVER THE MARK IS, not only a question's.
-            //
-            // Answering ENDS THE TURN for these engines — measured, one
-            // millisecond apart and the turn first:
-            //
-            //   18:04:58.534 [turn] 395050e8 ended · 65175ms
-            //   18:04:58.535 [question] 395050e8 answered elsewhere · closing
-            //
-            // so the `done` that lands with every answer overwrote the question
-            // mark and the badge never went down. Reading it as news is wrong on
-            // its face: a turn that ended in the same breath as your own answer
-            // is not something that happened while you were away.
-            //
-            // A close means somebody just dealt with this agent. Anything unread
-            // for it at that moment is about the work they were standing over.
-            _forgetUnread(machine.machine.machineId, agentId);
+            // An old question close cannot erase a newer completed result.
+            if (agentUnread.kindFor(machineId, agentId) == AlertKind.needsYou) {
+              _forgetUnread(machineId, agentId);
+            }
           }
         }
         break;
@@ -12853,6 +12871,20 @@ class AppNotifier extends ChangeNotifier {
         // agent first becomes busy. Expiry and turn end publish separately.
         if (!changed) return;
         break;
+      case 'turn_summary':
+        final notification = payload['notification'];
+        final agentId = _eventAgentId(machine, event, payload);
+        if (agentId == null || notification is! Map) return;
+        final id = notification['id'];
+        if (id is! String || id.isEmpty || notification['kind'] != 'done') {
+          return;
+        }
+        if (!_deliveredNotifications.add('$machineId/$id')) return;
+        while (_deliveredNotifications.length > 512) {
+          _deliveredNotifications.remove(_deliveredNotifications.first);
+        }
+        _raiseAlert(machine, agentId, AlertKind.done);
+        break;
       case 'turn_ended':
         final agentId = _eventAgentId(machine, event, payload);
         if (agentId != null) {
@@ -12863,7 +12895,7 @@ class AppNotifier extends ChangeNotifier {
           // project of four specialists put one row on the dial and five marks
           // here. Same predicate now, asked on the daemon: `isSubagentSession`.
           if (event['subagent'] != true) {
-            _raiseAlert(machine, agentId, AlertKind.done);
+            final failed = event['error'] != null || payload['error'] != null;
             final agent = machine.agents
                 .where((a) => a.id == agentId)
                 .firstOrNull;
@@ -12877,7 +12909,15 @@ class AppNotifier extends ChangeNotifier {
                       pane.agentId == agentId &&
                       pane.session != null,
                 );
-            final failed = event['error'] != null || payload['error'] != null;
+            // Activity belongs to the harness, even if its pane is currently
+            // detached. The zoo counters below still count only our own work.
+            if (agent != null && !isTerminalEngine(agent.engine)) {
+              if (failed) {
+                machine.failedTurnAgents.add(agentId);
+              } else {
+                machine.failedTurnAgents.remove(agentId);
+              }
+            }
             if (ownWork && !failed) {
               machine.completedHarnessUses.add((
                 harness: agent.dsh == null
@@ -12886,10 +12926,8 @@ class AppNotifier extends ChangeNotifier {
                 model: agent.gridModel,
               ));
               machine.completedHarnessTurns++;
-              machine.failedTurnAgents.remove(agentId);
             } else if (ownWork) {
               machine.failedHarnessTurns++;
-              machine.failedTurnAgents.add(agentId);
             }
             if (ownWork) {
               machine.recentTurnEnds.add((agentId: agentId, failed: failed));
@@ -12907,7 +12945,11 @@ class AppNotifier extends ChangeNotifier {
               machine.zooTurns++;
             }
           }
-          _cancelTurnActivity(machine.machine.machineId, agentId);
+          _cancelTurnActivity(
+            machine.machine.machineId,
+            agentId,
+            clearQuestion: false,
+          );
         } else {
           final sessionId = _eventSessionId(event, payload);
           if (sessionId != null) {
@@ -12971,6 +13013,7 @@ class AppNotifier extends ChangeNotifier {
 
   @override
   void dispose() {
+    experimentalFeatures.dispose();
     viewer?.auth.dispose();
     _deviceVisit?.dispose();
     _modelManager?.dispose();

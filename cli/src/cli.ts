@@ -42,6 +42,7 @@ import { ensureUtf8Locale } from './lib/childLocale.js'
 import { DialLog } from './cable/dialLog.js'
 import { buildLogBundle, bundleFileName, redactSecretsInText } from './lib/logBundle.js'
 import { CableSession } from './cable/cableSession.js'
+import { CableFleet } from './cable/cableFleet.js'
 import { DaemonCableHost, cableEventFor, cableQuestionFor, cableQuestionCloseFor } from './cable/cableHost.js'
 import { terminalActivity } from './cable/terminalActivity.js'
 
@@ -53,6 +54,7 @@ import { engineSessionTitle } from './lib/sessionTitle.js'
 import { installAmpPlugin, installCodexHooks, installCommandCodeHooks, installCursorHooks, installDevinHooks, installGrokHooks, installAgyHooks, installCopilotHooks, installHermesHooks, installKiloPlugin, installOpencodePlugin, installPiExtension, installSessionHooks } from './lib/hooks.js'
 import { PID_FILE, daemonPort, isAlive, isDaemonRunning, readPid } from './lib/daemonState.js'
 import { clearSafeModeMarker, readSafeModeMarker, runBootHandoff, safeModeDisposition, safeModeStatusBody, writeSafeModeMarker } from './lib/daemonSafeMode.js'
+import { awakeTimeout } from './lib/sleepAware.js'
 import {
   BIND_WAIT_MS, connectFailure, defaultLaunchDeps, removePidFileIf, waitForBind, waitForReady,
 } from './lib/daemonLaunch.js'
@@ -205,6 +207,7 @@ import { AskQuestionController, parseEngineQuestionPane, pollsQuestions, Questio
 import { teamWriteHold } from './teams/preflight.js'
 import { TeamError } from './teams/model.js'
 import { CommanderMirror, SUBAGENT_IDLE_MS, type CommanderMirrorOpts } from './lib/commander.js'
+import { AgentNotifications } from './lib/agentNotifications.js'
 import {
   setSummaryPoolDeviceConnected,
   shutdownSummaryPool,
@@ -316,7 +319,7 @@ function terminalHintMachineName(): string {
 
 // The dial's session, held at module scope for the same reason `backendRef` is: shutdown() is defined
 // before the wiring that creates it, and the port has to be released on the way out.
-let cableRef: CableSession | null = null
+let cableRef: CableFleet | null = null
 /** The same object the session holds — module scope so the recap gates can ask which machine is selected
  *  without threading it through every constructor between here and there. */
 let cableHostRef: DaemonCableHost | null = null
@@ -2684,6 +2687,7 @@ async function runForeground(session: AuthSession | null): Promise<void> {
   let openToolsOf: (sessionId: string) => Array<{ name: string; input: unknown }> = () => []
   // What is still being asked, by session — handed to a window that connects later (openQuestions below).
   const openQuestions = new Map<string, Record<string, unknown>>()
+  const agentNotifications = new AgentNotifications()
   const questionWatcher = new QuestionWatcher({
     getSession: (id) => registry.resolve(id),
     capture: captureTerminal,
@@ -2697,7 +2701,7 @@ async function runForeground(session: AuthSession | null): Promise<void> {
         type: 'commander_question',
         agentId: agentIdFor(sessionId),
         dbSessionId: sessionId,
-        payload: { requestId, questions: shaped },
+        payload: { requestId, questions: shaped, notification: agentNotifications.asked(sessionId, requestId) },
       }
       backend.sendCommander(asked)
       // ...and to the window on this computer. `sendCommander` is `webEligible: false`, so until this
@@ -2723,6 +2727,7 @@ async function runForeground(session: AuthSession | null): Promise<void> {
     // waiting, down the SAME path the question itself took, so the dial and the WiFi device cannot
     // disagree about whether a question is still open.
     onQuestionGone: (sessionId, requestId) => {
+      agentNotifications.answered(sessionId, requestId)
       deviceInput.setUserAction(agentIdFor(sessionId), false)
       const closed = {
         type: 'commander_question_close',
@@ -2783,6 +2788,8 @@ async function runForeground(session: AuthSession | null): Promise<void> {
     return role?.role === 'worker' || (role?.role === 'director' && role.busy)
   }
   const mirror = new CommanderMirror({
+    notifications: agentNotifications,
+    notifyWithoutDevice: true,
     send: (frame) => backend.sendCommander(frame),
     sendWeb: (frame) => backend.send(frame), // turn_summary_pending / turn_summary → web indicator
     hasDevice: () => deviceIsWatching(),        // device-gate the LLM recap (mirror node)
@@ -3124,7 +3131,7 @@ async function runForeground(session: AuthSession | null): Promise<void> {
     if (learnFrom && daemons.on() && !isTerminalEngine(learnFrom.engine)) {
       lessonUsage.ingest({ cwd: learnFrom.cwd ?? null }, events, { replay: !!(opts?.resumed || opts?.replay) })
     }
-    mirror.ingest(events, sessionId)
+    mirror.ingest(events, sessionId, { replay: !!(opts?.resumed || opts?.replay) })
     // Subscribed devices only (lib/autonomous-device/stream.ts). A transcript re-read is history, not live.
     if (!opts?.replay) autonomousDeviceService?.stream(agentIdFor(sessionId), events)
   }
@@ -4266,9 +4273,11 @@ async function runForeground(session: AuthSession | null): Promise<void> {
     // route and hears about everyone else's edits as `desk_changed` (backendSocket.ts).
     onDeskRead: () => proxyBackend('GET', '/api/desk'),
     onDeskOps: (body) => proxyBackend('POST', '/api/desk/ops', body),
+    onExperimentalRead: () => proxyBackend('GET', '/api/experimental-settings'),
+    onExperimentalWrite: (body) => proxyBackend('PATCH', '/api/experimental-settings', body),
     // The account's zoo — see backend routes/zoo.ts. Same shape as the desk: read and ops proxied,
-    // everyone else's changes heard as `zoo_changed`. Signed out, proxyBackend answers 401 NOT_SIGNED_IN
-    // and a guest keeps its zoo locally until it seeds this one.
+    // everyone else's changes heard as `zoo_changed`. The backend requires the account's creature
+    // opt-in. Signed out, proxyBackend answers 401 NOT_SIGNED_IN.
     // Killed on this computer (lib/daemonsSwitch.ts): a 404 DAEMONS_OFF without asking, which a window reads
     // exactly as the server's own 404 — daemons hidden. Otherwise verbatim, and the switch learns from it.
     onZooRead: () => zooProxy.read(),
@@ -6759,7 +6768,8 @@ async function runForeground(session: AuthSession | null): Promise<void> {
   if (existsSync(legacyDialLog)) {
     try { writeFileSync(legacyDialLog, `moved to ${join(env.HARNESS_LOGS_DIR, 'dial-YYYYMMDD.log')}\n`) } catch { /* best effort */ }
   }
-  const cable = new CableSession(cableHost, new DialLog(env.HARNESS_LOGS_DIR))
+  const cable = new CableFleet(CableSession, cableHost, env.HARNESS_LOGS_DIR, DialLog,
+    { serials: process.env.HARNESS_DIAL_SERIALS?.split(',').map(s => s.trim()).filter(Boolean) })
   cableRef = cable
 
   const deviceStore = createDeviceStore({ dataDir: env.ADAPTER_DATA_DIR, machineId: backend.machineId,
@@ -7955,9 +7965,11 @@ const enterSafeMode = (err: unknown): void => {
   // Bounded on purpose. A cause that has since cleared — tmux not yet on PATH after a reboot, a lock
   // file, a port held for a moment — would otherwise leave the machine wedged in a state nobody
   // respawns over, because not-ready is exactly what stops the app trying again.
+  // Counted in AWAKE time: a plain timer spent a closed lid on this clock and exited the daemon on the
+  // first loop turn after the wake, taking every local terminal with it (see lib/sleepAware.ts).
   if (env.ADAPTER_SAFE_MODE_MS > 0) {
-    setTimeout(() => leave(`no fix arrived within ${Math.round(env.ADAPTER_SAFE_MODE_MS / 60_000)}m — letting a clean start try`, 1),
-      env.ADAPTER_SAFE_MODE_MS).unref?.()
+    awakeTimeout(() => leave(`no fix arrived within ${Math.round(env.ADAPTER_SAFE_MODE_MS / 60_000)}m — letting a clean start try`, 1),
+      env.ADAPTER_SAFE_MODE_MS)
   }
 }
 

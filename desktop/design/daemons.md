@@ -86,9 +86,9 @@ checks hold the AppKit bar to the same with the daemon hidden.
 
 **Appearing.** When daemons turn on (the first 200, or the preview switched
 on), the slot takes its space at the first quiet moment: no mouse button held,
-the pointer off the bar, and no key or pointer event for 800 ms (at once when
+the pointer off the bottom status bar, and no key or pointer event for 800 ms (at once when
 nothing has been touched yet). Native holds the slot back the same way while a
-button is down or the pointer is on its strip (`daemonMayAppear`). Tabs never
+button is down or the pointer is on its footer (`daemonMayAppear`). Controls never
 move under a click.
 
 **The welcome's steps are not the daemon's habits.** `WorkspaceOnboarding` is
@@ -111,7 +111,7 @@ daemons are on.
 | zoo shape, rules, local draw | `lib/daemons/zoo.dart` |
 | zoo state: account, guest, seed; on, off or not known yet | `lib/daemons/zoo_controller.dart` |
 | Experimental local preview | `lib/settings/experimental_features.dart`; `lib/settings/sections/experimental_section.dart`; `SwarmScreen._experimentalFeaturesChanged`; `ZooController.showPreview` |
-| moods, blinks, work steps, tally, voice | `lib/daemons/daemon_face.dart` |
+| moods, blinks, work steps, activity details, voice | `lib/daemons/daemon_face.dart` |
 | the pair brain's frames, shown and armed, confirms, talk and `pair` requests | `lib/daemons/daemon_brain.dart` |
 | lessons (list, show, skip, revert; taught only by the live line's key) | `lib/daemons/daemon_lessons.dart` |
 | `pair.jsonc`: where it is, the file written when missing, what a rules confirmation turns on | `lib/daemons/pair_rules_file.dart` |
@@ -174,7 +174,7 @@ the night began). The app does not measure a guest's turn minutes, so long
 turns count once.
 
 The paired daemon draws at its `version`. A new egg sits in the status slot for
-3 s (an ack blink, no line), then the daemon returns and `+1 egg` stays beside
+3 s (an ack blink, no line), then the daemon returns and `1 egg` stays after
 it until the egg is opened; the tooltip shows one egg look and a count
 (`\_O_/ x2 waiting`). A level-up is a slow blink, no line. Before the first
 hatch the slot shows the waiting egg itself: the first egg's ready face, or
@@ -216,7 +216,8 @@ place to practise it.
 
 ## Status slot
 
-Eight cells plus a one-cell gutter each side, far right of the status bar, in
+Eight cells plus a one-cell gutter each side in the bottom status bar, before
+the optional Share action and model selector, in
 the bar's font with ligatures off. The face sends its ten cells as drawn
 (`statusCell` centred on the version's base sprite, so a borrowed baton or a
 nap's `z` grows to the right and the face never shifts). A status cell is
@@ -240,17 +241,29 @@ daemon has one now; else the colour brighter and more saturated) on the
 terminal background: panel, zoo, card and reveal; the card reads
 `SHINY <RARITY>`.
 
-**Tally.** Dim, left of the cells: `+3` turns finished since you looked,
-cleared by a hover, opening the panel, or coming back to the window (after
-4 s in front); `+1 egg` while eggs wait, until they are opened. With a pair
-brain the `+n` is its `daemon_state.done.count` (every machine; the tooltip
-names the last few) and a look sends `daemon_presence { doneSeen: true }`;
-without one the window counts what it sees (a turn in the pane in front of you
-is already seen). Native lays out again only when the tally's width changes.
+**Focus bar.** Only the egg or creature occupies its ten-cell slot. Do not put
+completed-turn counts, egg counts, or labels beside it. Its expression and work
+frames communicate activity; additional eggs, progress, and activity details
+live in the panel. Tooltips and accessibility retain details on demand. Counts
+never widen the slot or move its neighbors, including during hover.
+
+The underlying finished-turn details are cleared by a hover, opening the panel,
+or coming back to the window (after 4 s in front). With a pair brain the count
+is its `daemon_state.done.count` (every machine; the tooltip names the last few)
+and a look sends `daemon_presence { doneSeen: true }`; without one the window
+counts what it sees (a turn in the pane in front of you is already seen).
+
+![The native bar shows Git context and the creature alone](images/daemon-status-counts.png)
+
+Render the combined Git/creature fixture with `HARNESS_DAEMON_CAPTURE_DIR=/tmp/daemon-focus-bar
+flutter test test/daemon_review_render_test.dart --plain-name 'creature alone'`.
+Then use `HARNESS_NATIVE_STATUS_CAPTURE_DIR=/tmp/daemon-focus-bar
+bash tool/check_swarm_titlebar.sh /path/to/flutter --status-preview` for the
+actual AppKit controls. Both use synthetic state without launching the app.
 
 Clicking a ready egg hatches it; nothing hatches on its own. Otherwise a click
 boops the daemon and opens its panel. Hover is a look. Native updates carry the
-face in `daemonState` (`glyph`, `cell`, `tally`, `foreground`, `tallyColor`,
+face in `daemonState` (`glyph`, `cell`, `foreground`,
 `patch`, voice, `voiceArmed`) and repaint only the slot and the line; hover comes back as `daemonLook`.
 
 While a hatch reveal runs, the slot keeps the egg and neither the Flutter bar
@@ -274,8 +287,8 @@ Silent by default. **Only a harness waiting on you and a failure take over the
 status line**, in the terminal's yellow for 5.2 s, as tmux's message line
 does. A reply to something you did (a boop, the first words after a hatch, why
 an answer failed) speaks at once, dim, in the status line's own ink. Finished
-turns, new eggs, level-ups and returns are never a line: they are the tally, a
-blink, the wave and the brief.
+turns, new eggs, level-ups and returns are never a line: they are a blink,
+the wave, the panel and the brief.
 
 A line nobody asked for:
 
@@ -318,7 +331,7 @@ from the loopback socket bound to this computer's own harnessd
   needs (same ids as the window's own questions,
   `machineId/agentId#requestId`), work and failures across every machine;
   `asks` and `confirms` make the face `need` (it asks you something);
-  `done.count` is the `+n`; the dial is the badge. `pair: null` keeps the
+  `done.count` is the labeled done count; the dial is the badge. `pair: null` keeps the
   roster's lines (a harnessd with no consent yet pairs nothing).
 - **Shown, then armed** (BRAIN.md, "Security" 1). A key counts only on a
   line this connection was sent and acknowledged as drawn with `daemon_shown
@@ -364,7 +377,7 @@ from the loopback socket bound to this computer's own harnessd
   the pair acted) holds `done` with an ack blink and says it dimly, counted as
   a line nobody asked for; it is also in "what tim did". `say` (the pair
   answering you, or a setting that changed) is a dim reply and draws idle. `done` and `back` are never a
-  line: the tally and the brief carry them.
+  line: the expression and the brief carry them.
 - **What waits for you** (the now tab) keeps what the line could not: every
   confirmation in `daemon_state.confirms`, every proposal in
   `daemon_state.asks` (a proposal's keys work for its ten minutes; one

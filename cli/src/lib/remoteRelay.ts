@@ -12,8 +12,9 @@
  * every machine, relayed or not. A machine with no pinned peer fails the relay with `NO_PEER_LINK`
  * instead of ever reaching pipe mode.
  */
+import { randomUUID } from 'node:crypto'
 import { WebSocket, type RawData } from 'ws'
-import { watchSocketLiveness, type LivenessWatch } from './wsLiveness.js'
+import { BACKEND_IDLE_DEADLINE_MS, watchSocketLiveness, type LivenessWatch } from './wsLiveness.js'
 import type { Frame, LocalClientSink } from '../backendSocket.js'
 import type { AuthSessionManager } from './authSession.js'
 import { b64d, type Identity } from './e2ee/core.js'
@@ -654,6 +655,8 @@ export class RemoteRelayPool {
     })
     entry.heartbeat = watchSocketLiveness(ws, {
       onIdle: (idleMs) => console.log(`[relay] ${machineId.slice(0, 8)} no traffic for ${Math.round(idleMs / 1000)}s — terminating`),
+      // The relay socket ends at the backend, which hung up on it while we slept.
+      peerGivesUpAfterMs: BACKEND_IDLE_DEADLINE_MS,
       // Piggybacked sweep for a migration that never completed (pane closed mid-flight, responder never
       // answered, etc.) — no dedicated timer needed, this tick is frequent enough (20s) against the 30s TTL.
       onTick: () => {
@@ -669,8 +672,14 @@ export class RemoteRelayPool {
   }
 
   private sessionFor(machineId: string, entry: Entry, client: AttachedClient | null = null): RelaySession {
+    // Several local views share this upstream connection. Keep each view's terminal lease
+    // distinct, but stable across its opens (and across relay/P2P transport changes).
+    const viewId = randomUUID()
     return {
       send: async (frame) => {
+        if (frame.type === 'terminal_open') {
+          frame = { ...frame, payload: { ...framePayload(frame), viewId } }
+        }
         const payload = framePayload(frame)
         let useP2p = typeof payload.streamId === 'string' && entry.p2pStreams.has(payload.streamId)
         if (frame.type === 'terminal_open' && typeof payload.requestId === 'string' && entry.p2p) {
