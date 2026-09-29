@@ -2434,6 +2434,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
       initialSection: section,
       experimentalFeatures: _experimentalFeatures,
       source: 'swarm',
+      compactBelow: widget.chrome?.compactBelow ?? 0,
     ),
   );
 
@@ -5531,6 +5532,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
         source: 'shortcut',
         initialSection: SettingsSection.debug,
         experimentalFeatures: _experimentalFeatures,
+        compactBelow: widget.chrome?.compactBelow ?? 0,
       ),
     ),
   };

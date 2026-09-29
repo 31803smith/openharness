@@ -6,17 +6,10 @@ import '../shared/theme/app_theme.dart' as grid;
 import '../state/app_state.dart';
 import '../widgets/harness_customize_pane.dart';
 import 'experimental_features.dart';
-import 'sections/about_section.dart';
-import 'sections/account_section.dart';
-import 'sections/debug_section.dart';
-import 'sections/devices_section.dart';
-import 'sections/experimental_section.dart';
-import 'sections/shortcuts_section.dart';
-import 'sections/tracking_section.dart';
-import 'sections/usage_section.dart';
+import 'settings_body.dart';
+import 'settings_compact.dart';
 import 'settings_nav.dart';
 import 'settings_section.dart';
-import 'sections/notifications_section.dart';
 
 /// Opens Settings over the app.
 ///
@@ -38,6 +31,9 @@ Future<void> showSettingsScreen(
   // because a pane reachable several ways is close to meaningless as a bare
   // count.
   required String source,
+  // Narrower than this, the list and a section take turns on the screen (a
+  // phone). Desktop passes nothing: its window never gets that narrow.
+  double compactBelow = 0,
 }) async {
   if (initialSection == SettingsSection.customize) {
     await showHarnessCustomizePane(context);
@@ -52,6 +48,7 @@ Future<void> showSettingsScreen(
         initialSection: initialSection,
         experimentalFeatures: experimentalFeatures,
         source: source,
+        compactBelow: compactBelow,
       ),
       transitionDuration: Duration.zero,
       reverseTransitionDuration: Duration.zero,
@@ -72,6 +69,7 @@ class SettingsScreen extends StatefulWidget {
     this.initialSection,
     this.experimentalFeatures,
     this.source = 'unknown',
+    this.compactBelow = 0,
   }) : assert(
          initialSection != SettingsSection.customize,
          'Open workspace actions through showSettingsScreen.',
@@ -90,6 +88,10 @@ class SettingsScreen extends StatefulWidget {
   /// does not show as selected.
   final SettingsSection? initialSection;
 
+  /// Below this width the list of sections and one section take turns on the
+  /// screen instead of sitting side by side.
+  final double compactBelow;
+
   @override
   State<SettingsScreen> createState() => _SettingsScreenState();
 }
@@ -97,6 +99,12 @@ class SettingsScreen extends StatefulWidget {
 class _SettingsScreenState extends State<SettingsScreen> {
   late SettingsSection _section =
       widget.initialSection ?? kDefaultSettingsSection;
+
+  /// Narrow screens only: a section is open over the list. Opening Settings on
+  /// a named section starts there; otherwise the list comes first.
+  late bool _sectionOpen = widget.initialSection != null;
+
+  bool get _compact => MediaQuery.sizeOf(context).width < widget.compactBelow;
 
   KeyEventResult _key(FocusNode node, KeyEvent event) {
     if (event is! KeyDownEvent ||
@@ -138,6 +146,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       Navigator.of(context).pop(target);
       return;
     }
+    if (_compact) setState(() => _sectionOpen = true);
     if (target == _section) return;
     analytics.screenView(_screenName(target), source: 'rail');
     setState(() => _section = target);
@@ -155,6 +164,21 @@ class _SettingsScreenState extends State<SettingsScreen> {
     grid.AppTheme.watch(context);
     // The native title bar already owns window dragging. Settings starts below
     // it, with the same content inset on both sides of the divider.
+    final body = SettingsBody(
+      section: _section,
+      notifier: widget.notifier,
+      experimentalFeatures: widget.experimentalFeatures,
+    );
+    if (_compact) {
+      return SettingsCompactScreen(
+        section: _section,
+        sectionOpen: _sectionOpen,
+        onSelect: _show,
+        onBack: () => setState(() => _sectionOpen = false),
+        onKeyEvent: _key,
+        body: body,
+      );
+    }
     return Focus(
       onKeyEvent: _key,
       child: Scaffold(
@@ -164,54 +188,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
           children: [
             SettingsNav(section: _section, onSelect: _show),
             VerticalDivider(width: 1, color: grid.AppPalette.divider),
-            Expanded(
-              child: _SettingsBody(
-                section: _section,
-                notifier: widget.notifier,
-                experimentalFeatures: widget.experimentalFeatures,
-              ),
-            ),
+            Expanded(child: body),
           ],
         ),
       ),
     );
-  }
-}
-
-/// The screen behind a [SettingsSection].
-///
-/// Switch immediately, disposing the previous section instead of retaining it
-/// for a cross-fade while the new section starts its work.
-class _SettingsBody extends StatelessWidget {
-  const _SettingsBody({
-    required this.section,
-    required this.notifier,
-    this.experimentalFeatures,
-  });
-
-  final SettingsSection section;
-  final AppNotifier notifier;
-  final ExperimentalFeaturesStore? experimentalFeatures;
-
-  @override
-  Widget build(BuildContext context) {
-    final screen = switch (section) {
-      SettingsSection.account => AccountSection(notifier: notifier),
-      SettingsSection.usage => const UsageSection(),
-      SettingsSection.customize => throw StateError(
-        'Customization opens over the workspace.',
-      ),
-      SettingsSection.notifications => const NotificationsSection(),
-      SettingsSection.experimental => ExperimentalSection(
-        store: experimentalFeatures ?? notifier.experimentalFeatures,
-        controller: notifier.swarmSettings,
-      ),
-      SettingsSection.devices => const DevicesSection(),
-      SettingsSection.shortcuts => const ShortcutsSection(),
-      SettingsSection.debug => const DebugSection(),
-      SettingsSection.tracking => const TrackingSection(),
-      SettingsSection.about => AboutSection(notifier: notifier),
-    };
-    return KeyedSubtree(key: ValueKey(section), child: screen);
   }
 }
