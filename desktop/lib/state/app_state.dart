@@ -6864,19 +6864,46 @@ class AppNotifier extends ChangeNotifier {
   /// socket is back. Consumed by [_onMachineConnected].
   final Set<String> _dshProbeOnReconnect = {};
 
-  Future<String?> installDsh(String machineId, String id) =>
-      _installOrUpdateDsh(machineId, id, update: false);
+  /// [trustUnverified] is the person's answer to the Store's warning about a
+  /// package Harness has not reviewed ([DshEntry.unverified]). Without it such
+  /// a package is refused here, so a way into an install that has no warning
+  /// of its own — New Harness, a future caller — cannot run a stranger's setup
+  /// script unannounced.
+  Future<String?> installDsh(
+    String machineId,
+    String id, {
+    bool trustUnverified = false,
+  }) => _installOrUpdateDsh(
+    machineId,
+    id,
+    update: false,
+    trustUnverified: trustUnverified,
+  );
 
-  Future<String?> updateDsh(String machineId, String id) =>
-      _installOrUpdateDsh(machineId, id, update: true);
+  Future<String?> updateDsh(
+    String machineId,
+    String id, {
+    bool trustUnverified = false,
+  }) => _installOrUpdateDsh(
+    machineId,
+    id,
+    update: true,
+    trustUnverified: trustUnverified,
+  );
 
   Future<String?> _installOrUpdateDsh(
     String machineId,
     String id, {
     required bool update,
+    required bool trustUnverified,
   }) async {
     final machine = machineStates[machineId];
     if (machine == null) return 'Machine not found';
+    final entry = machine.dsh[id];
+    if (entry != null && entry.unverified && !trustUnverified) {
+      return '${entry.name} is not reviewed by Harness. Open it in the Store '
+          'to check its source before you ${update ? 'update' : 'install'} it.';
+    }
     final machineName = machine.machine.displayName;
     final action = update ? 'Update' : 'Install';
     final verb = update ? 'update' : 'install';
