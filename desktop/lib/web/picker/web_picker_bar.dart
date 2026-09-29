@@ -22,8 +22,9 @@ class WebPickerBar extends StatelessWidget {
       listenable: search,
       builder: (context, _) => Padding(
         key: const ValueKey('web-picker-bar'),
+        // Four cells in, like the input and the result titles under it.
         padding: EdgeInsets.fromLTRB(
-          cell.width * 2,
+          cell.width * 4,
           cell.height * .5,
           cell.width,
           0,
@@ -105,7 +106,9 @@ class _BarText extends StatelessWidget {
       ),
       child: SizedBox(
         height: terminalCellSizeOf(context).height * 1.5,
-        child: Center(child: Text(label)),
+        // Centered on the row's height only: a plain Center would take the
+        // whole width and stack every scope on a line of its own.
+        child: Center(widthFactor: 1, child: Text(label)),
       ),
     );
   }
