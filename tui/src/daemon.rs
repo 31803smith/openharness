@@ -245,6 +245,12 @@ impl Link {
 // ── REST on the same port (machines, desk, status) ──────────────────────────────
 
 pub async fn http_json(port: u16, method: &str, path: &str, body: Option<&Value>) -> Result<Value, RpcError> {
+    http_json_for(port, method, path, body, Duration::from_secs(15)).await
+}
+
+/// [http_json] with its own wait: a long poll (`POST /api/pair` holds the request for as long as a
+/// phone's handshake runs) needs more than the usual 15 s.
+pub async fn http_json_for(port: u16, method: &str, path: &str, body: Option<&Value>, wait: Duration) -> Result<Value, RpcError> {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     let work = async {
         let mut stream = tokio::net::TcpStream::connect(("127.0.0.1", port)).await.map_err(|e| RpcError::new("DAEMON_UNREACHABLE", e.to_string()))?;
@@ -268,7 +274,7 @@ pub async fn http_json(port: u16, method: &str, path: &str, body: Option<&Value>
         }
         Ok(if value.get("success").is_some() && value.get("data").is_some() { value["data"].clone() } else { value })
     };
-    tokio::time::timeout(Duration::from_secs(15), work).await.unwrap_or_else(|_| Err(RpcError::new("TIMEOUT", "the daemon did not answer")))
+    tokio::time::timeout(wait, work).await.unwrap_or_else(|_| Err(RpcError::new("TIMEOUT", "the daemon did not answer")))
 }
 
 fn dechunk(body: &[u8]) -> Vec<u8> {

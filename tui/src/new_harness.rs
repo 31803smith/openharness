@@ -15,8 +15,7 @@ use crossterm::event::{
 use ratatui::{
     buffer::Buffer,
     layout::{Position, Rect},
-    style::{Color, Modifier, Style},
-    widgets::{Block, BorderType, Borders, Widget},
+    style::{Modifier, Style},
 };
 use serde_json::{Value, json};
 use std::{collections::HashMap, time::Duration};
@@ -275,8 +274,7 @@ fn short_path(path: &str, home: &str) -> String {
     }
 }
 fn defaults_path() -> std::path::PathBuf {
-    std::path::PathBuf::from(std::env::var("HOME").unwrap_or_default())
-        .join(".harness/tui/new-harness.json")
+    crate::app::state_dir().join("new-harness.json")
 }
 fn defaults() -> Value {
     if cfg!(test) {
@@ -1561,6 +1559,23 @@ mod tests {
         });
         app.homes.insert("local".into(), "/home/dev".into());
         app
+    }
+
+    /// Opening a chooser beside the form (an agent, here) leaves the form where it was, on a wide
+    /// window and a narrow one.
+    #[tokio::test]
+    async fn the_form_stays_put_when_a_chooser_opens() {
+        let mut app = app();
+        open(&mut app, None, Some("/home/dev/project".into()));
+        let Some(Modal::NewHarness(mut form)) = app.modal.take() else { panic!() };
+        for body in [Rect::new(0, 0, 150, 41), Rect::new(0, 0, 90, 30)] {
+            form.child = None;
+            draw(&mut Buffer::empty(body), body, &mut form);
+            let alone = form.area;
+            child(&mut app, &mut form, Choice::Agent, "codex");
+            draw(&mut Buffer::empty(body), body, &mut form);
+            assert_eq!(form.area, alone, "the form moved at {}x{}", body.width, body.height);
+        }
     }
 
     #[tokio::test]

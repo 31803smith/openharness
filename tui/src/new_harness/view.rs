@@ -23,23 +23,8 @@ fn put(buf: &mut Buffer, x: u16, y: u16, width: u16, text: &str, style: Style) {
     buf.set_stringn(x, y, out, width as usize, style);
 }
 
-fn panel(buf: &mut Buffer, r: Rect, title: &str, base: Style, border: Style) {
-    crate::term_out::clear_extras(r);
-    for y in r.y..r.bottom() {
-        for x in r.x..r.right() {
-            if let Some(c) = buf.cell_mut((x, y)) {
-                c.reset();
-                c.set_style(base);
-            }
-        }
-    }
-    Block::default()
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
-        .border_style(border)
-        .render(r, buf);
-    let _ = title;
-}
+/// The form's surface, as the settings panel draws its own: filled, no border.
+fn panel(buf: &mut Buffer, r: Rect, base: Style) { crate::settings::fill(buf, r, base) }
 
 pub fn draw(buf: &mut Buffer, body: Rect, form: &mut Form) -> Option<Position> {
     form.hits.clear();
@@ -56,74 +41,20 @@ pub fn draw(buf: &mut Buffer, body: Rect, form: &mut Form) -> Option<Position> {
         );
         return None;
     }
-    let (_, foreground, light) = theme::palette();
-    let base = if theme::no_color() {
-        Style::default()
-    } else {
-        theme::fg(foreground).bg(theme::depth_fit(if light {
-            Color::Rgb(247, 247, 247)
-        } else {
-            Color::Rgb(25, 25, 25)
-        }))
-    };
-    let accent = base.patch(theme::bold(theme::accent()));
-    let muted = base.patch(theme::fg(if light {
-        Color::Rgb(92, 98, 104)
-    } else {
-        Color::Rgb(167, 173, 180)
-    }));
-    let border = base.patch(theme::fg(theme::pane_palette().active_foreground));
-    // Keep the working panes visible under the form, with a quiet backdrop.
-    crate::term_out::clear_extras(body);
-    let backdrop = if theme::no_color() {
-        Style::default().add_modifier(Modifier::DIM)
-    } else {
-        theme::fg(if light {
-            Color::Rgb(185, 185, 185)
-        } else {
-            Color::Rgb(32, 32, 32)
-        })
-        .bg(theme::depth_fit(if light {
-            Color::Rgb(230, 230, 230)
-        } else {
-            Color::Rgb(4, 4, 4)
-        }))
-        .remove_modifier(Modifier::BOLD | Modifier::REVERSED | Modifier::DIM | Modifier::UNDERLINED)
-    };
-    for y in body.y..body.bottom() {
-        for x in body.x..body.right() {
-            if let Some(c) = buf.cell_mut((x, y)) {
-                c.set_style(backdrop);
-            }
-        }
-    }
-    let side = form.child.is_some() && body.width >= 110;
-    let form_w = if side {
-        ((u32::from(body.width) - 5) * 3 / 5).min(76) as u16
-    } else {
-        body.width.saturating_sub(4).min(76)
-    };
-    let child_w = if side {
-        (body.width - form_w - 5).min(60)
-    } else {
-        form_w
-    };
+    // The settings panel's colours, and its quiet backdrop over the working panes.
+    let crate::settings::Chrome { base, muted, accent, backdrop, .. } = crate::settings::chrome();
+    crate::settings::backdrop(buf, body, backdrop);
+    // The form is the menus' panel: centred, the one size whatever is open — and a chooser (an
+    // agent, a machine, a folder…) opens in its place, as a section of Appearance does, so
+    // nothing moves.
+    let side = false;
+    let r = crate::settings::area(body);
+    let (x, y, form_w, form_h) = (r.x, r.y, r.width, r.height);
+    let (child_w, child_h) = (form_w, form_h);
     let fields = form.fields();
-    let form_h = (fields.len() as u16 * 2 + 3).min(body.height.saturating_sub(2).max(5));
-    let child_h = form
-        .child
-        .as_ref()
-        .map(|c| if c.kind.editing() { 8 } else { 22 })
-        .unwrap_or(0)
-        .min(body.height.saturating_sub(2).max(5));
-    let total_w = if side { form_w + 2 + child_w } else { form_w };
-    let height = form_h.max(child_h);
-    let x = body.x + (body.width - total_w) / 2;
-    let y = body.y + (body.height - height) / 2;
-    let r = Rect::new(x, y, form_w, form_h);
     form.area = r;
     if form.child.is_none() || side || !form.child_active {
-        panel(buf, r, "New Harness", base, border);
+        panel(buf, r, base);
         let gap = if form_h >= fields.len() as u16 * 2 + 3 {
             2
         } else {
@@ -201,7 +132,7 @@ pub fn draw(buf: &mut Buffer, body: Rect, form: &mut Form) -> Option<Position> {
     };
     let r = Rect::new(if side { x + form_w + 2 } else { x }, y, child_w, child_h);
     form.child_area = r;
-    panel(buf, r, &c.picker.title, base, border);
+    panel(buf, r, base);
     let query_x = r.x + 4;
     let query_y = r.y + 2;
     let query_w = r.width.saturating_sub(6) as usize;
