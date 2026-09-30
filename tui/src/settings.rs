@@ -100,7 +100,7 @@ pub fn chrome() -> Chrome {
 /// its surface lifted a little toward the text, the backdrop its surface pushed down, so the panel
 /// stands out in any theme, light or dark.
 pub fn chrome_for(pal: theme::PanePalette) -> Chrome {
-    let (bg, fg) = (pal.surface, pal.foreground);
+    let (bg, fg) = (pal.background, pal.foreground);
     let light = matches!(bg, Color::Rgb(r, g, b) if 299 * r as u32 + 587 * g as u32 + 114 * b as u32 > 128_000);
     let floor = if light { Color::Rgb(160, 160, 160) } else { Color::Rgb(0, 0, 0) };
     let panel = mix(bg, fg, if light { 3 } else { 7 });
@@ -113,6 +113,22 @@ pub fn chrome_for(pal: theme::PanePalette) -> Chrome {
     // pointer and the query's mark, not for words.)
     let selected = base.add_modifier(Modifier::BOLD).bg(theme::depth_fit(mix(panel, fg, 10)));
     Chrome { base, muted, accent, backdrop, selected }
+}
+
+/// A pane you are not in, a little quieter (`@hn-dim on`): every cell's text moved toward its
+/// background — the terminal's own colours ([background], [foreground]) where it keeps them, and
+/// the terminal's faint where the text is one of its indexed colours.
+pub fn dim(buf: &mut Buffer, area: Rect, background: Color, foreground: Color) {
+    const DIM: u16 = 35;
+    for y in area.y..area.bottom() { for x in area.x..area.right() {
+        let Some(c) = buf.cell_mut((x, y)) else { continue };
+        let bg = if matches!(c.bg, Color::Rgb(..)) { c.bg } else { background };
+        match c.fg {
+            Color::Rgb(..) => c.fg = theme::depth_fit(mix(c.fg, bg, DIM)),
+            Color::Reset => c.fg = theme::depth_fit(mix(foreground, bg, DIM)),
+            _ => c.modifier.insert(Modifier::DIM),
+        }
+    } }
 }
 
 /// [a] moved [amount] % toward [b] (RGB; any other colour stays as it is).
@@ -426,6 +442,8 @@ pub struct Look {
     /// Where the status bar is (bottom, top, left, right), and box panes.
     pub bar: String,
     pub boxes: bool,
+    /// The panes you are not in, a little quieter (`@hn-dim`).
+    pub dim: bool,
 }
 
 impl Look {
@@ -444,7 +462,8 @@ impl Look {
             theme,
             // ── status bar ──
             bar: match o.status_bar() { "bottom" if app.status_top => "top".into(), b => b.into() },
-            boxes: o.get("@hn-border", "", None).as_deref() != Some("line"),
+            boxes: o.border_style() == "box",
+            dim: o.dim_others(),
         }
     }
 
@@ -462,6 +481,7 @@ impl Look {
             // ── status bar ──
             "status_bar" => self.bar = value.into(),
             "border_style" => self.boxes = value == "box",
+            "dim" => self.dim = value == "on",
             _ => {}
         }
         self
@@ -545,7 +565,7 @@ pub fn preview(buf: &mut Buffer, r: Rect, look: &Look, c: &Chrome) {
         Some(t) => (theme::pane_palette_of(t.background, t.foreground), rgb(theme::theme_accent_rgb(t))),
         None => (theme::native_pane_palette(), native_accent()),
     };
-    let (bg, fg) = (pal.surface, pal.foreground);
+    let (bg, fg) = (pal.background, pal.foreground);
     let name = look.theme.map(|t| t.name).unwrap_or("your terminal's colours");
     let at = r.x + put(buf, r.x, r.y, r.width, "Preview · ", c.muted);
     put(buf, at, r.y, r.right().saturating_sub(at), name, c.base);
@@ -641,6 +661,7 @@ pub fn preview(buf: &mut Buffer, r: Rect, look: &Look, c: &Chrome) {
                 x += put(buf, x, y, inner.right().saturating_sub(x), text, s);
             }
         }
+        if look.dim && !here { dim(buf, inner, pbg, pfg) }
         // The theme's sixteen colours, in the first pane where it has room.
         if let (Some(t), true) = (look.theme, here) {
             let y = inner.y + lines.len() as u16 + 1;
@@ -671,7 +692,7 @@ pub fn preview(buf: &mut Buffer, r: Rect, look: &Look, c: &Chrome) {
 /// first focused, each with its repo), a rule, the machine with its window, and the separator
 /// facing the panes.
 fn preview_bar(buf: &mut Buffer, bar: Rect, left: bool, pal: &theme::PanePalette, accent: Color, names: &[&str]) {
-    let (bg, fg) = (pal.surface, pal.foreground);
+    let (bg, fg) = (pal.background, pal.foreground);
     for y in bar.y..bar.bottom() { for x in bar.x..bar.right() { if let Some(cell) = buf.cell_mut((x, y)) { cell.reset(); cell.set_style(Style::default().bg(bg)); } } }
     let sx = if left { bar.right() - 1 } else { bar.x };
     for y in bar.y..bar.bottom() { buf.set_string(sx, y, "│", Style::default().fg(pal.border).bg(bg)) }

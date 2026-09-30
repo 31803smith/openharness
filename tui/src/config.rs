@@ -2,6 +2,7 @@
 //!
 //! ```toml
 //! prefix = "ctrl+a"              # instead of ctrl+space
+//! prefix2 = "C-b"                # a second one (⌘ keys reach only some terminals)
 //! desk = "read"                  # sync | read | off   (as HARNESS_TUI_DESK)
 //! predict = "off"                # auto | always | off (as HARNESS_TUI_PREDICT)
 //! notify = false                 # OS notifications through the terminal
@@ -132,12 +133,17 @@ pub struct Look {
     pub border_style: Option<String>,
     /// The bar's width down a side, in columns (18-36; 26 unless dragged).
     pub status_bar_width: Option<String>,
+    /// `on`: the panes you are not in, a little quieter (`off` unless chosen).
+    pub dim: Option<String>,
 }
 
 pub struct Config {
     pub prefix: Chord,
     /// Whether the file named a prefix (else tmux's, or ~/.tmux.conf's, stands).
     pub prefix_set: bool,
+    /// A second prefix (tmux's prefix2), where the file names one: `prefix = "D-b"` (⌘B, which
+    /// only some terminals pass on) with `prefix2 = "C-b"` works in every terminal.
+    pub prefix2: Option<Chord>,
     pub keys: Vec<(Chord, Option<String>)>,
     /// The `[look]` table, if any.
     pub look: Option<Look>,
@@ -191,13 +197,14 @@ impl Look {
         }
         if let Some(b) = &self.border_style { out.push(("@hn-border".into(), b.clone())) }
         if let Some(w) = &self.status_bar_width { out.push(("@hn-status-bar-width".into(), w.clone())) }
+        if let Some(d) = &self.dim { out.push(("@hn-dim".into(), d.clone())) }
         out
     }
 }
 
 impl Default for Config {
     fn default() -> Self {
-        Config { prefix: Chord::normal(KeyCode::Char('b'), KeyModifiers::CONTROL), prefix_set: false, keys: Vec::new(), look: None, problems: Vec::new() }
+        Config { prefix: Chord::normal(KeyCode::Char('b'), KeyModifiers::CONTROL), prefix_set: false, prefix2: None, keys: Vec::new(), look: None, problems: Vec::new() }
     }
 }
 
@@ -223,6 +230,9 @@ pub fn load() -> Config {
     let setenv = |name: &str, value: &str| { if std::env::var(name).is_err() { unsafe { std::env::set_var(name, value) } } };
     if let Some(p) = value.get("prefix").and_then(|v| v.as_str()) {
         match crate::keys::parse(p) { Ok(c) => { config.prefix = c; config.prefix_set = true } Err(e) => config.problems.push(format!("tui.toml prefix: {e}")) }
+    }
+    if let Some(p) = value.get("prefix2").and_then(|v| v.as_str()) {
+        match crate::keys::parse(p) { Ok(c) => config.prefix2 = Some(c), Err(e) => config.problems.push(format!("tui.toml prefix2: {e}")) }
     }
     if let Some(d) = value.get("desk").and_then(|v| v.as_str()) { setenv("HARNESS_TUI_DESK", d) }
     if let Some(p) = value.get("predict").and_then(|v| v.as_str()) { setenv("HARNESS_TUI_PREDICT", p) }
@@ -264,6 +274,7 @@ fn look_of(look: &toml::Table, problems: &mut Vec<String>) -> Look {
     field(look, "status_bar", &mut l.status_bar);
     field(look, "border_style", &mut l.border_style);
     field(look, "status_bar_width", &mut l.status_bar_width);
+    field(look, "dim", &mut l.dim);
     // (An older file's `tabs` is left alone: the tabs over the panes are gone, the bar lists the windows.)
     l
 }
@@ -299,6 +310,7 @@ fn format_look(look: &Look) -> String {
     push(&look.status_bar, "status_bar", &mut s);
     push(&look.border_style, "border_style", &mut s);
     push(&look.status_bar_width, "status_bar_width", &mut s);
+    push(&look.dim, "dim", &mut s);
     s
 }
 

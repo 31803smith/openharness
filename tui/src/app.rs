@@ -5146,6 +5146,7 @@ impl App {
                 ("@hn-status-bar", format!("status bar: {value}"))
             }
             "border_style" => ("@hn-border", format!("border style: {value}")),
+            "dim" => ("@hn-dim", format!("dim other panes: {value}")),
             _ => return format!("unknown: {value}"),
         };
         let _ = self.options.set(name, Some(value), &global, "", 0);
@@ -5173,6 +5174,7 @@ impl App {
         look.status_bar = self.options.get("@hn-status-bar", "", None);
         look.border_style = self.options.get("@hn-border", "", None);
         look.status_bar_width = self.options.get("@hn-status-bar-width", "", None);
+        look.dim = self.options.get("@hn-dim", "", None);
         if let Err(e) = crate::config::write_look(&look) { self.say(format!("could not write tui.toml: {e}"), crate::theme::DANGER) }
     }
 

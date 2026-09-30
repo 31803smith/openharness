@@ -473,6 +473,9 @@ pub fn palette() -> (Color, Color, bool) {
 /// Surface colors derived from the terminal theme, with a stable fallback before OSC replies.
 #[derive(Clone, Copy, Debug)]
 pub struct PanePalette {
+    /// The terminal's (or theme's) own background: hn's chrome — the panel, the side bar — sits
+    /// on it, as the panes do; `surface` is the focused pane's fill, lifted off it.
+    pub background: Color,
     pub surface: Color, pub inactive_surface: Color,
     pub foreground: Color, pub inactive_foreground: Color, pub muted: Color,
     pub active_foreground: Color,
@@ -514,6 +517,7 @@ fn pane_palette_for(native: Option<(Color, Color)>) -> PanePalette {
     let surface = mix(bg, foreground, if light { 4 } else { 10 });
     let surface = if surface == inactive_surface { mix(bg, foreground, if light { 2 } else { 6 }) } else { surface };
     PanePalette {
+        background: bg,
         surface,
         inactive_surface,
         foreground, inactive_foreground: mix(foreground, bg, 9),
@@ -581,6 +585,8 @@ pub fn fzf_change(f: impl FnOnce(&mut Fzf)) {
 pub fn opts_change(f: impl FnOnce(&mut FzfOpts)) {
     let mut c = fzf_opts().clone();
     f(&mut c);
+    // (No list or preview in hn draws a scrollbar, whatever a list asks: see fzf_opts_base.)
+    (c.scrollbar, c.preview_scrollbar) = (None, None);
     OPTS_LIVE.store(Box::into_raw(Box::new(c)), std::sync::atomic::Ordering::Release);
 }
 
@@ -1094,6 +1100,9 @@ fn fzf_opts_base() -> &'static FzfOpts {
             if !sign_set { o.wrap_sign = "> ".into() }
         }
         if no_color() { o.fg = None; o.bg = None }
+        // No list or preview in hn draws a scrollbar, whatever FZF_DEFAULT_OPTS says: they follow
+        // the cursor, and the wheel and the keys scroll them.
+        (o.scrollbar, o.preview_scrollbar) = (None, None);
         o
     })
 }

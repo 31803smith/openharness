@@ -2705,7 +2705,9 @@ fn choose(app: &mut App, kind: PickerKind, mut picker: Picker, choice: Choice) {
                             let msg = app.set_look(knob, value);
                             picker.say(msg);
                             picker.set_rows(modal::theme_options(app, &section));
-                            crate::settings::cursor_to(&mut picker, &id);
+                            // (A switch — Dim other panes — is the same row turned over.)
+                            let at = if knob == "dim" { format!("dim:{}", if value == "on" { "off" } else { "on" }) } else { id.clone() };
+                            crate::settings::cursor_to(&mut picker, &at);
                         }
                     } else if let Some(sec) = id.strip_prefix("section:") {
                         // The section list: Enter opens the section's options.

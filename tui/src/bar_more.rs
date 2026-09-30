@@ -45,7 +45,7 @@ pub fn footer_height(app: &App, width: u16) -> u16 {
 pub fn footer(buf: &mut Buffer, app: &App, r: Rect) {
     if r.height == 0 || r.width < 4 { return }
     let pal = theme::pane_palette();
-    let base = Style::default().fg(theme::paint(pal.muted)).bg(theme::depth_fit(pal.surface));
+    let base = Style::default().fg(theme::paint(pal.muted)).bg(theme::depth_fit(pal.background));
     for x in r.x..r.right() { if let Some(c) = buf.cell_mut((x, r.y)) { c.set_symbol("─").set_style(Style::default().fg(theme::paint(pal.border)).bg(base.bg.unwrap_or_default())); } }
     for (row, item) in items(app).iter().take(r.height.saturating_sub(1) as usize).enumerate() {
         let y = r.y + 1 + row as u16;

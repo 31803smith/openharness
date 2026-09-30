@@ -563,7 +563,9 @@ pub fn theme_sections(app: &App) -> Vec<Row> {
     let o = &app.options;
     let status = o.get("pane-border-status", "", None).unwrap_or_else(|| "top".into());
     // (Named as its options are: the highlighted border, or the rest blurred.)
-    let focus = if o.focus_style() == "surface" { "blurred" } else { "border" };
+    // (And, with either, the other panes dimmed or not.)
+    let focus = format!("{}{}", if o.focus_style() == "surface" { "blurred" } else { "border" }, if o.dim_others() { " · dim" } else { "" });
+    let focus = focus.as_str();
     let orientation = o.look_orientation().to_string();
     let layout_preset = o.get("@hn-layout-preset", "", None).unwrap_or_else(|| "auto".into());
     let theme = o.get("@hn-theme", "", None).unwrap_or_default();
@@ -592,7 +594,7 @@ pub fn theme_sections(app: &App) -> Vec<Row> {
 fn status_bar_of(app: &App) -> &'static str { match app.options.status_bar() { "bottom" if app.status_top => "top", b => b } }
 
 /// How panes are set apart: `box` unless `@hn-border line`.
-fn border_style_of(app: &App) -> &'static str { if app.options.get("@hn-border", "", None).as_deref() == Some("line") { "line" } else { "box" } }
+fn border_style_of(app: &App) -> &'static str { app.options.border_style() }
 
 /// The look/theme picker, level two: the options of one section. Enter on one applies it (and the
 /// ▼ moves to it); Left/Esc returns to the section list.
@@ -612,7 +614,13 @@ pub fn theme_options(app: &App, section: &str) -> Vec<Row> {
         "border" => { let cur = current("pane-border-lines", "single");
             ["single", "double", "heavy", "simple", "number"].iter().map(|v| opt(format!("border_lines:{v}"), *v, cur == *v, "pane-border-lines")).collect() }
         "focus" => { let cur = o.focus_style().to_string();
-            ["line", "surface"].iter().map(|v| opt(format!("focus:{v}"), if *v == "line" { "border" } else { "blurred" }, cur == *v, "focus_style")).collect() }
+            let styles = ["line", "surface"].iter().map(|v| opt(format!("focus:{v}"), if *v == "line" { "border" } else { "blurred" }, cur == *v, "focus_style"));
+            // With either: the panes you are not in, a little quieter — a switch (Enter turns it
+            // over; the preview shows it turned).
+            let on = o.dim_others();
+            let dim = Row::new(if on { "dim:off" } else { "dim:on" }, "Dim other panes").lead(lead(on))
+                .detail(vec![span(if on { "on" } else { "the panes you are not in, a little quieter" }, fg(theme::MUTED))]);
+            styles.chain(std::iter::once(dim)).collect() }
         "split" => { let cur = o.look_orientation().to_string();
             ["auto", "vertical", "horizontal"].iter().map(|v| opt(format!("layout_orientation:{v}"), *v, cur == *v, "layout_orientation")).collect() }
         "layout" => { let cur = current("@hn-layout-preset", "auto");
@@ -791,6 +799,14 @@ mod theme_row_tests {
         let _ = app.set_look("border_style", "line");
         assert_eq!(picked(theme_options(&app, "bar")).as_deref(), Some("status_bar:left"));
         assert_eq!(picked(theme_options(&app, "boxes")).as_deref(), Some("border_style:line"));
+        // Dim other panes, in Focus under border and blurred: off until chosen, a switch its row
+        // turns over.
+        let focus = ids(theme_options(&app, "focus"));
+        assert_eq!(focus, ["focus:line", "focus:surface", "dim:on"]);
+        let _ = app.set_look("dim", "on");
+        assert!(app.options.dim_others());
+        assert_eq!(ids(theme_options(&app, "focus"))[2], "dim:off");
+        assert!(theme_sections(&app).iter().any(|r| r.id == "section:focus" && r.right == "border · dim"));
         let rows = theme_sections(&app);
         let right = |id: &str| rows.iter().find(|r| r.id == id).map(|r| r.right.clone()).unwrap_or_default();
         assert_eq!((right("section:bar"), right("section:boxes")), ("left".into(), "off".into()));

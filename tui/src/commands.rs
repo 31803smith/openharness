@@ -1248,6 +1248,7 @@ fn after_set(app: &mut App, name: &str, now: Option<String>, global: bool, tab: 
     if matches!(name.as_str(), "@hn-accent" | "@hn-theme" | "@hn-lists") { app.sync_accent(); app.redraw_all = true }
     // (The bar down a side and the pane frames change the panes' room.)
     if matches!(name.as_str(), "@hn-status-bar" | "@hn-border" | "@hn-focus") { app.redraw_all = true; app.fit_panes(); }
+    if name == "@hn-dim" { app.redraw_all = true }
     // alerts_reset_all: every window's silence timer starts again.
     if name == "monitor-silence" { for t in app.tabs.iter_mut() { t.last_output = std::time::Instant::now() } }
     if name.starts_with('@') && now.is_none() { app.opts.user.remove(&name); return }

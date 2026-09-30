@@ -169,6 +169,7 @@ async fn run_headless(config: config::Config, port: u16) -> io::Result<()> {
     app.cfg_finished = true;
     app.config_files = read;
     if config.prefix_set { app.keymap.prefix = config.prefix }
+    if config.prefix2.is_some() { app.keymap.prefix2 = config.prefix2 }
     app.apply_look(config.look.as_ref());
     // The server's options, keys, buffers and environment: this client's if it is the first.
     server::join(&mut app);
@@ -252,6 +253,7 @@ async fn run(config: config::Config) -> io::Result<()> {
         let mut km = keys::Keymap::tmux_defaults();
         let settings = tmuxconf::load(&mut km);
         if config.prefix_set { km.prefix = config.prefix }
+        if config.prefix2.is_some() { km.prefix2 = config.prefix2 }
         let mut text = String::new();
         for p in &settings.paths { text += &format!("read {}\n", p.display()) }
         text += &format!("prefix {}\n\n", keys::name(&km.prefix));
@@ -425,6 +427,7 @@ async fn run(config: config::Config) -> io::Result<()> {
     app.cfg_finished = true;
     app.config_files = read.clone();
     if config.prefix_set { app.keymap.prefix = config.prefix }
+    if config.prefix2.is_some() { app.keymap.prefix2 = config.prefix2 }
     app.apply_look(config.look.as_ref());
     for (chord, command) in &config.keys {
         match command { Some(c) => app.keymap.bind(keys::Table::Root, *chord, c.clone(), false), None => app.keymap.unbind(keys::Table::Root, chord) }

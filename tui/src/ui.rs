@@ -292,6 +292,11 @@ fn window(buf: &mut Buffer, app: &mut App, body: Rect) -> Option<Position> {
             if let Some(pos) = pane_body(buf, pane, content, active, window) { cursor = Some(pos) }
             pane.dirty = false;
         }
+        // `@hn-dim on`: a pane you are not in, a little quieter (with one pane, nothing to set apart).
+        if !active && rects.len() > 1 && app.options.dim_others() {
+            let pal = theme::pane_palette();
+            crate::settings::dim(buf, content, window.1.unwrap_or(pal.background), window.0.unwrap_or(pal.foreground));
+        }
     }
     if surfaces { pane_chrome(buf, app); } else if app.options.box_panes() { boxes(buf, app); } else { borders(buf, app, body); }
     if app.modal.is_some() && !matches!(app.modal, Some(Modal::Copy { .. })) { None } else { cursor }
@@ -398,19 +403,16 @@ fn boxes(buf: &mut Buffer, app: &App) {
     let hz = box_set(&lines).4;
     let inner = app.box_inner(tab);
     let frames: Vec<(u64, crate::pane_frame::Frame)> = app.rects.iter().map(|(id, r)| (*id, crate::pane_frame::boxed_in(*r, canvas, inner, status))).filter(|(_, f)| f.content != f.surface).collect();
-    // The lines, each cell with the pane it is drawn for: neighbours share a line, which takes
-    // the colour of the one that matters most — the focused pane's, else one that waits on you.
-    let rank = |id: u64| if Some(id) == app.focused() { 2 } else { u8::from(app.pane_state(id) == Some(crate::fleet::State::NeedsInput)) };
-    let mut cells: std::collections::HashMap<(u16, u16), u64> = std::collections::HashMap::new();
+    // Each box its own line, in its own colour — boxes side by side touch (`││`), never sharing a
+    // line or joining at a corner.
     for (id, f) in &frames {
-        let r = f.surface;
-        let edge = (r.x..r.right()).flat_map(|x| [(x, r.y), (x, r.bottom() - 1)]).chain((r.y..r.bottom()).flat_map(|y| [(r.x, y), (r.right() - 1, y)]));
-        for p in edge { let owner = cells.entry(p).or_insert(*id); if rank(*id) > rank(*owner) { *owner = *id } }
-    }
-    for (&(x, y), &id) in &cells {
-        let on = |dx: i32, dy: i32| cells.contains_key(&((x as i32 + dx) as u16, (y as i32 + dy) as u16));
-        let g = crate::settings::joint(&lines, y > 0 && on(0, -1), on(0, 1), x > 0 && on(-1, 0), on(1, 0));
-        if let Some(c) = buf.cell_mut((x, y)) { c.set_symbol(g).set_style(box_style(app, id)); }
+        let (r, style) = (f.surface, box_style(app, *id));
+        let edge: std::collections::HashSet<(u16, u16)> = (r.x..r.right()).flat_map(|x| [(x, r.y), (x, r.bottom() - 1)]).chain((r.y..r.bottom()).flat_map(|y| [(r.x, y), (r.right() - 1, y)])).collect();
+        for &(x, y) in &edge {
+            let on = |dx: i32, dy: i32| edge.contains(&((x as i32 + dx) as u16, (y as i32 + dy) as u16));
+            let g = crate::settings::joint(&lines, y > 0 && on(0, -1), on(0, 1), x > 0 && on(-1, 0), on(1, 0));
+            if let Some(c) = buf.cell_mut((x, y)) { c.set_symbol(g).set_style(style); }
+        }
     }
     for (id, f) in &frames {
         let (id, style) = (*id, box_style(app, *id));

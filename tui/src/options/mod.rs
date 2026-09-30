@@ -277,11 +277,23 @@ impl Store {
     }
 
     /// `@hn-border` box (the default): every pane its own frame, a cell apart. `line` is tmux's
-    /// shared lines; the blurred surfaces, `@hn-look tmux` and `@hn-look classic` (the earlier
-    /// line borders) draw as they always have.
+    /// shared lines; the blurred surfaces and `@hn-look tmux` draw as they always have.
     pub fn box_panes(&self) -> bool {
-        !self.tmux_look() && !self.pane_look() && self.get("@hn-look", "", None).as_deref() != Some("classic")
-            && self.get("@hn-border", "", None).as_deref() != Some("line")
+        !self.tmux_look() && !self.pane_look() && self.border_style() == "box"
+    }
+
+    /// `@hn-dim on` (tui.toml `dim`): the panes you are not in, a little quieter — with borders or
+    /// blurred surfaces alike. Off unless chosen.
+    pub fn dim_others(&self) -> bool { self.get("@hn-dim", "", None).as_deref() == Some("on") }
+
+    /// `@hn-border` as chosen — or, not chosen, `box` except under `@hn-look classic` (a look
+    /// from before boxes, whose panes keep their lines until you choose).
+    pub fn border_style(&self) -> &'static str {
+        match self.get("@hn-border", "", None).as_deref() {
+            Some("line") => "line",
+            Some(_) => "box",
+            None => if self.get("@hn-look", "", None).as_deref() == Some("classic") { "line" } else { "box" },
+        }
     }
 
     /// The default for a name: hn's, or tmux's under `@hn-look tmux`.
