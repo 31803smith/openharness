@@ -5904,6 +5904,14 @@ class AppNotifier extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Makes [machineId] the workspace's machine, where New Harness starts,
+  /// until focus moves to a pane on another one.
+  void selectMachine(String machineId) {
+    if (selectedMachineId == machineId) return;
+    selectedMachineId = machineId;
+    notifyListeners();
+  }
+
   /// Selects a machine without toggling its tree. Setup/status rows use this
   /// action so clicking an E2EE prompt always opens that machine's setup pane.
   Future<void> selectMachineForSetup(String machineId) async {

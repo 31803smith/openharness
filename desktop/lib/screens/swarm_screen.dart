@@ -73,6 +73,7 @@ import '../widgets/harness_activity_mark.dart';
 import '../widgets/workspace_status_line.dart';
 import '../widgets/workspace_pull_request_label.dart';
 import '../widgets/workspace_bar_control.dart';
+import '../widgets/workspace_tab_close.dart';
 import '../widgets/session_work_dialog.dart';
 import '../widgets/web_download_button.dart';
 import '../widgets/workspace_share_button.dart';
@@ -2457,6 +2458,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
       initialSection: section,
       experimentalFeatures: _experimentalFeatures,
       source: 'swarm',
+      compactBelow: widget.chrome?.compactBelow ?? 0,
     ),
   );
 
@@ -4966,6 +4968,13 @@ class _SwarmScreenState extends State<SwarmScreen> {
     }
   }
 
+  /// View on a machine when the host asks it to close the picker: that
+  /// machine becomes the one New Harness starts on.
+  void _viewMachine(String machineId) {
+    _dismissSearch();
+    app.selectMachine(machineId);
+  }
+
   void _dismissSearch() {
     final target = _search?.targetId;
     _closeSearch();
@@ -5174,6 +5183,9 @@ class _SwarmScreenState extends State<SwarmScreen> {
       onRefocus: _focusSearch,
       onModalChanged: _pickerModalChanged,
       onCommands: _showSearchCommands,
+      onViewMachine: widget.chrome?.viewMachineCloses == true
+          ? _viewMachine
+          : null,
     );
     final terminalTheme = terminalThemeFor(
       grid.AppTheme.palette.value,
@@ -5723,6 +5735,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
         source: 'shortcut',
         initialSection: SettingsSection.debug,
         experimentalFeatures: _experimentalFeatures,
+        compactBelow: widget.chrome?.compactBelow ?? 0,
       ),
     ),
   };
@@ -6779,6 +6792,9 @@ class _SwarmScreenState extends State<SwarmScreen> {
         math.max(0.0, constraints.maxWidth - cell.width * 14),
       );
       final leadingWidth = chrome?.leadingWidth(context) ?? 0.0;
+      final closeCells = chrome?.closesTabs == true
+          ? kWorkspaceTabCloseCells
+          : 0;
       final tabBudget = math.max(
         0.0,
         constraints.maxWidth -
@@ -6791,12 +6807,15 @@ class _SwarmScreenState extends State<SwarmScreen> {
       _tabWidths = [
         for (var i = 0; i < labels.length; i++)
           math.max(
-            activities[i] == null ? 0 : ('${i + 1}:'.length + 4) * cell.width,
+            activities[i] == null
+                ? 0
+                : ('${i + 1}:'.length + 4 + closeCells) * cell.width,
             math.min(
               math.min(
                     labels[i].characters.length +
                         2 +
-                        (activities[i] == null ? 0 : 2),
+                        (activities[i] == null ? 0 : 2) +
+                        closeCells,
                     24,
                   ) *
                   cell.width,
@@ -6885,77 +6904,86 @@ class _SwarmScreenState extends State<SwarmScreen> {
                                   padding: EdgeInsets.symmetric(
                                     horizontal: cell.width,
                                   ),
-                                  child: Center(
-                                    child: activity == null
-                                        ? Text(
-                                            labels[index],
-                                            maxLines: 1,
-                                            overflow: TextOverflow.ellipsis,
-                                            textAlign: TextAlign.center,
-                                            style: workspaceBarTextStyle(
-                                              color: theme.foreground,
-                                              emphasized: emphasized,
-                                            ),
-                                          )
-                                        : Row(
-                                            mainAxisSize: MainAxisSize.min,
-                                            children: [
-                                              Text(
-                                                '${index + 1}:',
-                                                style: workspaceBarTextStyle(
-                                                  color: theme.foreground,
-                                                  emphasized: emphasized,
-                                                ),
+                                  child: _withTabClose(
+                                    closeCells > 0,
+                                    id: swarm.id,
+                                    visible: selected || emphasized,
+                                    color: theme.foreground,
+                                    child: Center(
+                                      child: activity == null
+                                          ? Text(
+                                              labels[index],
+                                              maxLines: 1,
+                                              overflow: TextOverflow.ellipsis,
+                                              textAlign: TextAlign.center,
+                                              style: workspaceBarTextStyle(
+                                                color: theme.foreground,
+                                                emphasized: emphasized,
                                               ),
-                                              Flexible(
-                                                child: Text(
-                                                  names[swarm.id]!,
-                                                  maxLines: 1,
-                                                  overflow:
-                                                      TextOverflow.ellipsis,
+                                            )
+                                          : Row(
+                                              mainAxisSize: MainAxisSize.min,
+                                              children: [
+                                                Text(
+                                                  '${index + 1}:',
                                                   style: workspaceBarTextStyle(
                                                     color: theme.foreground,
                                                     emphasized: emphasized,
                                                   ),
                                                 ),
-                                              ),
-                                              SizedBox(width: cell.width),
-                                              ListenableBuilder(
-                                                listenable: _tabScroll,
-                                                builder: (context, _) {
-                                                  final left = _tabWidths
-                                                      .take(index)
-                                                      .fold(
-                                                        0.0,
-                                                        (a, b) => a + b,
-                                                      );
-                                                  final offset =
-                                                      _tabScroll.hasClients
-                                                      ? _tabScroll.offset
-                                                      : 0.0;
-                                                  return ActivityMark(
-                                                    key: ValueKey(
-                                                      'tab-activity:${swarm.id}',
-                                                    ),
-                                                    activity: activity,
-                                                    color: activityColor(
-                                                      activity,
-                                                      theme,
-                                                      color: prefs.color,
-                                                    ),
-                                                    emphasized: emphasized,
-                                                    tooltip: false,
-                                                    visible:
-                                                        left <
-                                                            offset +
-                                                                tabsWidth &&
-                                                        left + _tabWidths[index] >
-                                                            offset,
-                                                  );
-                                                },
-                                              ),
-                                            ],
-                                          ),
+                                                Flexible(
+                                                  child: Text(
+                                                    names[swarm.id]!,
+                                                    maxLines: 1,
+                                                    overflow:
+                                                        TextOverflow.ellipsis,
+                                                    style:
+                                                        workspaceBarTextStyle(
+                                                          color:
+                                                              theme.foreground,
+                                                          emphasized:
+                                                              emphasized,
+                                                        ),
+                                                  ),
+                                                ),
+                                                SizedBox(width: cell.width),
+                                                ListenableBuilder(
+                                                  listenable: _tabScroll,
+                                                  builder: (context, _) {
+                                                    final left = _tabWidths
+                                                        .take(index)
+                                                        .fold(
+                                                          0.0,
+                                                          (a, b) => a + b,
+                                                        );
+                                                    final offset =
+                                                        _tabScroll.hasClients
+                                                        ? _tabScroll.offset
+                                                        : 0.0;
+                                                    return ActivityMark(
+                                                      key: ValueKey(
+                                                        'tab-activity:${swarm.id}',
+                                                      ),
+                                                      activity: activity,
+                                                      color: activityColor(
+                                                        activity,
+                                                        theme,
+                                                        color: prefs.color,
+                                                      ),
+                                                      emphasized: emphasized,
+                                                      tooltip: false,
+                                                      visible:
+                                                          left <
+                                                              offset +
+                                                                  tabsWidth &&
+                                                          left + _tabWidths[index] >
+                                                              offset,
+                                                    );
+                                                  },
+                                                ),
+                                              ],
+                                            ),
+                                    ),
                                   ),
                                 ),
                               ),
@@ -7043,6 +7071,23 @@ class _SwarmScreenState extends State<SwarmScreen> {
 
   /// A host's narrow bar (the web on a phone): its tab switcher in place of
   /// the tab list, and no Store button, which the host's menu already offers.
+  /// A tab's label, with a close mark when the host closes tabs by mouse.
+  Widget _withTabClose(
+    bool closes, {
+    required String id,
+    required bool visible,
+    required Color color,
+    required Widget child,
+  }) => !closes
+      ? child
+      : WorkspaceTabCloseSlot(
+          tabId: id,
+          visible: visible,
+          color: color,
+          onClose: () => unawaited(app.closeSwarm(id)),
+          child: child,
+        );
+
   Widget _compactTabStrip(WorkspaceChrome chrome, TerminalTheme theme) =>
       Builder(
         builder: (context) {

@@ -81,6 +81,7 @@ class SwarmResourcePreview extends StatefulWidget {
     required this.onRefocus,
     required this.onModalChanged,
     required this.onCommands,
+    this.onViewMachine,
   });
   final SwarmSearchController search;
   final SearchPreviewControls controls;
@@ -88,6 +89,10 @@ class SwarmResourcePreview extends StatefulWidget {
   final VoidCallback onRefocus;
   final ValueChanged<bool> onModalChanged;
   final VoidCallback onCommands;
+
+  /// Where View takes a machine instead of scoping the picker to it, when
+  /// the host composition asks for that ([WorkspaceChrome.viewMachineCloses]).
+  final ValueChanged<String>? onViewMachine;
 
   @override
   State<SwarmResourcePreview> createState() => _SwarmResourcePreviewState();
@@ -157,7 +162,12 @@ class _SwarmResourcePreviewState extends State<SwarmResourcePreview> {
   /// a project/machine group opens, so Rename/Delete are not the only doors.
   void _viewMachine() {
     final selected = row;
-    if (selected == null || !widget.search.scopeToGroup(selected.id)) return;
+    if (selected == null) return;
+    if (widget.onViewMachine case final view?) {
+      view(selected.machineId!);
+      return;
+    }
+    if (!widget.search.scopeToGroup(selected.id)) return;
     widget.onRefocus();
   }
 
