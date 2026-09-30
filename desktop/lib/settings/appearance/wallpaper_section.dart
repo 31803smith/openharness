@@ -1,5 +1,6 @@
 import 'dart:math' as math;
 
+import 'package:harness/shared/theme/app_icons.dart';
 import 'package:desktop_drop/desktop_drop.dart';
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
@@ -133,9 +134,22 @@ class _BackgroundCard extends StatelessWidget {
       label: '$label background',
       child: Material(
         color: Colors.transparent,
-        child: InkWell(
-          onTap: onTap,
-          borderRadius: BorderRadius.circular(8),
+        child: TextButton(
+          onPressed: onTap,
+          style: ButtonStyle(
+            padding: const WidgetStatePropertyAll(EdgeInsets.zero),
+            side: WidgetStateProperty.resolveWith(
+              (states) => BorderSide(
+                color: states.contains(WidgetState.focused)
+                    ? grid.AppDesktop.focus
+                    : Colors.transparent,
+                width: grid.AppDesktop.focusWidth,
+              ),
+            ),
+            shape: WidgetStatePropertyAll(
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+            ),
+          ),
           child: Padding(
             padding: const EdgeInsets.all(3),
             child: Column(
@@ -165,7 +179,7 @@ class _BackgroundCard extends StatelessWidget {
                             // White vanishes on a light palette's plain field
                             // (1.25:1); its deep accent holds 5.1:1 or better.
                             child: Icon(
-                              Icons.check_circle,
+                              AppIcons.circleCheck,
                               color: grid.AppTheme.pick(
                                 grid.AppPalette.swarmAccent,
                                 Colors.white,
