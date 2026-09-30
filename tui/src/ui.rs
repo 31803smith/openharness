@@ -2847,8 +2847,8 @@ mod theme_render_tests {
         let mut app = app();
         let _ = app.set_look("theme", "Aizen Dark");
         crate::input::run(&mut app, "theme");
-        // (Theme is the fourth section: Pane titles, Focus, Layout, Theme.)
-        for code in [KeyCode::Down, KeyCode::Down, KeyCode::Down, KeyCode::Right] { crate::input::modal_key(&mut app, KeyEvent::new(code, KeyModifiers::NONE)) }
+        // (Theme is the third section: Pane titles, Focus, Theme.)
+        for code in [KeyCode::Down, KeyCode::Down, KeyCode::Right] { crate::input::modal_key(&mut app, KeyEvent::new(code, KeyModifiers::NONE)) }
         {
             let Some(Modal::Picker { picker, .. }) = &app.modal else { panic!("closed") };
             assert_eq!(picker.current_id().as_deref(), Some("theme:Aizen Dark"), "a section opens on the value in use");

@@ -566,7 +566,6 @@ pub fn theme_sections(app: &App) -> Vec<Row> {
     // (And, with either, the other panes dimmed or not.)
     let focus = format!("{}{}", if o.focus_style() == "surface" { "blurred" } else { "border" }, if o.dim_others() { " · dim" } else { "" });
     let focus = focus.as_str();
-    let layout_preset = o.get("@hn-layout-preset", "", None).unwrap_or_else(|| "auto".into());
     let theme = o.get("@hn-theme", "", None).unwrap_or_default();
 
     let sec = |id: &str, title: &str, detail: &str, cur: &str| Row::new(id, title)
@@ -577,10 +576,10 @@ pub fn theme_sections(app: &App) -> Vec<Row> {
         // (The lines' glyphs and tmux's arrow indicators are tmux.conf's to set: with every pane its
         // own box, coloured when focused, they say nothing more. Nor is the split direction here:
         // C-b % and C-b " choose it each time, and a harness hn opens splits by the pane's shape —
-        // `layout_orientation` in tui.toml, or @hn-layout, where you want one way always.)
+        // `layout_orientation` in tui.toml, or @hn-layout, where you want one way always. Nor a
+        // layout: C-b Space, C-b M-1…5 and Commands → Layout… lay the panes out now.)
         sec("section:status", "Pane titles", "pane-border-status", &status),
         sec("section:focus", "Focus", "focus_style", focus),
-        sec("section:layout", "Layout", "@hn-layout-preset", &layout_preset),
         sec("section:theme", "Theme", "bundled terminal themes", if theme.is_empty() { "terminal" } else { &theme }),
         // ── status bar ──
         sec("section:bar", "Status bar", "status_bar", status_bar_of(app)),
@@ -621,8 +620,6 @@ pub fn theme_options(app: &App, section: &str) -> Vec<Row> {
             let dim = Row::new(if on { "dim:off" } else { "dim:on" }, "Dim other panes").lead(lead(on))
                 .detail(vec![span(if on { "on" } else { "the panes you are not in, a little quieter" }, fg(theme::MUTED))]);
             styles.chain(std::iter::once(dim)).collect() }
-        "layout" => { let cur = current("@hn-layout-preset", "auto");
-            ["auto", "even-horizontal", "even-vertical", "main-horizontal", "main-vertical", "tiled"].iter().map(|v| opt(format!("layout_preset:{v}"), *v, cur == *v, "@hn-layout-preset")).collect() }
         "theme" => {
             let cur = o.get("@hn-theme", "", None).unwrap_or_default();
             // First, no theme: the terminal's own colours.
@@ -726,7 +723,7 @@ mod theme_row_tests {
         let app = app();
         let rows = theme_sections(&app);
         let ids: Vec<&str> = rows.iter().map(|r| r.id.as_str()).collect();
-        assert_eq!(ids, vec!["section:status", "section:focus", "section:layout", "section:theme",
+        assert_eq!(ids, vec!["section:status", "section:focus", "section:theme",
             // ── status bar ──
             "section:bar", "section:boxes"]);
         // Each section shows its current value and opens onto a non-empty option list.

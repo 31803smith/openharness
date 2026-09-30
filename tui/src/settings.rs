@@ -317,7 +317,7 @@ fn capital(t: &str) -> String { let mut c = t.chars(); c.next().map(|f| f.to_upp
 pub fn section_title(section: &str) -> &'static str {
     match section {
         "status" => "Pane titles", "focus" => "Focus",
-        "layout" => "Layout", "theme" => "Theme",
+        "theme" => "Theme",
         // ── status bar ──
         "bar" => "Status bar", "boxes" => "Borders",
         _ => "",
