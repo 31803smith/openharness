@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../shared/theme/app_theme.dart' as grid;
+import '../shortcuts/app_shortcuts.dart' show linuxKeyLabels;
 import '../state/command_bar.dart';
 
 class HarnessCommandBar extends StatefulWidget {
@@ -360,7 +361,7 @@ class _HarnessCommandBarState extends State<HarnessCommandBar> {
                     ),
                   if (!widget.compact && !watchesVisible)
                     Text(
-                      '⌘⇧J · toggle   Esc · close',
+                      '${linuxKeyLabels ? 'Alt+Shift+J' : '⌘⇧J'} · toggle   Esc · close',
                       style: grid.AppType.monoMeta(
                         color: grid.AppPalette.textFaint,
                       ),

@@ -98,8 +98,13 @@ class _LinuxMenuBarState extends State<LinuxMenuBar> {
     final visible = widget.visible ?? (RuntimePlatform.isLinux && !kUnderTest);
     if (!visible) return const SizedBox.shrink();
     grid.AppTheme.watch(context);
+    // The strip spans the window with the menus at its left end, where a menu
+    // bar sits; the shell's Column would otherwise centre a strip only as
+    // wide as its menus.
     return Container(
+      width: double.infinity,
       height: 30,
+      alignment: Alignment.centerLeft,
       decoration: BoxDecoration(
         color: grid.AppPalette.panelBg,
         border: Border(bottom: BorderSide(color: grid.AppGlass.hair)),

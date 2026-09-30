@@ -540,7 +540,12 @@ its headless debug timings do not establish native display or network latency.
   appear immediately; clicking a row or pressing Enter opens keyboard practice without dispatching
   that action. Labels and keycaps use system UI typography and accessibility text scaling,
   independent of terminal font and zoom. The practice scratch preview retains terminal typography.
-  ⇧⌘P opens commands with the query `>`; ⌘P opens the unified picker. On Linux these use Ctrl+Shift+P and Ctrl+P.
+  ⇧⌘P opens commands with the query `>`; ⌘P opens the unified picker. On Linux these use
+  Ctrl+Shift+P and Alt+Shift+P. Linux, like the web, takes Alt where the Mac takes ⌘
+  (`altWorkspacePrefix`) — Hyprland and GNOME keep most Super chords for themselves — and
+  `_linuxAltShortcuts`/`linuxAltCommandKeys` move the few that would land on a key a terminal
+  program answers (Alt+Enter, Alt+T, Alt+F/B/D). The runner rewrites Super to Meta
+  (`super_as_meta_cb`), so a Super chord a user binds still reads as `cmd`.
   Other workspace shortcuts are ⌘-based — Ctrl otherwise belongs to the shell/tmux, ⌥ is a
   Meta prefix for the pty (⌥⏎ and ⌥⌫ only — `AltAsMetaInputHandler` in
   `lib/terminal/terminal_input.dart` turns them into `ESC` + Return and `ESC` + `\x7f`, so the
