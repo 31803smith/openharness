@@ -566,7 +566,6 @@ pub fn theme_sections(app: &App) -> Vec<Row> {
     // (And, with either, the other panes dimmed or not.)
     let focus = format!("{}{}", if o.focus_style() == "surface" { "blurred" } else { "border" }, if o.dim_others() { " · dim" } else { "" });
     let focus = focus.as_str();
-    let orientation = o.look_orientation().to_string();
     let layout_preset = o.get("@hn-layout-preset", "", None).unwrap_or_else(|| "auto".into());
     let theme = o.get("@hn-theme", "", None).unwrap_or_default();
 
@@ -576,10 +575,11 @@ pub fn theme_sections(app: &App) -> Vec<Row> {
 
     vec![
         // (The lines' glyphs and tmux's arrow indicators are tmux.conf's to set: with every pane its
-        // own box, coloured when focused, they say nothing more.)
+        // own box, coloured when focused, they say nothing more. Nor is the split direction here:
+        // C-b % and C-b " choose it each time, and a harness hn opens splits by the pane's shape —
+        // `layout_orientation` in tui.toml, or @hn-layout, where you want one way always.)
         sec("section:status", "Pane titles", "pane-border-status", &status),
         sec("section:focus", "Focus", "focus_style", focus),
-        sec("section:split", "Split direction", "layout_orientation", &orientation),
         sec("section:layout", "Layout", "@hn-layout-preset", &layout_preset),
         sec("section:theme", "Theme", "bundled terminal themes", if theme.is_empty() { "terminal" } else { &theme }),
         // ── status bar ──
@@ -621,8 +621,6 @@ pub fn theme_options(app: &App, section: &str) -> Vec<Row> {
             let dim = Row::new(if on { "dim:off" } else { "dim:on" }, "Dim other panes").lead(lead(on))
                 .detail(vec![span(if on { "on" } else { "the panes you are not in, a little quieter" }, fg(theme::MUTED))]);
             styles.chain(std::iter::once(dim)).collect() }
-        "split" => { let cur = o.look_orientation().to_string();
-            ["auto", "vertical", "horizontal"].iter().map(|v| opt(format!("layout_orientation:{v}"), *v, cur == *v, "layout_orientation")).collect() }
         "layout" => { let cur = current("@hn-layout-preset", "auto");
             ["auto", "even-horizontal", "even-vertical", "main-horizontal", "main-vertical", "tiled"].iter().map(|v| opt(format!("layout_preset:{v}"), *v, cur == *v, "@hn-layout-preset")).collect() }
         "theme" => {
@@ -728,7 +726,7 @@ mod theme_row_tests {
         let app = app();
         let rows = theme_sections(&app);
         let ids: Vec<&str> = rows.iter().map(|r| r.id.as_str()).collect();
-        assert_eq!(ids, vec!["section:status", "section:focus", "section:split", "section:layout", "section:theme",
+        assert_eq!(ids, vec!["section:status", "section:focus", "section:layout", "section:theme",
             // ── status bar ──
             "section:bar", "section:boxes"]);
         // Each section shows its current value and opens onto a non-empty option list.
@@ -771,9 +769,8 @@ mod theme_row_tests {
         let status_opts = theme_options(&app, "status");
         let status_ids: Vec<&str> = status_opts.iter().map(|r| r.id.as_str()).collect();
         assert_eq!(status_ids, vec!["border_status:off", "border_status:top", "border_status:bottom"]);
-        let split_opts = theme_options(&app, "split");
-        let split_ids: Vec<&str> = split_opts.iter().map(|r| r.id.as_str()).collect();
-        assert_eq!(split_ids, vec!["layout_orientation:auto", "layout_orientation:vertical", "layout_orientation:horizontal"]);
+        // (No split direction section: C-b % and C-b " choose it.)
+        assert!(theme_options(&app, "split").is_empty());
     }
 
     // ── status bar ──
