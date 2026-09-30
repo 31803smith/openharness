@@ -52,6 +52,9 @@ fn on_key(app: &mut App, key: KeyEvent) {
     app.key_name = Some(keys::name(&chord));
     // A message goes on the next key, as tmux's does.
     app.toast = None;
+    // ── keys ── Waiting for a key (a prefix, or a command's key, chosen in the panel): this is it,
+    // whatever it is — the prefix too.
+    if app.capturing.is_some() { crate::settings::captured(app, key); return }
     // display-panes (cmd_display_panes_key), before any table: a number, or a letter for 10 on,
     // runs its template for that pane (select-pane) and closes it — as does one no pane has;
     // any other key (every key with -N) closes it and goes on as it would have.
@@ -680,7 +683,7 @@ fn fill_rows(app: &App, kind: &PickerKind, picker: &mut Picker) {
         }
         // (Typed into, it ranks by match, best first, as fzf does; empty, it keeps its groups. A
         // query matches a command's name and keywords, not the description shown beside it.)
-        PickerKind::Commands => { picker.live = true; picker.set_rows(modal::command_rows_for(app, !picker.query.is_empty())); picker.hints = vec![("enter", "run")] }
+        PickerKind::Commands => { picker.live = true; picker.set_rows(modal::command_rows_for(app, !picker.query.is_empty())); picker.hints = vec![("enter", "run"), ("M-k", "change its key")] }
         PickerKind::Help => { picker.set_rows(modal::mode_rows(app)); picker.hints = vec![("enter", "go")] }
         PickerKind::Store => {
             let catalog = app.dsh.get(&app.fleet.local_id).cloned().unwrap_or_default();
@@ -839,6 +842,15 @@ pub fn run(app: &mut App, command: &str) {
         "help" => launch(app, "?", Filter::All),
         "layout" => picker(app, PickerKind::Layout, "layout", ""),
         "theme" | "appearance" => picker(app, PickerKind::Theme, "Appearance", "Search appearance"),
+        // ── keys ── Keybinds: Appearance, opened at its keys (Esc: the other settings).
+        "keybinds" => {
+            picker(app, PickerKind::Theme, "Appearance", "Search appearance");
+            if let Some(Modal::Picker { kind, mut picker }) = app.modal.take() {
+                crate::settings::open_section(app, &mut picker, "keys");
+                picker.vset(0, 1);
+                app.modal = Some(Modal::Picker { kind, picker });
+            }
+        }
         "commands" => picker(app, PickerKind::Commands, "Commands", "Type a command — appearance, new, layout, models…"),
         "store" => launch(app, "*", Filter::All),
         "new" => crate::new_harness::open(app, None, None),
@@ -1963,6 +1975,12 @@ fn picker_key(app: &mut App, key: KeyEvent, kind: PickerKind, picker: Picker) {
     let _ = was;
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
     let alt = key.modifiers.contains(KeyModifiers::ALT);
+    // ── keys ── Alt-k on a command: the next key you press is its key (Ctrl-k moves, as in fzf).
+    if matches!(kind, PickerKind::Commands) && alt && !ctrl && key.code == KeyCode::Char('k') {
+        crate::settings::capture_for_row(app, &mut picker);
+        app.modal = Some(Modal::Picker { kind, picker });
+        return;
+    }
     // Jump mode consumes one key, then fires jump or jump-cancel as fzf does.
     if let Some(accept) = picker.jumping.take() {
         let mut event = "jump-cancel";
@@ -2702,7 +2720,8 @@ fn choose(app: &mut App, kind: PickerKind, mut picker: Picker, choice: Choice) {
                     if let Some(section) = under {
                         // Inside a section: Enter sets that option (and the ● moves to it).
                         if let Some((knob, value)) = id.split_once(':') {
-                            let msg = app.set_look(knob, value);
+                            // (The prefix is a key, not a look: tui.toml's top, not its [look].)
+                            let msg = crate::settings::set_key(app, knob, value).unwrap_or_else(|| app.set_look(knob, value));
                             picker.say(msg);
                             picker.set_rows(modal::theme_options(app, &section));
                             // (A switch — Dim other panes — is the same row turned over.)
@@ -2897,7 +2916,7 @@ pub fn is_command(id: &str) -> bool {
         | "broadcast" | "clone" | "restart" | "pause" | "take" | "rename" | "tab" | "rename-tab" | "close-tab" | "next-tab" | "prev-tab"
         | "split-right" | "split-down" | "close-pane" | "zoom" | "equalize" | "pane-tab" | "copy-mode" | "find" | "tab-left" | "tab-right"
         | "last-tab" | "next-waiting" | "prev-waiting" | "resume-focused" | "last-harness" | "tree" | "info" | "messages" | "keys"
-        | "theme" | "appearance" | "commands" | "choose-buffer" | "quit"
+        | "theme" | "appearance" | "commands" | "choose-buffer" | "quit" | "keybinds"
         // ── machines & devices ──
         | "connect-machine" | "add-phone" | "devices")
 }
