@@ -1,5 +1,5 @@
 import 'dart:async';
-import 'dart:io' show Directory, exit, pid;
+import 'dart:io' show Directory, Platform, exit, pid;
 import 'dart:math' show Random;
 
 import 'package:dio/dio.dart';
@@ -47,6 +47,9 @@ import '../core/project_history.dart';
 import '../core/project_preview.dart';
 import '../core/repository_clone.dart';
 import '../core/retry.dart';
+import '../core/process_responsibility.dart';
+import '../core/serial_port_lease.dart';
+import '../autonomous_device/autonomous_device_cli.dart';
 import '../settings/config_store.dart';
 import '../settings/experimental_features.dart';
 import '../stats/harness_stats.dart';
@@ -657,6 +660,38 @@ class AppNotifier extends ChangeNotifier {
   /// default. Touch it earlier and it freezes the wrong `localCliBaseUrl`.
   late final LocalCliDiscovery _discovery =
       localCliDiscovery ?? LocalCliDiscovery(config: config);
+
+  /// Restarts a daemon this app did not launch, so it runs under the app's Local Network permission
+  /// (see `core/process_responsibility.dart`). macOS only, and never under `flutter test` or with an
+  /// injected discovery: a restart there would `harness stop` the real daemon of the machine the
+  /// suite runs on.
+  late final DaemonOwnerGuard? _daemonOwner =
+      Platform.isMacOS &&
+          !kUnderTest &&
+          localCliDiscovery == null &&
+          viewer == null
+      ? DaemonOwnerGuard(
+          probe: MacResponsibilityProbe(),
+          ownPid: pid,
+          paused: () =>
+              SerialPortLease.held || SerialPortLease.heldByAnotherProcess(),
+          restart: () async {
+            final probe = await _discovery.restart();
+            return probe.ready ? probe.pid : null;
+          },
+          lanBlocked: () async {
+            try {
+              await AutonomousDeviceCli().discover();
+              return false;
+            } on AutonomousDeviceCliException catch (error) {
+              return error.localNetworkBlocked ? true : null;
+            } catch (_) {
+              return null;
+            }
+          },
+          log: (line) => appLog.info('daemon', line),
+        )
+      : null;
   final EnvironmentProvisioner? environmentProvisioner;
   final DesktopUpdater? desktopUpdater;
   @visibleForTesting
@@ -3802,8 +3837,15 @@ class AppNotifier extends ChangeNotifier {
     if (viewer != null) return;
     final revision = _authRevision;
     final discovery = _discovery;
-    final probe = await discovery.ensureRunning();
+    var probe = await discovery.ensureRunning();
     if (!_authWorkCurrent(revision)) return;
+    final daemonPid = probe.pid;
+    if (probe.ready &&
+        daemonPid != null &&
+        await (_daemonOwner?.check(daemonPid) ?? Future.value(false))) {
+      probe = await discovery.ensureRunning();
+      if (!_authWorkCurrent(revision)) return;
+    }
     _logDaemonProbe(probe);
     switch (probe.state) {
       case LocalCliProbeState.ready:
@@ -3889,6 +3931,9 @@ class AppNotifier extends ChangeNotifier {
       },
       onSnapshot: _updateLocalProjectSnapshot,
       onBackendOnline: _noteBackendOnline,
+      checkOwner: _daemonOwner == null
+          ? null
+          : (daemonPid) => _daemonOwner.check(daemonPid),
       onReady: (endpoint) {
         // Back (or here for the first time). If the app is sitting on the error strip from a boot
         // or reload that found the daemon not ready, this is the moment it was waiting for.
