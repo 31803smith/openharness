@@ -6551,11 +6551,9 @@ class _SwarmScreenState extends State<SwarmScreen> {
                           if (app.panes.isEmpty
                               ? !newHarnessOpensInBox &&
                                     !app.activeSwarm.isNewTabPage
-                              // Behind harnesses: seen through the panes and
-                              // their gutters, on harness tabs only.
-                              : appearancePrefsStore
-                                        .value
-                                        .showsBehindHarnesses &&
+                              // Seen through the panes and their gutters, on
+                              // harness tabs only.
+                              : appearancePrefsStore.value.showsBackground &&
                                     !app.activeSwarm.isUtility &&
                                     !app.activeSwarm.isOrchestrator)
                             const RepaintBoundary(
