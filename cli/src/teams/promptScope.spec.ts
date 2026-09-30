@@ -34,6 +34,34 @@ describe('prompt swarm origin', () => {
     expect(scopes.current(agent)).toBe(b)
   })
 
+  it('keeps the origin of prompts broken with the app’s ⇧⏎ and ⌥⏎ line keys', () => {
+    const scopes = new SwarmPromptScopes()
+    scopes.raw(agent, bytes('a\x1b[13;2ub\r'), 'swarm-a')
+    scopes.started(agent, 'a\nb', 'hook', 'claude')
+    expect(scopes.current(agent)).toBe(a)
+    // The reported pattern: a paste, two ⇧⏎, then text, each key its own write.
+    for (const chunk of ['\x1b[200~pasted code\x1b[201~', '\x1b[13;2u', '\x1b', '[13;2u', 'explain it', '\r']) scopes.raw(agent, bytes(chunk), 'swarm-b')
+    scopes.started(agent, 'pasted code\n\nexplain it', 'hook', 'claude')
+    expect(scopes.current(agent)).toBe(b)
+    scopes.raw(agent, bytes('c\x1b\rd\r'), 'swarm-a')
+    scopes.started(agent, 'c\nd', 'hook', 'codex')
+    expect(scopes.current(agent)).toBe(a)
+    // Under LNM the app sends Return as \r\n, so ⌥⏎ arrives as \x1b\r\n: still one line break.
+    scopes.raw(agent, bytes('e\x1b\r\nf\r\n'), 'swarm-b')
+    scopes.started(agent, 'e\nf', 'hook', 'codex')
+    expect(scopes.current(agent)).toBe(b)
+  })
+
+  it('still fails closed on ⌥⌫ and on other CSI keys that share the ⇧⏎ prefix', () => {
+    const scopes = new SwarmPromptScopes()
+    scopes.raw(agent, bytes('one two\x1b\x7f\r'), 'swarm-a')
+    scopes.started(agent, 'one ', 'hook', 'claude')
+    expect(scopes.current(agent)).toBeNull()
+    scopes.raw(agent, bytes('word\x1b[1;5D\r'), 'swarm-a')
+    scopes.started(agent, 'word', 'hook', 'claude')
+    expect(scopes.current(agent)).toBeNull()
+  })
+
   it('matches native accepted text instead of treating permission keys as prompts', () => {
     const scopes = new SwarmPromptScopes()
     scopes.raw(agent, bytes('1\r'), 'swarm-b')

@@ -114,12 +114,18 @@ export class SwarmPromptScopes {
       if (bytes.length > MAX_TEXT) { state.known = false; state.draft = []; return }
       insert(Buffer.from(bytes).toString('utf8')); return
     }
+    // ⌥⏎ under LNM is \x1b\r\n; its \n belongs to the same keystroke, so only this write can hold it.
+    let metaReturn = false
     for (const char of state.decoder.write(Buffer.from(bytes))) {
+      if (metaReturn) { metaReturn = false; if (char === '\n') continue }
       if (state.escape) {
         state.escape += char
         if (state.escape === '\x1b[200~') { state.paste = true; state.escape = ''; continue }
         if (state.escape === '\x1b[201~') { state.paste = false; state.escape = ''; continue }
-        if (['\x1b', '\x1b[', '\x1b[2', '\x1b[20', '\x1b[200', '\x1b[201', '\x1b[3', '\x1bO'].includes(state.escape)) continue
+        // The app sends ⇧⏎ as CSI-u and ⌥⏎ as Meta+Return; engines read both as a line break.
+        if (state.escape === '\x1b[13;2u') { state.escape = ''; insert('\n'); continue }
+        if (state.escape === '\x1b\r') { state.escape = ''; insert('\n'); metaReturn = true; continue }
+        if (['\x1b', '\x1b[', '\x1b[1', '\x1b[13', '\x1b[13;', '\x1b[13;2', '\x1b[2', '\x1b[20', '\x1b[200', '\x1b[201', '\x1b[3', '\x1bO'].includes(state.escape)) continue
         const sequence = state.escape
         state.escape = ''
         if (sequence === '\x1b[D') state.cursor = Math.max(0, state.cursor - 1)
@@ -127,6 +133,8 @@ export class SwarmPromptScopes {
         else if (sequence === '\x1b[H' || sequence === '\x1bOH') state.cursor = 0
         else if (sequence === '\x1b[F' || sequence === '\x1bOF') state.cursor = state.draft.length
         else if (sequence === '\x1b[3~') state.draft.splice(state.cursor, 1)
+        // Everything else fails closed, ⌥⌫ (\x1b\x7f) included: Claude and Codex may not agree
+        // on word boundaries, and a guessed kill could match a different prompt.
         else { state.known = false; state.draft = [] }
         continue
       }
