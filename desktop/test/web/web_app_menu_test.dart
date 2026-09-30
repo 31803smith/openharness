@@ -1,6 +1,7 @@
 @TestOn('browser')
 library;
 
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -14,6 +15,7 @@ import 'package:harness/state/new_harness.dart';
 import 'package:harness/web/shell/web_workspace.dart';
 import 'package:harness/widgets/new_harness_form.dart';
 import 'package:harness/widgets/swarm_switcher.dart';
+import 'package:harness/widgets/workspace_bar_control.dart';
 
 Future<AppNotifier> _mount(
   WidgetTester tester, {
@@ -150,6 +152,76 @@ void main() {
     expect(app.swarms, hasLength(tabs - 1));
     expect(app.swarms.any((tab) => tab.id == empty), isFalse);
     expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox.shrink());
+    app.dispose();
+  });
+
+  testWidgets('tabs too many for the bar scroll by arrows and wheel', (
+    tester,
+  ) async {
+    final app = await _mount(tester);
+    expect(find.byKey(const ValueKey('tab-scroll-right')), findsNothing);
+    for (var i = 0; i < 24; i++) {
+      app.newSwarm(newTabPage: true);
+    }
+    await tester.pump(const Duration(milliseconds: 200));
+    // The arrows read the list's extent after it lays out: one more frame.
+    await tester.pump();
+    final left = find.byKey(const ValueKey('tab-scroll-left'));
+    final right = find.byKey(const ValueKey('tab-scroll-right'));
+    expect(left, findsOneWidget);
+    expect(right, findsOneWidget);
+    bool enabled(Finder arrow) =>
+        tester.widget<WorkspaceBarControl>(arrow).onPressed != null;
+    // The newest tab is selected and revealed: the strip rests at its end.
+    expect(enabled(left), isTrue);
+    expect(enabled(right), isFalse);
+    await tester.tap(left);
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(enabled(right), isTrue);
+
+    // A plain vertical wheel over the strip moves it sideways.
+    final scrollable = tester.state<ScrollableState>(
+      find
+          .descendant(
+            of: find.byKey(const ValueKey('workspace-tab-bar')),
+            matching: find.byType(Scrollable),
+          )
+          .first,
+    );
+    final before = scrollable.position.pixels;
+    await tester.sendEventToBinding(
+      PointerScrollEvent(
+        position: tester.getCenter(left) + const Offset(80, 0),
+        scrollDelta: const Offset(0, -120),
+      ),
+    );
+    await tester.pump();
+    expect(scrollable.position.pixels, lessThan(before));
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox.shrink());
+    app.dispose();
+  });
+
+  testWidgets('crossing into and out of overflow keeps one tab list', (
+    tester,
+  ) async {
+    final app = await _mount(tester);
+    for (var i = 0; i < 12; i++) {
+      app.newSwarm(newTabPage: true);
+    }
+    for (final width in [1800.0, 900.0, 1800.0, 700.0, 1280.0]) {
+      tester.view.physicalSize = Size(width, 800);
+      await tester.pump();
+      await tester.pump();
+      expect(tester.takeException(), isNull, reason: 'width $width');
+    }
+    while (app.swarms.length > 2) {
+      await app.closeSwarm(app.swarms.last.id);
+      await tester.pump();
+      await tester.pump();
+      expect(tester.takeException(), isNull, reason: '${app.swarms.length}');
+    }
     await tester.pumpWidget(const SizedBox.shrink());
     app.dispose();
   });

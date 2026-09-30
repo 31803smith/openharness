@@ -20,6 +20,7 @@ WorkspaceChrome webWorkspaceChrome(AppNotifier app) => WorkspaceChrome(
   viewMachineCloses: true,
   closesTabs: true,
   showsShareStatus: true,
+  scrollsTabsByArrows: true,
   compactTabs: (context, commands) =>
       WebTabSwitcher(app: app, commands: commands),
   compactBelow: kWebCompactBelow,
