@@ -73,6 +73,7 @@ import '../widgets/harness_activity_mark.dart';
 import '../widgets/workspace_status_line.dart';
 import '../widgets/workspace_pull_request_label.dart';
 import '../widgets/workspace_bar_control.dart';
+import '../widgets/workspace_tab_scroller.dart';
 import '../widgets/session_work_dialog.dart';
 import '../widgets/web_download_button.dart';
 import '../widgets/workspace_share_button.dart';
@@ -99,6 +100,7 @@ import '../widgets/desktop_search_panel.dart';
 import '../widgets/desktop_workspace_tab.dart';
 import '../widgets/open_harness_intent.dart';
 import '../widgets/pane_grid.dart';
+import '../widgets/pane_share_badge.dart';
 import '../widgets/remote_folder_picker.dart';
 import '../widgets/shortcuts_sheet.dart';
 import '../widgets/harness_customize_pane.dart';
@@ -6434,102 +6436,113 @@ class _SwarmScreenState extends State<SwarmScreen> {
                                   child: Stack(
                                     children: [
                                       Positioned.fill(
-                                        child: PaneOpacity(
-                                          opacity: appearancePrefsStore
-                                              .value
-                                              .effectivePaneOpacity,
-                                          child: PaneGrid(
-                                            notifier: app,
-                                            swarmMode: true,
-                                            onOpenModels: _openPaneModels,
-                                            companionViewer:
-                                                _creatureEnabled && _zoo.loaded
-                                                ? _companionViewer
-                                                : null,
-                                            soloFocused: _compact(context),
-                                            empty:
-                                                app.panes.isEmpty &&
-                                                    !app
-                                                        .activeSwarm
-                                                        .isUtility &&
-                                                    !app
-                                                        .activeSwarm
-                                                        .isOrchestrator
-                                                ? newHarnessOpensInBox ||
-                                                          app
-                                                              .activeSwarm
-                                                              .isNewTabPage
-                                                      ? _startGuide()
-                                                      : HarnessStartPage(
-                                                          key: ValueKey(
-                                                            'harness-start:${app.activeSwarmId}',
-                                                          ),
-                                                          focusNode:
-                                                              _startSearchFocus,
-                                                          createSearch: () => SwarmSearchController(
-                                                            app,
-                                                            _navigation.recent,
-                                                            projects: _projects,
-                                                            commands:
-                                                                _searchCommands,
-                                                            recentCommands: () =>
-                                                                _navigation
-                                                                    .recentCommands,
-                                                            // The first box a new
-                                                            // person meets is the same
-                                                            // box: its placeholder
-                                                            // promises `?` and a way
-                                                            // to create, so it has them.
-                                                            modes: _searchModes,
-                                                            adding: true,
-                                                            offersCreate: true,
-                                                            placement:
-                                                                HarnessPlacement
-                                                                    .currentTab,
-                                                            catalog:
-                                                                _searchCatalog,
-                                                          ),
-                                                          onNewTab: _newTab,
-                                                          onNewPane: () =>
-                                                              unawaited(
-                                                                _addAgent(
-                                                                  query: '',
+                                        child: PaneShareStatus(
+                                          visible:
+                                              widget.chrome?.showsShareStatus ==
+                                              true,
+                                          child: PaneOpacity(
+                                            opacity: appearancePrefsStore
+                                                .value
+                                                .effectivePaneOpacity,
+                                            child: PaneGrid(
+                                              notifier: app,
+                                              swarmMode: true,
+                                              onOpenModels: _openPaneModels,
+                                              companionViewer:
+                                                  _creatureEnabled &&
+                                                      _zoo.loaded
+                                                  ? _companionViewer
+                                                  : null,
+                                              soloFocused: _compact(context),
+                                              empty:
+                                                  app.panes.isEmpty &&
+                                                      !app
+                                                          .activeSwarm
+                                                          .isUtility &&
+                                                      !app
+                                                          .activeSwarm
+                                                          .isOrchestrator
+                                                  ? newHarnessOpensInBox ||
+                                                            app
+                                                                .activeSwarm
+                                                                .isNewTabPage
+                                                        ? _startGuide()
+                                                        : HarnessStartPage(
+                                                            key: ValueKey(
+                                                              'harness-start:${app.activeSwarmId}',
+                                                            ),
+                                                            focusNode:
+                                                                _startSearchFocus,
+                                                            createSearch: () => SwarmSearchController(
+                                                              app,
+                                                              _navigation
+                                                                  .recent,
+                                                              projects:
+                                                                  _projects,
+                                                              commands:
+                                                                  _searchCommands,
+                                                              recentCommands: () =>
+                                                                  _navigation
+                                                                      .recentCommands,
+                                                              // The first box a new
+                                                              // person meets is the same
+                                                              // box: its placeholder
+                                                              // promises `?` and a way
+                                                              // to create, so it has them.
+                                                              modes:
+                                                                  _searchModes,
+                                                              adding: true,
+                                                              offersCreate:
+                                                                  true,
+                                                              placement:
+                                                                  HarnessPlacement
+                                                                      .currentTab,
+                                                              catalog:
+                                                                  _searchCatalog,
+                                                            ),
+                                                            onNewTab: _newTab,
+                                                            onNewPane: () =>
+                                                                unawaited(
+                                                                  _addAgent(
+                                                                    query: '',
+                                                                  ),
                                                                 ),
-                                                              ),
-                                                          onCommands:
-                                                              _showSearchCommands,
-                                                          onQuickStart:
-                                                              _learning.offer
-                                                              ? _startQuickStart
-                                                              : null,
-                                                          onPractice:
-                                                              _practiceKeyboard,
-                                                          onNew: () => _newAgent(
-                                                            placement:
-                                                                HarnessPlacement
-                                                                    .currentTab,
-                                                          ),
-                                                          onNewWithTask:
-                                                              (
-                                                                task,
-                                                              ) => _newAgent(
-                                                                task: task,
-                                                                placement:
-                                                                    HarnessPlacement
-                                                                        .currentTab,
-                                                              ),
-                                                          onStore: _openStore,
-                                                          onResourceSearch:
-                                                              (
-                                                                query,
-                                                              ) => _openSearch(
-                                                                adding: true,
-                                                                query: query,
-                                                              ),
-                                                          onChoose:
-                                                              _chooseStartSearch,
-                                                        )
-                                                : null,
+                                                            onCommands:
+                                                                _showSearchCommands,
+                                                            onQuickStart:
+                                                                _learning.offer
+                                                                ? _startQuickStart
+                                                                : null,
+                                                            onPractice:
+                                                                _practiceKeyboard,
+                                                            onNew: () => _newAgent(
+                                                              placement:
+                                                                  HarnessPlacement
+                                                                      .currentTab,
+                                                            ),
+                                                            onNewWithTask:
+                                                                (
+                                                                  task,
+                                                                ) => _newAgent(
+                                                                  task: task,
+                                                                  placement:
+                                                                      HarnessPlacement
+                                                                          .currentTab,
+                                                                ),
+                                                            onStore: _openStore,
+                                                            onResourceSearch:
+                                                                (query) =>
+                                                                    _openSearch(
+                                                                      adding:
+                                                                          true,
+                                                                      query:
+                                                                          query,
+                                                                    ),
+                                                            onChoose:
+                                                                _chooseStartSearch,
+                                                          )
+                                                  : null,
+                                            ),
                                           ),
                                         ),
                                       ),
@@ -6912,7 +6925,13 @@ class _SwarmScreenState extends State<SwarmScreen> {
           ),
       ];
       final total = _tabWidths.fold(0.0, (sum, width) => sum + width);
-      final tabsWidth = math.min(total, tabBudget);
+      // Arrows come out of the tabs' own budget, so the bar never reflows.
+      final arrows = chrome?.scrollsTabsByArrows == true && total > tabBudget;
+      final tabsWidth = math.max(
+        0.0,
+        math.min(total, tabBudget) -
+            (arrows ? cell.width * kWorkspaceTabArrowCells * 2 : 0),
+      );
       _revealSelectedTab(tabsWidth);
       return Material(
         key: const ValueKey('workspace-tab-bar'),
@@ -6930,107 +6949,113 @@ class _SwarmScreenState extends State<SwarmScreen> {
                   width: leadingWidth,
                   child: chrome.leading(context, _workspaceCommands),
                 ),
-              SizedBox(
-                width: tabsWidth,
-                child: ReorderableListView.builder(
-                  scrollController: _tabScroll,
-                  itemExtentBuilder: (index, _) => _tabWidths[index],
-                  scrollDirection: Axis.horizontal,
-                  shrinkWrap: true,
-                  buildDefaultDragHandles: false,
-                  itemCount: shown.length,
-                  onReorderItem: (old, to) =>
-                      app.reorderSwarm(shown[old].id, to),
-                  itemBuilder: (context, index) {
-                    final swarm = shown[index];
-                    final selected = app.activeSwarmId == swarm.id;
-                    final activity = activities[index];
-                    final nameHint = workspaceTabTooltip(
-                      labels[index],
-                      swarm.name,
-                      clipped:
-                          DesktopWorkspaceTab.naturalWidth(
-                            context,
-                            labels[index],
+              _withTabArrows(
+                arrows,
+                color: theme.foreground,
+                child: SizedBox(
+                  width: tabsWidth,
+                  child: ReorderableListView.builder(
+                    scrollController: _tabScroll,
+                    itemExtentBuilder: (index, _) => _tabWidths[index],
+                    scrollDirection: Axis.horizontal,
+                    shrinkWrap: true,
+                    buildDefaultDragHandles: false,
+                    itemCount: shown.length,
+                    onReorderItem: (old, to) =>
+                        app.reorderSwarm(shown[old].id, to),
+                    itemBuilder: (context, index) {
+                      final swarm = shown[index];
+                      final selected = app.activeSwarmId == swarm.id;
+                      final activity = activities[index];
+                      final nameHint = workspaceTabTooltip(
+                        labels[index],
+                        swarm.name,
+                        clipped:
+                            DesktopWorkspaceTab.naturalWidth(
+                              context,
+                              labels[index],
+                              shortcutHint: _keymap.hint(
+                                'swarm.select_${index + 1}',
+                              ),
+                              hasActivity: activity != null,
+                            ) >
+                            _tabWidths[index],
+                      );
+                      final tabHint = [
+                        ?nameHint,
+                        if (activity != null) activity.label,
+                      ].join('\n');
+                      return ReorderableDragStartListener(
+                        key: ValueKey(swarm.id),
+                        index: index,
+                        child: Listener(
+                          onPointerDown: (event) {
+                            _middleDownTab = event.buttons == kTertiaryButton
+                                ? swarm.id
+                                : null;
+                          },
+                          onPointerUp: (event) {
+                            final armed = _middleDownTab;
+                            _middleDownTab = null;
+                            if (armed == swarm.id) {
+                              unawaited(app.closeSwarm(swarm.id));
+                            }
+                          },
+                          child: DesktopWorkspaceTab(
+                            id: swarm.id,
+                            onRename: () => _rename(swarm.id),
+                            label: labels[index],
+                            selected: selected,
+                            showShortcuts: _tabShortcutHints,
                             shortcutHint: _keymap.hint(
                               'swarm.select_${index + 1}',
                             ),
-                            hasActivity: activity != null,
-                          ) >
-                          _tabWidths[index],
-                    );
-                    final tabHint = [
-                      ?nameHint,
-                      if (activity != null) activity.label,
-                    ].join('\n');
-                    return ReorderableDragStartListener(
-                      key: ValueKey(swarm.id),
-                      index: index,
-                      child: Listener(
-                        onPointerDown: (event) {
-                          _middleDownTab = event.buttons == kTertiaryButton
-                              ? swarm.id
-                              : null;
-                        },
-                        onPointerUp: (event) {
-                          final armed = _middleDownTab;
-                          _middleDownTab = null;
-                          if (armed == swarm.id) {
-                            unawaited(app.closeSwarm(swarm.id));
-                          }
-                        },
-                        child: DesktopWorkspaceTab(
-                          id: swarm.id,
-                          onRename: () => _rename(swarm.id),
-                          label: labels[index],
-                          selected: selected,
-                          showShortcuts: _tabShortcutHints,
-                          shortcutHint: _keymap.hint(
-                            'swarm.select_${index + 1}',
+                            tooltip: tabHint.isEmpty ? null : tabHint,
+                            activityLabel: activity?.label,
+                            highlighted:
+                                selected &&
+                                app.tabStripFocused &&
+                                _tabStripFocus.hasPrimaryFocus,
+                            onSelect: _shortcutsEnabled
+                                ? () => app.selectSwarm(swarm.id)
+                                : null,
+                            onClose: _shortcutsEnabled
+                                ? () => unawaited(app.closeSwarm(swarm.id))
+                                : null,
+                            activity: activity == null || activity.mark.isEmpty
+                                ? null
+                                : ListenableBuilder(
+                                    listenable: _tabScroll,
+                                    builder: (context, _) {
+                                      final left = _tabWidths
+                                          .take(index)
+                                          .fold(0.0, (a, b) => a + b);
+                                      final offset = _tabScroll.hasClients
+                                          ? _tabScroll.offset
+                                          : 0.0;
+                                      return ActivityMark(
+                                        key: ValueKey(
+                                          'tab-activity:${swarm.id}',
+                                        ),
+                                        activity: activity,
+                                        color: activityColor(
+                                          activity,
+                                          theme,
+                                          color: prefs.color,
+                                        ),
+                                        emphasized: selected,
+                                        tooltip: false,
+                                        visible:
+                                            left < offset + tabsWidth &&
+                                            left + _tabWidths[index] > offset,
+                                      );
+                                    },
+                                  ),
                           ),
-                          tooltip: tabHint.isEmpty ? null : tabHint,
-                          activityLabel: activity?.label,
-                          highlighted:
-                              selected &&
-                              app.tabStripFocused &&
-                              _tabStripFocus.hasPrimaryFocus,
-                          onSelect: _shortcutsEnabled
-                              ? () => app.selectSwarm(swarm.id)
-                              : null,
-                          onClose: _shortcutsEnabled
-                              ? () => unawaited(app.closeSwarm(swarm.id))
-                              : null,
-                          activity: activity == null || activity.mark.isEmpty
-                              ? null
-                              : ListenableBuilder(
-                                  listenable: _tabScroll,
-                                  builder: (context, _) {
-                                    final left = _tabWidths
-                                        .take(index)
-                                        .fold(0.0, (a, b) => a + b);
-                                    final offset = _tabScroll.hasClients
-                                        ? _tabScroll.offset
-                                        : 0.0;
-                                    return ActivityMark(
-                                      key: ValueKey('tab-activity:${swarm.id}'),
-                                      activity: activity,
-                                      color: activityColor(
-                                        activity,
-                                        theme,
-                                        color: prefs.color,
-                                      ),
-                                      emphasized: selected,
-                                      tooltip: false,
-                                      visible:
-                                          left < offset + tabsWidth &&
-                                          left + _tabWidths[index] > offset,
-                                    );
-                                  },
-                                ),
                         ),
-                      ),
-                    );
-                  },
+                      );
+                    },
+                  ),
                 ),
               ),
               _statusToolIcon(
@@ -7106,6 +7131,21 @@ class _SwarmScreenState extends State<SwarmScreen> {
         foreground: theme.foreground,
         onPressed: _shortcutsEnabled ? _showNotificationInbox : null,
       );
+
+  /// The tab list, inside the arrows' scroller whenever the host scrolls tabs
+  /// by mouse — drawn only while [arrows], the list overflowing.
+  Widget _withTabArrows(
+    bool arrows, {
+    required Color color,
+    required Widget child,
+  }) => widget.chrome?.scrollsTabsByArrows != true
+      ? child
+      : WorkspaceTabScroller(
+          controller: _tabScroll,
+          arrows: arrows,
+          color: color,
+          child: child,
+        );
 
   /// A compact host uses a tab switcher instead of the tab list.
   Widget _compactTabStrip(WorkspaceChrome chrome, TerminalTheme theme) =>

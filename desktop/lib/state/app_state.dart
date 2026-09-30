@@ -67,6 +67,7 @@ import 'dial_status.dart';
 import 'grid_pictures.dart';
 import 'model_start_watch.dart';
 import 'harness_placement.dart';
+import 'harness_share_status.dart';
 import 'desk_sync.dart';
 import 'machine_profile.dart';
 import 'pane_layout_store.dart';
@@ -735,6 +736,11 @@ class AppNotifier extends ChangeNotifier {
       payload: {'agentId': key.agentId, 'n': 3},
       timeout: const Duration(seconds: 6),
     ),
+  );
+
+  /// Which of the owner's harnesses are shared, and how — for marking panes.
+  late final shareStatus = HarnessShareStatus(
+    (machineId, agentId) => manageHarnessShares(machineId, agentId, 'list'),
   );
 
   /// The end of the session a Cmd-P row previews, from its machine's index
@@ -4159,6 +4165,7 @@ class AppNotifier extends ChangeNotifier {
     machineStates.clear();
     sessionPreviews.clear();
     sessionTails.clear();
+    shareStatus.clear();
     gridPictures.clear();
     _stopWakeFollowers();
     expandedMachines.clear();
@@ -4806,10 +4813,15 @@ class AppNotifier extends ChangeNotifier {
     if (machineStates[machineId]?.machine.isShared == true) {
       return Future.error(StateError('Only the owner can change sharing.'));
     }
-    return _conn(machineId).request(
-      'harness_share_$action',
-      payload: {'agentId': agentId, ...payload},
-    );
+    return _conn(machineId)
+        .request(
+          'harness_share_$action',
+          payload: {'agentId': agentId, ...payload},
+        )
+        .then((response) {
+          shareStatus.record(machineId, agentId, response);
+          return response;
+        });
   }
 
   /// The browser controls only a linked, owned machine's managed viewer. Requests fail while

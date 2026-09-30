@@ -18,7 +18,8 @@ WorkspaceChrome webWorkspaceChrome(AppNotifier app) => WorkspaceChrome(
   pickerBar: (context, picker) => WebPickerBar(picker: picker),
   showsKeyHints: false,
   viewMachineCloses: true,
-  closesTabs: true,
+  showsShareStatus: true,
+  scrollsTabsByArrows: true,
   compactTabs: (context, commands) =>
       WebTabSwitcher(app: app, commands: commands),
   compactBelow: kWebCompactBelow,

@@ -1,6 +1,7 @@
 @TestOn('browser')
 library;
 
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -14,6 +15,7 @@ import 'package:harness/state/new_harness.dart';
 import 'package:harness/web/shell/web_workspace.dart';
 import 'package:harness/widgets/new_harness_form.dart';
 import 'package:harness/widgets/swarm_switcher.dart';
+import 'package:harness/widgets/workspace_bar_control.dart';
 
 Future<AppNotifier> _mount(
   WidgetTester tester, {
@@ -144,12 +146,93 @@ void main() {
     final tabs = app.swarms.length;
     final empty = app.activeSwarmId;
     expect(app.activeSwarm.panes, isEmpty);
+    // The close mark shows under the mouse, as on desktop.
+    final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
+    addTearDown(mouse.removePointer);
+    await mouse.addPointer(location: Offset.zero);
+    await mouse.moveTo(
+      tester.getCenter(find.byKey(ValueKey('tab-close:$empty'))),
+    );
+    await tester.pump(const Duration(milliseconds: 200));
     await tester.tap(find.byKey(ValueKey('tab-close:$empty')));
     // Past the tab's double-tap-to-rename window, which holds the tap.
     await tester.pump(const Duration(milliseconds: 400));
     expect(app.swarms, hasLength(tabs - 1));
     expect(app.swarms.any((tab) => tab.id == empty), isFalse);
     expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox.shrink());
+    app.dispose();
+  });
+
+  testWidgets('tabs too many for the bar scroll by arrows and wheel', (
+    tester,
+  ) async {
+    final app = await _mount(tester);
+    expect(find.byKey(const ValueKey('tab-scroll-right')), findsNothing);
+    for (var i = 0; i < 24; i++) {
+      app.newSwarm(newTabPage: true);
+    }
+    await tester.pump(const Duration(milliseconds: 200));
+    // The arrows read the list's extent after it lays out: one more frame.
+    await tester.pump();
+    final left = find.byKey(const ValueKey('tab-scroll-left'));
+    final right = find.byKey(const ValueKey('tab-scroll-right'));
+    expect(left, findsOneWidget);
+    expect(right, findsOneWidget);
+    bool enabled(Finder arrow) =>
+        tester.widget<WorkspaceBarControl>(arrow).onPressed != null;
+    final scrollable = tester.state<ScrollableState>(
+      find
+          .descendant(
+            of: find.byKey(const ValueKey('workspace-tab-bar')),
+            matching: find.byType(Scrollable),
+          )
+          .first,
+    );
+
+    // A plain vertical wheel over the strip moves it sideways — here all the
+    // way back to the first tab, where the left arrow has nowhere to go.
+    await tester.sendEventToBinding(
+      PointerScrollEvent(
+        position: tester.getCenter(left) + const Offset(80, 0),
+        scrollDelta: const Offset(0, -100000),
+      ),
+    );
+    await tester.pump();
+    expect(scrollable.position.pixels, scrollable.position.minScrollExtent);
+    expect(enabled(left), isFalse);
+    expect(enabled(right), isTrue);
+
+    await tester.tap(right);
+    // One frame starts the page animation, the next lands it.
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(scrollable.position.pixels, greaterThan(0));
+    expect(enabled(left), isTrue);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox.shrink());
+    app.dispose();
+  });
+
+  testWidgets('crossing into and out of overflow keeps one tab list', (
+    tester,
+  ) async {
+    final app = await _mount(tester);
+    for (var i = 0; i < 12; i++) {
+      app.newSwarm(newTabPage: true);
+    }
+    for (final width in [1800.0, 900.0, 1800.0, 700.0, 1280.0]) {
+      tester.view.physicalSize = Size(width, 800);
+      await tester.pump();
+      await tester.pump();
+      expect(tester.takeException(), isNull, reason: 'width $width');
+    }
+    while (app.swarms.length > 2) {
+      await app.closeSwarm(app.swarms.last.id);
+      await tester.pump();
+      await tester.pump();
+      expect(tester.takeException(), isNull, reason: '${app.swarms.length}');
+    }
     await tester.pumpWidget(const SizedBox.shrink());
     app.dispose();
   });

@@ -45,7 +45,8 @@ class WorkspaceChrome {
     this.pickerBar,
     this.showsKeyHints = true,
     this.viewMachineCloses = false,
-    this.closesTabs = false,
+    this.showsShareStatus = false,
+    this.scrollsTabsByArrows = false,
     this.compactTabs,
     this.compactBelow = 0,
   });
@@ -69,9 +70,11 @@ class WorkspaceChrome {
   /// picker; false keeps View scoping the picker to its harnesses.
   final bool viewMachineCloses;
 
-  /// True puts a close mark on the selected and hovered tab, for a host with
-  /// no ⌘W menu to close one — an empty New Tab included.
-  final bool closesTabs;
+  /// True marks each shared harness's pane header Public or Private.
+  final bool showsShareStatus;
+
+  /// True puts arrows either side of a tab list too long for the bar.
+  final bool scrollsTabsByArrows;
 
   /// Below [compactBelow] of window width the workspace goes compact: this
   /// replaces the tab list (the Store button steps aside), and only the focused

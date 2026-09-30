@@ -11,6 +11,7 @@ import 'package:harness/core/models.dart';
 import 'package:harness/state/app_state.dart';
 import 'package:harness/terminal/terminal_session.dart';
 import 'package:harness/theme/app_theme.dart';
+import 'package:harness/widgets/pane_share_badge.dart';
 import 'package:harness/widgets/terminal_panel.dart';
 
 import 'support/real_fonts.dart';
@@ -55,6 +56,9 @@ void main() {
     TerminalSession session, {
     double width = 900,
     bool withPr = false,
+    bool compactHeader = false,
+    bool showsShares = false,
+    Map<String, dynamic>? share,
   }) async {
     // Wider than the pane, and stated: the default test window is 800px, and a
     // `SizedBox(width: 900)` inside it is silently clamped to 800.
@@ -89,16 +93,21 @@ void main() {
             ),
           ];
     addTearDown(notifier.dispose);
+    if (share != null) notifier.shareStatus.record('local', 'agent-1', share);
     await tester.pumpWidget(
       MaterialApp(
         home: Scaffold(
           body: SizedBox(
             width: width,
             height: 320,
-            child: TerminalPanel(
-              notifier: notifier,
-              session: session,
-              focused: true,
+            child: PaneShareStatus(
+              visible: showsShares,
+              child: TerminalPanel(
+                notifier: notifier,
+                session: session,
+                focused: true,
+                compactHeader: compactHeader,
+              ),
             ),
           ),
         ),
@@ -119,6 +128,64 @@ void main() {
       await tester.pumpWidget(const SizedBox());
     });
   }
+
+  const publicShare = {
+    'link': {'id': 'l1', 'visibility': 'public'},
+    'shares': [],
+  };
+
+  // A workspace pane's header is compact: its right side's budget holds only
+  // the close button, and a status beside the name fills the name's row. The
+  // mark sits at the right edge either way.
+  for (final width in [420.0, 900.0]) {
+    for (final status in [
+      TerminalSessionStatus.controlling,
+      TerminalSessionStatus.takenOver,
+    ]) {
+      testWidgets(
+        'a shared pane says so at the right edge, ${status.name}, width $width',
+        (tester) async {
+          final session = sessionNamed('Desktop')..status = status;
+          addTearDown(session.dispose);
+          await pump(
+            tester,
+            session,
+            width: width,
+            compactHeader: true,
+            showsShares: true,
+            share: publicShare,
+          );
+          final badge = find.byKey(const ValueKey('pane-share:local:agent-1'));
+          expect(badge, findsOneWidget);
+          final rect = tester.getRect(badge);
+          expect(rect.width, greaterThan(12));
+          expect(
+            rect.left,
+            greaterThan(tester.getRect(find.text('Desktop')).right),
+          );
+          // Only the header's own right-side controls (the close icon) follow.
+          expect(rect.right, greaterThan(width - 100));
+          expect(rect.right, lessThanOrEqualTo(width));
+          if (width > 560) expect(find.text('Public'), findsOneWidget);
+          expect(tester.takeException(), isNull);
+          await tester.pumpWidget(const SizedBox());
+        },
+      );
+    }
+  }
+
+  testWidgets('without the web scope a shared pane shows no mark', (
+    tester,
+  ) async {
+    final session = sessionNamed('Desktop');
+    addTearDown(session.dispose);
+    await pump(tester, session, compactHeader: true, share: publicShare);
+    expect(
+      find.byKey(const ValueKey('pane-share:local:agent-1')),
+      findsNothing,
+    );
+    await tester.pumpWidget(const SizedBox());
+  });
 
   // Each shape describes the path topology, not an assumed speed: direct link, intermediate hop,
   // backend server. Tooltip and semantics use the protocol names people will diagnose with.
