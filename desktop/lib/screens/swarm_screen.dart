@@ -73,6 +73,7 @@ import '../widgets/harness_activity_mark.dart';
 import '../widgets/workspace_status_line.dart';
 import '../widgets/workspace_pull_request_label.dart';
 import '../widgets/workspace_bar_control.dart';
+import '../widgets/workspace_tab_close.dart';
 import '../widgets/session_work_dialog.dart';
 import '../widgets/web_download_button.dart';
 import '../widgets/workspace_share_button.dart';
@@ -335,7 +336,6 @@ class _SwarmScreenState extends State<SwarmScreen> {
   DaemonBrief? _lastBrief;
   StreamSubscription<int?>? _zooPushes;
   OverlayEntry? _daemonOverlay;
-  int _companionTalkRequest = 0;
   OverlayEntry? _hatchOverlay;
   OverlayEntry? _daemonHintOverlay;
   OverlayEntry? _daemonPreview;
@@ -964,6 +964,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
   }
 
   void _recordNavigation() {
+    _scheduleCompanionWorkspace();
     _navigation.record(app);
     if (_hasCommandBar && _commandBarOpen) {
       final local = app.localMachineState;
@@ -1564,7 +1565,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
   /// agent and its pane are one agent — and one mark on the tab — not a two-pane group.
   Set<(String, String)> _tabAgents(Swarm tab) => {
     for (final pane in tab.panes)
-      if ((pane.isWeb ? pane.ownerAgentId : pane.agentId) case final id?)
+      if ((pane.isViewer ? pane.ownerAgentId : pane.agentId) case final id?)
         (pane.machineId, id),
   };
 
@@ -2457,6 +2458,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
       initialSection: section,
       experimentalFeatures: _experimentalFeatures,
       source: 'swarm',
+      compactBelow: widget.chrome?.compactBelow ?? 0,
     ),
   );
 
@@ -3307,6 +3309,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
     _brain.reset();
     _plates.reset();
     _syncDaemon();
+    _scheduleCompanionWorkspace();
     // A setting change must leave keyboard focus in Settings.
     if (hadOverlay && _routeIsCurrent && !_dialogOpen) _returnFocusToPane();
   }
@@ -3575,10 +3578,99 @@ class _SwarmScreenState extends State<SwarmScreen> {
 
   /// The whole conversation: the pair harness's own pane.
   void _openConversation() {
-    final pair = _pairHarness;
-    if (pair == null) return;
-    _openHarness(DaemonAbout(pair.machineId, pair.agentId));
+    _openCompanions(talk: true);
   }
+
+  bool _companionWorkspaceScheduled = false;
+  String? _companionAttemptedKey, _companionOpeningKey;
+  String? _companionTerminalError;
+  bool _focusCompanionTerminal = false;
+
+  void _scheduleCompanionWorkspace() {
+    if (_companionWorkspaceScheduled) return;
+    _companionWorkspaceScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _companionWorkspaceScheduled = false;
+      if (mounted) _syncCompanionWorkspace();
+    });
+  }
+
+  void _syncCompanionWorkspace() {
+    final enabled = _creatureEnabled && _zoo.loaded;
+    app.syncCompanionViewer(
+      enabled: enabled,
+      machineId: app.localMachineState?.machine.machineId,
+    );
+    if (!enabled) {
+      _companionAttemptedKey = null;
+      return;
+    }
+    final pair = _zoo.isPreview ? null : _pairHarness;
+    unawaited(app.showCompanionTerminal(pair?.machineId, pair?.agentId));
+    if (!app.activeSwarm.isCompanions) {
+      _companionAttemptedKey = null;
+      return;
+    }
+    if (_focusCompanionTerminal && pair != null) {
+      final pane = app.panes
+          .where((p) => p.agentId == pair.agentId)
+          .firstOrNull;
+      if (pane != null) {
+        _focusCompanionTerminal = false;
+        app.focusPane(pane.id);
+      }
+    }
+    final uid = _zoo.paired?.uid;
+    if (_zoo.isPreview || uid == null || !_brain.active) return;
+    final key = '${_zoo.scope}:$uid';
+    if (_companionAttemptedKey == key || _companionOpeningKey == key) return;
+    _companionAttemptedKey = key;
+    _companionOpeningKey = key;
+    _companionTerminalError = null;
+    setState(() {});
+    unawaited(_openCompanionTerminal(key));
+  }
+
+  Future<void> _openCompanionTerminal(String key) async {
+    final result = await _brain.openConversation();
+    if (!mounted || _companionOpeningKey != key) return;
+    _companionOpeningKey = null;
+    if (key != '${_zoo.scope}:${_zoo.paired?.uid}' || !_creatureEnabled) return;
+    if (result['ok'] != true) {
+      _companionTerminalError = switch (result['error']) {
+        'UNSUPPORTED' => 'Update Harness CLI to open the companion terminal.',
+        'NO_ENGINE' =>
+          'Install Claude Code or Codex to talk with your companion.',
+        _ =>
+          result['detail'] as String? ??
+              'The terminal could not connect. Try opening it again.',
+      };
+    }
+    setState(() {});
+    _scheduleCompanionWorkspace();
+  }
+
+  Widget _companionViewer(BuildContext context) => CompanionHome(
+    key: ValueKey('companion-home:${_zoo.scope}'),
+    face: _face,
+    brain: _brain,
+    onHatch: _hatch,
+    onOpenControls: _openCompanionControls,
+    terminalStatus:
+        _companionTerminalError ??
+        (_companionOpeningKey != null
+            ? 'Opening your companion’s terminal…'
+            : null),
+    onOpenConversation: _companionTerminalError == null
+        ? null
+        : () {
+            _companionAttemptedKey = null;
+            _focusCompanionTerminal = true;
+            _scheduleCompanionWorkspace();
+          },
+    dial: app.dial,
+    onDeviceSettings: app.setDeviceSettings,
+  );
 
   /// `~/.config/harness/pair.jsonc`, written with no rules when it is not
   /// there yet, opened in the editor `.jsonc` files open in.
@@ -3746,6 +3838,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
   void _brainChanged() {
     // Heard while daemons are off (or not decided yet): nothing shows.
     if (!mounted || !_zoo.loaded) return;
+    _scheduleCompanionWorkspace();
     final firstHeard = !_face.brainActive && _brain.active;
     _face.brainActive = _brain.active;
     if (firstHeard) unawaited(_sendPresence());
@@ -3849,6 +3942,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
   void _zooChanged() {
     if (!mounted) return;
     _brain.bindConversation(_zoo.scope, _zoo.paired?.uid);
+    _scheduleCompanionWorkspace();
     if (!_zoo.loaded || _lastZooScope != _zoo.scope) {
       _closeDaemonHint();
       _closeDaemon(restoreFocus: false);
@@ -4176,8 +4270,12 @@ class _SwarmScreenState extends State<SwarmScreen> {
     _closeCommandBar(restoreFocus: false);
     dismissTransientMenus();
     _preparePaneFocus();
-    if (talk) _companionTalkRequest++;
+    if (talk) {
+      _focusCompanionTerminal = true;
+      _companionAttemptedKey = null;
+    }
     app.openCompanions();
+    _scheduleCompanionWorkspace();
     _face.look();
     _face.seen();
     setState(() {});
@@ -4966,6 +5064,13 @@ class _SwarmScreenState extends State<SwarmScreen> {
     }
   }
 
+  /// View on a machine when the host asks it to close the picker: that
+  /// machine becomes the one New Harness starts on.
+  void _viewMachine(String machineId) {
+    _dismissSearch();
+    app.selectMachine(machineId);
+  }
+
   void _dismissSearch() {
     final target = _search?.targetId;
     _closeSearch();
@@ -5174,6 +5279,9 @@ class _SwarmScreenState extends State<SwarmScreen> {
       onRefocus: _focusSearch,
       onModalChanged: _pickerModalChanged,
       onCommands: _showSearchCommands,
+      onViewMachine: widget.chrome?.viewMachineCloses == true
+          ? _viewMachine
+          : null,
     );
     final terminalTheme = terminalThemeFor(
       grid.AppTheme.palette.value,
@@ -5723,6 +5831,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
         source: 'shortcut',
         initialSection: SettingsSection.debug,
         experimentalFeatures: _experimentalFeatures,
+        compactBelow: widget.chrome?.compactBelow ?? 0,
       ),
     ),
   };
@@ -6273,11 +6382,15 @@ class _SwarmScreenState extends State<SwarmScreen> {
                           Offstage(
                             key: const ValueKey('workspace-canvas'),
                             offstage:
-                                app.activeSwarm.isUtility ||
+                                app.activeSwarm.isStore ||
+                                (app.activeSwarm.isCompanions &&
+                                    (!_creatureEnabled || !_zoo.loaded)) ||
                                 app.activeSwarm.isOrchestrator,
                             child: ExcludeFocus(
                               excluding:
-                                  app.activeSwarm.isUtility ||
+                                  app.activeSwarm.isStore ||
+                                  (app.activeSwarm.isCompanions &&
+                                      (!_creatureEnabled || !_zoo.loaded)) ||
                                   app.activeSwarm.isOrchestrator,
                               child: Padding(
                                 padding: app.panes.isEmpty
@@ -6301,6 +6414,10 @@ class _SwarmScreenState extends State<SwarmScreen> {
                                           child: PaneGrid(
                                             notifier: app,
                                             swarmMode: true,
+                                            companionViewer:
+                                                _creatureEnabled && _zoo.loaded
+                                                ? _companionViewer
+                                                : null,
                                             soloFocused: _compact(context),
                                             empty:
                                                 app.panes.isEmpty &&
@@ -6410,35 +6527,6 @@ class _SwarmScreenState extends State<SwarmScreen> {
                               recentHarnesses: _navigation.recent,
                               source: 'tab',
                             ),
-                          if (_creatureEnabled &&
-                              _zoo.loaded &&
-                              app.swarms.any((s) => s.isCompanions))
-                            Offstage(
-                              offstage: !app.activeSwarm.isCompanions,
-                              child: ExcludeFocus(
-                                excluding: !app.activeSwarm.isCompanions,
-                                child: TickerMode(
-                                  enabled: app.activeSwarm.isCompanions,
-                                  child: CompanionHome(
-                                    key: ValueKey(
-                                      'companion-home:${_zoo.scope}',
-                                    ),
-                                    face: _face,
-                                    brain: _brain,
-                                    onHatch: _hatch,
-                                    onOpenControls: _openCompanionControls,
-                                    onOpenConversation: _zoo.isPreview
-                                        ? null
-                                        : _openConversation,
-                                    canOpenConversation: () =>
-                                        _pairHarness != null,
-                                    dial: app.dial,
-                                    onDeviceSettings: app.setDeviceSettings,
-                                    focusRequest: _companionTalkRequest,
-                                  ),
-                                ),
-                              ),
-                            ),
                           if (app.activeSwarm.isCompanions &&
                               (!_creatureEnabled || !_zoo.loaded))
                             Center(
@@ -6546,7 +6634,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
     }
     final machine = app.stateOf(focused.pane.machineId);
     final agent = focused.agent;
-    final owner = focused.pane.isWeb
+    final owner = focused.pane.isViewer
         ? app.panes
               .where(
                 (pane) =>
@@ -6791,6 +6879,9 @@ class _SwarmScreenState extends State<SwarmScreen> {
         math.max(0.0, constraints.maxWidth - cell.width * 14),
       );
       final leadingWidth = chrome?.leadingWidth(context) ?? 0.0;
+      final closeCells = chrome?.closesTabs == true
+          ? kWorkspaceTabCloseCells
+          : 0;
       final tabBudget = math.max(
         0.0,
         constraints.maxWidth -
@@ -6803,12 +6894,15 @@ class _SwarmScreenState extends State<SwarmScreen> {
       _tabWidths = [
         for (var i = 0; i < labels.length; i++)
           math.max(
-            activities[i] == null ? 0 : ('${i + 1}:'.length + 4) * cell.width,
+            activities[i] == null
+                ? 0
+                : ('${i + 1}:'.length + 4 + closeCells) * cell.width,
             math.min(
               math.min(
                     labels[i].characters.length +
                         2 +
-                        (activities[i] == null ? 0 : 2),
+                        (activities[i] == null ? 0 : 2) +
+                        closeCells,
                     24,
                   ) *
                   cell.width,
@@ -6897,77 +6991,86 @@ class _SwarmScreenState extends State<SwarmScreen> {
                                   padding: EdgeInsets.symmetric(
                                     horizontal: cell.width,
                                   ),
-                                  child: Center(
-                                    child: activity == null
-                                        ? Text(
-                                            labels[index],
-                                            maxLines: 1,
-                                            overflow: TextOverflow.ellipsis,
-                                            textAlign: TextAlign.center,
-                                            style: workspaceBarTextStyle(
-                                              color: theme.foreground,
-                                              emphasized: emphasized,
-                                            ),
-                                          )
-                                        : Row(
-                                            mainAxisSize: MainAxisSize.min,
-                                            children: [
-                                              Text(
-                                                '${index + 1}:',
-                                                style: workspaceBarTextStyle(
-                                                  color: theme.foreground,
-                                                  emphasized: emphasized,
-                                                ),
+                                  child: _withTabClose(
+                                    closeCells > 0,
+                                    id: swarm.id,
+                                    visible: selected || emphasized,
+                                    color: theme.foreground,
+                                    child: Center(
+                                      child: activity == null
+                                          ? Text(
+                                              labels[index],
+                                              maxLines: 1,
+                                              overflow: TextOverflow.ellipsis,
+                                              textAlign: TextAlign.center,
+                                              style: workspaceBarTextStyle(
+                                                color: theme.foreground,
+                                                emphasized: emphasized,
                                               ),
-                                              Flexible(
-                                                child: Text(
-                                                  names[swarm.id]!,
-                                                  maxLines: 1,
-                                                  overflow:
-                                                      TextOverflow.ellipsis,
+                                            )
+                                          : Row(
+                                              mainAxisSize: MainAxisSize.min,
+                                              children: [
+                                                Text(
+                                                  '${index + 1}:',
                                                   style: workspaceBarTextStyle(
                                                     color: theme.foreground,
                                                     emphasized: emphasized,
                                                   ),
                                                 ),
-                                              ),
-                                              SizedBox(width: cell.width),
-                                              ListenableBuilder(
-                                                listenable: _tabScroll,
-                                                builder: (context, _) {
-                                                  final left = _tabWidths
-                                                      .take(index)
-                                                      .fold(
-                                                        0.0,
-                                                        (a, b) => a + b,
-                                                      );
-                                                  final offset =
-                                                      _tabScroll.hasClients
-                                                      ? _tabScroll.offset
-                                                      : 0.0;
-                                                  return ActivityMark(
-                                                    key: ValueKey(
-                                                      'tab-activity:${swarm.id}',
-                                                    ),
-                                                    activity: activity,
-                                                    color: activityColor(
-                                                      activity,
-                                                      theme,
-                                                      color: prefs.color,
-                                                    ),
-                                                    emphasized: emphasized,
-                                                    tooltip: false,
-                                                    visible:
-                                                        left <
-                                                            offset +
-                                                                tabsWidth &&
-                                                        left + _tabWidths[index] >
-                                                            offset,
-                                                  );
-                                                },
-                                              ),
-                                            ],
-                                          ),
+                                                Flexible(
+                                                  child: Text(
+                                                    names[swarm.id]!,
+                                                    maxLines: 1,
+                                                    overflow:
+                                                        TextOverflow.ellipsis,
+                                                    style:
+                                                        workspaceBarTextStyle(
+                                                          color:
+                                                              theme.foreground,
+                                                          emphasized:
+                                                              emphasized,
+                                                        ),
+                                                  ),
+                                                ),
+                                                SizedBox(width: cell.width),
+                                                ListenableBuilder(
+                                                  listenable: _tabScroll,
+                                                  builder: (context, _) {
+                                                    final left = _tabWidths
+                                                        .take(index)
+                                                        .fold(
+                                                          0.0,
+                                                          (a, b) => a + b,
+                                                        );
+                                                    final offset =
+                                                        _tabScroll.hasClients
+                                                        ? _tabScroll.offset
+                                                        : 0.0;
+                                                    return ActivityMark(
+                                                      key: ValueKey(
+                                                        'tab-activity:${swarm.id}',
+                                                      ),
+                                                      activity: activity,
+                                                      color: activityColor(
+                                                        activity,
+                                                        theme,
+                                                        color: prefs.color,
+                                                      ),
+                                                      emphasized: emphasized,
+                                                      tooltip: false,
+                                                      visible:
+                                                          left <
+                                                              offset +
+                                                                  tabsWidth &&
+                                                          left + _tabWidths[index] >
+                                                              offset,
+                                                    );
+                                                  },
+                                                ),
+                                              ],
+                                            ),
+                                    ),
                                   ),
                                 ),
                               ),
@@ -7055,6 +7158,23 @@ class _SwarmScreenState extends State<SwarmScreen> {
 
   /// A host's narrow bar (the web on a phone): its tab switcher in place of
   /// the tab list, and no Store button, which the host's menu already offers.
+  /// A tab's label, with a close mark when the host closes tabs by mouse.
+  Widget _withTabClose(
+    bool closes, {
+    required String id,
+    required bool visible,
+    required Color color,
+    required Widget child,
+  }) => !closes
+      ? child
+      : WorkspaceTabCloseSlot(
+          tabId: id,
+          visible: visible,
+          color: color,
+          onClose: () => unawaited(app.closeSwarm(id)),
+          child: child,
+        );
+
   Widget _compactTabStrip(WorkspaceChrome chrome, TerminalTheme theme) =>
       Builder(
         builder: (context) {
