@@ -3647,12 +3647,13 @@ impl App {
             if let Some(c) = c { own = true; s = if fg { s.fg(c) } else { s.bg(c) } }
         }
         // No status colours of its own and the terminal has told us what it looks like: the bar
-        // takes the theme's own colours — its background the terminal's background, its text the
-        // readable opposite — so it is a visible bar in the theme (a dark bar, light text on a
-        // dark terminal), not a transparent one, and not tmux's stock green.
+        // swaps the theme's own colours — its background the terminal's foreground, its text the
+        // terminal's background — so the bar is the theme's text colour with the theme's
+        // background as its lettering (an ivory bar with dark text on a dark terminal), not a
+        // transparent one, and not tmux's stock green.
         if !own && !self.options.pane_look() && !self.options.tmux_look() {
             let (bg, fg, _) = crate::theme::palette();
-            s = s.bg(bg).fg(fg);
+            s = s.bg(fg).fg(bg);
         }
         s
     }
