@@ -46,6 +46,7 @@ import '../widgets/notification_inbox.dart';
 import '../widgets/workspace_notifications_button.dart';
 import '../state/harness_sessions.dart';
 import '../state/harness_activity.dart';
+import '../state/harness_attachments.dart';
 import '../state/harness_placement.dart';
 import '../state/new_harness.dart';
 import 'swarm_menu_bus.dart';
@@ -472,7 +473,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
                         children: [
                           WorkspaceMachinePrompt(
                             loading: app.machinesLoading,
-                            preparing: app.localMachineState != null,
+                            preparing: _hasNewHarnessMachine,
                             onChoose: () => unawaited(_openMachines()),
                           ),
                           if (recent != null) ...[
@@ -513,7 +514,13 @@ class _SwarmScreenState extends State<SwarmScreen> {
       _search == null &&
       !_commandBarOpen &&
       !_pickingFolder &&
-      app.localMachineState != null;
+      _hasNewHarnessMachine;
+
+  /// A machine New Harness can start on without asking: this computer, or the
+  /// host's choice when it runs none (a browser's connected machine).
+  bool get _hasNewHarnessMachine =>
+      app.localMachineState != null ||
+      widget.chrome?.newHarnessMachine?.call() != null;
 
   void _scheduleWelcomeComposer() {
     if (_welcomeEntryScheduled || !_canShowWelcomeComposer) return;
@@ -2936,6 +2943,9 @@ class _SwarmScreenState extends State<SwarmScreen> {
       swarmId: swarmId,
       split: split,
       placement: placement,
+      attachments: widget.chrome?.attachesFiles == true
+          ? HarnessAttachments(onDeliveryProblem: _showPaneActionHint)
+          : null,
     );
     _newHarnessFormKey = GlobalKey<NewHarnessFormState>();
     _newHarnessDevicePort = DeviceFormPort();
