@@ -16,6 +16,27 @@ BorderSide terminalPaneBorder({bool focused = false}) => BorderSide(
 /// One gutter around the workspace, between panes, and beside command docks.
 const double kWorkspaceInset = 9.5;
 
+/// How solid the workspace's panes paint their own fill: below 1 while the
+/// background shows through them (Behind harnesses). Only fills turn
+/// translucent — text, colored cells, banners and the composer stay solid.
+class PaneOpacity extends InheritedWidget {
+  const PaneOpacity({super.key, required this.opacity, required super.child});
+  final double opacity;
+
+  /// 1 outside a workspace that set one.
+  static double of(BuildContext context) =>
+      context.dependOnInheritedWidgetOfExactType<PaneOpacity>()?.opacity ?? 1;
+
+  /// [color] at the pane opacity.
+  static Color fill(BuildContext context, Color color) {
+    final opacity = of(context);
+    return opacity >= 1 ? color : color.withValues(alpha: color.a * opacity);
+  }
+
+  @override
+  bool updateShouldNotify(PaneOpacity old) => old.opacity != opacity;
+}
+
 /// The selected tab joins the workspace with the same small radius used at
 /// its top corners. The bottom curves turn outward, like a browser tab.
 class TerminalTabBorder extends ShapeBorder {
