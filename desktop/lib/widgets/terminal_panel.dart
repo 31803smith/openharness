@@ -45,6 +45,7 @@ import 'engine_identity.dart';
 import 'harness_activity_mark.dart';
 import 'grid_model_picker.dart';
 import 'pane_header_actions.dart';
+import 'pane_share_badge.dart';
 import 'pane_model_status.dart';
 
 /// The pane header's own horizontal inset.
@@ -2891,6 +2892,17 @@ class _TerminalHeader extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(width: 8),
+                // At the right edge, outside the right side's width budget:
+                // a workspace pane's compact header leaves that only its close
+                // button, and a status beside the name fills the name's row.
+                if (agent != null && PaneShareStatus.visibleOf(context))
+                  PaneShareBadge(
+                    notifier: notifier,
+                    machineId: session.machineId,
+                    agentId: agent.id,
+                    name: agent.displayName,
+                    compact: narrow,
+                  ),
                 // Which of the three paths carries this pane's bytes. Absent for a local machine's own
                 // terminal, which has no such distinction and so gets no badge.
                 //

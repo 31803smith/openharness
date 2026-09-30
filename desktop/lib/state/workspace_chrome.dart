@@ -46,6 +46,7 @@ class WorkspaceChrome {
     this.showsKeyHints = true,
     this.viewMachineCloses = false,
     this.closesTabs = false,
+    this.showsShareStatus = false,
     this.compactTabs,
     this.compactBelow = 0,
   });
@@ -72,6 +73,9 @@ class WorkspaceChrome {
   /// True puts a close mark on the selected and hovered tab, for a host with
   /// no ⌘W menu to close one — an empty New Tab included.
   final bool closesTabs;
+
+  /// True marks each shared harness's pane header Public or Private.
+  final bool showsShareStatus;
 
   /// Below [compactBelow] of window width the workspace goes compact: this
   /// replaces the tab list (the Store button steps aside), and only the focused
