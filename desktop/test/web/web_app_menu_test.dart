@@ -76,8 +76,8 @@ void main() {
     newHarnessOpensInBox = true;
     addTearDown(() => newHarnessOpensInBox = false);
     final app = await _mount(tester, connectedMachine: 'remote-box');
-    await _openMenu(tester);
-    await tester.tap(find.byKey(const ValueKey('web-menu:agent.new')));
+    // New work starts where a new tab opens: its "Start an agent" row.
+    await tester.tap(find.byKey(const ValueKey('welcome-agent.new')));
     await tester.runAsync(
       () => Future<void>.delayed(const Duration(milliseconds: 200)),
     );
@@ -93,8 +93,8 @@ void main() {
     tester,
   ) async {
     final app = await _mount(tester);
-    await _openMenu(tester);
-    await tester.tap(find.byKey(const ValueKey('web-menu:agent.new')));
+    // New work starts where a new tab opens: its "Start an agent" row.
+    await tester.tap(find.byKey(const ValueKey('welcome-agent.new')));
     await tester.pump(const Duration(milliseconds: 400));
     expect(find.byType(NewHarnessForm), findsNothing);
     expect(

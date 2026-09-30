@@ -1945,7 +1945,10 @@ async function runForeground(session: AuthSession | null): Promise<void> {
       const title = engineSessionTitle(session, terminals.titleFor(session, titles))
       if (!title) continue
       const before = projectDisplayName(session)
-      const updated = registry.updateTitle(session.sessionId, title)
+      // Fall back to the agent id: a terminal that became an engine harness (e.g. opencode typed
+      // into a New Terminal) has no engine session id — nothing fired a session-start hook — but its
+      // pane title is still readable and should still rename the harness.
+      const updated = registry.updateTitle(session.sessionId || session.agentId, title)
       if (!updated) continue
       const after = projectDisplayName(updated)
       if (after !== before) {
@@ -4882,6 +4885,20 @@ async function runForeground(session: AuthSession | null): Promise<void> {
     // one the dial has been using for every voice turn.
     // A window that connects after the dial did has missed the `dial_status` that announced it.
     dialStatus: () => cableHostRef?.currentDialStatus() ?? { attached: false },
+    /*
+     * A window changing a device's settings. Addressed by the fleet's id, so a second robot on the same
+     * desk is not dragged along — every other cable command broadcasts on purpose (they all show the
+     * same desktop), but a preference belongs to the glass it was set on.
+     *
+     * Nothing is answered here. The device replies to its own `settings.set` with the values it now
+     * holds, and that reaches the window as an ordinary `dial_status`.
+     */
+    onDialSettings: (id, patch) => {
+      void cableRef?.setSettings(id, patch as Parameters<NonNullable<typeof cableRef>['setSettings']>[1])
+        .then(result => {
+          if (!result.ok) console.log(`[cable] settings for ${id || 'no device'}: ${result.error}`)
+        })
+    },
     openQuestions: () => [...openQuestions.values()],
     onRouteSend: backend.ownerCommands.onRouteSend = (agentId, text) => {
       const sent = cableHostRef?.sendTurn(agentId, text) ?? { ok: false as const, machine: '', reason: 'no agent list yet' }

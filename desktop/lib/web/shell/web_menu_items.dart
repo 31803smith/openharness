@@ -1,61 +1,59 @@
+/// Which layouts a menu row belongs to: some rows repeat a control the wide
+/// bar already shows, others make no sense on a phone.
+enum WebMenuWidth { any, compact, wide }
+
 /// One entry of the web app menu: a workspace command id and its menu label.
 /// The command itself lives in the workspace's shared command table.
-typedef WebMenuItem = ({String command, String label});
+typedef WebMenuItem = ({String command, String label, WebMenuWidth width});
 
-/// A titled group of menu entries.
-typedef WebMenuSection = ({String title, List<WebMenuItem> items});
-
-/// What desktop reaches through its native menu bar, for a mouse in a browser.
-/// Order follows the native menus: create, open, arrange, then the app itself.
-const List<WebMenuSection> kWebMenuSections = [
-  (
-    title: 'Harness',
-    items: [
-      (command: 'agent.new', label: 'New harness'),
-      (command: 'swarm.new', label: 'New tab'),
-      (command: 'harnesses.list', label: 'Agents'),
-      (command: 'navigation.needs_input', label: 'Needing input'),
-      (command: 'machines.list', label: 'Machines'),
-      (command: 'models.list', label: 'Models'),
-      (command: 'app.store', label: 'Store'),
-    ],
-  ),
-  (
-    title: 'Pane',
-    items: [
-      (command: 'pane.split_right', label: 'Split right'),
-      (command: 'pane.split_down', label: 'Split down'),
-      (command: 'pane.zoom', label: 'Zoom pane'),
-      (command: 'pane.move_to_tab', label: 'Move pane to tab'),
-      (command: 'agent.share', label: 'Share harness'),
-      (command: 'pane.close', label: 'Close pane'),
-    ],
-  ),
-  (
-    title: 'Workspace',
-    items: [
-      (command: 'pane.layout', label: 'Layout'),
-      (command: 'navigation.history', label: 'History'),
-      (command: 'navigation.commands', label: 'All commands'),
-    ],
-  ),
-  (
-    title: 'App',
-    items: [
-      (command: 'app.settings', label: 'Settings'),
-      (command: 'app.customize', label: 'Customize'),
-      (command: 'app.add_phone', label: 'Add phone'),
-      (command: 'keyboard.quick_start', label: 'Quick start'),
-      (command: 'keyboard.help', label: 'Keyboard shortcuts'),
-    ],
-  ),
+/// What the menu offers, in groups a thin rule separates. Only what has no
+/// other door in the browser chrome: new work is the `+` beside the tabs
+/// (a new tab opens on "Start an agent"), agents the search button, tabs the
+/// tab bar and switcher, attention the bell; keyboard tours and grid layout
+/// stay out of a mouse-first menu. All commands still reaches every one.
+const List<List<WebMenuItem>> kWebMenuGroups = [
+  [
+    (command: 'machines.list', label: 'Machines', width: WebMenuWidth.any),
+    (command: 'models.list', label: 'Models', width: WebMenuWidth.any),
+    // The wide bar has its own Store button; the phone bar gives it up.
+    (command: 'app.store', label: 'Store', width: WebMenuWidth.compact),
+  ],
+  [
+    (command: 'agent.share', label: 'Share harness', width: WebMenuWidth.any),
+    (command: 'pane.close', label: 'Close pane', width: WebMenuWidth.any),
+  ],
+  [
+    (command: 'navigation.history', label: 'History', width: WebMenuWidth.any),
+    (
+      command: 'navigation.commands',
+      label: 'All commands',
+      width: WebMenuWidth.any,
+    ),
+  ],
+  [
+    (command: 'app.settings', label: 'Settings', width: WebMenuWidth.any),
+    (command: 'app.customize', label: 'Customize', width: WebMenuWidth.any),
+    // Pairing a phone is for a computer; a phone is already here.
+    (command: 'app.add_phone', label: 'Add phone', width: WebMenuWidth.wide),
+  ],
 ];
 
-/// The sections as they can be drawn right now: commands that cannot run in
-/// this workspace state are left out, and a section left empty goes with them.
-List<WebMenuSection> runnableWebMenu(bool Function(String command) canRun) => [
-  for (final section in kWebMenuSections)
-    if (section.items.where((item) => canRun(item.command)).toList()
+/// The groups as they can be drawn right now: rows for the other layout, and
+/// commands that cannot run in this workspace state, are left out, and a group
+/// left empty goes with them.
+List<List<WebMenuItem>> runnableWebMenu(
+  bool Function(String command) canRun, {
+  required bool compact,
+}) => [
+  for (final group in kWebMenuGroups)
+    if (group
+            .where(
+              (item) =>
+                  item.width !=
+                      (compact ? WebMenuWidth.wide : WebMenuWidth.compact) &&
+                  canRun(item.command),
+            )
+            .toList()
         case final items when items.isNotEmpty)
-      (title: section.title, items: items),
+      items,
 ];

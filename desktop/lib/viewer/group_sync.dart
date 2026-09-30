@@ -1,13 +1,10 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:typed_data';
 
 import 'package:web_socket_channel/web_socket_channel.dart';
 
 import '../e2ee/bytes.dart';
 import '../e2ee/envelope.dart';
-import '../e2ee/keys.dart' show E2eeIdentity, verifySignature;
-import '../e2ee/primitives.dart';
 import '../e2ee/relay_session_crypto.dart';
 import 'password_link.dart' show RelaySocketFactory, defaultRelaySocket;
 import 'viewer_key_store.dart';
@@ -260,16 +257,12 @@ Future<GroupSyncOutcome> syncTrustGroup({
           theirs.pub == b64e(pin.pub))
         theirs,
     ];
-    // Merged into the roster as it is NOW, not as it was sent: something may have joined it while
-    // this swap was on the network (a device this one just approved), and must not be written over.
-    final merged = await keys.updateGroupRoster((current) async {
-      final m = mergeGroupRoster(
-        await _seededFrom(keys, current, selfPub),
-        GroupRoster(members, incoming.removed),
-        selfPub,
-      );
-      return (m.roster.toJson(), m);
-    });
+    final merged = mergeGroupRoster(
+      local,
+      GroupRoster(members, incoming.removed),
+      selfPub,
+    );
+    await keys.writeGroupRoster(merged.roster.toJson());
     return await _apply(keys, merged);
   } catch (_) {
     return GroupSyncOutcome.none;
@@ -280,16 +273,8 @@ Future<GroupSyncOutcome> syncTrustGroup({
 
 /// This phone's roster, with every machine it has pinned folded in — how a machine this phone linked
 /// by password reaches the rest of the group, and how links made before the group existed join it.
-Future<GroupRoster> _seeded(ViewerKeyStore keys, String selfPub) async =>
-    _seededFrom(keys, await keys.groupRoster(), selfPub);
-
-/// [_seeded], from a stored roster already read ([raw]).
-Future<GroupRoster> _seededFrom(
-  ViewerKeyStore keys,
-  Object? raw,
-  String selfPub,
-) async {
-  final stored = GroupRoster.parse(raw);
+Future<GroupRoster> _seeded(ViewerKeyStore keys, String selfPub) async {
+  final stored = GroupRoster.parse(await keys.groupRoster());
   // Only pins the roster does not name yet: a pin's `linkedAt` is when THIS device pinned it (the
   // group's own pins included), and folding that in again would restamp the member as new on every
   // swap and push the change around the whole group.
@@ -395,279 +380,4 @@ String? _cleanLabel(Object? v) {
       .trim();
   if (label.isEmpty) return null;
   return label.length > 60 ? label.substring(0, 60) : label;
-}
-
-// ── Handing the group to a browser that signs in by phone ────────────────────────────────────────
-//
-// A web desktop's sign-in QR carries a one-time pairing code that reaches only the approving phone
-// (by camera). The phone takes the browser into its roster — the machines hear of it on the phone's
-// next sync, which it runs at once — and hands the browser that roster sealed under the code, through
-// the backend's sign-in request. The backend carries it but can neither read nor alter it; the browser
-// opens it, pins every machine, and is in the group without ever dialling one first.
-
-/// The roster this device hands a browser it approved: everything it knows, and itself.
-Future<GroupRoster> handoffRoster(
-  ViewerKeyStore keys, {
-  required String selfLabel,
-}) async {
-  final selfPub = b64e((await keys.identity()).pub);
-  final seeded = await _seeded(keys, selfPub);
-  final me = GroupMember(
-    pub: selfPub,
-    kind: 'viewer',
-    label: selfLabel,
-    at: DateTime.now().millisecondsSinceEpoch,
-  );
-  return GroupRoster([me, ...seeded.members], seeded.removed);
-}
-
-/// Takes [member] — the browser this device just approved — into its roster; the next sync spreads it.
-Future<void> admitGroupMember(ViewerKeyStore keys, GroupMember member) async {
-  final selfPub = b64e((await keys.identity()).pub);
-  await keys.updateGroupRoster((current) async {
-    final merged = mergeGroupRoster(
-      await _seededFrom(keys, current, selfPub),
-      GroupRoster([member], const []),
-      selfPub,
-    );
-    return (merged.roster.toJson(), null);
-  });
-}
-
-/// A browser: the roster its approving phone handed it, merged in with every machine pinned.
-Future<GroupSyncOutcome> adoptHandedRoster(
-  ViewerKeyStore keys,
-  Object? raw,
-) async {
-  final selfPub = b64e((await keys.identity()).pub);
-  final merged = await keys.updateGroupRoster((current) async {
-    final m = mergeGroupRoster(
-      await _seededFrom(keys, current, selfPub),
-      GroupRoster.parse(raw),
-      selfPub,
-    );
-    return (m.roster.toJson(), m);
-  });
-  return _apply(keys, merged);
-}
-
-/// The key a handed roster is sealed under: the QR's pairing [code], bound to the sign-in request it
-/// answers ([userCode]) so a sealed roster cannot be replayed into another one.
-Uint8List _handoffKey(String code, String userCode) => hkdfSha256(
-  utf8Bytes(code.trim().toUpperCase()),
-  salt: utf8Bytes('harness/signin-roster/v1'),
-  info: utf8Bytes(userCode),
-  length: 32,
-);
-
-final Uint8List _handoffAad = utf8Bytes('harness signin roster');
-
-String sealHandedRoster(
-  GroupRoster roster, {
-  required String code,
-  required String userCode,
-}) => b64e(
-  aeadSeal(
-    _handoffKey(code, userCode),
-    1,
-    _handoffAad,
-    utf8Bytes(jsonEncode(roster.toJson())),
-  ),
-);
-
-/// Null when it does not open — a different code or request, or a byte changed on the way.
-Object? openHandedRoster(
-  String sealed, {
-  required String code,
-  required String userCode,
-}) {
-  try {
-    final clear = aeadOpen(
-      _handoffKey(code, userCode),
-      1,
-      _handoffAad,
-      b64d(sealed),
-    );
-    return clear == null ? null : jsonDecode(utf8.decode(clear));
-  } on FormatException {
-    return null;
-  }
-}
-
-// ── The account's group board ─────────────────────────────────────────────────────────────────────
-//
-// Signed statements ("vouches") about who is in the group, kept by the backend so a device can learn a
-// member it shares no machine with — a browser approved by a phone that had no machine yet, then a
-// machine approved by that phone. The CLI's `lib/e2ee/groupBoard.ts` signs and checks the same bytes
-// (one test vector pins both):
-//
-//   sig = ed25519(signer, lvCat('group-vouch-v1', pub, kind | 'removed', machineId | '', label | '', at))
-//
-// Trust stays on the device: a vouch counts only when its signer is a member this device already
-// trusts (or itself), growing to a fixpoint. The server, holding no member's key, cannot add anyone.
-
-/// The bytes a vouch's signature covers.
-Uint8List vouchMessage(Map<String, Object?> subject) => lvCat([
-  'group-vouch-v1',
-  '${subject['pub']}',
-  subject['removed'] == true ? 'removed' : '${subject['kind'] ?? ''}',
-  '${subject['machineId'] ?? ''}',
-  '${subject['label'] ?? ''}',
-  '${subject['at']}',
-]);
-
-/// A member as a board statement.
-Map<String, Object> memberSubject(GroupMember m) => {
-  'pub': m.pub,
-  'kind': m.kind,
-  'machineId': ?m.machineId,
-  'label': m.label,
-  'at': m.at,
-};
-
-/// A vouch about [subject], signed by [identity].
-Future<Map<String, Object>> signVouch(
-  E2eeIdentity identity,
-  Map<String, Object> subject,
-) async => {
-  'subject': subject,
-  'signer': b64e(identity.pub),
-  'sig': b64e(await identity.sign(vouchMessage(subject))),
-};
-
-/// The part of a board this device believes, as a roster to merge: members and removals signed by a key
-/// it already trusts — its roster's members and itself — growing to a fixpoint. A self-vouch is carried
-/// for others and never believed on its own; a key the group removed vouches for nobody.
-Future<GroupRoster> acceptVouches(
-  GroupRoster local,
-  String selfPub,
-  Object? entries, {
-  DateTime? now,
-}) async {
-  final removedAt = {for (final t in local.removed) t.pub: t.at};
-  final trusted = {selfPub, for (final m in local.members) m.pub};
-  final pending = <Map<Object?, Object?>>[
-    if (entries is List)
-      for (final e in entries.take(_maxMembers + _maxTombstones))
-        if (e is Map &&
-            e['subject'] is Map &&
-            e['signer'] is String &&
-            e['sig'] is String &&
-            (e['signer'] != (e['subject'] as Map)['pub'] ||
-                e['signer'] == selfPub))
-          e,
-  ];
-  final members = <GroupMember>[];
-  final removed = <GroupTombstone>[];
-  final done = <int>{};
-  var progressed = true;
-  while (progressed) {
-    progressed = false;
-    for (var i = 0; i < pending.length; i++) {
-      final v = pending[i];
-      if (done.contains(i) || !trusted.contains(v['signer'])) continue;
-      done.add(i);
-      final subject = Map<String, Object?>.from(v['subject'] as Map);
-      final List<int> signer, sig;
-      try {
-        signer = b64d(v['signer'] as String);
-        sig = b64d(v['sig'] as String);
-      } on FormatException {
-        continue;
-      }
-      if (signer.length != 32 || sig.length != 64) continue;
-      if (!await verifySignature(signer, vouchMessage(subject), sig)) continue;
-      if (subject['removed'] == true) {
-        if (GroupTombstone.tryParse(subject, now: now) case final t?) {
-          removed.add(t);
-        }
-        continue;
-      }
-      final member = GroupMember.tryParse(subject, now: now);
-      if (member == null) continue;
-      members.add(member);
-      final tomb = removedAt[member.pub];
-      if (tomb != null && tomb >= member.at) continue;
-      if (trusted.add(member.pub)) progressed = true;
-    }
-  }
-  return GroupRoster(members, removed);
-}
-
-/// Takes in what this device believes of a board ([acceptVouches]) and pins or drops machines to match.
-Future<GroupSyncOutcome> adoptBoard(
-  ViewerKeyStore keys,
-  Object? entries,
-) async {
-  final selfPub = b64e((await keys.identity()).pub);
-  final merged = await keys.updateGroupRoster((current) async {
-    final local = await _seededFrom(keys, current, selfPub);
-    final accepted = await acceptVouches(local, selfPub, entries);
-    final m = mergeGroupRoster(local, accepted, selfPub);
-    return (m.roster.toJson(), m);
-  });
-  return _apply(keys, merged);
-}
-
-/// What this device knows that the board does not yet carry in its own words: each member of its
-/// roster (itself aside) that no vouch it signed states at that stamp or later, and each removal of a
-/// key the board still vouches for. Posting it is how a group formed before the board existed — or
-/// grown by the relay swap alone — reaches devices that share no machine with it.
-///
-/// [entries] is the board as read. Labels are cut to the board's 60 characters; a machine with no id
-/// and a stamp the board would refuse are left out.
-Future<List<Map<String, Object>>> boardNews(
-  ViewerKeyStore keys,
-  Object? entries, {
-  DateTime? now,
-}) async {
-  final selfPub = b64e((await keys.identity()).pub);
-  final roster = await _seeded(keys, selfPub);
-  final stated = <String, int>{};
-  final mentioned = <String, int>{};
-  if (entries is List) {
-    for (final e in entries) {
-      if (e is! Map || e['subject'] is! Map) continue;
-      final subject = e['subject'] as Map;
-      final pub = subject['pub'], at = subject['at'];
-      if (pub is! String || at is! int) continue;
-      if (subject['removed'] != true) {
-        mentioned[pub] = at > (mentioned[pub] ?? -1) ? at : mentioned[pub]!;
-      }
-      if (e['signer'] == selfPub) {
-        stated[pub] = at > (stated[pub] ?? -1) ? at : stated[pub]!;
-      }
-    }
-  }
-  final latest = (now ?? DateTime.now())
-      .add(_maxClockSkew)
-      .millisecondsSinceEpoch;
-  final removedAt = {for (final t in roster.removed) t.pub: t.at};
-  final news = <Map<String, Object>>[];
-  for (final m in roster.members) {
-    if (m.pub == selfPub || (m.isMachine && m.machineId == null)) continue;
-    if (m.at <= 0 || m.at > latest) continue;
-    if ((removedAt[m.pub] ?? -1) >= m.at) continue;
-    if ((stated[m.pub] ?? -1) >= m.at) continue;
-    news.add(
-      memberSubject(
-        GroupMember(
-          pub: m.pub,
-          kind: m.kind,
-          label: m.label.length > 60 ? m.label.substring(0, 60) : m.label,
-          at: m.at,
-          machineId: m.machineId,
-        ),
-      ),
-    );
-  }
-  for (final t in roster.removed) {
-    if (t.pub == selfPub || t.at <= 0 || t.at > latest) continue;
-    // Only a key someone still vouches for needs taking back.
-    final vouched = mentioned[t.pub];
-    if (vouched == null || vouched > t.at) continue;
-    if ((stated[t.pub] ?? -1) >= t.at) continue;
-    news.add({'pub': t.pub, 'at': t.at, 'removed': true});
-  }
-  return news;
 }

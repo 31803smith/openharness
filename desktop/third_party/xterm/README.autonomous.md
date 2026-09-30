@@ -274,3 +274,24 @@ it if one is dropped.
     as before; underlined spaces become U+00A0 as in the per-cell path.
     Regression: `test/terminal_line_paint_cache_test.dart` (where runs are cut,
     and a rendering within antialiasing of the per-cell one).
+
+15. **`deleteDetection` keeps its pad** (`lib/src/ui/custom_text_edit.dart`).
+    Upstream seeds the hidden input buffer with two spaces so an on-screen
+    keyboard's Backspace (which sends no key event) still deletes something
+    and is seen, but never puts them back: after two deletes the buffer was
+    empty and every later Backspace changed nothing, so nothing reached the
+    PTY — a pasted `[Image #1]` at an agent prompt could not be removed on a
+    phone. The pad is restored whenever deletes eat into it. Only reached with
+    `deleteDetection: true`, which the app sets for touch browsers alone
+    (`isTouchBrowser` in `lib/widgets/terminal_panel.dart`). Regression:
+    `test/terminal_delete_detection_test.dart`.
+
+16. **A browser sends its own Backspace** (`lib/src/terminal_view.dart`).
+    Native macOS/iOS hand a bare Backspace to Apple's text input client, which
+    answers with `deleteBackward:` (see 15's neighbour in
+    `custom_text_edit.dart`). Flutter web reports the same platforms — macOS in
+    Chrome on a Mac, iOS on an iPhone — but sends no performSelectors: the
+    browser only deleted from the hidden input, so with nothing typed there a
+    Backspace never reached the PTY. On the web the key now goes to
+    `keyInput` everywhere. Regression: `test/web/terminal_backspace_test.dart`
+    (run with `--platform=chrome`).

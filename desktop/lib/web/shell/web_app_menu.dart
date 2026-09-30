@@ -8,9 +8,11 @@ import '../../shared/theme/workspace_bar_style.dart';
 import '../../state/app_state.dart';
 import '../../state/workspace_chrome.dart';
 import '../../terminal/terminal_theme.dart';
+import '../../theme/app_theme.dart' show AppColors;
 import '../../terminal/terminal_theme_store.dart';
 import '../../widgets/pane_menu.dart';
 import '../../widgets/workspace_bar_control.dart';
+import 'web_layout.dart';
 import 'web_menu_items.dart';
 
 /// The browser has no native menu bar, so everything desktop keeps there is
@@ -65,7 +67,10 @@ class WebAppMenuButton extends StatelessWidget {
     if (box == null || overlay == null) return;
     final origin = box.localToGlobal(Offset.zero, ancestor: overlay);
     // Resolved as it opens, so the rows match the workspace's state right now.
-    final sections = runnableWebMenu(commands.canRun);
+    final groups = runnableWebMenu(
+      commands.canRun,
+      compact: isWebCompact(context),
+    );
     final chosen = await showPaneMenu<String>(
       context: context,
       position: RelativeRect.fromLTRB(
@@ -76,7 +81,7 @@ class WebAppMenuButton extends StatelessWidget {
       ),
       minWidth: 240,
       maxWidth: 320,
-      children: (close) => _rows(sections, close),
+      children: (close) => _rows(groups, close),
     );
     // Run after the menu closed and handed focus back, never inside it.
     if (chosen == _signOut) {
@@ -89,7 +94,7 @@ class WebAppMenuButton extends StatelessWidget {
   static const _signOut = 'web.sign_out';
 
   List<Widget> _rows(
-    List<WebMenuSection> sections,
+    List<List<WebMenuItem>> groups,
     void Function(String?) close,
   ) {
     Widget row(String id, String label) => paneMenuItem(
@@ -100,12 +105,19 @@ class WebAppMenuButton extends StatelessWidget {
         title: label,
       ),
     );
+    final rule = Divider(
+      height: 9,
+      thickness: 1,
+      indent: 14,
+      endIndent: 14,
+      color: AppColors.border,
+    );
     return [
-      for (final section in sections) ...[
-        paneMenuHeader(section.title),
-        for (final item in section.items) row(item.command, item.label),
+      for (final group in groups) ...[
+        for (final item in group) row(item.command, item.label),
+        rule,
       ],
-      paneMenuHeader('Account', caption: app.currentUser?.email),
+      if (app.currentUser?.email case final email?) paneMenuEmpty(email),
       row(_signOut, 'Sign out'),
     ];
   }
