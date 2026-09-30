@@ -78,7 +78,7 @@ pub fn draw(buf: &mut Buffer, body: Rect, form: &mut Form) -> Option<Position> {
             };
             let (label, value) = form.describe(*field);
             put(buf, r.x + 1, fy, 1, if active { "›" } else { " " }, accent);
-            let label_w = if r.width < 45 { 10 } else { 15 };
+            let label_w = if r.width < 45 { 10 } else { 12 };
             put(
                 buf,
                 r.x + 3,
@@ -102,21 +102,12 @@ pub fn draw(buf: &mut Buffer, body: Rect, form: &mut Form) -> Option<Position> {
             form.hits
                 .push((Rect::new(r.x + 1, fy, r.width - 2, 1), *field));
         }
-        let hint = if form.starting {
-            if form.checking {
-                "Checking…"
-            } else {
-                "Starting…"
-            }
-        } else {
-            &form.error
-        };
         put(
             buf,
             r.x + 2,
             r.bottom() - 2,
             r.width - 4,
-            hint,
+            &form.error,
             if form.error.is_empty() {
                 muted
             } else {

@@ -251,8 +251,16 @@ fn check(app: &mut App, m: &mut Event, double: bool) -> Option<Key> {
         let body = app.body();
         if px > body.width as u32 || py > body.height as u32 { return None }
         let geoms = app.visible_layout_geoms();
+        // A top pane's title, on the window's first row (tmux's pane status line there), is the
+        // pane's in hn's boxes and surfaces: a click focuses it and reaches no program.
+        if py == 0 && (app.options.box_panes() || app.options.pane_look()) {
+            if let Some((id, _)) = geoms.iter().find(|(_, g)| g.y == 1 && px >= g.x && px < g.x + g.w) {
+                m.wp = Some(*id);
+                place = Some(keys::PANE);
+            }
+        }
         // A border (a zoomed window has none): the column after a pane or the row below it.
-        if !app.tab().zoomed {
+        if place.is_none() && !app.tab().zoomed {
             if let Some((id, _)) = geoms.iter().find(|(_, g)| (g.x + g.w == px && g.y <= 1 + py && g.y + g.h >= py) || (g.y + g.h == py && g.x <= 1 + px && g.x + g.w >= px)) {
                 m.wp = Some(*id);
                 place = Some(keys::BORDER);

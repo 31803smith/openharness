@@ -33,13 +33,27 @@ from the device's acknowledgement, including the individual UID, growth stage,
 seed, colour and markings. Offline, updating, and older firmware states remain
 explicit. A collection preview cannot send an unowned companion to the dial.
 
-Memories shows the actual hatch date, XP, approved shared lessons, and whether
-the collection's selected model is ready to review queued observations. Read and
-forget use the existing local lesson interface. Forget is explicitly labelled as
-affecting all agents and retains the learner's revision history. Pending lessons
-still need the established person-only approval flow.
+Memories leads with a 24-hour lookback and the pending lesson inbox. Each suggestion
+shows why it may be useful, its conversation sources, and an explicit Review / Approve /
+Skip flow. The full lesson must have been visible while scrolling before approval arms;
+large text can span several screenfuls. The existing person-only key check, one-use
+capability and display delay still apply. A review never types in or remounts the terminal.
+The collection's selected model does the extraction; progress, waiting and incomplete
+local index coverage stay visible. Requested work survives daemon restarts and can be
+stopped. Approved lessons, the actual hatch date and XP follow the inbox. Forget affects
+all agents and retains the learner's revision history. Lessons remain local to this
+computer; this is not cross-machine memory sync.
 
-Opening the home starts or resumes the existing pair DSH through a UI-only local
+![Pending memory review with source evidence and guarded approval, using synthetic fixture data](companion-memory-inbox.png)
+
+The header's **Powered by** menu chooses Codex or Claude Code for the collection.
+A new collection asks the person to choose; there is no Claude-first default or
+automatic fallback when usage runs out. Existing collections keep their agent.
+The choice stays visible across Story, Collection and Memories, and moves below
+the title in a narrow viewer. Selecting an uninstalled agent explains which one
+is missing and keeps the current choice.
+
+Opening the home starts or resumes the selected pair DSH through a UI-only local
 socket request, without a prompt, pasted text or Enter key. The complete engine
 conversation appears in the right pane. First-time login, folder trust and tool
 permission prompts are visible and interactive there, like any other DSH. No
@@ -47,7 +61,13 @@ separate Pair tab or full-conversation button is needed. No trust prompt is
 auto-accepted. The experiment being off, or a background restored tab, cannot
 start an engine.
 
-One persistent DSH workspace and conversation serves the owned collection.
+One selected DSH serves the owned collection. Each engine keeps its own
+conversation; switching back resumes that engine's history. Saved lessons and the
+pending review queue remain with the collection across engine changes. An explicit
+switch clears the old provider's quota wait, but never bypasses the local hourly
+review budget or restarts a cancelled review. A working turn must finish or be
+stopped before switching. No synthetic prompt is sent to initialize an agent.
+
 Switching companions keeps the same terminal, conversation, model and shared
 lessons; the selected character's context updates on the next real user prompt.
 Each individual retains its own name, story, appearance and growth. Existing

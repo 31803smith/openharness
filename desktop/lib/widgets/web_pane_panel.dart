@@ -1,6 +1,6 @@
+import 'package:harness/shared/theme/app_icons.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 import 'package:webview_flutter_wkwebview/webview_flutter_wkwebview.dart';
 
@@ -8,12 +8,14 @@ import '../core/open_in_browser.dart';
 import '../core/runtime_platform.dart';
 import '../core/models.dart' show AgentVerdict;
 import '../core/test_run.dart';
+import '../shared/theme/app_pane_icon.dart';
 import '../shared/theme/app_theme.dart' as grid;
 import '../shared/theme/workspace_bar_style.dart';
 import '../state/app_state.dart';
 import '../state/terminal_pane.dart';
 import '../theme/app_theme.dart';
 import '../viewer/interactive_viewer.dart';
+import 'agent_drag.dart';
 import 'engine_identity.dart';
 import 'harness_activity_mark.dart';
 import '../terminal/terminal_text.dart';
@@ -272,7 +274,10 @@ class _WebPanePanelState extends State<WebPanePanel> {
     return SizedBox(
       height: compact ? 38 : 46,
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 14),
+        padding: const EdgeInsets.only(
+          left: 14,
+          right: grid.AppDesktop.paneCloseInset,
+        ),
         child: Row(
           children: [
             EngineMark(
@@ -287,7 +292,7 @@ class _WebPanePanelState extends State<WebPanePanel> {
             Expanded(
               child: Tooltip(
                 message: [widget.ownerName, ?widget.pane.url].join('\n'),
-                waitDuration: const Duration(milliseconds: 700),
+                waitDuration: const Duration(milliseconds: 500),
                 child: Row(
                   children: [
                     Flexible(
@@ -353,7 +358,7 @@ class _WebPanePanelState extends State<WebPanePanel> {
     if (widget.pane.viewerError case final error?) {
       return _Notice(
         key: const ValueKey('web-pane-error'),
-        icon: LucideIcons.unplug,
+        icon: AppIcons.unplug,
         title: 'Viewer unavailable',
         detail: error,
       );
@@ -368,7 +373,7 @@ class _WebPanePanelState extends State<WebPanePanel> {
       final page = url == null ? null : Uri.tryParse(url);
       return _Notice(
         key: const ValueKey('web-pane-placeholder'),
-        icon: LucideIcons.globe,
+        icon: AppIcons.globe,
         title: 'Viewer',
         detail: page == null
             ? 'No viewer yet.'
@@ -390,7 +395,7 @@ class _WebPanePanelState extends State<WebPanePanel> {
           ColoredBox(
             color: grid.AppPalette.windowBg,
             child: _Notice(
-              icon: LucideIcons.unplug,
+              icon: AppIcons.unplug,
               title: 'Waiting for the viewer',
               detail: _failure!,
               action: TextButton(
@@ -418,45 +423,27 @@ class _ViewerActions extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    Widget action(String tooltip, IconData icon, VoidCallback? callback) =>
-        IconButton(
-          tooltip: tooltip,
-          onPressed: callback,
-          icon: Icon(icon, size: 16),
-          style: ButtonStyle(
-            fixedSize: const WidgetStatePropertyAll(Size(28, 28)),
-            minimumSize: const WidgetStatePropertyAll(Size(28, 28)),
-            padding: const WidgetStatePropertyAll(EdgeInsets.zero),
-            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-            visualDensity: VisualDensity.standard,
-            shape: WidgetStatePropertyAll(
-              RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
-            ),
-            foregroundColor: WidgetStateProperty.resolveWith((states) {
-              if (states.contains(WidgetState.disabled)) {
-                return grid.AppPalette.textFaint;
-              }
-              if (states.contains(WidgetState.hovered) ||
-                  states.contains(WidgetState.focused)) {
-                return AppColors.text;
-              }
-              return AppColors.mutedStrong.withValues(alpha: .8);
-            }),
-            overlayColor: WidgetStatePropertyAll(grid.AppSurface.hoverFill),
-          ),
-        );
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        action('Reload viewer', LucideIcons.refreshCw, onReload),
-        const SizedBox(width: 2),
-        action(
-          zoomed ? 'Restore harnesses' : 'Zoom viewer',
-          zoomed ? LucideIcons.minimize : LucideIcons.maximize,
-          onZoom,
+        PaneHeaderButton(
+          label: 'Reload viewer',
+          icon: AppPaneSymbol.reload,
+          onPressed: onReload,
         ),
-        const SizedBox(width: 2),
-        action('Close viewer', LucideIcons.x, onClose),
+        PaneHeaderButton(
+          label: zoomed ? 'Restore harnesses' : 'Zoom viewer',
+          command: 'pane.zoom',
+          icon: zoomed ? AppPaneSymbol.restore : AppPaneSymbol.zoom,
+          onPressed: onZoom,
+        ),
+        PaneHeaderButton(
+          label: 'Close viewer',
+          command: 'pane.close',
+          icon: AppPaneSymbol.close,
+          iconSize: AppIcons.closeSize,
+          onPressed: onClose,
+        ),
       ],
     );
   }
@@ -479,12 +466,12 @@ class _Notice extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Center(
-      child: Padding(
+      child: SingleChildScrollView(
         padding: const EdgeInsets.all(20),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(icon, size: 26, color: AppColors.mutedStrong),
+            Icon(icon, size: 24, color: AppColors.mutedStrong),
             const SizedBox(height: 10),
             Text(
               title,

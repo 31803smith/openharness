@@ -238,8 +238,9 @@ pub fn draw(buf: &mut Buffer, app: &App, body: Rect, kind: &PickerKind, picker: 
     // that is the whole answer — output, messages, keys — has none either.)
     let settings = matches!(kind, PickerKind::Theme);
     let side = inner_w >= 64 && (settings || (picker.preview && !matches!(kind, PickerKind::Commands)));
-    // (A list's preview gets the larger part: a harness's screen, a machine's, a model's facts.)
-    let list_w = if !side { inner_w } else if settings { (inner_w * 2 / 5).clamp(28, 40) } else { (inner_w * 2 / 5).clamp(30, 48) };
+    // (A list's preview gets at least half: a harness's screen, a machine's, a model's facts —
+    // the list room for a row's name and what it says, a harness's doing.)
+    let list_w = if !side { inner_w } else if settings { (inner_w * 2 / 5).clamp(28, 40) } else { (inner_w / 2).clamp(30, 56) };
     list_from(buf, picker, Rect::new(x, top, list_w, rows as u16), &c, !side, launcher);
     picker.preview_area.set(None);
     picker.bar.set(None);
@@ -394,7 +395,14 @@ pub fn list_from(buf: &mut Buffer, picker: &mut Picker, r: Rect, c: &Chrome, det
         let hx = at + 28;
         let with_hint = !hint.is_empty() && hx + 8 < end;
         at += put(buf, at, y, if with_hint { 26 } else { end.saturating_sub(at) }, &row.label, style);
-        if with_hint { put(buf, hx.max(at + 2), y, end - hx.max(at + 2), &hint, if here { style.remove_modifier(Modifier::BOLD) } else { c.muted }); }
+        let quiet = if here { style.remove_modifier(Modifier::BOLD) } else { c.muted };
+        if with_hint { put(buf, hx.max(at + 2), y, end - hx.max(at + 2), &hint, quiet); }
+        else if !details && at + 10 < end {
+            // Beside a preview, what the row says (what a harness is doing, what it did) follows
+            // its name, where it fits.
+            let said: String = row.detail.iter().map(|s| s.content.as_ref()).collect();
+            if !said.is_empty() { put(buf, at, y, end - at, &format!(" · {said}"), quiet); }
+        }
         if right_w > 0 { put(buf, r.right().saturating_sub(right_w + 2), y, right_w, right_text, if here { style } else { c.muted }); }
         row_at.push((y, vi));
     }
@@ -555,8 +563,8 @@ pub fn preview(buf: &mut Buffer, r: Rect, look: &Look, c: &Chrome) {
         _ => (Rect::new(screen.x, screen.y, screen.width, screen.height - 1), Some(screen.bottom() - 1), None),
     };
     let boxed = look.boxes && !look.surface;
-    let canvas = if look.surface { pal.canvas } else { bg };
-    for y in body.y..body.bottom() { for x in body.x..body.right() { if let Some(cell) = buf.cell_mut((x, y)) { cell.reset(); cell.set_style(Style::default().bg(canvas)); } } }
+    // Blurred surfaces too sit on the terminal's own background.
+    for y in body.y..body.bottom() { for x in body.x..body.right() { if let Some(cell) = buf.cell_mut((x, y)) { cell.reset(); cell.set_style(Style::default().bg(bg)); } } }
 
     let panes = tiles(body, &look.layout, &look.split);
     let names = ["claude", "codex", "shell"];

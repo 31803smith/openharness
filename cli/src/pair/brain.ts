@@ -90,7 +90,7 @@ export interface PairBrainDeps {
   /** `daemon_talk`: the person's words to the pair harness (pair/pairHarness.ts), which starts or wakes. */
   talk?: (text: string, companionUid?: string) => Promise<Record<string, unknown>>
   /** Open the pair's terminal without typing into it or starting a model turn. */
-  open?: (companionUid?: string) => Promise<Record<string, unknown>>
+  open?: (companionUid?: string, engine?: 'claude' | 'codex') => Promise<Record<string, unknown>>
   /** The collection's persistent agent and its observed model. Local windows only. */
   companionHarness?: () => Record<string, unknown>
   /** How many keys may be relayed to other machines, per window (RELAY_LIMITS unless a spec says). */
@@ -112,6 +112,7 @@ export interface PairBrainDeps {
    * the line was shown here; the nonce in the id is checked by the learner. Absent: a lesson key is refused.
    */
   lessonKey?: (connId: string) => Promise<{ ok: true } | { ok: false; error: string; detail: string }>
+  lessonReview?: (id: string) => Record<string, unknown>
   now: () => number
 }
 
@@ -532,7 +533,9 @@ export class PairBrain {
     if (!this.deps.open) { reply({ ok: false, error: 'UNSUPPORTED' }); return }
     const uid = str(payload.companionUid, 64)
     if (!uid) { reply({ ok: false, error: 'STALE_COMPANION' }); return }
-    const result = await this.deps.open(uid).catch((err): Record<string, unknown> => ({ ok: false, error: 'FAILED', detail: err instanceof Error ? err.message.slice(0, 200) : undefined }))
+    const engine = payload.engine
+    if (engine !== undefined && engine !== 'claude' && engine !== 'codex') { reply({ ok: false, error: 'BAD_ENGINE' }); return }
+    const result = await this.deps.open(uid, engine).catch((err): Record<string, unknown> => ({ ok: false, error: 'FAILED', detail: err instanceof Error ? err.message.slice(0, 200) : undefined }))
     reply(result)
   }
 
@@ -540,6 +543,16 @@ export class PairBrain {
   onShown(connId: string, payload: Record<string, unknown>): void {
     const id = str(payload.id, 200)
     if (id && this.clients.has(connId)) this.deps.shown?.shown(connId, id)
+  }
+
+  /** A review capability is offered only to the verified window that requested it. */
+  async reviewLesson(connId: string, id: string): Promise<Record<string, unknown>> {
+    if (!this.active || !this.clients.has(connId)) return { ok: false, error: 'UI_ONLY' }
+    const verdict = await this.deps.lessonKey?.(connId).catch(() => ({ ok: false as const, error: 'UNVERIFIED' }))
+    if (!verdict?.ok) return { ok: false, error: verdict?.error ?? 'PERSON_ONLY' }
+    const result = this.deps.lessonReview?.(id) ?? { ok: false, error: 'UNSUPPORTED' }
+    if (result.ok && typeof result.reviewId === 'string') this.deps.shown?.offer([result.reviewId], [connId])
+    return result
   }
 
   /**

@@ -338,10 +338,19 @@ static void change(void)
     s.dirty = true;
     habitat_render_notify();
 }
-static unsigned notice_unread(void)
+/*
+ * What the bell counts: unread notices about any agent EXCEPT the one on the face.
+ *
+ * That agent's news is already on the glass — its recap, or its question in the recap's place — so
+ * counting it too told a person something else had happened, somewhere else (owner, 2026-09-30:
+ * people took the +1 for another agent's news). Nothing is marked read by this: look away from that agent
+ * and its unanswered question counts again, until it is answered.
+ */
+static unsigned notice_unread(const char *except)
 {
     unsigned count = 0;
-    for (int i = 0; i < s.notice_count; i++) count += !s.notice[i].read_on_dial;
+    for (int i = 0; i < s.notice_count; i++)
+        count += !s.notice[i].read_on_dial && !(except && !strcmp(s.notice[i].agent_id, except));
     return count;
 }
 static bool notice_was_read(const cable_notif_t *n)
@@ -858,7 +867,7 @@ static void render_home(ht_scene_t *f)
     bool rotating = home_caption_rotates() && character.id != HT_CHARACTER_FOCUS;
     const char *caption = rotating && home_caption.activity ? activity : a ? a->name : "Choose a pane";
     bool bell = !s.voice_retry_until && !carry.active && !carry.error[0] && !visit.available;
-    unsigned unread = notice_unread();
+    unsigned unread = notice_unread(a ? a->id : NULL);
     bell = bell && unread > 0;
     char status[100];
     if (s.voice_retry_until) COPY(status, "Try again");
@@ -2514,7 +2523,7 @@ void habitat_touch(bool down, int x, int y, uint32_t now)
                 // Reading/choosing consumed this contact; motion cannot submit an answer.
             } else if (s.view == SELECTION) {
                 // Its bounded reading cursor already consumed this vertical drag.
-            } else if (surface && character.id == HT_CHARACTER_FOCUS && dy > 0 && notice_unread()) {
+            } else if (surface && character.id == HT_CHARACTER_FOCUS && dy > 0 && notice_unread(active() ? active()->id : NULL)) {
                 // Pull down from the badge. The creature skins keep this drag inert — their footer
                 // badge is a target you tap — but on Focus the badge sits at the top edge and a pull
                 // is the gesture the rest of the world already means by it.

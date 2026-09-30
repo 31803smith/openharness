@@ -302,8 +302,9 @@ async fn run(config: config::Config) -> io::Result<()> {
     }
     // `hn <command>` where the command is an in-TUI one (theme, palette, layout…): tmux's CLI
     // would answer "unknown command", because these are not tmux commands. The client starts and
-    // runs it itself, once the launcher is up — as `;`'s chain is (`start_then`).
-    let gui = !f.rest.is_empty() && f.rest.iter().all(|w| crate::input::is_command(w));
+    // runs it itself, once the launcher is up — as `;`'s chain is (`start_then`). A word the
+    // server answers too (take, new, send…) stays the server's.
+    let gui = !f.rest.is_empty() && f.rest.iter().all(|w| crate::input::is_command(w) && !crate::commands::is_command_name(w));
     // hn <command>: answered from here (hn ls) or by the running client (a tmux command).
     if !gui { if let Some(code) = cli::run(&f.rest, explicit, f.socket.as_deref(), f.name.as_deref()).await { std::process::exit(code) } }
     // -L name, starting a client: its socket's name.
@@ -540,7 +541,7 @@ async fn run(config: config::Config) -> io::Result<()> {
         let all = app.mouse && app.wants_motion();
         if all != mouse_all { execute!(term.backend_mut(), term_out::Mouse(if all { 2 } else { 1 }))?; mouse_all = all }
         app.flush_acks();
-        if refill && matches!(app.modal, Some(modal::Modal::Picker { .. })) { input::refill(&mut app) }
+        if refill && matches!(app.modal, Some(modal::Modal::Picker { .. } | modal::Modal::NewHarness(_))) { input::refill(&mut app) }
         if std::mem::take(&mut app.redraw_all) { term.clear()?; need_draw = true; }
         if need_draw && last_draw.elapsed() >= frame_budget {
             // (The backend makes each frame's changes one synchronized update, and writes nothing
