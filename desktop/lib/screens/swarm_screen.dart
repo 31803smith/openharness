@@ -42,6 +42,8 @@ import '../shortcuts/keymap_native.dart';
 import '../shortcuts/keymap_settings.dart';
 import '../state/app_state.dart';
 import '../state/notification_inbox.dart';
+import '../widgets/linux_menu_bar.dart'
+    show LinuxTitleBar, linuxTitleBarActions;
 import '../widgets/notification_inbox.dart';
 import '../widgets/workspace_notifications_button.dart';
 import '../state/harness_sessions.dart';
@@ -235,6 +237,15 @@ class _SwarmScreenState extends State<SwarmScreen> {
   /// the strip stays and only the menu state and actions cross the bus.
   late final bool _menuHost =
       _native || (RuntimePlatform.isLinux && !kUnderTest);
+
+  /// On Linux the in-window menu bar is the title bar, and search,
+  /// notifications and Store sit at its right end instead of the tab strip's
+  /// ([linuxTitleBarActions]).
+  late final bool _titleBarActions =
+      !_native &&
+      RuntimePlatform.isLinux &&
+      !kUnderTest &&
+      LinuxTitleBar.current == LinuxTitleBar.flutter;
   late final SwarmProjectStore _projects =
       widget.projectStore ??
       SwarmProjectStore(storage: kUnderTest ? null : HarnessFileStore.shared);
@@ -553,6 +564,9 @@ class _SwarmScreenState extends State<SwarmScreen> {
   @override
   void initState() {
     super.initState();
+    if (_titleBarActions) {
+      linuxTitleBarActions.attach(this, _buildTitleBarActions);
+    }
     app.deviceNavigationAllowed = _allowDeviceNavigation;
     app.deviceFormCommand = _deviceFormCommand;
     _pullRequest = WorkspacePullRequest(app)..addListener(_statusPrefsChanged);
@@ -743,6 +757,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
 
   @override
   void dispose() {
+    linuxTitleBarActions.detach(this);
     _closeDaemonHint();
     app.foreground.removeListener(_daemonEnvironmentChanged);
     if (app.deviceNavigationAllowed == _allowDeviceNavigation) {
@@ -6266,7 +6281,39 @@ class _SwarmScreenState extends State<SwarmScreen> {
   );
 
   @override
-  Widget build(BuildContext context) => _buildWorkspace(context);
+  Widget build(BuildContext context) {
+    // The title bar draws this screen's controls from outside its subtree, so
+    // it redraws after each of this screen's builds — after, because asking
+    // for a build during one is what setState-during-build forbids.
+    if (_titleBarActions) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) linuxTitleBarActions.refresh();
+      });
+    }
+    return _buildWorkspace(context);
+  }
+
+  /// Search, notifications and Store, for the right end of the Linux title
+  /// bar — the same three the tab strip draws on every other host.
+  Widget _buildTitleBarActions(BuildContext context) {
+    final theme = terminalThemeFor(
+      grid.AppTheme.palette.value,
+      terminalThemeStore.value,
+    );
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        _searchButton(theme),
+        _notificationsButton(theme),
+        WorkspaceStoreButton(
+          key: const ValueKey('swarm-store-button'),
+          width: WorkspaceStoreButton.widthOf(context),
+          tooltip: 'Harness Store ${_keymap.hint('app.store') ?? ''}',
+          onPressed: _shortcutsEnabled ? _openStore : null,
+        ),
+      ],
+    );
+  }
 
   Widget _buildWorkspace(BuildContext context) => ListenableBuilder(
     listenable: Listenable.merge([app, _projects, _learning]),
@@ -6912,14 +6959,16 @@ class _SwarmScreenState extends State<SwarmScreen> {
         WorkspaceStoreButton.widthOf(context),
         math.max(0.0, constraints.maxWidth - cell.width * 22),
       );
+      // Store, search and notifications — none of it here when the title bar
+      // holds them.
+      final actionsWidth = _titleBarActions ? 0.0 : storeWidth + cell.width * 8;
       final leadingWidth = chrome?.leadingWidth(context) ?? 0.0;
       final tabBudget = math.max(
         0.0,
         constraints.maxWidth -
             cell.width * 6 -
-            storeWidth -
+            actionsWidth -
             (_slotShown ? 44 : 0) -
-            cell.width * 8 -
             leadingWidth,
       );
       _tabWidths = [
@@ -7078,14 +7127,16 @@ class _SwarmScreenState extends State<SwarmScreen> {
                 tooltip: 'New Tab ${_keymap.hint('swarm.new') ?? ''}',
               ),
               const Spacer(),
-              _searchButton(theme),
-              _notificationsButton(theme),
-              WorkspaceStoreButton(
-                key: const ValueKey('swarm-store-button'),
-                width: storeWidth,
-                tooltip: 'Harness Store ${_keymap.hint('app.store') ?? ''}',
-                onPressed: _shortcutsEnabled ? _openStore : null,
-              ),
+              if (!_titleBarActions) ...[
+                _searchButton(theme),
+                _notificationsButton(theme),
+                WorkspaceStoreButton(
+                  key: const ValueKey('swarm-store-button'),
+                  width: storeWidth,
+                  tooltip: 'Harness Store ${_keymap.hint('app.store') ?? ''}',
+                  onPressed: _shortcutsEnabled ? _openStore : null,
+                ),
+              ],
               if (kIsWeb && _slotShown) _daemonTabButton(),
               SizedBox(width: cell.width),
             ],
