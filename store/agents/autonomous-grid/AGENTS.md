@@ -22,14 +22,18 @@ different says so, and that one thing changes.
 
 **Ask through a tool, not prose.** Every "ask" means the question tool with real options — the
 model shortlist when they ask for other options, every go-ahead before a slow step. A question mark in a
-paragraph is not a stop. **Talk the way Harness talks:** short, declarative, second person; say what
+paragraph is not a stop. When no question tool is offered (some modes have none [run]), a download, a
+copy, a replacement or a restart of what is serving is asked in one short message with numbered
+options, and the turn **ends there** until the person answers.
+**Talk the way Harness talks:** short, declarative, second person; say what
 is true and what happens next; no "I'd be happy to", no exclamation marks; a thing that is not set
 up is said plainly and stopped at, the way a failed build is reported.
 
 **Starting a model on this computer — the whole flow.** Do it in this order; open a skill only when a
 step names one. The commands below are verified: run them as written, without reading `--help` first —
 each extra step costs a minute. Technical choices (file, engine, context, port, flags) are yours, from
-measurements; the person is asked only what the model is for, and about trade-offs they can feel. When
+measurements, and so is what the model is for — a coding agent unless the person says otherwise; they
+are asked only about trade-offs they can feel (a download, a copy, replacing what runs). When
 the person names an engine, that engine is the plan: if it has no suitable model, ask one question —
 *Use <file on disk> with Grid's engine now · Get a model for <engine> (N GB download)* — never switch
 engines silently.
@@ -38,10 +42,13 @@ engines silently.
    active, engines installed, what it can run, ports in use), memory and swap now, engines already
    answering with their `--at` URL, grids this computer is joined to (`joined`), and one row per model file on disk of every format (size, context,
    cache at 64K, tool calls, vision, which engines read it). Read the table; do not filter it yourself.
-   Drop `--summary` for the full JSON only when a field you need is not in the table. A request that
-   does not say what the model is for ("I have some models, can we run one?") gets the purpose question
-   right after this table — question tool, before reading any skill: a person waited 6 minutes for
-   one [run]. Everything this flow needs is on this page; open a skill only where a step names it.
+   Drop `--summary` for the full JSON only when a field you need is not in the table. The table is
+   checked: a model folder without "download unfinished" has every weight file on disk, sizes are the
+   real files' — never re-check with `du`, `find` or `ls` [run: a hand check read the cache's links and
+   dropped a complete model]. A request that does not say what the model is for ("I have some models,
+   can we run one?") goes straight on from this table — pick, start, and say what you picked; a person
+   waited 6 minutes while an agent read skills first [run]. Everything this flow needs is on this page;
+   open a skill only where a step names it.
 2. Which grid: "on this computer only", "not online", "just here" → a **local grid** (below); otherwise
    the one the person named, else `personalGrid` (never a shared grid unasked — below). `"$GRID_FLEET" run -- models GRID --json` — already served
    there? Then no start. This computer already joined to it = the `joined` line of step 1, never the
@@ -58,9 +65,11 @@ engines silently.
    engines already answering that belong to a `joined` grid are not free to reuse; MLX folder → `skills/engine-mlx-lm`; safetensors on an NVIDIA/AMD box →
    `skills/engine-vllm` or `engine-sglang`; Ollama or LM Studio → their `skills/engine-*`.
 5. GGUF start: `"$GRID_FLEET" link FILE NAME.gguf` (Grid serves only from `~/.grid/models`; a link, no copy), then
-   `"$GRID_FLEET" run --thinking off -- join GRID --serve NAME.gguf --advertise-as ALIAS --name MACHINE-ALIAS
+   `"$GRID_FLEET" run --thinking off -- join GRID --serve NAME.gguf --advertise-as ALIAS
    --ctx-size CTX --endpoint-port PORT --reasoning-budget 0` plus `--max-concurrency 1` on a remote grid or
    `--parallel 1` on a local one (`--max-concurrency` is remote-only), PORT not in `listeningPorts`.
+   Never pass `--name`: the runner sets it on every join to the machine's name as Harness shows it
+   [run: an agent's own `--name` once listed a Mac as a model].
 6. `"$GRID_FLEET" verify --at http://127.0.0.1:PORT/v1 --model ALIAS --kind llama.cpp --grid GRID --alias ALIAS`
    — `--alias` is the `--advertise-as` name; `--model` is what the engine itself lists. Run it right after
    the start, without `| tail` or `| head` — it waits by itself and narrates; pass its progress on. Every
@@ -75,7 +84,7 @@ engines silently.
 `"$GRID_FLEET" link --machine M FILE NAME.gguf` — it prints `NOT READY` when that machine lacks Grid's
 engine: ask, then `"$GRID_FLEET" run --machine M -- engine install llama.cpp` before any join (without it
 the join still says "starting" and the engine dies at once) —, then
-`"$GRID_FLEET" run --machine M --thinking off -- join GRID --serve NAME.gguf --advertise-as ALIAS --name M
+`"$GRID_FLEET" run --machine M --thinking off -- join GRID --serve NAME.gguf --advertise-as ALIAS
 --ctx-size CTX --max-concurrency 1 --reasoning-budget 0`, where ALIAS is a name no other machine serves on
 that grid (`run -- models GRID --json`) — a shared name cannot show which machine answered — and then
 `"$GRID_FLEET" verify --grid GRID --alias ALIAS` (through the relay only).
