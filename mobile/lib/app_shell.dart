@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import 'analytics/analytics_lifecycle.dart';
+import 'stats/stats_lifecycle.dart';
 import 'core/crash_log.dart';
 import 'state/app_state.dart';
 import 'viewer/viewer_services.dart';
@@ -158,7 +158,7 @@ class HarnessApp extends StatelessWidget {
         maxScaleFactor: scale,
         child: _GridTokenScope(child: child ?? const SizedBox.shrink()),
       ),
-      home: AnalyticsLifecycle(
+      home: StatsLifecycle(
         child: RootShell(
           authenticatedScreen: authenticatedScreen,
           signedOutScreen: signedOutScreen,

@@ -96,6 +96,14 @@ TerminalNotice terminalNotice({
   banner: banner,
 );
 
+/// A browser on a phone or tablet, typing through its on-screen keyboard.
+/// Those keyboards send no Backspace key, so the terminal detects deletes in
+/// its input buffer instead ([TerminalView.deleteDetection]).
+bool get isTouchBrowser =>
+    kIsWeb &&
+    (defaultTargetPlatform == TargetPlatform.android ||
+        defaultTargetPlatform == TargetPlatform.iOS);
+
 class TerminalPanel extends StatefulWidget {
   final AppNotifier notifier;
   final TerminalSession session;
@@ -2253,6 +2261,7 @@ class _TerminalPanelState extends State<TerminalPanel>
                                   ? SystemMouseCursors.basic
                                   : SystemMouseCursors.text,
                               onSecondaryTapDown: (_, _) => _copyOrPaste(),
+                              deleteDetection: isTouchBrowser,
 
                               onAltBufferScroll: session.scrollViaTmuxCopyMode
                                   ? (up) => session.sendScrollCommand(up, 1)
