@@ -39,7 +39,7 @@ describe('prompt swarm origin', () => {
     scopes.raw(agent, bytes('a\x1b[13;2ub\r'), 'swarm-a')
     scopes.started(agent, 'a\nb', 'hook', 'claude')
     expect(scopes.current(agent)).toBe(a)
-    // The reported pattern: a paste, two ⇧⏎, then text, each key its own write.
+    // A paste, two ⇧⏎, then text, each key arriving as its own write.
     for (const chunk of ['\x1b[200~pasted code\x1b[201~', '\x1b[13;2u', '\x1b', '[13;2u', 'explain it', '\r']) scopes.raw(agent, bytes(chunk), 'swarm-b')
     scopes.started(agent, 'pasted code\n\nexplain it', 'hook', 'claude')
     expect(scopes.current(agent)).toBe(b)
@@ -59,6 +59,16 @@ describe('prompt swarm origin', () => {
     expect(scopes.current(agent)).toBeNull()
     scopes.raw(agent, bytes('word\x1b[1;5D\r'), 'swarm-a')
     scopes.started(agent, 'word', 'hook', 'claude')
+    expect(scopes.current(agent)).toBeNull()
+    // Pasted escapes reach the engine literally; they are not line keys.
+    scopes.raw(agent, bytes('\x1b[200~x\x1b[13;2uy\x1b\rz\x1b[201~\r'), 'swarm-a')
+    scopes.started(agent, 'x\ny\nz', 'hook', 'claude')
+    expect(scopes.current(agent)).toBeNull()
+    // A lone Esc followed later by Return is not ⌥⏎: the draft must not become 'hello\n…'.
+    scopes.raw(agent, bytes('hello\x1b'), 'swarm-a')
+    scopes.raw(agent, bytes('\r'), 'swarm-a')
+    scopes.raw(agent, bytes('next\r'), 'swarm-a')
+    scopes.started(agent, 'hello\nnext', 'hook', 'claude')
     expect(scopes.current(agent)).toBeNull()
   })
 
