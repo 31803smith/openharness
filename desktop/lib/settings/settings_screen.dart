@@ -26,6 +26,7 @@ Future<void> showSettingsScreen(
   AppNotifier notifier, {
   SettingsSection? initialSection,
   ExperimentalFeaturesStore? experimentalFeatures,
+  Future<void> Function()? onCustomize,
   // Which door opened Settings. No longer read since analytics was removed;
   // kept so the callers need not change.
   required String source,
@@ -34,7 +35,7 @@ Future<void> showSettingsScreen(
   double compactBelow = 0,
 }) async {
   if (initialSection == SettingsSection.customize) {
-    await showHarnessCustomizePane(context);
+    await (onCustomize?.call() ?? showHarnessCustomizePane(context));
     return;
   }
   final action = await Navigator.of(context).push<SettingsSection>(
@@ -55,7 +56,7 @@ Future<void> showSettingsScreen(
   // Leave the opaque Settings route before opening the panel, keeping the
   // active terminals visible behind the controls and retaining caller focus.
   if (action == SettingsSection.customize && context.mounted) {
-    await showHarnessCustomizePane(context);
+    await (onCustomize?.call() ?? showHarnessCustomizePane(context));
   }
 }
 

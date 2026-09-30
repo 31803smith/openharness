@@ -93,6 +93,8 @@ import { PairToken } from './pair/token.js'
 import { pairCommand as pairControlCommand, pairRequest, pairVerb, type PairClientDeps } from './pair/client.js'
 import { serveMcp } from './pair/mcp.js'
 import { PairHarness, type PairEngine } from './pair/pairHarness.js'
+import { CompanionIntelligence } from './pair/intelligence.js'
+import { ConversationReview } from './pair/learn/conversationReview.js'
 import { individualName, pairedIndividual } from './pair/individuals.js'
 import { PlateService } from './pair/plateService.js'
 import { inProjects, PairConfigFile, pairConfigPath, ruleRunner, type PairConfig } from './pair/rules.js'
@@ -217,7 +219,7 @@ import {
   syncSummaryPoolSessions,
 } from './lib/summarize.js'
 import type { CableAgent } from './cable/cableSession.js'
-import { routeVoiceTask, runPairOneShot, setVoiceRouterDeviceConnected, setVoiceRouterSessions, shutdownVoiceRouter, type RouterAgent } from './lib/voiceRouter.js'
+import { routeVoiceTask, setVoiceRouterDeviceConnected, setVoiceRouterSessions, shutdownVoiceRouter, type RouterAgent } from './lib/voiceRouter.js'
 import { tailFile } from './lib/sessions.js'
 import { E2eeStore } from './lib/e2ee/store.js'
 import { isLoopbackRequest, loopbackHosts } from './lib/loopbackRequest.js'
@@ -233,6 +235,8 @@ import {
   type Poller, type UpdateEntry,
 } from './lib/selfUpdate.js'
 import { managedNodePath } from './lib/nodeRuntime.js'
+import { updateTui } from './tui/install.js'
+import { startTuiUpdater } from './tui/update.js'
 import { ensureHnLauncher, ensureLauncher, ensureManagedGrid, ensureManagedRuntime, startGridPinRecheck } from './lib/runtimeInstall.js'
 import { readdir, stat } from 'fs/promises'
 import { CodexNormalizer, codexTaskError, lastCodexTurnText } from './engines/codex/normalizer.js'
@@ -534,6 +538,7 @@ function spawnDaemonChild(extraEnv: Record<string, string>): ReturnType<typeof s
  */
 const daemonBoot: {
   updater: Poller | null
+  tuiUpdater: Poller | null
   /** The hook server, once bound — the only thing a mid-boot handoff has to release. */
   hookServer: Server | null
   /** Its Unix-socket twin (lib/localSocket.ts), when one could be opened. Read by `/api/status`. */
@@ -544,7 +549,7 @@ const daemonBoot: {
   safeMode: string | null
   handingOff: boolean
   applyStagedUpdate: (version: string) => void | Promise<void>
-} = { updater: null, hookServer: null, localSocket: null, markNotReady: null, safeMode: null, handingOff: false, applyStagedUpdate: bootHandoff }
+} = { updater: null, tuiUpdater: null, hookServer: null, localSocket: null, markNotReady: null, safeMode: null, handingOff: false, applyStagedUpdate: bootHandoff }
 
 /**
  * Hand the machine to a newer build without finishing start-up.
@@ -562,6 +567,7 @@ const daemonBoot: {
 function bootHandoff(version: string): void {
   if (daemonBoot.handingOff) return
   daemonBoot.handingOff = true
+  daemonBoot.tuiUpdater?.stop()
   runBootHandoff(VERSION, version, {
     // The hook port has no fallback: a successor that cannot bind it is a daemon that does not come up.
     closeServer: () => {
@@ -1243,6 +1249,16 @@ async function downloadCanaryStage(entry: UpdateEntry, dir: string, log: (m: str
   return true
 }
 
+/** An explicit hn update manages only the installed bundle, never a checkout or a canary. */
+function isInstalledCli(): boolean {
+  const installedCli = join(env.ADAPTER_CLI_DIR, 'cli.js')
+  try {
+    const running = statSync(SCRIPT_PATH)
+    const installed = statSync(installedCli)
+    return running.dev === installed.dev && running.ino === installed.ino
+  } catch { return SCRIPT_PATH === installedCli }
+}
+
 /** `harness update` — force the self-update NOW instead of waiting for the daemon's
  *  background poll. Checks the manifest; if a newer build exists it stops any running daemon first (so
  *  its poller can't race our staging), swaps in the new bytes, then relaunches on them. No-op on a
@@ -1264,6 +1280,12 @@ async function updateCommand(force: boolean): Promise<void> {
     process.exit(0)
   }
   console.log(`▸ Checking for updates…  (current v${VERSION})`)
+  // hn has its own release cadence. An already-current CLI must still refresh an installed hn;
+  // a failed optional download must not stop the CLI from updating.
+  if (isInstalledCli()) {
+    try { await updateTui((line) => console.log(line)) }
+    catch (error) { console.warn(`  hn update failed; continuing with the CLI update: ${error instanceof Error ? error.message : error}`) }
+  }
   let entry: UpdateEntry | null = null
   try { entry = await fetchManifest(env.ADAPTER_UPDATE_URL, env.ADAPTER_UPDATE_KEY) }
   catch (e) { console.error(`✗ Could not reach the update manifest: ${e instanceof Error ? e.message : e}`); process.exit(1) }
@@ -1491,6 +1513,15 @@ async function runForeground(session: AuthSession | null): Promise<void> {
   } else if (!env.ADAPTER_UPDATE_DISABLE) {
     console.log(`[update] self-update off · running a dev/repo build (v${VERSION}), not the installed copy`)
   }
+
+  // Keep the CLI's recovery updater armed first. hn is an independent, optional download.
+  daemonBoot.tuiUpdater = startTuiUpdater({
+    currentVersion: VERSION,
+    isInstalledCopy,
+    disabled: env.ADAPTER_UPDATE_DISABLE,
+    intervalMs: env.ADAPTER_UPDATE_CHECK_MS,
+    slotSecond: env.ADAPTER_UPDATE_SLOT_SEC,
+  })
 
   const savedApis = new ApiConnections(env.ADAPTER_DATA_DIR)
   // Before any agent is probed: one already running on a saved API's model reports that model.
@@ -1745,6 +1776,9 @@ async function runForeground(session: AuthSession | null): Promise<void> {
   let pairTalk: (text: string, companionUid?: string) => Promise<Record<string, unknown>> = async () => ({ ok: false, error: 'UNSUPPORTED' })
   /** A turn started or ended on the pair harness: it is in use (its idle pause waits). Bound with it. */
   let pairHarnessActivity: (agentId: string) => void = () => {}
+  let companionPromptContext: (agentId: string) => string | null = () => null
+  let companionProfileChanged: () => void = () => {}
+  let isCollectionAgent: (agentId: string) => boolean = () => false
   /** The person's pair.jsonc (pair/rules.ts): the model opt-in, learning's opt-ins, and the rules act-within-rules runs here. */
   const pairConfig = new PairConfigFile(pairConfigPath())
   /** pair.jsonc as the person confirmed it (pair/gate.ts): a new or changed file waits for their yes. */
@@ -2965,6 +2999,7 @@ async function runForeground(session: AuthSession | null): Promise<void> {
   runtimeProfiles.onChanged = (sessionId) => {
     const session = registry.resolve(sessionId)
     if (session) syncSession(session)
+    companionProfileChanged()
   }
 
   // Turn heartbeat (5s): pushes `turn_heartbeat` to the web while the turn is open (keeps its 10s
@@ -3127,9 +3162,12 @@ async function runForeground(session: AuthSession | null): Promise<void> {
         // to the device and self-cancels once mirror.heartbeat() reports idle (summary done).
       }
     }
-    // Learning notices only what the sensor would: pairing on, never a sub-agent, a terminal or the pair itself.
+    // Real work and the person's collection conversation can teach lessons. Archived
+    // pair chats, sub-agents and replay stay excluded. Tool-free background reviews
+    // never register as agents, so they cannot feed their own results back in here.
     const learnFrom = registry.bySession(sessionId)
-    if (learnFrom && pairSensor.enabled() && !isTerminalEngine(learnFrom.engine) && !isSubagentSession(sessionId) && !isPairHarnessSession(sessionId)) {
+    if (learnFrom && pairSensor.enabled() && !isTerminalEngine(learnFrom.engine) && !isSubagentSession(sessionId) &&
+      (!isPairHarnessSession(sessionId) || isCollectionAgent(learnFrom.agentId))) {
       lessonSignals.ingest({ agentId: learnFrom.agentId, sessionId, engine: learnFrom.engine, cwd: learnFrom.cwd ?? null }, events,
         { replay: !!(opts?.resumed || opts?.replay) })
     }
@@ -3908,6 +3946,7 @@ async function runForeground(session: AuthSession | null): Promise<void> {
 
 
   const { server: hookServer, port: hookPort, localSocket } = await startHookServer(env.PORT, {
+    onPromptContext: (agentId) => companionPromptContext(agentId),
     onCommandBar: commandBarService,
     onAutonomousDeviceRequest: async (method, target, body) => {
       if (!autonomousDeviceService) return { status: 503, body: { error: { code: 'UNAVAILABLE', message: 'Autonomous device service is starting' } } }
@@ -4477,6 +4516,7 @@ async function runForeground(session: AuthSession | null): Promise<void> {
     started: new StartedHarnesses(join(env.ADAPTER_DATA_DIR, 'pair', 'started.json')),
     changed: () => pairBrain?.stateChanged(),
     lessons: async (payload) => pairLearner ? pairLearner.local(payload) : { ok: false, error: 'UNSUPPORTED' },
+    lessonReview: async (connId, id) => pairBrain?.reviewLesson(connId, id) ?? { ok: false, error: 'UNSUPPORTED' },
     person: { verify: verifyLessonCaller, nonces: lessonNonces },
     now: Date.now,
     newId: () => randomUUID(),
@@ -4488,6 +4528,7 @@ async function runForeground(session: AuthSession | null): Promise<void> {
     pairedDaemon: () => pairSensor.pairedDaemon(),
     pairedName: () => pairSensor.pairedName(),
     pairedUid: () => zooPair.known ? companionZoo.identity?.uid ?? null : guestCompanion?.uid ?? null,
+    collectionUids: () => zooPair.known ? companionZoo.uids : guestCompanion ? [guestCompanion.uid] : [],
     engine: async () => {
       const found = await probeEngines(['claude', 'codex']).catch(() => [])
       return (['claude', 'codex'] as PairEngine[]).find((engine) => found.some((e) => e.engine === engine && e.installed)) ?? null
@@ -4505,8 +4546,8 @@ async function runForeground(session: AuthSession | null): Promise<void> {
     find: () => {
       const live = registry.advertised()
       return [
-        ...live.filter((s) => s.dsh === PAIR_HARNESS_DSH).map((s) => ({ agentId: s.agentId, status: 'live' as const, hasConversation: !!s.sessionId })),
-        ...stoppedAgents.available(live).filter((s) => s.dsh === PAIR_HARNESS_DSH).map((s) => ({ agentId: s.agentId, status: 'stopped' as const, hasConversation: !!s.sessionId })),
+        ...live.filter((s) => s.dsh === PAIR_HARNESS_DSH).map((s) => ({ agentId: s.agentId, status: 'live' as const, engine: s.engine as PairEngine, hasConversation: !!s.sessionId })),
+        ...stoppedAgents.available(live).filter((s) => s.dsh === PAIR_HARNESS_DSH).map((s) => ({ agentId: s.agentId, status: 'stopped' as const, engine: s.engine as PairEngine, hasConversation: !!s.sessionId })),
       ]
     },
     create: async ({ engine, cwd, prompt, name }) => {
@@ -4531,14 +4572,48 @@ async function runForeground(session: AuthSession | null): Promise<void> {
     now: Date.now,
   })
   pairTalk = (text, uid) => pairHarness.talk(text, uid)
+  isCollectionAgent = (agentId) => agentId === pairHarness.agentId()
+  companionPromptContext = (agentId) => daemons.on() ? pairHarness.context(agentId) : null
   pairHarnessActivity = (agentId) => { if (daemons.on()) pairHarness.activity(agentId) }
-  // THE LEARNER (pair/learn/propose.ts): distills what this machine noticed while nothing is working — a model
-  // only with pair.jsonc "model": true — and, when you are at this computer, proposes one lesson at a time.
+  const companionIntelligence = new CompanionIntelligence({
+    enabled: () => daemons.on() && !!pairSensor.pairedDaemon(),
+    current: () => {
+      const agentId = pairHarness.agentId()
+      if (!agentId) return null
+      const live = registry.advertised().find(s => s.agentId === agentId)
+      const session = live ?? stoppedAgents.get(agentId)
+      if (!session || session.dsh !== PAIR_HARNESS_DSH) return null
+      return { agentId, sessionId: session.sessionId, engine: session.engine,
+        profile: runtimeProfiles.selectedModel(session), stopped: !live,
+        codexHome: session.codexHome, customProvider: !!(session.grid || session.gridLaunch || session.gateway) }
+    },
+    directory: join(env.ADAPTER_DATA_DIR, 'pair', 'reasoning'),
+    stateFile: join(env.ADAPTER_DATA_DIR, 'pair', 'intelligence.json'),
+  })
+  companionProfileChanged = () => { companionIntelligence.status(); pairBrain?.stateChanged() }
+  // The collection's DSH supplies learning and triage with its observed model. The
+  // experiment and watching consent still gate everything; there is no second model switch.
   const lessonProjects = (): string[] =>
     [...new Set([...registry.advertised(), ...stoppedAgents.available(registry.advertised())].map((s) => s.cwd).filter((cwd): cwd is string => !!cwd))]
+  const lessonDistiller = new LessonDistiller({ oneshot: companionIntelligence.run, modelEnabled: () => companionIntelligence.ready(), now: Date.now, home: homedir() })
+  const conversationReview = new ConversationReview({
+    directory: join(env.ADAPTER_DATA_DIR, 'pair', 'learn'),
+    scope: () => daemons.on() && pairSensor.pairedDaemon() ? pairHarness.agentId() : null,
+    pairedDaemon: () => pairSensor.pairedDaemon(), intelligence: () => companionIntelligence.status(),
+    turns: (from, to) => sessionSearch?.recentConversations(from, to) ?? null,
+    cwd: (id) => registry.resolve(id)?.cwd ?? stoppedAgents.get(id)?.cwd ?? null,
+    machine: () => terminalHintMachineName(), distiller: lessonDistiller, store: lessonStore, now: Date.now,
+    home: homedir(), changed: () => pairBrain?.stateChanged(),
+  })
   pairLearner = new PairLearner({
     store: lessonStore,
-    distiller: new LessonDistiller({ oneshot: (prompt, opts) => runPairOneShot(prompt, opts, registry.active()), modelEnabled: () => pairRulesConfig().model, now: Date.now, home: homedir() }),
+    distiller: lessonDistiller,
+    history: conversationReview,
+    intelligence: () => companionIntelligence.status(),
+    queueFile: () => {
+      const id = pairHarness.agentId()
+      return id ? join(env.ADAPTER_DATA_DIR, 'pair', 'learn', `queue-${id}.json`) : null
+    },
     pairedDaemon: () => pairSensor.pairedDaemon(),
     autonomy: () => pairAutonomy(),
     voice: pairVoice,
@@ -4586,8 +4661,9 @@ async function runForeground(session: AuthSession | null): Promise<void> {
   pairBrain = new PairBrain({
     pairing: { enabled: () => pairSensor.enabled(), pairedDaemon: () => pairSensor.pairedDaemon() },
     fleet: pairFleet,
-    // A model's words only when the person opted in (pair.jsonc "model": true).
-    triage: new PairTriage({ oneshot: (prompt, opts) => runPairOneShot(prompt, opts, registry.active()), modelEnabled: () => pairRulesConfig().model, now: Date.now }),
+    // Template first, then this collection's selected model when it is ready.
+    triage: new PairTriage({ oneshot: companionIntelligence.run, modelEnabled: () => companionIntelligence.ready(), now: Date.now, budgetMs: 30_000 }),
+    companionHarness: () => ({ agentId: pairHarness.agentId(), ...companionIntelligence.status() }),
     voice: pairVoice,
     proposals: joinProposals(pairControl, pairLearner),
     autonomy: () => pairAutonomy(),
@@ -4599,6 +4675,7 @@ async function runForeground(session: AuthSession | null): Promise<void> {
     relayed: (fields) => { pairSensor.relayed(fields) },
     // A lesson's key (pair/learn/approval.ts): never a tool client, never a process inside a harness pane.
     lessonKey: (connId) => lessonKeyVerdict(connId, { isTool: (conn) => backend.isToolClient(conn), verify: verifyLessonCaller }),
+    lessonReview: (id) => pairLearner!.review(id),
     // A key pressed on a line about THIS machine's harness: the owner's floor, then the dialog's own
     // requestId, checked as the keys go in (STALE_QUESTION, nothing typed, when it changed).
     answer: (input) => pairOwner.answer(input, 'key'),
@@ -4612,6 +4689,7 @@ async function runForeground(session: AuthSession | null): Promise<void> {
     onGuestConsent: (watching) => { guestConsent = watching; applyPair() },
     onActiveChanged: (active) => setVoiceRouterDeviceConnected(backend.hasCommander() || active),
     talk: (text, uid) => pairTalk(text, uid),
+    open: (uid) => pairHarness.open(uid),
     now: Date.now,
   })
   // DAEMONS ON AND OFF (lib/daemonsSwitch.ts): the only timers the pair keeps whatever happens — the learner's
@@ -4622,7 +4700,6 @@ async function runForeground(session: AuthSession | null): Promise<void> {
   let pairConfigTick: ReturnType<typeof setInterval> | null = null
   onDaemonsChanged = (on) => {
     plates.setOn(on)
-    if (!on) { companionZoo.reset(); guestCompanion = null }
     if (on) {
       // pair.jsonc is read when something needs it, and on this tick: a "daemons": false in it switches
       // everything off within the tick (before the rest of the file is read), and any other change asks for
@@ -4639,6 +4716,10 @@ async function runForeground(session: AuthSession | null): Promise<void> {
       zooTurnReporter.clear()
       zooLessonReporter.clear()
       void pairHarness.off().catch(() => {})
+      conversationReview.stop()
+      pairLearner?.cancelReviews()
+      companionIntelligence.cancel()
+      companionZoo.reset(); guestCompanion = null
     }
     applyPair()
     pairBrain?.refresh()
@@ -4942,6 +5023,11 @@ async function runForeground(session: AuthSession | null): Promise<void> {
       const off = !daemons.on() ? DAEMONS_OFF : !pairBrain ? 'UNSUPPORTED' : null
       if (off) { reply({ type: 'daemon_talk_result', payload: { requestId: payload.requestId, ok: false, error: off, ...(off === DAEMONS_OFF ? { detail: DAEMONS_OFF_DETAIL } : {}) } }); return }
       void pairBrain!.onTalk(connId, payload, (frame) => { reply(frame) })
+    },
+    onDaemonOpen: (connId, payload, reply) => {
+      const off = !daemons.on() ? DAEMONS_OFF : !pairBrain ? 'UNSUPPORTED' : null
+      if (off) { reply({ type: 'daemon_open_result', payload: { requestId: payload.requestId, ok: false, error: off, ...(off === DAEMONS_OFF ? { detail: DAEMONS_OFF_DETAIL } : {}) } }); return }
+      void pairBrain!.onOpen(connId, payload, (frame) => { reply(frame) })
     },
     // Presence: whether the person is here (the zoo's away turns) always; the rest only while daemons are
     // on. Signed out, a window bound to this machine saying its guest zoo has the person's consent is what
@@ -6502,6 +6588,7 @@ async function runForeground(session: AuthSession | null): Promise<void> {
     console.log(`[update] applying ${VERSION} → ${newVersion} — restarting daemon`)
     registry.flush()
     daemonBoot.updater?.stop()
+    daemonBoot.tuiUpdater?.stop()
     agentReconciler.stop()
     clearInterval(logTrimTimer)
     clearInterval(runtimeReconcileTimer)
@@ -6612,6 +6699,7 @@ async function runForeground(session: AuthSession | null): Promise<void> {
     void cableRef?.stop()
     deviceLinkRef?.stop()
     daemonBoot.updater?.stop()
+    daemonBoot.tuiUpdater?.stop()
     agentReconciler.stop()
     clearInterval(logTrimTimer)
     clearInterval(runtimeReconcileTimer)
