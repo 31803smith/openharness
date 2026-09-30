@@ -2755,19 +2755,19 @@ class _SwarmScreenState extends State<SwarmScreen> {
             ? app.projectHistory.selected(id) ??
                   app.projectHistory.recent(id).firstOrNull
             : null);
+    final inherited = agent?.engine;
     if (!newHarnessOpensInBox) {
       await _newAgentForm(
         machineId: id,
         folder: initialFolder,
         swarmId: target,
         split: requestedSplit,
-        engine: engine,
+        engine: engine ?? (isTerminalEngine(inherited) ? null : inherited),
         placement: placement,
         task: task ?? fallbackTask,
       );
       return;
     }
-    final inherited = agent?.engine;
     final embedded =
         source == _NewHarnessSource.workspace &&
         requestedSplit == null &&
@@ -3329,10 +3329,18 @@ class _SwarmScreenState extends State<SwarmScreen> {
     }
   }
 
-  Future<void> _splitAgent(PaneResizeAxis axis) async {
-    final split = app.preparePaneSplit(axis);
+  Future<void> _splitAgent(PaneResizeAxis axis, {int? paneId}) async {
+    if (app.activeSwarm.isUtility || app.activeSwarm.isOrchestrator) return;
+    final split = app.preparePaneSplit(axis, paneId: paneId);
     if (split == null) return;
-    _openSearch(adding: true, split: split);
+    // Header actions belong to the clicked pane, even if its neighbor held
+    // the keyboard. The shared creation flow inherits that pane's context.
+    app.focusPane(split.paneId);
+    await _newAgent(
+      swarmId: split.swarmId,
+      split: split,
+      stillCurrent: () => app.isPaneSplitCurrent(split),
+    );
   }
 
   Future<void> _showHistory() async {
@@ -3833,16 +3841,18 @@ class _SwarmScreenState extends State<SwarmScreen> {
     unawaited(_openCompanionTerminal(key));
   }
 
-  Future<void> _openCompanionTerminal(String key) async {
-    final result = await _brain.openConversation();
+  Future<void> _openCompanionTerminal(String key, {String? engine}) async {
+    final result = await _brain.openConversation(engine: engine);
     if (!mounted || _companionOpeningKey != key) return;
     _companionOpeningKey = null;
     if (key != '${_zoo.scope}:${_zoo.paired?.uid}' || !_creatureEnabled) return;
     if (result['ok'] != true) {
       _companionTerminalError = switch (result['error']) {
+        'ENGINE_REQUIRED' => null,
         'UNSUPPORTED' => 'Update Harness CLI to open the companion terminal.',
         'NO_ENGINE' =>
-          'Install Claude Code or Codex to talk with your companion.',
+          result['detail'] as String? ??
+              'Install Claude Code or Codex to talk with your companion.',
         _ =>
           result['detail'] as String? ??
               'The terminal could not connect. Try opening it again.',
@@ -3852,12 +3862,28 @@ class _SwarmScreenState extends State<SwarmScreen> {
     _scheduleCompanionWorkspace();
   }
 
+  void _selectCompanionEngine(String engine) {
+    final uid = _zoo.paired?.uid;
+    if (uid == null || _companionOpeningKey != null || _zoo.isPreview) return;
+    final key = '${_zoo.scope}:$uid';
+    setState(() {
+      _companionAttemptedKey = key;
+      _companionOpeningKey = key;
+      _companionTerminalError = null;
+    });
+    unawaited(_openCompanionTerminal(key, engine: engine));
+  }
+
   Widget _companionViewer(BuildContext context) => CompanionHome(
     key: ValueKey('companion-home:${_zoo.scope}'),
     face: _face,
     brain: _brain,
     onHatch: _hatch,
     onOpenControls: _openCompanionControls,
+    onSelectEngine: _zoo.isPreview || !_brain.active || _zoo.paired == null
+        ? null
+        : _selectCompanionEngine,
+    openingTerminal: _companionOpeningKey != null,
     terminalStatus:
         _companionTerminalError ??
         (_companionOpeningKey != null
@@ -6083,10 +6109,14 @@ class _SwarmScreenState extends State<SwarmScreen> {
       return app.panes.length > 1 && app.zoomedPaneId == null;
     }
     if (id == 'pane.split_right') {
-      return app.preparePaneSplit(PaneResizeAxis.x) != null;
+      return !app.activeSwarm.isUtility &&
+          !app.activeSwarm.isOrchestrator &&
+          app.preparePaneSplit(PaneResizeAxis.x) != null;
     }
     if (id == 'pane.split_down') {
-      return app.preparePaneSplit(PaneResizeAxis.y) != null;
+      return !app.activeSwarm.isUtility &&
+          !app.activeSwarm.isOrchestrator &&
+          app.preparePaneSplit(PaneResizeAxis.y) != null;
     }
     if (id == 'pane.reset_sizes') {
       return app.activeSwarm.paneSizes.keys.any(
@@ -6574,6 +6604,13 @@ class _SwarmScreenState extends State<SwarmScreen> {
                                               notifier: app,
                                               swarmMode: true,
                                               onOpenModels: _openPaneModels,
+                                              onSplitPane: (paneId, axis) =>
+                                                  unawaited(
+                                                    _splitAgent(
+                                                      axis,
+                                                      paneId: paneId,
+                                                    ),
+                                                  ),
                                               companionViewer:
                                                   _creatureEnabled &&
                                                       _zoo.loaded
@@ -7248,7 +7285,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
       height: workspaceBarControlHeight(context),
       child: Icon(
         AppIcons.search,
-        size: 17,
+        size: 16,
         color: theme.foreground.withValues(
           alpha: !_shortcutsEnabled
               ? .28
