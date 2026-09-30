@@ -33,7 +33,7 @@ export const DISTILL_HOURLY_CAP = 6
 const HOUR_MS = 60 * 60_000
 
 export type DistillWhy = 'nothing' | 'no-template' | 'refused' | 'bad-json' | 'too-long' | 'bad-name' | 'empty'
-  | 'timeout' | 'failed' | 'no-model' | 'cap'
+  | 'timeout' | 'failed' | 'no-model' | 'cap' | 'usage-limit'
 
 export type DistillSource = 'template' | 'model' | 'borrowed'
 
@@ -56,12 +56,26 @@ export class LessonDistiller {
 
   constructor(private readonly deps: DistillDeps) {}
 
+  /** Explicit history reviews share the live learner's model, time budget and hourly limit. */
+  async review(prompt: string, signal?: AbortSignal): Promise<{ text: string | null; failure?: DistillWhy }> {
+    if (signal?.aborted) return { text: null, failure: 'failed' }
+    if (!this.deps.oneshot || this.deps.modelEnabled?.() !== true) return { text: null, failure: 'no-model' }
+    if (!this.takeCall()) return { text: null, failure: 'cap' }
+    const result = await this.ask(redact(prompt, { home: this.deps.home ?? null }), signal)
+    // Claude can return a successful text envelope containing its usage-limit
+    // notice. It is neither lesson JSON nor a judgment that nothing was learned.
+    if (result.text && /^\s*you(?:['’]ve| have) (?:hit|reached) your (?:[\w-]+\s+){0,3}limit\b/i.test(result.text)) {
+      return { text: null, failure: 'usage-limit' }
+    }
+    return result
+  }
+
   /** The one lesson in this signal, or why there is none. Never throws. */
   async distill(signal: Signal): Promise<Distilled> {
     let why: DistillWhy = 'no-template'
     if (this.deps.oneshot && this.deps.modelEnabled?.() === true) {
-      if (!this.takeCall()) return { lesson: null, why: 'cap' }
-      const { text, failure } = await this.ask(distillPrompt(signal, { home: this.deps.home ?? null }))
+      const { text, failure } = await this.review(distillPrompt(signal, { home: this.deps.home ?? null }))
+      if (failure === 'cap' || failure === 'usage-limit') return { lesson: null, why: failure }
       why = failure ?? 'bad-json'
       if (text !== null) {
         const parsed = parseDistilled(text)
@@ -81,11 +95,14 @@ export class LessonDistiller {
     return true
   }
 
-  private async ask(prompt: string): Promise<{ text: string | null; failure?: DistillWhy }> {
+  private async ask(prompt: string, signal?: AbortSignal): Promise<{ text: string | null; failure?: DistillWhy }> {
     const oneshot = this.deps.oneshot
     if (!oneshot) return { text: null, failure: 'no-model' }
     const budgetMs = this.deps.budgetMs ?? DISTILL_BUDGET_MS
     const controller = new AbortController()
+    const abort = (): void => controller.abort()
+    signal?.addEventListener('abort', abort, { once: true })
+    if (signal?.aborted) controller.abort()
     let timer: ReturnType<typeof setTimeout> | undefined
     const timeout = new Promise<'timeout'>((resolve) => { timer = setTimeout(() => resolve('timeout'), budgetMs) })
     try {
@@ -96,6 +113,7 @@ export class LessonDistiller {
       return { text: null, failure: 'failed' }
     } finally {
       if (timer) clearTimeout(timer)
+      signal?.removeEventListener('abort', abort)
     }
   }
 }
@@ -150,6 +168,7 @@ export function templateLesson(signal: Signal): Lesson | null {
 // ── the model ─────────────────────────────────────────────────────────────────────────────────────────
 
 const WHAT: Record<Signal['kind'], (signal: Signal) => string> = {
+  'conversation': () => 'The person explicitly asked for a review of their previous conversations. Only evidence of useful, durable lessons counts.',
   'correction': () => 'The person corrected one of their coding agents right after its turn. Their words, and what the agent had just done, are below.',
   'repeat-failure': (signal) => `The same ${signal.failure?.what ?? 'check'} failed for two different agents in this project within a week: ${untrusted(signal.failure?.name ?? '', 160)}.`,
   'repeat-steps': (signal) => `Agents ran the same steps, in this order, in ${signal.from.length} separate turns in this project: ${(signal.steps ?? []).map((s) => untrusted(s, 60)).join(' > ')}.`,
