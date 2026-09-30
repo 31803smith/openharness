@@ -96,6 +96,24 @@ static void clipboard_image_method_call_cb(FlMethodChannel* channel,
   fl_method_call_respond(method_call, response, nullptr);
 }
 
+// The app's command key is Meta — ⌘ on a Mac. A PC keyboard's logo key reaches
+// GTK as Super, which Flutter's Linux embedder maps to its own `superKey`
+// rather than to meta, so HardwareKeyboard.isMetaPressed never saw it and no
+// ⌘ shortcut could fire. Rewrite the key and its modifier bit before FlView's
+// own handler (the class default, which runs after this) reads the event.
+static gboolean super_as_meta_cb(GtkWidget* widget, GdkEventKey* event,
+                                 gpointer user_data) {
+  if (event->keyval == GDK_KEY_Super_L) {
+    event->keyval = GDK_KEY_Meta_L;
+  } else if (event->keyval == GDK_KEY_Super_R) {
+    event->keyval = GDK_KEY_Meta_R;
+  }
+  if (event->state & GDK_SUPER_MASK) {
+    event->state = static_cast<GdkModifierType>(event->state | GDK_META_MASK);
+  }
+  return FALSE;
+}
+
 // Held for the app's lifetime (same scope as the window itself), never unreffed — there is no
 // natural teardown point before process exit, the same reason `fl_register_plugins` below registers
 // its plugins on `view` with no matching cleanup in this function.
@@ -105,6 +123,31 @@ static void install_clipboard_image_channel(FlView* view) {
       FL_METHOD_CODEC(fl_standard_method_codec_new()));
   fl_method_channel_set_method_call_handler(
       channel, clipboard_image_method_call_cb, nullptr, nullptr);
+}
+
+// True under a tiling compositor (Hyprland — Omarchy's — sway, niri, river,
+// i3). Windows there carry no title bar: the compositor places them and a key
+// closes them, so a GTK header bar is a strip of chrome no other app has.
+static gboolean is_tiling_session() {
+  const gchar* sockets[] = {"HYPRLAND_INSTANCE_SIGNATURE", "SWAYSOCK",
+                            "NIRI_SOCKET", "I3SOCK"};
+  for (const gchar* name : sockets) {
+    const gchar* value = g_getenv(name);
+    if (value != nullptr && value[0] != '\0') return TRUE;
+  }
+  const gchar* desktop = g_getenv("XDG_CURRENT_DESKTOP");
+  if (desktop == nullptr) return FALSE;
+  g_auto(GStrv) names = g_strsplit(desktop, ":", -1);
+  for (gchar** name = names; *name != nullptr; name++) {
+    if (g_ascii_strcasecmp(*name, "Hyprland") == 0 ||
+        g_ascii_strcasecmp(*name, "sway") == 0 ||
+        g_ascii_strcasecmp(*name, "niri") == 0 ||
+        g_ascii_strcasecmp(*name, "river") == 0 ||
+        g_ascii_strcasecmp(*name, "i3") == 0) {
+      return TRUE;
+    }
+  }
+  return FALSE;
 }
 
 // Implements GApplication::activate.
@@ -122,8 +165,7 @@ static void my_application_activate(GApplication* application) {
       GTK_WINDOW(gtk_application_window_new(GTK_APPLICATION(application)));
 
   // The packaged icon lives beside the executable in the relocatable Linux
-  // bundle. Resolve it once so both the native window icon and GNOME's custom
-  // header title use the exact same asset.
+  // bundle.
   g_autofree gchar* icon_path = nullptr;
   g_autofree gchar* exe_path = g_file_read_link("/proc/self/exe", nullptr);
   if (exe_path != nullptr) {
@@ -133,12 +175,17 @@ static void my_application_activate(GApplication* application) {
 
   // Use a header bar when running in GNOME as this is the common style used
   // by applications and is the setup most users will be using (e.g. Ubuntu
-  // desktop).
+  // desktop) — there it is the only way to drag, minimize or close a GTK
+  // window.
   // If running on X and not using GNOME then just use a traditional title bar
   // in case the window manager does more exotic layout, e.g. tiling.
-  // If running on Wayland assume the header bar will work (may need changing
-  // if future cases occur).
+  // Under a tiling compositor draw no title bar at all; on Wayland GTK would
+  // otherwise fall back to a client-side one of its own.
   gboolean use_header_bar = TRUE;
+  if (is_tiling_session()) {
+    use_header_bar = FALSE;
+    gtk_window_set_decorated(window, FALSE);
+  }
 #ifdef GDK_WINDOWING_X11
   GdkScreen* screen = gtk_window_get_screen(window);
   if (GDK_IS_X11_SCREEN(screen)) {
@@ -149,25 +196,11 @@ static void my_application_activate(GApplication* application) {
   }
 #endif
   if (use_header_bar) {
+    // The stock title, name only, as GNOME's own apps caption their windows;
+    // the icon already sits in the dock and the task switcher.
     GtkHeaderBar* header_bar = GTK_HEADER_BAR(gtk_header_bar_new());
     gtk_widget_show(GTK_WIDGET(header_bar));
-    // GTK's stock header title has no application icon. Supply a compact,
-    // centered title widget so the native caption identifies Harness the same
-    // way it does in the dock and task switcher.
-    GtkWidget* title = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
-    if (icon_path != nullptr && g_file_test(icon_path, G_FILE_TEST_IS_REGULAR)) {
-      g_autoptr(GError) icon_error = nullptr;
-      g_autoptr(GdkPixbuf) title_pixbuf = gdk_pixbuf_new_from_file_at_scale(
-          icon_path, 20, 20, TRUE, &icon_error);
-      if (title_pixbuf != nullptr) {
-        GtkWidget* icon = gtk_image_new_from_pixbuf(title_pixbuf);
-        gtk_box_pack_start(GTK_BOX(title), icon, FALSE, FALSE, 0);
-      }
-    }
-    GtkWidget* label = gtk_label_new("Harness");
-    gtk_box_pack_start(GTK_BOX(title), label, FALSE, FALSE, 0);
-    gtk_widget_show_all(title);
-    gtk_header_bar_set_custom_title(header_bar, title);
+    gtk_header_bar_set_title(header_bar, "Harness");
     gtk_header_bar_set_show_close_button(header_bar, TRUE);
     gtk_window_set_titlebar(window, GTK_WIDGET(header_bar));
   }
@@ -196,6 +229,10 @@ static void my_application_activate(GApplication* application) {
   fl_view_set_background_color(view, &background_color);
   gtk_widget_show(GTK_WIDGET(view));
   gtk_container_add(GTK_CONTAINER(window), GTK_WIDGET(view));
+  g_signal_connect(view, "key-press-event", G_CALLBACK(super_as_meta_cb),
+                   nullptr);
+  g_signal_connect(view, "key-release-event", G_CALLBACK(super_as_meta_cb),
+                   nullptr);
 
   // Show the window when Flutter renders.
   // Requires the view to be realized so we can start rendering.

@@ -29,26 +29,9 @@ class HarnessCommand {
   /// Workspace defaults come from the live shortcut table. A command cannot
   /// quietly propose different keys from the ones the user already uses.
   List<String> get keys {
-    if (!kIsWeb &&
-        id == 'navigation.commands' &&
-        defaultTargetPlatform == TargetPlatform.linux) {
-      return const ['ctrl+shift+p'];
-    }
-    if (!kIsWeb &&
-        id == 'harnesses.list' &&
-        defaultTargetPlatform == TargetPlatform.linux) {
-      return const ['ctrl+p'];
-    }
-    if (!kIsWeb &&
-        id == 'models.list' &&
-        defaultTargetPlatform == TargetPlatform.linux) {
-      return const ['ctrl+i', 'cmd+i'];
-    }
-    if (!kIsWeb &&
-        id == 'picker.complete' &&
-        defaultTargetPlatform == TargetPlatform.linux) {
-      // Ctrl-I opens Models on Linux, including from another picker scope.
-      return const ['tab'];
+    if (!kIsWeb && defaultTargetPlatform == TargetPlatform.linux) {
+      final linux = linuxAltCommandKeys[id];
+      if (linux != null) return linux;
     }
     return action == null
         ? extraKeys.map(platformWorkspaceBinding).toList(growable: false)
@@ -855,10 +838,10 @@ ResolvedKeymap get harnessDefaultKeymap =>
     );
 
 List<String> describeKeyStrokeKeys(KeyStroke stroke) => [
-  if (stroke.control) kIsWeb ? 'Ctrl' : '⌃',
-  if (stroke.alt) kIsWeb ? 'Alt' : '⌥',
-  if (stroke.shift) kIsWeb ? 'Shift' : '⇧',
-  if (stroke.command) kIsWeb ? 'Cmd' : '⌘',
+  if (stroke.control) controlKeyLabel,
+  if (stroke.alt) altKeyLabel,
+  if (stroke.shift) shiftKeyLabel,
+  if (stroke.command) commandKeyLabel,
   const {
         'left': '←',
         'right': '→',
@@ -887,6 +870,6 @@ List<String> describeKeyStrokeKeys(KeyStroke stroke) => [
       stroke.key.toUpperCase(),
 ];
 String describeKeyStroke(KeyStroke stroke) =>
-    describeKeyStrokeKeys(stroke).join(kIsWeb ? '+' : '');
+    describeKeyStrokeKeys(stroke).join(chordKeySeparator);
 String describeKeyBinding(KeyBinding binding) =>
     binding.keys.map(describeKeyStroke).join(' ');
