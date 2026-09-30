@@ -66,6 +66,8 @@ set(BOARD_SRCS
     "ui/habitat/octopus_font.c"
     "ui/habitat/command_face.c"
     "ui/habitat/fonts.c"
+    "ui/habitat/lvgl_fonts.c"
+    "ui/habitat/lvgl_icons.c"
 )
 
 set(BOARD_REQUIRES
@@ -105,6 +107,12 @@ target_compile_options(${COMPONENT_LIB} PRIVATE -Wno-format-truncation)
 
 if(DEVICE_HABITAT_ORANGE)
     target_compile_definitions(${COMPONENT_LIB} PRIVATE DEVICE_HABITAT_ORANGE=1)
+endif()
+
+# Focus and nothing else until the companion skins are finished (owner, 2026-09-30); the host tests
+# build without it and keep covering every skin. -DDEVICE_ALL_SKINS=1 lifts it for a build.
+if(NOT DEVICE_ALL_SKINS)
+    target_compile_definitions(${COMPONENT_LIB} PRIVATE HABITAT_FOCUS_ONLY=1)
 endif()
 
 # Focus unless told otherwise — see ht_character_default().
