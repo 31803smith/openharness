@@ -173,37 +173,34 @@ static void my_application_activate(GApplication* application) {
     icon_path = g_build_filename(exe_dir, "harness.png", nullptr);
   }
 
-  // Use a header bar when running in GNOME as this is the common style used
-  // by applications and is the setup most users will be using (e.g. Ubuntu
-  // desktop) — there it is the only way to drag, minimize or close a GTK
-  // window.
-  // If running on X and not using GNOME then just use a traditional title bar
-  // in case the window manager does more exotic layout, e.g. tiling.
-  // Under a tiling compositor draw no title bar at all; on Wayland GTK would
-  // otherwise fall back to a client-side one of its own.
-  gboolean use_header_bar = TRUE;
+  // Who draws the window's title bar, told to Dart through the environment
+  // (HARNESS_LINUX_TITLE_BAR, read by linux_menu_bar.dart):
+  //  - "flutter": GNOME, the common case (e.g. Ubuntu desktop). The app draws
+  //    one row itself — its menus, search, notifications, Store and the
+  //    window buttons — where a GTK header bar would have taken a row of its
+  //    own above them. GTK keeps drawing the shadow and the resize edges
+  //    (client-side decorations) round a titlebar widget that is never shown.
+  //  - "none": a tiling compositor. Windows there carry no title bar; on
+  //    Wayland GTK would otherwise fall back to a client-side one of its own.
+  //  - "native": X without GNOME, where the window manager may lay windows out
+  //    in exotic ways, so it keeps its own traditional title bar.
+  const gchar* title_bar = "flutter";
   if (is_tiling_session()) {
-    use_header_bar = FALSE;
+    title_bar = "none";
     gtk_window_set_decorated(window, FALSE);
-  }
+  } else {
 #ifdef GDK_WINDOWING_X11
-  GdkScreen* screen = gtk_window_get_screen(window);
-  if (GDK_IS_X11_SCREEN(screen)) {
-    const gchar* wm_name = gdk_x11_screen_get_window_manager_name(screen);
-    if (g_strcmp0(wm_name, "GNOME Shell") != 0) {
-      use_header_bar = FALSE;
+    GdkScreen* screen = gtk_window_get_screen(window);
+    if (GDK_IS_X11_SCREEN(screen)) {
+      const gchar* wm_name = gdk_x11_screen_get_window_manager_name(screen);
+      if (g_strcmp0(wm_name, "GNOME Shell") != 0) title_bar = "native";
     }
-  }
 #endif
-  if (use_header_bar) {
-    // The stock title, name only, as GNOME's own apps caption their windows;
-    // the icon already sits in the dock and the task switcher.
-    GtkHeaderBar* header_bar = GTK_HEADER_BAR(gtk_header_bar_new());
-    gtk_widget_show(GTK_WIDGET(header_bar));
-    gtk_header_bar_set_title(header_bar, "Harness");
-    gtk_header_bar_set_show_close_button(header_bar, TRUE);
-    gtk_window_set_titlebar(window, GTK_WIDGET(header_bar));
   }
+  if (g_strcmp0(title_bar, "flutter") == 0) {
+    gtk_window_set_titlebar(window, gtk_fixed_new());
+  }
+  g_setenv("HARNESS_LINUX_TITLE_BAR", title_bar, TRUE);
   // Keep the native window metadata correct even when a custom header is
   // drawn. Window managers use it for non-GNOME captions and accessibility.
   gtk_window_set_title(window, "Harness");
