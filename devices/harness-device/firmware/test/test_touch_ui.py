@@ -191,7 +191,7 @@ static bool scroll_emit(ht_scroll_phase_t phase, int dy, int velocity, void *ctx
 code += function('color')
 code += function('settings_item') + function('settings_count') + function('hit_contains')
 code += function('find')
-for name in ['copy', 'recap_preview', 'notice_unread', 'notice_was_read', 'notice_forget_read', 'notice_flush_reads', 'notice_mark_read', 'habitat_scene_receipt', 'habitat_scene_presented', 'pane_memory', 'pane_memory_apply', 'dismiss_result', 'activity_text', 'ensure', 'input_cancel', 'view', 'notice_open', 'workspace_index', 'tabs_open', 'workspace_failed', 'ui_scroll_reportable', 'control', 'home_footer', 'footer_control', 'text', 'center', 'render_brand', 'heading', 'question_view', 'question_rows', 'question_move', 'question_text', 'render_question', 'render_choices', 'render_answer_review', 'question_answer', 'send_answer', 'make_action', 'character_mood', 'voice_status', 'home_caption_rotates', 'home_caption_tick', 'status_animated', 'status_speed', 'status_wake_ms', 'surface_tick', 'command_face', 'render_workspace_preview', 'render_home', 'render_voice', 'render_selection', 'render_form', 'draft_move', 'render_draft', 'render_draft_options', 'ui_swarms_replace', 'ui_workspace_applied', 'ui_land_after_reload']:
+for name in ['copy', 'recap_preview', 'notice_unread', 'notice_was_read', 'notice_forget_read', 'notice_flush_reads', 'notice_mark_read', 'habitat_scene_receipt', 'habitat_scene_presented', 'pane_memory', 'pane_memory_apply', 'dismiss_result', 'activity_text', 'ensure', 'input_cancel', 'view', 'notice_open', 'workspace_index', 'tabs_open', 'workspace_failed', 'ui_scroll_reportable', 'control', 'home_footer', 'footer_control', 'text', 'center', 'render_brand', 'heading', 'question_view', 'question_rows', 'question_move', 'question_text', 'render_question', 'render_choices', 'render_answer_review', 'question_answer', 'send_answer', 'make_action', 'character_mood', 'voice_status', 'home_caption_rotates', 'home_caption_tick', 'status_animated', 'status_speed', 'status_wake_ms', 'surface_tick', 'command_face', 'render_workspace_preview', 'question_prompt', 'render_home', 'render_voice', 'render_selection', 'render_form', 'draft_move', 'render_draft', 'render_draft_options', 'ui_swarms_replace', 'ui_workspace_applied', 'ui_land_after_reload']:
     code += function(name)
 code += function('render_settings') + function('ui_visit_state')
 code += function('ui_project_known') + function('ui_focus_project') + function('ui_apply_pending_focus')
@@ -237,6 +237,10 @@ static void dispatch(action_t a) {
     else if (a.kind == A_VOICE_ABORT) { recording = s.voice_open = false; view(HOME); }
     else if (a.kind == A_RETURN || a.kind == A_LATEST) { if(a.kind==A_RETURN)returns++; visit_action(a); }
     else if (a.kind == A_PET) boops++;
+    else if (a.kind == A_PANE_PREV || a.kind == A_PANE_NEXT) {   // mirrors ui_habitat.c's dispatch
+        int i = s.active < 0 ? 0 : (s.active + (a.kind == A_PANE_NEXT ? 1 : s.count - 1)) % s.count;
+        action_t pane = {.kind = A_AGENT}; COPY(pane.id, s.agents[i].id); dispatch(pane);
+    }
     else if (a.kind == A_AGENT) {
         switches++; s.active = !strcmp(a.id, "b") ? 1 : 0; view(AGENT);
     } else if (a.kind == A_SETTINGS) view(SETTINGS);
@@ -1721,16 +1725,36 @@ int main(int argc, char **argv) {
     // The Focus SKIN's home face, footer and all — the "focus" portrait above is the legacy
     // focus-face option on the default character, which draws no microphone.
     reset(); ht_character_select(&character, HT_CHARACTER_FOCUS); scene_take(); portrait(dir, "focus-skin");
-    // A question's card on Focus: the engine badge, the "?" and the name, then the prompt — the whole
-    // of what a question puts on the glass. It is answered in the app.
+    // THE PANE ARROWS either side of the Focus microphone: a sideways swipe, as buttons, and only when
+    // the tab has another agent to go to.
+    reset(); ht_character_select(&character, HT_CHARACTER_FOCUS); scene_take(); portrait(dir, "focus-arrows");
+    tap(1000, 98, 388); assert(switches == 1 && s.active == 1 && !starts);
+    reset(); ht_character_select(&character, HT_CHARACTER_FOCUS); scene_take();
+    tap(1000, 368, 388); assert(switches == 1 && s.active == 1 && !starts);
+    reset(); ht_character_select(&character, HT_CHARACTER_FOCUS); scene_take();   // a thumb, not a tap
+    habitat_touch(true, 98, 388, 1000); habitat_touch(true, 110, 400, 1400); habitat_touch(false, 110, 400, 1800);
+    assert(switches == 1 && !starts);
+    reset(); ht_character_select(&character, HT_CHARACTER_FOCUS); s.count = 1; scene_take();
+    tap(1000, 98, 388); tap(1200, 368, 388); assert(!switches && !starts);   // one agent: no arrows at all
+    // An open question on Focus: shown on the home face, in the recap's place, and nowhere else.
     reset(); ht_character_select(&character, HT_CHARACTER_FOCUS); strcpy(s.agents[0].engine, "claude");
     {
         cable_notif_t asked={.question=true,.summary="Which database should the retry queue use?"};
-        COPY(asked.agent_id, s.agents[0].id); COPY(asked.name, "Kinh T\u1ebf");
-        ui_notif_replace(&asked,1); ui_notif_open(); scene_take(); portrait(dir, "focus-question");
-        assert(s.view == INBOX);
+        COPY(asked.agent_id, s.agents[0].id); COPY(asked.name, s.agents[0].name);
+        // A pill under the bell, as on glass: the two must not touch.
+        s.tab_count=1; COPY(s.tabs[0].id,"tab-0"); COPY(s.tabs[0].name,"Doi song"); COPY(s.selected_tab,"tab-0");
+        ui_notif_replace(&asked,1); scene_take(); portrait(dir, "focus-question");
+        assert(s.view == HOME);
+        uint16_t gap[HT_WIDTH];
+        for (int y = 42; y < 61; y++) {   // the bell's ink ends at 41, the pill's rim starts at 61
+            ht_raster(&scene, (ht_rect_t){0, y, HT_WIDTH, 1}, gap);
+            for (int x = 0; x < HT_WIDTH; x++) assert(gap[x] == 0);
+        }
+        bool shown = false;
+        for (int i = 0; i < scene.count; i++) if (strstr(scene.runs[i].text, "retry queue")) shown = true;
+        assert(shown);
     }
-    for (int y = 366; y < HT_HEIGHT; y += 4) {
+    for (int y = 386; y < HT_HEIGHT; y += 4) {
         // Inside the round glass only: a target row whose centre is off the panel is not a row.
         if ((y - 233) * (y - 233) >= 230 * 230) continue;
         reset(); ht_character_select(&character, HT_CHARACTER_FOCUS); scene_take();

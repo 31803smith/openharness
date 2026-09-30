@@ -19,6 +19,11 @@ from strokes and read as a different icon. The second was `icon_v_mic` from the 
 `main/ui/icons_voice.c` — a 24 x 32 white mark inside a 72 px blue disc — enlarged to fill the cell:
 40% bigger than the design, and without the design's base bar.
 
+## `chevron_left.png`, `chevron_right.png` — lifted from the design, at 1:1
+
+The pane arrows either side of the microphone, from the same screen: 11 x 20 at (113, 352) and
+(342, 352), #8a8a99 on black, coverage taken as brightness over the mark's own colour.
+
 ## `sparkle.png`, `sparkle_fill.png` — from the old firmware
 
 `icon_sparkle` and `icon_sparkle_fill` from `main/ui/icons_voice.c`, which was deleted with the LVGL

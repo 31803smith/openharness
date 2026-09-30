@@ -45,6 +45,10 @@ extern const ht_font_t ht_pill;
 #define HT_PILL_LEFT  "\xee\x81\x80\xee\x81\x81"
 #define HT_PILL_BODY  "\xee\x81\x82"
 #define HT_PILL_RIGHT "\xee\x81\x83\xee\x81\x84"
+// The Focus face's pane arrows either side of the microphone.
+extern const ht_font_t ht_chevron;
+#define HT_CHEVRON_LEFT  "\xee\x81\x90"
+#define HT_CHEVRON_RIGHT "\xee\x81\x91"
 // The colour a glyph pixel at coverage `alpha` (0..3) takes between `fg` and `bg`, exactly as the
 // rasteriser computes it. For a run that has to sit seamlessly on another run's coverage level.
 uint16_t ht_blend(uint16_t fg, uint16_t bg, unsigned alpha);

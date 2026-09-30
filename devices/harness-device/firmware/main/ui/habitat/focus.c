@@ -41,7 +41,7 @@ enum { FOCUS_ROWS = 7 };   // pill, name, status, and four of recap
  * nearly always (h, d, t, k, l), so the gap below the name is the one that needs the three pixels
  * back. Verified by banding the rendered face — see focus_face() in test/test_character.c.
  */
-enum { FOCUS_BODY_Y = 118 + 38 + 27 };
+enum { FOCUS_BODY_Y = 124 + 38 + 22 };
 
 /*
  * y, and the width the chord allows there, against a 230 px working radius rather than the 233 px
@@ -70,8 +70,10 @@ enum { FOCUS_BODY_Y = 118 + 38 + 27 };
  * has a line of text over it; the widths are re-measured for the y they actually use.
  */
 static const struct { int y, width; const ht_font_t *font; } ROWS[FOCUS_ROWS] = {
-    {  50, 240, &ht_mono_20 },   // the pill: 38 tall from 50, 20 cells of name — see pill()
-    { 118, 384, &ht_mono_28 },
+    // The pill: 38 tall from 61, 20 cells of name — see pill(). Well below the bell above it on this
+    // face (ink 15..41, ui_habitat.c); at 50 the two touched on glass.
+    {  61, 240, &ht_mono_20 },
+    { 124, 384, &ht_mono_28 },
     { FOCUS_BODY_Y,       442, &ht_mono_28 },
     { FOCUS_BODY_Y,       408, &ht_mono_28 },
     { FOCUS_BODY_Y +  38, 408, &ht_mono_28 },

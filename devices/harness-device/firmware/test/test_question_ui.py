@@ -78,8 +78,6 @@ static void display_lock(void) {}
 static void display_unlock(void) {}
 static int wakes;
 static void display_wake(void) { wakes++; }
-static int shown;
-static void notice_show_question(const char *id) { assert(id && *id); shown++; view(INBOX); }
 static bool queue(action_t a) {
     if (congested) return false;
     queued=a; if (a.kind==A_ANSWER) queued_answers++; return true;
@@ -229,16 +227,10 @@ int main(int argc,char **argv) {
     reset(false);s.view=MESSAGE;visit.available=true;strcpy(visit.agent,"b");b_known=false;
     ui_focus_project("b");assert(!strcmp(s.pending_focus,"b") && s.view==MESSAGE);
     b_known=true;ui_focus_project("b");assert(s.view==QUESTION && s.q.loading && !strcmp(s.q.agent,"b"));
-    // A question TAKES THE GLASS from a screen a person is only reading — its card, to be read; the
-    // answer is given in the app. No answer screen opens and nothing is fetched to answer with.
-    reset(false);view(HOME);reads=0;wakes=0;shown=0;
-    ui_question_show("b","Other","M2","q-b2",NULL);
-    assert(s.view==INBOX && shown==1 && wakes==1 && reads==0);
-    // ...and not from one they are in the middle of, nor from under a finger. The alert still counts.
-    reset(false);view(HOME);s.touch_down=true;notices=0;shown=0;
-    ui_question_show("b","Other","M2","q-b3",NULL);assert(s.view==HOME && notices==1 && !shown);
-    reset(false);s.view=VOICE;shown=0;ui_question_show("b","Other","M2","q-b4",NULL);assert(s.view==VOICE && !shown);
-    reset(false);s.view=DRAFT;shown=0;ui_question_show("b","Other","M2","q-b5",NULL);assert(s.view==DRAFT && !shown);
+    // A question does NOT change the screen — the home face shows it in the recap's place — but it
+    // does wake the display, and it still counts in the bell until it is answered.
+    reset(false);view(HOME);wakes=0;notices=0;
+    ui_question_show("b","Other","M2","q-b2",NULL);assert(s.view==HOME && wakes==1 && notices==1);
     // The ESP32 compiler's -O0 restrict analysis sees the enclosing global s,
     // not the disjoint options/answer fields. Exercise every selected subset
     // at their real capacities and prove that no neighboring state changes.

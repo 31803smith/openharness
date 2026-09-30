@@ -97,6 +97,7 @@ typedef enum {
     A_QUESTION,
     A_CHOICE,
     A_ANSWER, A_QUESTION_READ, A_QUESTION_CHOICES, A_QUESTION_REVIEW, A_QUESTION_BACK, A_QUESTION_SAY,
+    A_PANE_PREV, A_PANE_NEXT,
     A_INBOX,
     A_NOTICE,
     A_TABS,
@@ -374,17 +375,6 @@ static void notice_mark_read(cable_notif_t *n)
     // Read is not answered, removed or focused. Keep this exact card in place.
     change();
 }
-// Put one agent's question on the glass: its inbox card, which is the prompt whole and nothing to
-// press but the card, whose tap opens the pane on the desktop. The answer is given there.
-static void notice_show_question(const char *id)
-{
-    for (int i = 0; i < s.notice_count; i++)
-        if (s.notice[i].question && !strcmp(s.notice[i].agent_id, id)) {
-            view(INBOX);
-            s.offset = i;
-            return;
-        }
-}
 static void notice_open(void)
 {
     view(s.notice_count ? INBOX : HOME);
@@ -568,6 +558,14 @@ static int working(void)
         n += s.agents[i].busy;
     return n;
 }
+// The open question's prompt for this agent, as its notice carries it; NULL when it has none open.
+static const char *question_prompt(const char *id)
+{
+    for (int i = 0; i < s.notice_count; i++)
+        if (s.notice[i].question && !strcmp(id, s.notice[i].agent_id))
+            return s.notice[i].summary[0] ? s.notice[i].summary : "Needs your answer";
+    return NULL;
+}
 static bool is_question(const char *id)
 {
     for (int i = 0; i < s.notice_count; i++)
@@ -644,7 +642,7 @@ static bool home_footer(action_kind_t action)
     // bracket control is pressed and released like every other one, while A_PET reads a TAP as a boop
     // and only starts speech on a 650 ms hold — which is the creature's gesture, not a button's.
     return action == A_TABS || action == A_INBOX || action == A_AGENTS || action == A_RETURN ||
-           action == A_CARRY_DROP || action == A_VOICE;
+           action == A_CARRY_DROP || action == A_VOICE || action == A_PANE_PREV || action == A_PANE_NEXT;
 }
 static bool hit_contains(const hit_t *hit, int x, int y, bool surface)
 {
@@ -804,9 +802,9 @@ static void render_workspace_preview(ht_scene_t *f)
 }
 static void render_home(ht_scene_t *f)
 {
-    // Where the Focus face's microphone target begins: a little above the mark's ink at 377, so the
+    // Where the Focus face's microphone target begins: a little above the mark's ink at 397, so the
     // top of the mark is not its edge. A_PET ends here on Focus.
-    enum { FOCUS_MIC_TOP = 366 };
+    enum { FOCUS_MIC_TOP = 386 };
     s.caption_arc = (ht_rect_t){0};
     if (!s.connected || s.loading) { render_brand(f); return; }
     if (workspace.touching && workspace.moved && !workspace.cancelled) { render_workspace_preview(f); return; }
@@ -815,6 +813,15 @@ static void render_home(ht_scene_t *f)
     // a recap. The bell has its own lower target, outside the voice surface.
     const char *recap = a && !a->busy && a->recap_ready && s.connected && !s.loading &&
         !s.nap && !s.voice_retry_until && !carry.active && !carry.error[0] ? a->preview : NULL;
+    /*
+     * An open question takes the recap's place, on this face, where the person already is. It is
+     * shown to be READ: the answer is given in the app, so the face grows no buttons and no other
+     * screen opens for it. A turn's recap would be last turn's news; the question is what the agent
+     * is waiting on now.
+     */
+    const char *asked = a && s.connected && !s.loading && !carry.active && !carry.error[0] ?
+        question_prompt(a->id) : NULL;
+    if (asked) recap = asked;
     // A live turn can outlast its terminal footer (or have no readable footer).
     // Keep its busy state visible while more specific activity is unavailable.
     // An agent with a question open is not working, whatever its turn says: it is waiting on this
@@ -864,7 +871,7 @@ static void render_home(ht_scene_t *f)
     bool focus_face = character.id == HT_CHARACTER_FOCUS;
     ht_character_face(f, &character, &f_, ACCENT, recap);
     if (bell) {
-        if (focus_face) ht_notification_bell_at(f, unread, f_.ink, 14);
+        if (focus_face) ht_notification_bell_at(f, unread, f_.ink, 8);   // ink 15..41, clear of the pill at 61
         else ht_notification_bell(f, unread, f_.ink);
     }
     s.status_phase = status_animated() ? ht_shimmer_phase(ms()) : 0;
@@ -921,18 +928,35 @@ static void render_home(ht_scene_t *f)
          * nothing: a touch out there does not exist.
          */
         s.hits[n] = (hit_t){{143, FOCUS_MIC_TOP, 180, HT_HEIGHT - FOCUS_MIC_TOP}, A_VOICE, 0, can_say};
-        // Cell at 370 puts the mark's ink at y 377..411 — the design's own rows (mockup/newdesign.html,
-        // "Agent — recap"). It sat 22 px lower before, close enough to the bezel to read as crowded.
-        ht_text(f, (HT_WIDTH - ht_mic_footer.width) / 2, 370, ht_mic_footer.width, &ht_mic_footer,
+        // Cell at 390 puts the mark's ink at y 397..431: the design's rows (mockup/newdesign.html,
+        // "Agent — recap") plus 20, because on glass the cluster sat tight under the recap.
+        ht_text(f, (HT_WIDTH - ht_mic_footer.width) / 2, 390, ht_mic_footer.width, &ht_mic_footer,
                 // The design's own green, which is also the recording meter's: the thing that starts
                 // speech and the thing that shows it are one colour. HT_THEME_DONE, which this used to
                 // be, is the terminal's "finished" teal and read on glass as a different button.
                 !can_say ? DIM : n == s.pressed ? ACCENT : color(HT_THEME_VOICE), BG, HT_MIC);
+        /*
+         * THE PANE ARROWS, from the design: either side of the microphone, and only when this tab has
+         * another agent to go to. They do what a sideways swipe does (see the end of habitat_touch),
+         * which is the gesture nobody finds — and they are buttons, pressed and released, for the
+         * same reason the microphone is. Their targets stop where the microphone's starts, x 143 and
+         * 323, so the three never share a pixel.
+         */
+        if (s.count > 1) {
+            int prev = s.hit_count;
+            s.hits[s.hit_count++] = (hit_t){{53, 350, 90, 76}, A_PANE_PREV, 0, s.connected};
+            ht_text(f, 113, 370, ht_chevron.width, &ht_chevron,
+                    prev == s.pressed ? FG : DIM, BG, HT_CHEVRON_LEFT);
+            int next = s.hit_count;
+            s.hits[s.hit_count++] = (hit_t){{323, 350, 90, 76}, A_PANE_NEXT, 0, s.connected};
+            ht_text(f, 342, 370, ht_chevron.width, &ht_chevron,
+                    next == s.pressed ? FG : DIM, BG, HT_CHEVRON_RIGHT);
+        }
     }
     if (!carry.active && !carry.error[0] && !visit.available) {
         // Both phases of the caption open the same pane picker. On Focus the caption is the pill,
         // which sits below where the arc would have been.
-        s.hits[s.hit_count++] = focus_face ? (hit_t){{83, 54, 300, 40}, A_AGENTS, 0, true}
+        s.hits[s.hit_count++] = focus_face ? (hit_t){{83, 61, 300, 40}, A_AGENTS, 0, true}
                                            : (hit_t){{83, 0, 300, 66}, A_AGENTS, 0, true};
         for (int i = 0; i < f->count; i++) if (f->runs[i].arc == 1) {
             ht_rect_t r = ht_run_bounds(&f->runs[i]);
@@ -1790,6 +1814,16 @@ static void dispatch(action_t a)
         break;
     case A_INBOX:
         notice_open();
+        break;
+    case A_PANE_PREV:
+    case A_PANE_NEXT:
+        // The sideways swipe's step, from a button. Wraps, as the swipe does.
+        if (s.count > 1 && s.connected && !s.loading) {
+            int i = s.active < 0 ? 0 : (s.active + (a.kind == A_PANE_NEXT ? 1 : s.count - 1)) % s.count;
+            action_t pane = {.kind = A_AGENT};
+            COPY(pane.id, s.agents[i].id);
+            dispatch(pane);
+        }
         break;
     case A_NOTICE: {
         if (s.connected && !visit.pending && a.id[0]) {
@@ -3472,21 +3506,8 @@ void ui_question_show(const char *id, const char *name, const char *machine, con
         s.q.valid=false; s.q.pending=false; s.q.revision++;
         if (question_view(s.view)) { COPY(s.q.error,"The question changed. Open the alert again."); view(QUESTION); }
     }
-    /*
-     * A QUESTION TAKES THE GLASS — to be READ, not answered.
-     *
-     * An agent that asks has stopped: it is waiting on this person and nothing else. Leaving the
-     * face on its "working" line with a count in the bell said the opposite, even to somebody
-     * looking straight at that agent. So the question's card comes up now, from any screen a person
-     * is only reading, on every skin. It is the prompt and nothing else — no [later], [say] or
-     * [next]: the answer is given in the app, which is where the card's tap takes them. Not from a
-     * screen they are in the middle of — recording, drafting, a form, a question already open, a
-     * finger on the glass — where it would take their work away; there the bell counts it, as
-     * before, until the question is ANSWERED rather than until it is seen.
-     */
-    bool reading = s.view == HOME || s.view == AGENTS || s.view == AGENT || s.view == READER ||
-                   s.view == INBOX || s.view == TABS || s.view == MACHINES || s.view == MESSAGE;
-    if (reading && !s.touch_down) notice_show_question(id);
+    // The question is shown on the home face, in the recap's place (render_home): no screen opens
+    // for it. The display wakes so a person glancing over sees it.
     change();
     display_wake();
     display_unlock();
