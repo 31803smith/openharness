@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
-import '../analytics/analytics.dart';
 import '../shared/theme/app_theme.dart' as grid;
 import '../state/app_state.dart';
 import '../widgets/harness_customize_pane.dart';
@@ -27,9 +26,8 @@ Future<void> showSettingsScreen(
   AppNotifier notifier, {
   SettingsSection? initialSection,
   ExperimentalFeaturesStore? experimentalFeatures,
-  // Which door opened Settings — see [AnalyticsEvents.screenView]. `required`,
-  // because a pane reachable several ways is close to meaningless as a bare
-  // count.
+  // Which door opened Settings. No longer read since analytics was removed;
+  // kept so the callers need not change.
   required String source,
   // Narrower than this, the list and a section take turns on the screen (a
   // phone). Desktop passes nothing: its window never gets that narrow.
@@ -78,7 +76,7 @@ class SettingsScreen extends StatefulWidget {
   final AppNotifier notifier;
   final ExperimentalFeaturesStore? experimentalFeatures;
 
-  /// The door that opened this screen, reported with the first `screen_view`.
+  /// The door that opened this screen. Unread since analytics was removed.
   /// Defaulted only for tests that build the screen directly; every app door
   /// goes through [showSettingsScreen], where it is `required`.
   final String source;
@@ -130,16 +128,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
     return KeyEventResult.handled;
   }
 
-  @override
-  void initState() {
-    super.initState();
-    // The pane Settings opens on is a screen view like any other — without it
-    // the section a user lands on is the one section the stream never sees.
-    // This one carries the door that OPENED Settings; every later view in this
-    // visit came from the rail.
-    analytics.screenView(_screenName(_section), source: widget.source);
-  }
-
   /// Move to another pane, from the settings rail.
   void _show(SettingsSection target) {
     if (target == SettingsSection.customize) {
@@ -148,16 +136,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
     if (_compact) setState(() => _sectionOpen = true);
     if (target == _section) return;
-    analytics.screenView(_screenName(target), source: 'rail');
     setState(() => _section = target);
   }
-
-  /// The section's stable name, never its label: labels are rewritten and a
-  /// renamed label would read as a new screen. `SettingsSection.usage` becomes
-  /// `settings_usage`, so a settings pane cannot collide with a top-level screen
-  /// that happens to share a word.
-  static String _screenName(SettingsSection section) =>
-      'settings_${section.name}';
 
   @override
   Widget build(BuildContext context) {

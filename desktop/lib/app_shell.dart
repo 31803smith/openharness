@@ -10,11 +10,11 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_web_plugins/url_strategy.dart';
 
-import 'analytics/analytics_lifecycle.dart';
 import 'core/crash_log.dart';
 import 'core/desktop_window.dart';
 import 'screens/login_screen.dart';
 import 'state/app_state.dart';
+import 'stats/stats_lifecycle.dart';
 import 'viewer/viewer_services.dart';
 import 'ws/terminal_transport_plugin.dart';
 import 'shared/theme/app_theme.dart' as grid;
@@ -138,7 +138,7 @@ class HarnessApp extends StatelessWidget {
                 ),
         ),
       ),
-      home: AnalyticsLifecycle(
+      home: StatsLifecycle(
         child: RootShell(authenticatedScreen: authenticatedScreen),
       ),
     );

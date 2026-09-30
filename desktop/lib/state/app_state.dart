@@ -14,7 +14,6 @@ import 'package:flutter/widgets.dart'
     show AppLifecycleState, BuildContext, StringCharacters, WidgetsBinding;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../analytics/analytics.dart';
 import '../models/model_manager_controller.dart';
 import '../api/api_client.dart';
 import '../viewer/sign_in_browser.dart';
@@ -728,16 +727,6 @@ class AppNotifier extends ChangeNotifier {
     machine.agents.map((agent) => previewKey(machine.machine.machineId, agent)),
   );
 
-  /// When this launch became signed in, and by which route — until the first
-  /// message of that session has been reported, after which it is null.
-  ///
-  /// One record for the whole app, not one per agent: the question is how long
-  /// somebody sits signed in before talking to anything at all, and which agent
-  /// they finally picked is `agent_created`'s business. A session where nobody
-  /// ever sends a message simply leaves this set until sign-out or quit, which
-  /// is exactly the population the event exists to measure the absence of.
-  ({DateTime at, String from})? _awaitingFirstMessage;
-
   final Map<String, Timer> _offlineRetryTimers = {};
   // Periodic retry for a machine the relay reported NO_PEER_LINK for — a `harness link connect` run
   // in a terminal (or another app instance) has no way to notify this one, so this is what makes the
@@ -1294,6 +1283,38 @@ class AppNotifier extends ChangeNotifier {
   }
 
   String? _pendingStoreHarness;
+
+  /// The companion's illustrated viewer and conversation, one per window.
+  /// Opening it never launches an engine; only sending a chat does that.
+  void openCompanions() {
+    final existing = swarms.where((s) => s.isCompanions).firstOrNull;
+    if (existing != null) {
+      selectSwarm(existing.id);
+      return;
+    }
+    final current = activeSwarm;
+    if (current.isEmptyStarter && !current.isUtility) {
+      current
+        ..kind = 'companions'
+        ..name = Swarm.companionsName
+        ..nameIsCustom = false
+        ..isNewTabPage = false;
+      _draftSwarmReturns.remove(current.id);
+      _persistLayout();
+      notifyListeners();
+      return;
+    }
+    while (swarms.any((s) => s.id == 'swarm-$_nextSwarmId')) {
+      _nextSwarmId++;
+    }
+    final tab = Swarm(
+      id: 'swarm-${_nextSwarmId++}',
+      name: Swarm.companionsName,
+      kind: 'companions',
+    );
+    swarms.add(tab);
+    selectSwarm(tab.id);
+  }
 
   /// The harness page [openStore] was asked for, handed over once. The Store
   /// tab reads it when it is built and on every change while it is open.
@@ -2580,6 +2601,26 @@ class AppNotifier extends ChangeNotifier {
     if (pending != null) unawaited(pending.catchError((_) => false));
   }
 
+  /*
+   * Change one device's settings.
+   *
+   * Addressed by the fleet's id: a desk can hold two robots, and a preference belongs to the glass it
+   * was set on. Only the named fields go — absent means unchanged, so two windows open on one device
+   * cannot overwrite each other with whatever each of them last saw.
+   *
+   * Nothing is awaited and nothing is written here optimistically. The device answers with what it now
+   * HOLDS, which arrives as the next `dial_status`; that is also what corrects this window when the
+   * change was refused.
+   */
+  void setDeviceSettings(String id, Map<String, Object?> patch) {
+    if (patch.isEmpty) return;
+    final machineId = localMachineState?.machine.machineId;
+    final connection = machineId == null ? null : _pool?[machineId];
+    if (connection == null) return;
+    final pending = connection.sendTerminalFrame('dial_settings', {'id': id, ...patch});
+    unawaited(pending.catchError((_) => false));
+  }
+
   /// Tell the daemon which agents have a tile on the grid, so the dial can stay
   /// quiet about a turn that finished in front of the person.
   ///
@@ -3060,29 +3101,7 @@ class AppNotifier extends ChangeNotifier {
         _lastError = 'Could not complete sign-in. Please sign in again.';
       }
       notifyListeners();
-    } finally {
-      // A `finally` rather than a call per exit path: bootstrap resolves four
-      // ways (environment not ready, signed out, signed in, thrown) and the
-      // launch happened in all four. `retryEnvironmentSetup` re-enters here,
-      // which is why the event itself is once-per-launch.
-      _trackAppOpened();
     }
-  }
-
-  bool _appOpenedTracked = false;
-
-  /// `app_opened`, once, with the answer bootstrap actually reached. Sent from
-  /// here rather than from the first frame because `signed_in` is not known
-  /// until the CLI has been asked, and a first-frame event would report every
-  /// launch as signed out.
-  void _trackAppOpened() {
-    if (_appOpenedTracked) return;
-    _appOpenedTracked = true;
-    final signedIn = status == AppStatus.authenticated;
-    analytics.appOpened(signedIn: signedIn);
-    // A returning user is signed in before the app is even on screen, so their
-    // wait starts here rather than at a sign-in that never happens.
-    if (signedIn) _armFirstMessage('launch');
   }
 
   /// Runs before we invoke a single Harness subcommand. A fresh mac used to
@@ -3158,11 +3177,6 @@ class AppNotifier extends ChangeNotifier {
       mode: mode,
     );
     environmentReadiness = result;
-    if (!quiet ||
-        result.isReady ||
-        result.phase == EnvironmentSetupPhase.failed) {
-      analytics.environmentPrepared(ready: result.isReady);
-    }
     return result;
   }
 
@@ -3352,7 +3366,6 @@ class AppNotifier extends ChangeNotifier {
     } finally {
       _environmentSetupInFlight = false;
       notifyListeners();
-      _trackAppOpened();
     }
   }
 
@@ -3598,7 +3611,6 @@ class AppNotifier extends ChangeNotifier {
     _guestDeskRestorePending = true;
     signedIn = false;
     currentUser = null;
-    analyticsAccount.clear();
     if (banner != null) {
       _lastError = banner;
       _lastErrorRetryable = true;
@@ -3750,7 +3762,7 @@ class AppNotifier extends ChangeNotifier {
   /// Who is signed in, from the daemon. Shared by the boot path and by the
   /// retry path, because a boot that found the daemon still connecting now
   /// finishes THROUGH the retry path — and a session that never learns its
-  /// own account has an empty footer and unattributed analytics.
+  /// own account has an empty footer.
   Future<void> _loadProfile() {
     final pending = _profileInFlight;
     if (pending != null) return pending;
@@ -3770,12 +3782,7 @@ class AppNotifier extends ChangeNotifier {
         return;
       }
       if (me != null) {
-        final profile = CurrentUserProfile.fromMe(me);
-        currentUser = profile;
-        // Every event from here on is filed under the account, including ones
-        // queued while this call was still in flight — the queue reads the
-        // account per event, not per launch.
-        analyticsAccount.set(id: profile.id, email: profile.email);
+        currentUser = CurrentUserProfile.fromMe(me);
         notifyListeners();
       }
     } catch (error) {
@@ -3955,8 +3962,6 @@ class AppNotifier extends ChangeNotifier {
     currentUser = null;
     signingIn = false;
     pendingAuthorizeUrl = null;
-    _awaitingFirstMessage = null;
-    analyticsAccount.clear();
     final previousMachineId = localMachineState?.machine.machineId;
     _clearAccountWorkspace();
     // A VIEWER has nowhere to be but its login screen — no daemon, nothing of
@@ -4343,24 +4348,11 @@ class AppNotifier extends ChangeNotifier {
         return;
       }
       _guestDeskRestorePending = false;
-      analytics.signedIn();
-      // Restarts the clock even if `_trackAppOpened` already started one: this
-      // person met the login screen, so their wait begins where the launch's
-      // did not.
-      _armFirstMessage('sign_in');
     } catch (error) {
       if (!_authWorkCurrent(revision)) return;
       status = wasGuest ? AppStatus.authenticated : AppStatus.unauthenticated;
       _lastError = error.toString();
       _lastErrorRetryable = true;
-      // A short code, never `error.toString()` — a CLI failure carries paths
-      // and host names, and this stream is not the place for them. Only the
-      // two the TYPE can tell apart: a cancelled sign-in and a refused one both
-      // arrive as a `StateError` differing in message text, and matching on
-      // English sentences is how a stream starts lying after a copy edit.
-      analytics.signInFailed(
-        error is CliNotAvailableException ? 'cli_missing' : 'failed',
-      );
       if (wasGuest && _guestDeskRestorePending && !signedIn) {
         unawaited(_becomeGuest(revision: revision));
       }
@@ -4489,7 +4481,6 @@ class AppNotifier extends ChangeNotifier {
     final becomesGuest = viewer == null && localManualFixture == null;
     if (!becomesGuest) status = AppStatus.unauthenticated;
     currentUser = null;
-    analyticsAccount.clear();
     notifyListeners();
     // Clear saved credentials alongside connection cleanup. A new login must
     // wait for both, otherwise the old logout can delete its fresh session.
@@ -4499,12 +4490,6 @@ class AppNotifier extends ChangeNotifier {
         : Future<void>.sync(cliLogin.logout)
               .then((_) => true, onError: (Object _) => false);
     _clearAccountWorkspace();
-    analytics.signedOut();
-    // A session that ended without a message reports nothing — its absence IS
-    // the finding, and a stale clock would attach that wait to whoever signs in
-    // next.
-    _awaitingFirstMessage = null;
-    analyticsAccount.clear();
     notifyListeners();
     await _workspaceCleanup;
     final didClear = await cleared;
@@ -7338,7 +7323,7 @@ class AppNotifier extends ChangeNotifier {
 
   Iterable<({String machineId, String agentId})> _visibleOnTab() {
     if (lifecycle() != AppLifecycleState.resumed) return const [];
-    if (activeSwarm.isStore || activeSwarm.isOrchestrator) return const [];
+    if (activeSwarm.isUtility || activeSwarm.isOrchestrator) return const [];
     return [
       for (final pane in activeSwarm.panes)
         if (zoomedPaneId == null || pane.id == zoomedPaneId)
@@ -7530,7 +7515,11 @@ class AppNotifier extends ChangeNotifier {
       ),
     );
     if (revealAgentView(machineId, agentId)) return;
-    if (activeSwarm.panes.length >= maxPanes) newSwarm();
+    if (activeSwarm.isUtility ||
+        activeSwarm.isOrchestrator ||
+        activeSwarm.panes.length >= maxPanes) {
+      newSwarm();
+    }
     await addAgentToSwarm(machineId, agentId, swarmId: activeSwarmId);
     revealAgentView(machineId, agentId);
   }
@@ -7573,40 +7562,6 @@ class AppNotifier extends ChangeNotifier {
     final session = payload['sessionId'] ?? event['dbSessionId'];
     return session is String && session.isNotEmpty ? session : null;
   }
-
-  /// Starts the clock `app_first_message` measures. [from] is `sign_in` for a
-  /// fresh log-in and `launch` for an app opened with a session already there.
-  ///
-  /// One body, called by both routes and by the test seam below — a second
-  /// place building this record is a second place to get it wrong.
-  void _armFirstMessage(String from) =>
-      _awaitingFirstMessage = (at: DateTime.now(), from: from);
-
-  /// Closes that clock out, once.
-  ///
-  /// A one-shot latch rather than a counter: the record is read and cleared in
-  /// the same breath, so every turn after the first finds nothing and there is
-  /// never a "which message is this" to get wrong.
-  ///
-  /// ⚠️ Called from `turn_started` ONLY, never from the other two routes into
-  /// [_markAgentProcessing]. A `turn_heartbeat`, and an adopted agent found
-  /// already mid-turn when this app connected, are both work that was under way
-  /// before anybody here typed anything — counting either would report a
-  /// near-zero wait for a returning user who has not said a word.
-  void _reportFirstMessage() {
-    if (_awaitingFirstMessage case final login?) {
-      _awaitingFirstMessage = null;
-      analytics.appFirstMessage(
-        from: login.from,
-        secondsSinceLogin: DateTime.now().difference(login.at).inSeconds,
-      );
-    }
-  }
-
-  /// [_armFirstMessage], for a test: signing in needs a live CLI, and what is
-  /// worth pinning is what the first turn AFTER it does.
-  @visibleForTesting
-  void armFirstMessageForTest(String from) => _armFirstMessage(from);
 
   String _turnActivityKey(String machineId, String agentId) =>
       '$machineId\u0000$agentId';
@@ -8325,7 +8280,7 @@ class AppNotifier extends ChangeNotifier {
     }
     final target = swarms.where((s) => s.id == targetId).firstOrNull;
     if (target == null) return 'This swarm was closed';
-    if (placement != null && (target.isStore || target.isOrchestrator)) {
+    if (placement != null && (target.isUtility || target.isOrchestrator)) {
       return 'Open a new swarm to add a harness.';
     }
     if (target.panes.length >= maxPanes) {
@@ -11882,6 +11837,8 @@ class AppNotifier extends ChangeNotifier {
             raw['kind'] == 'store' ||
             (raw['name'] == Swarm.storeName && (raw['panes'] as List).isEmpty);
         if (isStore && restored.any((s) => s.isStore)) continue;
+        final isCompanions = raw['kind'] == 'companions';
+        if (isCompanions && restored.any((s) => s.isCompanions)) continue;
         final swarm =
             Swarm(
                 id: id,
@@ -11896,6 +11853,8 @@ class AppNotifier extends ChangeNotifier {
                     : Swarm.defaultName,
                 kind: isStore
                     ? 'store'
+                    : isCompanions
+                    ? 'companions'
                     : raw['kind'] == 'orchestrator'
                     ? 'orchestrator'
                     : 'harness',
@@ -11916,8 +11875,12 @@ class AppNotifier extends ChangeNotifier {
             raw['nameIsCustom'] == true ||
             (swarm.titleAgentId == null &&
                 swarm.name != Swarm.defaultName &&
-                !(swarm.isStore && swarm.name == Swarm.storeName));
-        for (final item in (raw['panes'] as List).take(maxPanes)) {
+                !(swarm.isStore && swarm.name == Swarm.storeName) &&
+                !(swarm.isCompanions && swarm.name == Swarm.companionsName));
+        for (final item
+            in (swarm.isCompanions ? const [] : raw['panes'] as List).take(
+              maxPanes,
+            )) {
           final entry = PaneLayoutEntry.fromJson(item);
           if (entry == null) continue;
           final key = '${entry.machineId}\u0000${entry.agentId}';
@@ -13016,10 +12979,6 @@ class AppNotifier extends ChangeNotifier {
         break;
       case 'turn_started':
       case 'turn_heartbeat':
-        // A turn that STARTS is somebody sending something; a heartbeat is a
-        // turn already under way, which for an agent this app merely reconnected
-        // to is work nobody here just asked for.
-        if (type == 'turn_started') _reportFirstMessage();
         var changed = false;
         final agentId = _eventAgentId(machine, event, payload);
         if (agentId != null) {

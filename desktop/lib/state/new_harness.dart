@@ -9,7 +9,6 @@ import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
 
 import '../core/runtime_platform.dart';
-import '../analytics/analytics.dart';
 import '../core/codex_profiles.dart';
 import '../core/dsh_catalog.dart';
 import '../core/harness_catalog.dart';
@@ -3281,11 +3280,6 @@ class NewHarnessController extends ChangeNotifier {
       }
       return _fail(failure);
     }
-    analytics.agentCreated(
-      engine: choice,
-      bypassPermission: bypass,
-      permissionMode: permissionMode,
-    );
     unawaited(app.agentPreference.remember(choice, harnessId: _harnessId));
     busy = false;
     status = null;

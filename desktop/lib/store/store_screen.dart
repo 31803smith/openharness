@@ -7,7 +7,6 @@ import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:harness/terminal/terminal_text.dart';
 
-import '../analytics/analytics.dart';
 import '../core/dsh_catalog.dart';
 import '../core/harness_catalog.dart';
 import '../core/models.dart' show ConnectionStatus;
@@ -167,7 +166,6 @@ class _StoreTabState extends State<StoreTab> {
   void initState() {
     super.initState();
     _remember();
-    analytics.screenView('store', source: widget.source);
     // Deferred a frame: both calls notify listeners at once, and this screen
     // is built while the shell underneath — which listens to the same
     // notifier — is mid-build.
@@ -379,7 +377,6 @@ class _StoreTabState extends State<StoreTab> {
   void _show(_Shelf shelf) => _navigate(_StoreVisit(shelf, null, ''));
 
   void _openPage(String id) {
-    analytics.screenView('store_harness', source: 'store');
     _navigate(_StoreVisit(_shelf, id, _search.text));
   }
 

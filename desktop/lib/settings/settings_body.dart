@@ -10,7 +10,6 @@ import 'sections/devices_section.dart';
 import 'sections/experimental_section.dart';
 import 'sections/notifications_section.dart';
 import 'sections/shortcuts_section.dart';
-import 'sections/tracking_section.dart';
 import 'sections/usage_section.dart';
 import 'settings_section.dart';
 
@@ -44,10 +43,17 @@ class SettingsBody extends StatelessWidget {
         store: experimentalFeatures ?? notifier.experimentalFeatures,
         controller: notifier.swarmSettings,
       ),
-      SettingsSection.devices => const DevicesSection(),
+      SettingsSection.devices => ListenableBuilder(
+        listenable: experimentalFeatures ?? notifier.experimentalFeatures,
+        builder: (context, _) => DevicesSection(
+          dial: notifier.dial,
+          onDeviceSettings: notifier.setDeviceSettings,
+          showCompanion: (experimentalFeatures ?? notifier.experimentalFeatures)
+              .enabled(ExperimentalFeature.focusBarCreature),
+        ),
+      ),
       SettingsSection.shortcuts => const ShortcutsSection(),
       SettingsSection.debug => const DebugSection(),
-      SettingsSection.tracking => const TrackingSection(),
       SettingsSection.about => AboutSection(notifier: notifier),
     };
     return KeyedSubtree(key: ValueKey(section), child: screen);
