@@ -2789,7 +2789,7 @@ class _TerminalHeader extends StatelessWidget {
                       Flexible(
                         child: Tooltip(
                           message: identityDetail,
-                          waitDuration: const Duration(milliseconds: 700),
+                          waitDuration: const Duration(milliseconds: 500),
                           child: GestureDetector(
                             behavior: HitTestBehavior.opaque,
                             onDoubleTap: () => unawaited(
@@ -2915,12 +2915,15 @@ class _TerminalHeader extends StatelessWidget {
                       else if (!compact)
                         Padding(
                           padding: const EdgeInsets.all(4),
-                          child: Container(
-                            width: 8,
-                            height: 8,
-                            decoration: BoxDecoration(
-                              shape: BoxShape.circle,
-                              color: color,
+                          child: Tooltip(
+                            message: 'Terminal connected',
+                            child: Container(
+                              width: 8,
+                              height: 8,
+                              decoration: BoxDecoration(
+                                shape: BoxShape.circle,
+                                color: color,
+                              ),
                             ),
                           ),
                         ),

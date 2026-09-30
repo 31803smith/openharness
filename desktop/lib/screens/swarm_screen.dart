@@ -42,6 +42,7 @@ import '../shortcuts/keymap_native.dart';
 import '../shortcuts/keymap_settings.dart';
 import '../state/app_state.dart';
 import '../state/notification_inbox.dart';
+import '../state/status_menu.dart';
 import '../widgets/linux_menu_bar.dart'
     show LinuxTitleBar, linuxTitleBarActions;
 import '../widgets/notification_inbox.dart';
@@ -251,7 +252,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
       SwarmProjectStore(storage: kUnderTest ? null : HarnessFileStore.shared);
   StreamSubscription<SpokenTaskRequest>? _spokenTasks;
   StreamSubscription<void>? _modelsRequests;
-  final _shellFocus = FocusNode(debugLabel: 'Swarm shell');
+  final _shellFocus = FocusNode(debugLabel: 'Tab shell');
 
   /// Where the keyboard waits after the active tab closes
   /// ([AppNotifier.tabStripFocused]): the strip drawn here, or the native one
@@ -384,7 +385,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
             app.resolveCommandBar(request, cancelToken: cancel),
   )..addListener(_commandChanged);
   final _canvasFocus = FocusNode(
-    debugLabel: 'Swarm canvas',
+    debugLabel: 'Tab canvas',
     canRequestFocus: false,
     skipTraversal: true,
   );
@@ -1189,7 +1190,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
 
   int get _attention => _sessions.where((row) => row.needsInput).length;
 
-  /// The bell and its list count the same current questions and unread results.
+  /// The notification surfaces count the same questions and unread results.
   int get _unread => notificationInbox(app).length;
 
   /// Whose window this is, or null while a signed-in window still waits for
@@ -1482,7 +1483,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
   void _unreadChanged() {
     if (!mounted) return;
     setState(() {});
-    // The native titlebar draws its own badge, and its state is pushed from
+    // The macOS menu bar draws its own count, and its state is pushed from
     // `_syncNative` — which is subscribed to the APP, not to this notifier. A
     // mark that only called setState redrew a tab strip the native window does
     // not use, and the badge a person can actually see never moved.
@@ -1720,6 +1721,11 @@ class _SwarmScreenState extends State<SwarmScreen> {
         terminal?.session?.engineId;
   }
 
+  String _commandTooltip(String label, String command) => [
+    label,
+    if (widget.chrome?.showsKeyHints != false) ?_keymap.hint(command),
+  ].join(' · ');
+
   void _syncNative() {
     _syncMachines();
     final focused = WorkspacePaneContext.focused(app);
@@ -1738,9 +1744,8 @@ class _SwarmScreenState extends State<SwarmScreen> {
       'enabled': _routeIsCurrent && !_dialogOpen && !_spokenPaletteOpen,
       'reduceMotion': _reduceMotion,
       'activeId': app.activeSwarmId,
-      'searchTooltip':
-          'Search harnesses ${_keymap.hint('harnesses.list') ?? ''}',
-      'storeTooltip': 'Harness Store ${_keymap.hint('app.store') ?? ''}',
+      'searchTooltip': _commandTooltip('Search harnesses', 'harnesses.list'),
+      'storeTooltip': _commandTooltip('Explore Harness Store', 'app.store'),
       // The selected tab is drawn with keyboard focus: ⏎ goes into it.
       'tabsFocused': app.tabStripFocused && _tabStripFocus.hasPrimaryFocus,
       // Only once the slot is shown: until then (and whenever daemons are
@@ -1862,7 +1867,8 @@ class _SwarmScreenState extends State<SwarmScreen> {
           },
       ],
       'attention': _attention,
-      // The native bell uses the same inbox count as its Flutter counterpart.
+      if (_native) 'statusMenuEntries': statusMenuEntries(app),
+      // The fallback bell and the macOS menu use the same unread ledger.
       'unread': _unread,
       'sessionsOpen': _harnessesVisible,
       'machinesOpen': _machinesVisible,
@@ -2370,6 +2376,12 @@ class _SwarmScreenState extends State<SwarmScreen> {
         unawaited(_notifications());
       case 'notificationInbox':
         unawaited(_showNotificationInbox());
+      case 'openStatusHarness':
+        await _openStatusHarness(args);
+      case 'clearStatusNotifications':
+        if (args['receipts'] case final List receipts) {
+          clearStatusMenuNotifications(app, receipts);
+        }
       case 'settings':
         await _settings();
       case 'addPhone':
@@ -2387,6 +2399,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
           'commands',
           'notifications',
           'notificationInbox',
+          'openStatusHarness',
           'addAgent',
           'newAgent',
           'newTerminal',
@@ -5620,7 +5633,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
     }
     if (_newHarness case final box?) {
       if (box.busy || box.checking) {
-        box.warn('Check the pending creation before opening another swarm.');
+        box.warn('Check the pending creation before opening another tab.');
         return false;
       }
       if (!box.requestDismiss()) return false;
@@ -5645,6 +5658,47 @@ class _SwarmScreenState extends State<SwarmScreen> {
   });
   Future<void> _notifications() async {
     _toggleSessions(filter: SessionFilter.needsInput);
+  }
+
+  Future<void> _openStatusHarness(Map receipt) async {
+    if (!statusMenuReceiptIsCurrent(app, receipt)) return;
+    final machineId = receipt['machineId'] as String;
+    final agentId = receipt['agentId'] as String;
+    final row = statusMenuEntries(app)
+        .where(
+          (row) => row['machineId'] == machineId && row['agentId'] == agentId,
+        )
+        .firstOrNull;
+    if (row == null || row['unavailable'] != null) return;
+    final destination = swarmDestinations(app)
+        .where((item) => item.machineId == machineId && item.agentId == agentId)
+        .firstOrNull;
+    if (destination == null || _newHarness?.requestDismiss() == false) return;
+    _closeNewHarness(restoreFocus: false);
+    _closeSearch(restoreFocus: false);
+    _closeCommandBar(restoreFocus: false);
+    _preparePaneFocus();
+    try {
+      final opened = await activateSwarmDestination(
+        app,
+        destination,
+        destinationSwarmId: app.activeSwarmId,
+      );
+      if (!mounted) return;
+      if (opened &&
+          receipt['unread'] == true &&
+          statusMenuReceiptIsCurrent(app, receipt)) {
+        app.readAgentNotification(
+          machineId,
+          agentId,
+          readToken: receipt['readToken'] as String?,
+        );
+      }
+    } on SwarmResumeFailure catch (failure) {
+      if (mounted) _showResumeFailure(failure, target: app.activeSwarmId);
+    } finally {
+      if (mounted) await revealWindow();
+    }
   }
 
   Future<void> _showNotificationInbox() => _dialog(() async {
@@ -6305,10 +6359,11 @@ class _SwarmScreenState extends State<SwarmScreen> {
       children: [
         _searchButton(theme),
         _notificationsButton(theme),
+        const SizedBox(width: DesktopChrome.controlGap),
         WorkspaceStoreButton(
           key: const ValueKey('swarm-store-button'),
           width: WorkspaceStoreButton.widthOf(context),
-          tooltip: 'Harness Store ${_keymap.hint('app.store') ?? ''}',
+          tooltip: _commandTooltip('Explore Harness Store', 'app.store'),
           onPressed: _shortcutsEnabled ? _openStore : null,
         ),
       ],
@@ -6961,7 +7016,9 @@ class _SwarmScreenState extends State<SwarmScreen> {
       );
       // Store, search and notifications — none of it here when the title bar
       // holds them.
-      final actionsWidth = _titleBarActions ? 0.0 : storeWidth + cell.width * 8;
+      final actionsWidth = _titleBarActions
+          ? 0.0
+          : storeWidth + cell.width * 8 + DesktopChrome.controlGap;
       final leadingWidth = chrome?.leadingWidth(context) ?? 0.0;
       final tabBudget = math.max(
         0.0,
@@ -7124,16 +7181,20 @@ class _SwarmScreenState extends State<SwarmScreen> {
                 AppIcons.plus,
                 Size(cell.width * 3, toolHeight),
                 theme,
-                tooltip: 'New Tab ${_keymap.hint('swarm.new') ?? ''}',
+                tooltip: _commandTooltip('New Tab', 'swarm.new'),
               ),
               const Spacer(),
               if (!_titleBarActions) ...[
                 _searchButton(theme),
                 _notificationsButton(theme),
+                const SizedBox(width: DesktopChrome.controlGap),
                 WorkspaceStoreButton(
                   key: const ValueKey('swarm-store-button'),
                   width: storeWidth,
-                  tooltip: 'Harness Store ${_keymap.hint('app.store') ?? ''}',
+                  tooltip: _commandTooltip(
+                    'Explore Harness Store',
+                    'app.store',
+                  ),
                   onPressed: _shortcutsEnabled ? _openStore : null,
                 ),
               ],
@@ -7166,7 +7227,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
   Widget _searchButton(TerminalTheme theme) => WorkspaceBarControl(
     key: const ValueKey('swarm-search-button'),
     label: 'Search harnesses',
-    tooltip: 'Search harnesses ${_keymap.hint('harnesses.list') ?? ''}',
+    tooltip: _commandTooltip('Search harnesses', 'harnesses.list'),
     onPressed: _shortcutsEnabled ? _toggleSessions : null,
     builder: (context, emphasized) => SizedBox(
       width: workspaceBarCellSizeOf(context).width * 4,

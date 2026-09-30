@@ -238,7 +238,7 @@ List<ShortcutRow> effectiveShortcutRows(
           ),
     if (defaultDigits)
       ShortcutRow(
-        label: 'Select swarms 1–9',
+        label: 'Select tabs 1–9',
         chords: [
           [workspaceKeyLabel, '1 – 9'],
         ],

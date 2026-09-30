@@ -870,9 +870,10 @@ class _SessionRow extends StatelessWidget {
                         key: ValueKey(
                           'session-unread-${unread!.name}:${row.id}',
                         ),
-                        tooltip: unread == AlertKind.failed
-                            ? 'Failed'
-                            : 'Finished',
+                        tooltip: [
+                          if (canOpen) 'Open harness',
+                          unread == AlertKind.failed ? 'Failed' : 'Finished',
+                        ].join(' · '),
                         onPressed: canOpen ? onOpen : null,
                         style: actionStyle(
                           statusInk(

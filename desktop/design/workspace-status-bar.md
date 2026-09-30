@@ -1,5 +1,8 @@
 # Workspace status bar
 
+Use the [product terminology](../../docs/terminology.md): a tab groups harnesses;
+a harness is one running agent session.
+
 A navigation row above the panes and a 37.5 pt status row below them. Tabs use
 system type; status fields use the selected workspace monospace face.
 Follow the [desktop design system](desktop-design-system.md) and
@@ -47,7 +50,7 @@ shortcut replaces the status beside the name without changing the tab width.
 Hover never moves the title. Cmd-W, remapped shortcuts, native menu access,
 and middle-click closing remain available.
 Preserve reorder, rename, keyboard focus, and terminal sessions. Cmd-T opens a
-swarm. Cmd-O opens the shared picker with `#` for projects; Cmd-P opens it directly
+tab. Cmd-O opens the shared picker with `#` for projects; Cmd-P opens it directly
 on harnesses. Cmd-Shift-P opens commands (`>`). The projects list has
 no New Project/Open Folder row. Projects with an open pane in any tab come first;
 each group is alphabetical. Pane focus and navigation history do not change that
@@ -93,7 +96,7 @@ explain each symbol.
 | `\|\|` | Paused | Muted foreground |
 | `⊘` | Offline | Muted foreground |
 
-A swarm shows its most urgent member in the order above, counting a harness and
+A tab shows its most urgent member in the order above, counting a harness and
 its viewers once. For an individual harness, offline/paused/launch state takes
 precedence; a current question takes precedence over working. A new turn masks
 old results. Seeing a completion clears its unread check, but viewing a failed
@@ -175,7 +178,7 @@ A model update must repaint the label without reopening or retargeting the pane.
 The observed subscription model does not select a Local row in the picker.
 
 Zoom and Stop remain keyboard/menu actions. Cmd-Shift-W closes the focused pane
-view, Cmd-W closes the swarm, and Cmd-Enter toggles pane zoom. Closing a view
+view, Cmd-W closes the tab, and Cmd-Enter toggles pane zoom. Closing a view
 keeps its harness running; Stop Harness remains a separate command with its
 existing confirmation. Preserve explicit user keymap overrides.
 
@@ -206,7 +209,30 @@ follow a dependent viewer's owner.
 
 ## Notifications
 
-A small bell sits in the top row between the search icon and the Harness Store button. Reserve four bar cells on both native macOS and Flutter; counts
+On macOS, the Harness menu bar uses the team's portrait symbol,
+stored as vector paths and rendered as a monochrome template. A small circular
+count badge sits at the bottom-right corner when notifications are unread.
+At zero, only the portrait icon is shown, with no number or badge circle. The badge
+sits slightly outside the mark so both remain legible. The combined template
+adapts to the menu bar's light, dark, and selected appearances. It keeps a fixed size, showing `99+`
+above 99 with the exact count in its tooltip and accessibility
+value. Its native menu lists only harnesses with unread
+notifications, grouped by project, adding machine names when more than one
+machine is represented. Read sessions disappear; an empty inbox says “No unread
+notifications.” Blue dots mark unread rows. Long titles truncate with
+their full text and context in tooltips; unavailable rows are disabled. Rows
+stay in place while the menu is open. New Harness, Clear All Notifications,
+Open Harness, Settings, and Quit follow the conversations. The window's titlebar
+has search and Store without a duplicate bell.
+
+Clear All acknowledges only the notifications in the displayed snapshot. Newer
+results and replacement questions stay unread. Opening a conversation restores
+its existing pane before bringing the window forward. Reading a question clears
+its notification, while the question itself remains pending until answered.
+The menu uses AppKit's standard keyboard navigation and accessibility.
+
+On Linux and the web, a small bell sits in the top row between the search icon
+and the Harness Store button. Reserve four bar cells in Flutter; counts
 never move the other controls. Put the count at the bell's upper-right corner,
 hide it at zero, show `99+` above 99, and keep the exact count in accessibility text.
 The bell has no background or button well, including on hover and keyboard
@@ -417,7 +443,9 @@ References: [Zsh prompt parameters](https://zsh.sourceforge.io/Doc/Release/Param
 [Powerlevel10k](https://github.com/romkatv/powerlevel10k).
 
 Pane headers keep task identity, model selection and an always-visible close action. The top bar
-contains tabs, New Tab, a plain search icon, the bell, and the Harness Store button.
+contains tabs, New Tab, a plain search icon, and the Harness Store button. Linux
+and browser bars also retain the notification bell. Leave an 8-point control gap
+before Store; macOS notifications live in the system menu bar.
 Search opens the existing unified picker; Store opens the existing Store tab.
 The Store restores its earlier rounded pill, colorful polymath mark, and quiet
 tinted fill. Its label is `Harness Store`, without brackets. Keep the full name
