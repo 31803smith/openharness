@@ -146,6 +146,14 @@ void main() {
     final tabs = app.swarms.length;
     final empty = app.activeSwarmId;
     expect(app.activeSwarm.panes, isEmpty);
+    // The close mark shows under the mouse, as on desktop.
+    final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
+    addTearDown(mouse.removePointer);
+    await mouse.addPointer(location: Offset.zero);
+    await mouse.moveTo(
+      tester.getCenter(find.byKey(ValueKey('tab-close:$empty'))),
+    );
+    await tester.pump(const Duration(milliseconds: 200));
     await tester.tap(find.byKey(ValueKey('tab-close:$empty')));
     // Past the tab's double-tap-to-rename window, which holds the tap.
     await tester.pump(const Duration(milliseconds: 400));
@@ -173,14 +181,6 @@ void main() {
     expect(right, findsOneWidget);
     bool enabled(Finder arrow) =>
         tester.widget<WorkspaceBarControl>(arrow).onPressed != null;
-    // The newest tab is selected and revealed: the strip rests at its end.
-    expect(enabled(left), isTrue);
-    expect(enabled(right), isFalse);
-    await tester.tap(left);
-    await tester.pump(const Duration(milliseconds: 400));
-    expect(enabled(right), isTrue);
-
-    // A plain vertical wheel over the strip moves it sideways.
     final scrollable = tester.state<ScrollableState>(
       find
           .descendant(
@@ -189,15 +189,26 @@ void main() {
           )
           .first,
     );
-    final before = scrollable.position.pixels;
+
+    // A plain vertical wheel over the strip moves it sideways — here all the
+    // way back to the first tab, where the left arrow has nowhere to go.
     await tester.sendEventToBinding(
       PointerScrollEvent(
         position: tester.getCenter(left) + const Offset(80, 0),
-        scrollDelta: const Offset(0, -120),
+        scrollDelta: const Offset(0, -100000),
       ),
     );
     await tester.pump();
-    expect(scrollable.position.pixels, lessThan(before));
+    expect(scrollable.position.pixels, scrollable.position.minScrollExtent);
+    expect(enabled(left), isFalse);
+    expect(enabled(right), isTrue);
+
+    await tester.tap(right);
+    // One frame starts the page animation, the next lands it.
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(scrollable.position.pixels, greaterThan(0));
+    expect(enabled(left), isTrue);
     expect(tester.takeException(), isNull);
     await tester.pumpWidget(const SizedBox.shrink());
     app.dispose();

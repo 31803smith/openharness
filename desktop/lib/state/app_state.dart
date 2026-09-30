@@ -1331,7 +1331,7 @@ class AppNotifier extends ChangeNotifier {
   String? _pendingStoreHarness;
 
   /// The companion's illustrated viewer and conversation, one per window.
-  /// Opening it never launches an engine; only sending a chat does that.
+  /// Its panes are bound only after the account's experimental gate is loaded.
   void openCompanions() {
     final existing = swarms.where((s) => s.isCompanions).firstOrNull;
     if (existing != null) {
@@ -1360,6 +1360,66 @@ class AppNotifier extends ChangeNotifier {
     );
     swarms.add(tab);
     selectSwarm(tab.id);
+  }
+
+  /// The built-in companion viewer uses the same canvas, focus, geometry and
+  /// terminal sessions as every DSH. These panes are derived from the enabled
+  /// account and current individual, never restored before that gate is known.
+  void syncCompanionViewer({required bool enabled, String? machineId}) {
+    var changed = false;
+    for (final tab in swarms.where((s) => s.isCompanions)) {
+      if (!enabled) {
+        for (final pane in tab.panes.toList()) {
+          tab.remove(pane);
+          if (!allPanes.contains(pane)) {
+            unawaited(_detachSession(pane, sendClose: true));
+          }
+          changed = true;
+        }
+      } else if (!tab.panes.any((p) => p.isCompanion)) {
+        final viewer = TerminalPane(
+          id: _nextPaneId++,
+          machineId: machineId ?? '',
+          kind: PaneKind.companion,
+        );
+        tab.panes.insert(0, viewer);
+        tab.focusedPaneId ??= viewer.id;
+        changed = true;
+      }
+    }
+    if (changed) notifyListeners();
+  }
+
+  Future<void> showCompanionTerminal(String? machineId, String? agentId) async {
+    final tab = swarms.where((s) => s.isCompanions).firstOrNull;
+    final viewer = tab?.panes.where((p) => p.isCompanion).firstOrNull;
+    if (tab == null || viewer == null) return;
+    var changed =
+        viewer.ownerAgentId != agentId || viewer.machineId != (machineId ?? '');
+    viewer.ownerAgentId = agentId;
+    viewer.machineId = machineId ?? '';
+    for (final pane in tab.panes.where((p) => !p.isCompanion).toList()) {
+      if (pane.machineId == machineId && pane.agentId == agentId) continue;
+      tab.remove(pane);
+      if (!allPanes.contains(pane)) {
+        unawaited(_detachSession(pane, sendClose: true));
+      }
+      changed = true;
+    }
+    if (changed) notifyListeners();
+    if (machineId == null || agentId == null) return;
+    // Keep the product's name and its standard viewer-left/terminal-right split.
+    if (tab.paneSizes['2:manual'] == null) {
+      tab.savePaneSizes('2:manual', PaneArrangement.viewerBesideTerminal);
+    }
+    await assignAgentToPane(
+      null,
+      machineId,
+      agentId,
+      swarmId: tab.id,
+      focus: false,
+      intent: tab == activeSwarm ? AttachIntent.person : AttachIntent.automatic,
+    );
   }
 
   /// The harness page [openStore] was asked for, handed over once. The Store
@@ -2254,6 +2314,18 @@ class AppNotifier extends ChangeNotifier {
   bool isPaneFocused(int paneId) =>
       !railFocused && !tabStripFocused && focusedPaneId == paneId;
 
+  /// A harness's terminal and viewers stay clear together. Keyboard focus and
+  /// its ring still belong to one pane, including while a menu owns input.
+  bool isPaneEmphasized(TerminalPane pane) {
+    final selected = focusedPane;
+    if (selected == null) return false;
+    if (selected.id == pane.id) return true;
+    final agentId = selected.agentId ?? selected.ownerAgentId;
+    return agentId != null &&
+        selected.machineId == pane.machineId &&
+        agentId == (pane.agentId ?? pane.ownerAgentId);
+  }
+
   /// True while the KEYBOARD is on the tab strip rather than in any pane.
   ///
   /// Closing the ACTIVE tab with work in it — ⌘W, the strip's own close, or
@@ -2663,7 +2735,10 @@ class AppNotifier extends ChangeNotifier {
     final machineId = localMachineState?.machine.machineId;
     final connection = machineId == null ? null : _pool?[machineId];
     if (connection == null) return;
-    final pending = connection.sendTerminalFrame('dial_settings', {'id': id, ...patch});
+    final pending = connection.sendTerminalFrame('dial_settings', {
+      'id': id,
+      ...patch,
+    });
     unawaited(pending.catchError((_) => false));
   }
 
@@ -6234,13 +6309,18 @@ class AppNotifier extends ChangeNotifier {
   ModelsMenuController get modelsMenu =>
       _modelsMenu ??= ModelsMenuController(remote: readRemoteUsage);
 
+  /// This machine's local models. [setup] makes it Grid's first use there too: `grid` installed,
+  /// signed in with this Harness account (its token, no second browser) and the account's grid
+  /// made, before the list answers — minutes, on a machine with no `grid` yet. Grid is an add-on:
+  /// nothing but this, and the acts that need it, ever sets it up.
   Future<Map<String, dynamic>> localModels(
     String machineId, {
     bool refresh = false,
+    bool setup = false,
   }) => _conn(machineId).request(
     'grid_fleet_models_list',
-    payload: {'refresh': refresh},
-    timeout: const Duration(seconds: 90),
+    payload: {'refresh': refresh, if (setup) 'setup': true},
+    timeout: setup ? const Duration(minutes: 5) : const Duration(seconds: 90),
   );
 
   Future<Map<String, dynamic>> apiConnections(
@@ -7486,7 +7566,7 @@ class AppNotifier extends ChangeNotifier {
 
   Iterable<({String machineId, String agentId})> _visibleOnTab() {
     if (lifecycle() != AppLifecycleState.resumed) return const [];
-    if (activeSwarm.isUtility || activeSwarm.isOrchestrator) return const [];
+    if (activeSwarm.isStore || activeSwarm.isOrchestrator) return const [];
     return [
       for (final pane in activeSwarm.panes)
         if (zoomedPaneId == null || pane.id == zoomedPaneId)
@@ -7533,8 +7613,11 @@ class AppNotifier extends ChangeNotifier {
     systemNotifications.withdraw(machineId, agentId);
     agentAlerts.dismiss(
       AgentAlert(
-        machineId: machineId, agentId: agentId,
-        title: '', kind: AlertKind.done, at: DateTime.now(),
+        machineId: machineId,
+        agentId: agentId,
+        title: '',
+        kind: AlertKind.done,
+        at: DateTime.now(),
       ),
     );
     _announceAgentSeen(machineId, agentId, readToken);
@@ -7542,7 +7625,11 @@ class AppNotifier extends ChangeNotifier {
 
   /// Reading is not answering. A device receipt clears only the exact message
   /// it displayed; the pending question and all pane/focus state remain intact.
-  void readAgentNotification(String machineId, String agentId, {String? readToken}) {
+  void readAgentNotification(
+    String machineId,
+    String agentId, {
+    String? readToken,
+  }) {
     if (readToken != null &&
         agentUnread.readTokenFor(machineId, agentId) != readToken) {
       return;
@@ -7554,7 +7641,9 @@ class AppNotifier extends ChangeNotifier {
         ..remove(key)
         ..[key] = question.requestId;
       while (_readQuestionNotifications.length > AgentUnread.capacity) {
-        _readQuestionNotifications.remove(_readQuestionNotifications.keys.first);
+        _readQuestionNotifications.remove(
+          _readQuestionNotifications.keys.first,
+        );
       }
     }
     _forgetUnread(machineId, agentId);
@@ -7589,7 +7678,8 @@ class AppNotifier extends ChangeNotifier {
       unawaited(
         _conn(machineId)
             .sendTerminalFrame('agent_seen', {
-              'agentId': agentId, 'readToken': ?readToken,
+              'agentId': agentId,
+              'readToken': ?readToken,
             })
             .catchError((_) => false),
       );
@@ -9983,7 +10073,7 @@ class AppNotifier extends ChangeNotifier {
           'Fork created. Its original swarm closed; use New Pane to open it.';
     } else if (target.panes.length >= maxPanes && !keepFocus) {
       notice =
-          'Fork created. Its original swarm is full; use New Swarm to open it.';
+          'Fork created. Its original swarm is full; use New Tab to open it.';
     } else {
       if (target.panes.length >= maxPanes) {
         newSwarm(name: fork.name);
@@ -10753,7 +10843,7 @@ class AppNotifier extends ChangeNotifier {
       target.arranged = split.after;
       target.arrangedKey = key;
     }
-    if (firstAgent && !target.nameIsCustom) {
+    if (firstAgent && !target.nameIsCustom && !target.isCompanions) {
       final agent = machine.agents
           .where((agent) => agent.id == agentId)
           .firstOrNull;
@@ -11385,6 +11475,10 @@ class AppNotifier extends ChangeNotifier {
   Future<void> closePane(int paneId, {bool persist = true}) async {
     final pane = panes.where((p) => p.id == paneId).firstOrNull;
     if (pane == null) return;
+    if (activeSwarm.isCompanions) {
+      await closeSwarm(activeSwarmId, persist: persist);
+      return;
+    }
     if (pane.isWeb) {
       // A viewer closed by hand stays closed for THIS page: the agent's next
       // frame carries the same URL and must not reopen it. A different URL —
@@ -12996,6 +13090,7 @@ class AppNotifier extends ChangeNotifier {
       case 'daemon_act_result':
       case 'daemon_confirm_result':
       case 'daemon_talk_result':
+      case 'daemon_open_result':
       case 'pair_result':
       case 'daemon_plate':
         // Only from the loopback socket bound to this computer's harnessd.
@@ -13040,8 +13135,10 @@ class AppNotifier extends ChangeNotifier {
         final readId = payload['agentId'];
         final readMachine = payload['machineId'];
         final readToken = payload['readToken'];
-        if (readId is String && readMachine is String &&
-            readToken is String && readToken.isNotEmpty) {
+        if (readId is String &&
+            readMachine is String &&
+            readToken is String &&
+            readToken.isNotEmpty) {
           readAgentNotification(readMachine, readId, readToken: readToken);
         }
         break;
@@ -13158,7 +13255,9 @@ class AppNotifier extends ChangeNotifier {
         final goneId = _eventAgentId(machine, event, payload);
         if (goneId != null) {
           agentUnread.forget(machineId, goneId);
-          _readQuestionNotifications.remove(AgentUnread.keyFor(machineId, goneId));
+          _readQuestionNotifications.remove(
+            AgentUnread.keyFor(machineId, goneId),
+          );
         }
         final agentId = _eventAgentId(machine, event, payload);
         if (agentId != null) {
@@ -13205,7 +13304,9 @@ class AppNotifier extends ChangeNotifier {
             // reconnect and when attaching to a turn that was already mid-dialog, and a window
             // that beeped at those would sound an alarm every time the network hiccuped.
             if (!repeat && !questionNotificationRead(machineId, agentId)) {
-              _readQuestionNotifications.remove(AgentUnread.keyFor(machineId, agentId));
+              _readQuestionNotifications.remove(
+                AgentUnread.keyFor(machineId, agentId),
+              );
               _raiseAlert(machine, agentId, AlertKind.needsYou);
             }
           }
@@ -13221,7 +13322,9 @@ class AppNotifier extends ChangeNotifier {
           final open = machine.blockedAgents[agentId];
           if (open != null && open.requestId == requestId) {
             machine.blockedAgents.remove(agentId);
-            _readQuestionNotifications.remove(AgentUnread.keyFor(machineId, agentId));
+            _readQuestionNotifications.remove(
+              AgentUnread.keyFor(machineId, agentId),
+            );
             // An old question close cannot erase a newer completed result.
             if (agentUnread.kindFor(machineId, agentId) == AlertKind.needsYou) {
               _forgetUnread(machineId, agentId);
