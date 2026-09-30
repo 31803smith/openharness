@@ -470,7 +470,7 @@ describe('cli.ts routes everything daemon-related through the switch', () => {
     }
     expect(source).toContain('onDaemonShown: (connId, payload) => { if (daemons.on()) pairBrain?.onShown(connId, payload) }')
     expect(source).toContain('if (daemons.on()) pairBrain?.onPresence(connId, payload, meta)')
-    expect(source).toContain('onBackendConnected = () => { gridAttach.run(); daemons.connected() }')
+    expect(source).toContain('onBackendConnected = () => { daemons.connected() }')
     expect(source).toContain('backend.onZooChanged = () => daemons.zooChanged()')
   })
 })

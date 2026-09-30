@@ -69,7 +69,9 @@ not execute it here.
 
 Model groups retain Subscriptions, APIs, Your local AI models, and Shared with
 you. API model disclosure, matching within groups, compatible subscriptions,
-and local catalogs retain their current behavior. Get downloads/prepares;
+and local catalogs retain their current behavior. Grid is an add-on: until it
+is set up here, local and shared models are one Set up row (Sign in, when
+signed out of Harness), and opening the picker never sets it up. Get downloads/prepares;
 Use starts when necessary and selects for the original harness; Stop explicitly
 stops an owned process. An unavailable row stays inspectable without activation.
 Closing the picker cancels its pending model switch, not startup on the host.
