@@ -44,6 +44,8 @@ fonts = [('ht_mono_16',mono,16,10,22,17),('ht_mono_20',mono,20,12,28,22),
          ('ht_done_28',mono,28,17,38,31),('ht_failed_28',mono,28,17,38,31),
          ('ht_right_20',mono,20,12,28,22),('ht_right_28',mono,28,17,38,31),
          ('ht_open_28',mono,28,17,38,31),
+         ('ht_open_24',mono,24,15,32,26),('ht_right_24',mono,24,15,32,26),
+         ('ht_bell_24',mono,24,15,32,26),
          ('ht_mic_footer',mono,40,40,48,40),
          ('ht_spark',mono,40,40,48,40),
          ('ht_engine',mono,28,24,38,31),
@@ -181,7 +183,8 @@ with dest.open('w') as out:
                 im = Image.new('L', (width, height))
                 im.paste(Image.open(root/'assets/mic.png'), (7, 7))
             values=[min(3,(v+42)//85) for v in im.get_flattened_data()]
-            if name in ('ht_mono_20','ht_open_20','ht_right_20','ht_bell_20'):
+            if name in ('ht_mono_20','ht_open_20','ht_right_20','ht_bell_20',
+                        'ht_mono_24','ht_open_24','ht_right_24','ht_bell_24'):
                 ink=[(i%width,i//width) for i,a in enumerate(values) if a]
                 bounds.append((min(x for x,y in ink),min(y for x,y in ink),
                                max(x for x,y in ink),max(y for x,y in ink)) if ink else (0,0,0,0))

@@ -76,6 +76,12 @@ static struct {
 } s;
 static ht_gesture_t gesture;
 static ht_character_t character;
+static bool companion_celebrating, follow_companion=true;
+static uint32_t celebration_began;
+static char celebration_label[64];
+static ht_character_id_t desktop_companion=HT_CHARACTER_COUNT;
+static struct { char name[25]; } desktop_identity;
+static void select_companion(void) {}
 static ht_character_caption_t home_caption;
 static ht_character_id_t test_character;
 static unsigned notice_reads_sent; static action_t notice_read_queued;
@@ -935,6 +941,19 @@ static void bell_checks(const char *dir) {
         found=true;
     }
     assert(!found && !action_enabled(A_INBOX));
+    // Identity stays available over USB, while its permanent name never takes
+    // the notification footer. Even a brief milestone yields to a new bell.
+    desktop_companion=HT_CHARACTER_ILLUSTRATED_TIM;
+    strcpy(desktop_identity.name,"tim #0001"); scene_take();
+    for(int i=0;i<scene.count;i++) assert(!strstr(scene.runs[i].text,"tim #0001"));
+    companion_celebrating=true; strcpy(celebration_label,"Tim grew!");
+    cable_notif_t during_growth={.agent_id="b",.name="Other pane",.summary="Ready."};
+    ui_notif_replace(&during_growth,1); scene_take();
+    assert(status_is(HT_BELL " 1") && action_enabled(A_INBOX));
+    for(int i=0;i<scene.count;i++) assert(!strstr(scene.runs[i].text,"grew!"));
+    companion_celebrating=false; desktop_companion=HT_CHARACTER_COUNT;
+    memset(&desktop_identity,0,sizeof desktop_identity);
+    reset();
     // A restored host failure is distinct from a completed task. Questions
     // keep priority; an ordinary fresh result must clear any old failure mark.
     cable_notif_t failed={.agent_id="b",.name="Website",.failed=true,
@@ -983,9 +1002,9 @@ static void bell_checks(const char *dir) {
     portrait(dir,"bell-working-activity");
     tap(10000,233,41);assert(s.view==AGENTS && !starts && !desktop_opens);
     reset(); active()->busy=true;
-    memset(active()->name,'x',32);active()->name[32]=0;scene_take();
+    memset(active()->name,'x',HT_ARC_COLS);active()->name[HT_ARC_COLS]=0;scene_take();
     fake_ms=2800;surface_tick(fake_ms);scene_take();
-    int end_x=233+(205*arc_trig[31][0]>>14),end_y=233-(205*arc_trig[31][1]>>14);
+    int end_x=233+(205*arc_trig[HT_ARC_COLS-1][0]>>14),end_y=233-(205*arc_trig[HT_ARC_COLS-1][1]>>14);
     habitat_touch(true,end_x,end_y,2800);fake_ms=3100;surface_tick(fake_ms);scene_take();
     assert(title_is(active()->name)); // Rotation cannot shrink a held caption target.
     habitat_touch(false,end_x,end_y,3150);assert(s.view==AGENTS && !starts && !desktop_opens);
@@ -1280,7 +1299,7 @@ int main(int argc, char **argv) {
     workspace_setup(); s.notice_count=1; scene_take(); portrait(dir,"clear-notification");
     // Long top labels curve below y=66. Their visible end letters must
     // remain caption targets, even where the old rectangle reached the portrait.
-    for(int length=11;length<=32;length++) for(int side=-1;side<=1;side+=2) for(int dy=-6;dy<=6;dy+=6) {
+    for(int length=11;length<=HT_ARC_COLS;length++) for(int side=-1;side<=1;side+=2) for(int dy=-6;dy<=6;dy+=6) {
         workspace_setup();s.notice_count=1;active()->busy=true;
         memset(active()->name,'x',(size_t)length);active()->name[length]=0;scene_take();
         int x=233+side*(205*arc_trig[length-1][0]>>14);
@@ -1966,7 +1985,7 @@ with tempfile.TemporaryDirectory(prefix='harness-touch-ui-') as d:
     subprocess.run(['cc','-std=c11','-Wall','-Wextra','-Werror','-O1','-g',
                     '-fsanitize='+os.environ.get('SANITIZERS','undefined,bounds'),
                     *extra_includes, '-I',str(native),str(out/'touch_ui.c'), *extra_sources, str(native/'gestures.c'),
-                    str(native/'form.c'),str(native/'visit.c'),str(native/'draft.c'), str(native/'scroll.c'),str(native/'selection.c'),str(native/'carry.c'),str(native/'tim.c'),str(native/'character_motion.c'),str(native/'character_layout.c'),str(native/'character.c'),str(native/'tux.c'),str(native/'focus.c'),str(native/'terminal.c'),
+                    str(native/'form.c'),str(native/'visit.c'),str(native/'draft.c'), str(native/'scroll.c'),str(native/'selection.c'),str(native/'carry.c'),str(native/'tim.c'),str(native/'character_motion.c'),str(native/'character_layout.c'),str(native/'character.c'),str(native/'illustrated.c'),str(native/'tux.c'),str(native/'focus.c'),str(native/'terminal.c'),
                     str(native/'fonts.c'),str(native/'octopus.c'),str(native/'ascii_clip.c'),str(native/'octopus_font.c'),str(native/'workspace.c'),str(native/'command_face.c'),'-o',str(out/'touch_ui')],check=True)
     args=[str(out/'touch_ui')]
     if os.environ.get('HABITAT_PREVIEW_DIR'):
