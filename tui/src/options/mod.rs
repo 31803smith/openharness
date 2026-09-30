@@ -96,12 +96,11 @@ pub fn defaults() -> &'static BTreeMap<String, String> {
         // where there is room. Git context stays here; the status bar keeps the location cue.
         m.insert("pane-border-format".into(), " #{pane_heading}#{?pane_where,#[align=right] #[dim]#{pane_where} #[nodim],}".into());
         // Window navigation on the left; connection, quota, fleet, machine and clock on the
-        // right. The machine and repo are the focused pane's (a pane with no machine: this
-        // computer's name in Harness), so they change as the focus does.
+        // right. The quoted name is this computer's name in Harness, independent of focus.
         // One cell at each outer edge aligns status text with the pane surfaces.
         // Two spaces separate the window list from the information on the right.
         m.insert("status-left".into(), " #{?client_prefix,#[bold]›#[nobold] ,}".into());
-        m.insert("status-right".into(), "  #{?daemon_down,#[bold]daemon down#[nobold]  ,}#{?usage_remaining,#{usage_remaining_mark}  ,}#{?fleet,#{s/ /  /:fleet}  ,}#{?pane_watching,[watching]  ,}#{?pane_machine,#{=/14/…:pane_machine},#{=/14/…:local_machine}}#{?pane_project,:#{=/18/…:pane_project},#{?pane_current_path,:#{=/18/…:#{b:pane_current_path}},}}  %H:%M ".into());
+        m.insert("status-right".into(), "  #{?daemon_down,#[bold]daemon down#[nobold]  ,}#{?usage_remaining,#{usage_remaining_mark}  ,}#{?fleet,#{s/ /  /:fleet}  ,}#{?pane_watching,[watching]  ,}\"#{=/21/…:local_machine}\"  %H:%M ".into());
         // Each window's most urgent harness at a glance (the symbol its pane titles show) and its
         // name in a few whole words (#{window_short_name}): a harness is named for its task.
         // Keep tmux's familiar current/previous markers beside the name, then any other

@@ -225,16 +225,14 @@ try:
     assert plain_header.startswith(title + ' '), (title, plain_header)
     hn('set', '-gu', 'status-right')
     default_status = hn('show', '-gv', 'status-right', strip=False)
-    # The focused pane's machine and repo, beside the clock (no branch: the pane's title has it).
-    assert all(part not in default_status for part in ('pane_branch', 'pane_where', 'git:'))
-    assert 'pane_machine' in default_status and 'pane_project' in default_status
+    assert all(part not in default_status for part in ('pane_branch', 'pane_where', 'pane_machine', 'pane_current_path', 'pane_project', 'git:'))
     assert value('#{host}') == socket.gethostname(), 'standard host format keeps its hostname meaning'
-    assert value('#{local_machine}') == 'studio', 'a pane with no machine shows the local machine name configured in the app'
-    where = '#{?pane_machine,#{=/14/…:pane_machine},#{=/14/…:local_machine}}#{?pane_project,:#{=/18/…:pane_project},#{?pane_current_path,:#{=/18/…:#{b:pane_current_path}},}}'
-    assert where in default_status
+    assert value('#{local_machine}') == 'studio', 'status uses the local machine name configured in the app'
+    machine_label = '"studio"'
+    assert machine_label in value(default_status), (machine_label, value(default_status))
     def local_machine_status():
         line = tmux('capture-pane', '-p', '-t', 'test').splitlines()[-1]
-        return re.search(re.escape(value(where)) + r'  \d{2}:\d{2}$', line.rstrip()) and '[' + session + ']' not in line
+        return re.search(re.escape(machine_label) + r'  \d{2}:\d{2}$', line.rstrip()) and '[' + session + ']' not in line
     def aligned_status_edges():
         line = tmux('capture-pane', '-p', '-t', 'test').splitlines()[-1]
         return re.match(r' \d+:', line) and len(line.rstrip()) == 149
@@ -246,13 +244,13 @@ try:
     for target in (third, second, first):
         hn('select-pane', '-t', target)
         assert value(default_left).strip() == ''
-        wait(local_machine_status, "the focused pane's machine and repo beside the clock, local and remote; no machine label on the left")
+        wait(local_machine_status, 'quoted local machine stays beside the clock across local and remote panes; no machine label on the left')
         if target in (first, third):
             snapshot('status-local' if target == first else 'status-remote')
     for window in hn('list-windows', '-F', '#{window_id}').splitlines():
         hn('select-window', '-t', window)
         assert value(default_left).strip() == ''
-        wait(local_machine_status, "the focused pane's machine and repo beside the clock in every window")
+        wait(local_machine_status, 'quoted local machine stays beside the clock in every window')
     hn('select-window', '-t', current)
     hn('select-pane', '-t', first)
     keys('C-b')
@@ -260,7 +258,7 @@ try:
     keys('Escape')
     hn('rename-session', 'work-review')
     assert value(default_left).strip() == '', 'renaming a session does not add a left label'
-    wait(local_machine_status, 'renaming a session does not change the machine and repo')
+    wait(local_machine_status, 'renaming a session does not change the quoted machine name')
     hn('set', '-g', 'status-left', '[custom] ')
     assert value(hn('show', '-gv', 'status-left')).strip() == '[custom]'
     hn('set', '-gu', 'status-left')
