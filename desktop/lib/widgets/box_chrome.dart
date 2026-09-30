@@ -18,7 +18,7 @@ BorderSide terminalPaneBorder({bool focused = false}) => BorderSide(
 const double kWorkspaceInset = 9.5;
 
 /// How solid the workspace's panes paint their own fill: below 1 while the
-/// background shows through them (Behind harnesses). Only fills turn
+/// background shows through them (any Background but Blank). Only fills turn
 /// translucent — text, colored cells, banners and the composer stay solid.
 class PaneOpacity extends InheritedWidget {
   const PaneOpacity({super.key, required this.opacity, required super.child});

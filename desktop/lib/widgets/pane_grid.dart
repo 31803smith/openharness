@@ -1258,7 +1258,7 @@ class _PaneCell extends StatelessWidget {
           // What changes to make the gaps visible is the field BEHIND the grid
           // (see _GridField), which is the part the gaps actually show.
           //
-          // Behind harnesses: a terminal paints its own translucent fills, so
+          // Over a Background: a terminal paints its own translucent fills, so
           // the frame adds none (two would stack); a status pane has only this.
           color: PaneOpacity.of(context) < 1 && pane.session != null
               ? null
