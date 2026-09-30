@@ -232,7 +232,7 @@ const List<AppShortcut> kAppShortcuts = [
       meta: true,
       shift: true,
     ),
-    label: 'Move this pane to another swarm',
+    label: 'Move this pane to another tab',
     group: ShortcutGroup.panes,
   ),
 
@@ -544,7 +544,7 @@ const kSwarmShortcuts = [
       meta: true,
       shift: true,
     ),
-    label: 'Next Swarm',
+    label: 'Next Tab',
     group: ShortcutGroup.navigate,
   ),
   AppShortcut(
@@ -554,13 +554,13 @@ const kSwarmShortcuts = [
       meta: true,
       shift: true,
     ),
-    label: 'Previous Swarm',
+    label: 'Previous Tab',
     group: ShortcutGroup.navigate,
   ),
   AppShortcut(
     action: ShortcutAction.nextSwarm,
     activator: SingleActivator(LogicalKeyboardKey.tab, control: true),
-    label: 'Next Swarm',
+    label: 'Next Tab',
     group: ShortcutGroup.navigate,
   ),
   AppShortcut(
@@ -570,7 +570,7 @@ const kSwarmShortcuts = [
       control: true,
       shift: true,
     ),
-    label: 'Previous Swarm',
+    label: 'Previous Tab',
     group: ShortcutGroup.navigate,
   ),
   AppShortcut(
@@ -671,7 +671,7 @@ List<ShortcutRow> shortcutRows() {
   // The digits are not in [kAppShortcuts] — nine near-identical rows would bury
   // everything around them — so they join here, at the end of their group.
   final digits = ShortcutRow(
-    label: 'Select swarms 1–9',
+    label: 'Select tabs 1–9',
     chords: [
       [workspaceKeyLabel, '1 – $kTabDigitCount'],
     ],
