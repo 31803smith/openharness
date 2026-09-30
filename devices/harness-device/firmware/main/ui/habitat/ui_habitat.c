@@ -57,6 +57,9 @@ static ht_gallery_t gallery;
 #define TAB_ROWS 4
 #define TAB_ROW_HEIGHT 64
 #define TAB_TOP 112
+// Focus's pane list: six rows on a 48 px pitch.
+#define PANE_PITCH 48
+#define PANE_ROWS 6
 #define LIST_HIT_X 59
 #define LIST_HIT_W 348
 #define LIST_TEXT_X 71
@@ -196,7 +199,7 @@ static EXT_RAM_BSS_ATTR struct {
     int pet_pose;
     uint32_t pet_until, nap_until, last_celebration;
     cable_swarm_t tabs[SWARMS_MAX];
-    int tab_count, tab_drag;
+    int tab_count, tab_drag, pane_pos;
     char selected_tab[ID_MAX];
     cable_machine_t machines[CABLE_MAX_MACHINES];
     int machine_count;
@@ -548,6 +551,7 @@ static void view(view_t v)
     s.view = v;
     s.offset = 0;
     s.pressed = -1;
+    s.pane_pos = 0;
     change();
 }
 static void voice_close(void)
@@ -1019,8 +1023,137 @@ static void render_home(ht_scene_t *f)
     // row (y 335) and the mic, so the band belongs to the button rather than to a tap-anywhere.
     s.hits[s.hit_count++] = (hit_t){{33, 66, 400, focus_face ? FOCUS_MIC_TOP - 66 : 316}, A_PET, 0, true};
 }
+/*
+ * FOCUS'S LISTS SPEAK THE AGENT SCREEN'S TYPE (owner, 2026-09-30): Geist and Montserrat from the
+ * LVGL build, not the terminal skin's mono. The title is a grey Geist Regular 20 straight across the
+ * top, a list row Geist Medium, and the one button the tab pill's own shape and face.
+ */
+static void focus_title(ht_scene_t *f, const char *title)
+{
+    const ht_font_t *font = &ht_lv_geist_reg_20.base;
+    int w = ht_measure(font, title);
+    ht_text(f, (HT_WIDTH - w) / 2, 24, w, font, DIM, BG, title);
+}
+static void focus_centred(ht_scene_t *f, int y, const ht_font_t *font, uint16_t ink, uint16_t bg,
+                          const char *text)
+{
+    // One line of at most 348 px: whole letters, then "..." when the name runs past it.
+    char line[HT_TEXT_BYTES];
+    snprintf(line, sizeof line, "%s", text);
+    int w = ht_measure(font, line);
+    if (w > 348) {
+        size_t n = strlen(line);
+        for (;;) {
+            while (n && ((uint8_t)line[n - 1] & 0xc0) == 0x80) n--;   // back over a letter's tail
+            if (n) n--;
+            while (n && line[n - 1] == ' ') n--;
+            if (n + 4 > sizeof line) continue;
+            memcpy(line + n, "...", 4);
+            w = ht_measure(font, line);
+            if (w <= 348 || !n) break;
+        }
+    }
+    if (w <= 0) w = 1;
+    ht_text(f, (HT_WIDTH - w) / 2, y, w, font, ink, bg, line);
+}
+/*
+ * One line of a moving name, cut to whole letters between x `left` and `right` so it stays on the
+ * round glass. A letter's share is measured with its neighbours, so kerning is kept.
+ */
+static void focus_clipped(ht_scene_t *f, int x, int y, const ht_font_t *font, uint16_t ink,
+                          const char *line, size_t len, int left, int right)
+{
+    char text[HT_TEXT_BYTES];
+    if (len >= sizeof text) len = sizeof text - 1;
+    memcpy(text, line, len);
+    text[len] = 0;
+    char probe[HT_TEXT_BYTES];
+    const char *p = text;
+    while (*p && x < left) {
+        const char *q = p;
+        ht_utf8_next(&q);
+        snprintf(probe, sizeof probe, "%.*s", (int)(q - text), text);
+        int to = ht_measure(font, probe);
+        snprintf(probe, sizeof probe, "%.*s", (int)(p - text), text);
+        x += to - ht_measure(font, probe);
+        p = q;
+    }
+    const char *end = p;
+    for (const char *q = p; *q;) {
+        ht_utf8_next(&q);
+        snprintf(probe, sizeof probe, "%.*s", (int)(q - p), p);
+        if (x + ht_measure(font, probe) > right) break;
+        end = q;
+    }
+    snprintf(probe, sizeof probe, "%.*s", (int)(end - p), p);
+    int w = ht_measure(font, probe);
+    if (w > 0) ht_text(f, x, y, w, font, ink, BG, probe);
+}
+/*
+ * FOCUS'S PANE LIST (owner, 2026-09-30): every pane at once, still, in full ink, centred as one block
+ * about y 233 on a 48 px pitch — six fit between the title and the ←. Only the pane on the face is
+ * green; a pressed row lights green on a dark-green band. Past six the list scrolls a row at a time
+ * under a vertical drag, and nothing moves otherwise. Each row is its own tap.
+ */
+static void render_focus_panes(ht_scene_t *f)
+{
+    focus_title(f, "panes");
+    const ht_font_t *font = &ht_lv_geist_med_32.base;   // the tab names' size
+    uint16_t green = color(HT_THEME_VOICE), band = color(0x0d3a18);
+    if (!s.count) {
+        focus_centred(f, 180, font, FG, BG, s.loading ? "Loading..." : "No panes in this tab.");
+        // "Choose a tab", in the tab pill's shape and face: the door to the tab list looks like one.
+        const ht_font_t *pf = &ht_lv_montserrat_24.base;
+        int n = s.hit_count++, w = ht_measure(pf, "Choose a tab"), box = w + 2 * 12 + 2;
+        int x = (HT_WIDTH - box) / 2, y = 250;
+        s.hits[n] = (hit_t){{x - 20, y - 12, box + 40, 41 + 24}, A_TABS, 0, s.connected};
+        bool pressed = n == s.pressed;
+        uint16_t fill = pressed ? band : color(0x141519);
+        ht_box(f, x, y, box, 41, 20, fill, pressed ? band : color(0x3a3f4b));
+        ht_text(f, x + 13, y + 7, w, pf, !s.connected ? DIM : pressed ? green : FG, fill, "Choose a tab");
+    } else {
+        int last = s.count > PANE_ROWS ? s.count - PANE_ROWS : 0;
+        if (s.offset > last) s.offset = last;
+        if (s.offset < 0) s.offset = 0;
+        int rows = s.count - s.offset < PANE_ROWS ? s.count - s.offset : PANE_ROWS;
+        for (int row = 0; row < rows; row++) {
+            int i = s.offset + row, y = 233 + ((2 * row - (rows - 1)) * PANE_PITCH) / 2;
+            agent_t *a = &s.agents[i];
+            int hit = s.hit_count++;
+            s.hits[hit] = (hit_t){{59, y - PANE_PITCH / 2, 348, PANE_PITCH}, A_AGENT, i, s.connected};
+            bool pressed = hit == s.pressed;
+            uint16_t ink = !s.connected ? DIM : i == s.active || pressed ? green : FG;
+            if (pressed) ht_box(f, 59, y - PANE_PITCH / 2 + 2, 348, PANE_PITCH - 4, 6, band, band);
+            // One line, as wide as the circle holds at the top and bottom rows; longer ends in "...".
+            focus_centred(f, y - font->height / 2, font, ink, pressed ? band : BG,
+                          a->name[0] ? a->name : "Untitled");
+        }
+    }
+    ht_text(f, 223, 400, 20, &ht_nav_32, DIM, BG, "\xe2\x86\x90");
+    s.hits[s.hit_count++] = (hit_t){{83, 392, 300, 74}, A_HOME, 0, true};
+}
+// A drag on the Focus pane list: a row per pitch travelled, and only when there are more than fit.
+static void panes_move(int dy)
+{
+    int last = s.count > PANE_ROWS ? s.count - PANE_ROWS : 0;
+    if (!last) { s.pane_pos = 0; return; }
+    s.pane_pos += dy;
+    int step = s.pane_pos / PANE_PITCH;
+    if (!step) return;
+    s.pane_pos %= PANE_PITCH;
+    int next = s.offset + step;
+    if (next < 0) next = 0;
+    if (next > last) next = last;
+    if (next != s.offset) { s.offset = next; change(); }
+    else s.pane_pos = 0;   // no overscroll to undo on reversal
+}
+static void panes_settle(void)
+{
+    s.pane_pos = 0;
+}
 static void render_agents(ht_scene_t *f)
 {
+    if (character.id == HT_CHARACTER_FOCUS) { render_focus_panes(f); return; }
     heading(f, "panes");
     int last = s.count > TAB_ROWS ? s.count - TAB_ROWS : 0;
     if (s.offset > last) s.offset = last;
@@ -1219,8 +1352,53 @@ static void tab_name(ht_scene_t *f, const char *name, int center_x, uint16_t ink
         r->w = cells * UI_FONT->width;
     }
 }
+/*
+ * FOCUS'S TABS: the same carousel, in Geist Medium 32 — the name on at most two lines of 204 px, as
+ * the mono version wrapped at twelve cells, ending in "..." past that; neighbours peek in at the
+ * edges, cut to whole letters inside x 42..424. The tab you are in is green.
+ */
+static void render_focus_tabs(ht_scene_t *f)
+{
+    focus_title(f, "tabs");
+    const ht_font_t *font = &ht_lv_geist_med_32.base;
+    enum { SPAN = 204 };
+    int current = ht_tab_carousel_index(&tab_carousel);
+    if (current < 0) focus_centred(f, 214, &ht_lv_geist_med_28.base, DIM, BG, "No tabs yet.");
+    else {
+        for (int i = current - 1; i <= current + 1; i++) {
+            if (i < 0 || i >= s.tab_count) continue;
+            int dx = i * HT_TAB_PITCH - tab_carousel.position;
+            uint16_t ink = !s.connected ? DIM : !strcmp(s.tabs[i].id, s.selected_tab) ? color(HT_THEME_VOICE) : FG;
+            int fade = abs(dx) * 140 / HT_TAB_PITCH;
+            ink = ht_character_caption_ink(ink, BG, fade < 210 ? 255 - fade : 45);
+            ht_lv_label_t l;
+            ht_lv_label(&l, font, s.tabs[i].name[0] ? s.tabs[i].name : "Untitled", SPAN, 2, true);
+            int cdx = dx < -HT_TAB_PITCH ? -HT_TAB_PITCH : dx > HT_TAB_PITCH ? HT_TAB_PITCH : dx;
+            // Centre the chosen name; a neighbour aligns toward the edge of its own page, as before.
+            int x = 233 + dx - l.w / 2 - cdx * (SPAN - l.w) / (2 * HT_TAB_PITCH);
+            int top = 233 - l.lines * font->height / 2;
+            for (int n = 0; n < l.lines; n++)
+                focus_clipped(f, x + (l.w - l.line[n].w) / 2, top + n * font->height, font, ink,
+                              l.text + l.line[n].at, l.line[n].len, 42, 424);
+        }
+        for (int n = 0; n < 3; n++) {
+            int i = current + (n == 1 ? -1 : n == 2 ? 1 : 0);
+            if (i < 0 || i >= s.tab_count) continue;
+            int cx = 233 + i * HT_TAB_PITCH - tab_carousel.position;
+            int left = i ? cx - HT_TAB_PITCH / 2 : 33;
+            int right = i + 1 < s.tab_count ? cx + HT_TAB_PITCH / 2 : 433;
+            if (left < 33) left = 33;
+            if (right > 433) right = 433;
+            if (right > left) s.hits[s.hit_count++] = (hit_t){{left, 110, right - left, 252},
+                A_TAB, i, s.connected && !s.loading};
+        }
+    }
+    ht_text(f, 223, 400, 20, &ht_nav_32, DIM, BG, "\xe2\x86\x90");
+    s.hits[s.hit_count++] = (hit_t){{83, 392, 300, 74}, A_HOME, 0, true};
+}
 static void render_tabs(ht_scene_t *f)
 {
+    if (character.id == HT_CHARACTER_FOCUS) { render_focus_tabs(f); return; }
     ht_arc_title(f, DIM, "tabs");
     int current = ht_tab_carousel_index(&tab_carousel);
     if (current < 0) center(f, 214, "No tabs yet.", DIM);
@@ -2484,6 +2662,8 @@ void habitat_touch(bool down, int x, int y, uint32_t now)
             if (pressed_action.kind==A_TABS && ht_workspace_move(&workspace,x,y,gesture.axis,now)) change();
         } else if (s.view == TABS) {
             if (gesture.axis == 2 && ht_tab_carousel_move(&tab_carousel, x, now)) change();
+        } else if (s.view == AGENTS && character.id == HT_CHARACTER_FOCUS && gesture.axis == 1) {
+            panes_move((s.last_y - y) * (scroll_reversed ? -1 : 1));
         } else if ((s.view == AGENTS || s.view == SETTINGS) && gesture.axis == 1) {
             tabs_move((s.last_y - y) * (scroll_reversed ? -1 : 1));
         } else if (s.view == DRAFT && gesture.axis == 1) {
@@ -2504,7 +2684,10 @@ void habitat_touch(bool down, int x, int y, uint32_t now)
     }
     if (!down && s.touch_down) {
         ht_touch_result_t result = ht_gesture_end(&gesture, x, y, now);
-        if (!s.touch_cancelled && (s.view == AGENTS || s.view == SETTINGS) && gesture.axis == 1)
+        if (s.view == AGENTS && character.id == HT_CHARACTER_FOCUS) {
+            if (!s.touch_cancelled && gesture.axis == 1) panes_move((s.last_y - y) * (scroll_reversed ? -1 : 1));
+            panes_settle();
+        } else if (!s.touch_cancelled && (s.view == AGENTS || s.view == SETTINGS) && gesture.axis == 1)
             tabs_move((s.last_y - y) * (scroll_reversed ? -1 : 1));
         bool tab_contact = s.view == TABS && tab_carousel.touching;
         bool tab_tap = tab_contact && ht_tab_carousel_end(&tab_carousel, x, gesture.axis == 2, now);

@@ -41,7 +41,7 @@ code = r'''
 # Keep real protocol capacities: a larger fake buffer can hide target truncation.
 code += defines('CABLE_READ_TOKEN_MAX','ID_MAX','CABLE_NAME_MAX','SWARM_ID_MAX','SWARMS_MAX','CABLE_MAX_AGENTS','MAX_PROJECTS')
 code += defines('NOTICES','QUESTION_MAX','OPTION_MAX','PANE_MEMORY_MAX','UI_FONT','Q_ROWS','DRAFT_ROWS',source=source)
-code += defines('FACE_CX', source=source)
+code += defines('FACE_CX', 'PANE_PITCH', 'PANE_ROWS', source=source)
 if '#define PANE_RESULT_BYTES ' in source:
     code += defines('PANE_RESULT_BYTES', source=source)
 code += face_geometry(source)
@@ -55,7 +55,7 @@ static struct {
     int brightness;
     char voice_target[CABLE_NAME_MAX];
     int pattern_mask, pattern_len, view, voice_return, offset, active, count, pressed, hit_count;
-    int draft_drag, tab_drag, start_x, start_y, last_x, last_y, tab_count, machine_count, model_count, notice_count, pet_pose;
+    int draft_drag, tab_drag, pane_pos, start_x, start_y, last_x, last_y, tab_count, machine_count, model_count, notice_count, pet_pose;
     uint32_t touch_started, coast_until, character_activity, pet_until, last_celebration;
     uint32_t notice_sequence, voice_retry_until;
     uint8_t status_phase;
@@ -201,7 +201,7 @@ for name in ['copy', 'recap_preview', 'notice_unread', 'notice_was_read', 'notic
     code += function(name)
 code += function('render_settings') + function('ui_visit_state')
 code += function('ui_project_known') + function('ui_focus_project') + function('ui_apply_pending_focus')
-code += function('render_agents') + function('tabs_move') + function('tab_name') + function('render_tabs') + function('page_controls') + function('render_notice') + function('render_focus_inbox') + function('render_list')
+code += function('focus_title') + function('focus_centred') + function('focus_clipped') + function('render_focus_panes') + function('panes_move') + function('panes_settle') + function('render_agents') + function('tabs_move') + function('tab_name') + function('render_focus_tabs') + function('render_tabs') + function('page_controls') + function('render_notice') + function('render_focus_inbox') + function('render_list')
 for name in ['notice_remove', 'notice_sync_view', 'notice_selection', 'notice_restore_selection', 'notice_add', 'ui_notify_task_done', 'ui_notif_seen', 'ui_notif_read', 'ui_notif_replace', 'ui_notif_open', 'ui_question_close', 'ui_answer_receipt']:
     code += function(name)
 for name in ['event', 'ui_project_emit', 'ui_project_restore_event', 'ui_project_clear_event', 'ui_project_set_name', 'ui_project_remove', 'ui_project_clear_all', 'ui_project_apply_order']:
@@ -1989,6 +1989,51 @@ int main(int argc, char **argv) {
     habitat_touch(false,233,100,1375); scene_take();
     assert(s.offset==4 && !strcmp(make_action(s.hits[4]).id,"pane-7"));
     portrait(dir,"panes-last");
+    // FOCUS'S PANES: every pane at once, still, in full ink; only the pane on the face is green.
+    reset(); ht_character_select(&character, HT_CHARACTER_FOCUS); s.count=3; s.active=0;
+    {
+        const char *names[3]={"claude - Harness","Energy","Opencode"};
+        for(int i=0;i<3;i++) { snprintf(s.agents[i].id,sizeof s.agents[i].id,"pane-%d",i); COPY(s.agents[i].name,names[i]); }
+        view(AGENTS); scene_take(); portrait(dir,"focus-panes");
+        int rows=0; bool green_one=false;
+        for(int i=0;i<scene.count;i++) for(int k=0;k<3;k++) if(!strcmp(scene.runs[i].text,names[k])) {
+            rows++;
+            assert(scene.runs[i].fg == (k==0 ? color(HT_THEME_VOICE) : FG));   // no fade, one green
+            assert(scene.runs[i].font == &ht_lv_geist_med_32.base);             // the tab names' type and size
+            if (k==1) assert(scene.runs[i].y + ht_lv_geist_med_32.base.height/2 == 233);   // centred as a block
+            if (k==0) green_one=true;
+        }
+        assert(rows==3 && green_one);
+        habitat_touch(true,233,300,1000); habitat_touch(true,233,200,1100); habitat_touch(false,233,200,1200);
+        assert(s.offset==0 && !switches);   // six or fewer: nothing moves
+        tap(2000,233,233); assert(switches==1 && s.view==AGENT);
+    }
+    // Past six the list scrolls a row per pitch, and a long name ends in "...".
+    reset(); ht_character_select(&character, HT_CHARACTER_FOCUS); s.count=9; s.active=0;
+    {
+        for(int i=0;i<9;i++) { snprintf(s.agents[i].id,sizeof s.agents[i].id,"pane-%d",i); snprintf(s.agents[i].name,sizeof s.agents[i].name,"Pane %d",i); }
+        COPY(s.agents[8].name,"Payments refactor and the webhook retry queue");
+        view(AGENTS); scene_take(); assert(s.hit_count==PANE_ROWS+1);
+        habitat_touch(true,233,340,1000); habitat_touch(true,233,240,1100); habitat_touch(true,233,120,1200);
+        habitat_touch(false,233,120,1300); scene_take();
+        assert(s.offset==3 && !switches);   // 220 px: four rows' travel, clamped at the last page
+        bool cut=false;
+        for(int i=0;i<scene.count;i++) { const char *t=scene.runs[i].text; size_t n=strlen(t);
+            if(!strncmp(t,"Payments",8) && n>3 && !strcmp(t+n-3,"...")) cut=true; }
+        assert(cut);
+        portrait(dir,"focus-panes-scrolled");
+    }
+    // And its tabs: the same carousel, the tab you are in green.
+    reset(); ht_character_select(&character, HT_CHARACTER_FOCUS);
+    s.tab_count=3; COPY(s.tabs[0].id,"t0"); COPY(s.tabs[0].name,"Harness repo"); COPY(s.tabs[1].id,"t1"); COPY(s.tabs[1].name,"Doi");
+    COPY(s.tabs[2].id,"t2"); COPY(s.tabs[2].name,"Research"); COPY(s.selected_tab,"t0");
+    dispatch((action_t){.kind=A_TABS}); scene_take(); portrait(dir,"focus-tabs");
+    {
+        bool green=false;
+        for(int i=0;i<scene.count;i++) if(strstr(scene.runs[i].text,"Harness") && scene.runs[i].fg==color(HT_THEME_VOICE) &&
+                                          scene.runs[i].font==&ht_lv_geist_med_32.base) green=true;
+        assert(green);
+    }
     // Every advertised optional control is present, none appear for a legacy host.
     reset(); host_features=0; view(SETTINGS); scene_take();
     assert(settings_count()==5 && !action_enabled(A_FORM) && !action_enabled(A_LATEST));
