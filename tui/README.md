@@ -101,12 +101,13 @@ harness's name, not what the program sets), `history-limit 10000` (agents print 
 harnesses waiting on you and the one in front; `set-titles-string` changes it), and the status line:
 each window's most urgent harness state follows its name and tmux marker; idle dots are hidden
 in tabs and pane headers. Connection, quota,
-fleet counts, `machine:folder` and clock sit on the right. The git branch stays in its pane
-header, aligned to the right with its PR and written `⑂ branch` without redundant punctuation.
+fleet counts, the quoted local machine name and clock sit on the right. The git branch stays in its pane
+header, aligned to the right with its PR and written `⎇ branch` without redundant punctuation.
 Status-bar groups are separated by two spaces, with one space at each outer edge to align
-with the pane surfaces. The left session label always stays visible: the
-desk uses the local machine name, independent of the focused pane's machine on the right.
-Custom session names and the prefix cue remain supported.
+with the pane surfaces. Window tabs start at the left, without a machine/session label.
+The right side shows the machine running hn by its name in the app, such as `"office"`,
+falling back to its hostname, independent of the focused pane or session name.
+Custom status formats and the prefix cue remain supported.
 One key differs on purpose: ⇧⏎
 reaches the pane as `CSI 13;2u` (a new line in an agent's prompt; tmux, without `extended-keys`,
 sends a plain Enter).
@@ -199,7 +200,7 @@ pane counts as done and unread (`✓`) until you go to that pane.
 
 - **The status line** counts the whole fleet: `?2 ✗1 ✓5 ⠹41` means two need you, one failed,
   five are done and unread, and 41 are working. Idle ones aren't counted, and a state with none
-  drops out. The right side keeps the focused pane's `machine:folder` and the clock, with two
+  drops out. The right side keeps the quoted local machine name and the clock, with two
   spaces between groups. Branch and pull request context stay in the pane header.
 - **`C-b s`** lists every harness, the most urgent nearest the prompt: needs you, failed, done and
   unread, working, then the rest. Each row has one line: the question, what it is doing now
@@ -240,7 +241,8 @@ For your own formats: `#{fleet}` (the status line's counts, ready to drop into y
 paused, offline), `#{pane_agent_mark}` (the icon in its colour, as the title row draws it),
 `#{pane_heading}` (the name, state and watcher label fitted to the pane header; `#{pane_title}`
 stays complete), `#{window_agent_icon}` and `#{window_agent_state}` (its most urgent pane's), `#{pane_project}`,
-`#{pane_branch}`, `#{pane_where}` (`project ⑂ branch #123` as far as it fits beside the title),
+`#{pane_branch}`, `#{pane_where}` (`machine:project ⎇ branch #123` as far as it fits beside the title;
+local and remote machine prefixes yield to project, branch and PR context in narrow panes),
 `#{pane_pr}` `#{pane_pr_state}` `#{pane_pr_url}` (the pull request for its branch), `#{pane_tokens}`
 and `#{fleet_tokens}` (what it, and all of them, have used: `1.2M`), `#{pane_lines}` (`+340 −52`),
 `#{pane_asked}` and `#{pane_did}` (what it was last asked, and what its last turn came to),
@@ -258,7 +260,8 @@ has multiple accounts, extra remote accounts say `Claude@studio 20%` to distingu
 and Codex; Grok and other providers are not listed until a quota source is available. Existing
 `usage`, `usage_high` and `usage_high_mark` formats retain their used-quota meaning for custom
 configurations. Other formats:
-`#{pane_machine}`, `#{pane_far}` (another machine's), `#{pane_watched}` and `#{pane_watcher}`
+`#{local_machine}` (this computer's name in the app, falling back to its hostname),
+`#{pane_machine}` (the focused pane's machine), `#{pane_far}` (another machine's), `#{pane_watched}` and `#{pane_watcher}`
 (another window has the pane to type in, and who), and `#{waiting}` (the harnesses waiting on
 you).
 
