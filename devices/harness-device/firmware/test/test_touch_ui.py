@@ -243,6 +243,7 @@ static void dispatch(action_t a) {
     else if (a.kind == A_VOICE_ABORT) { recording = s.voice_open = false; view(HOME); }
     else if (a.kind == A_RETURN || a.kind == A_LATEST) { if(a.kind==A_RETURN)returns++; visit_action(a); }
     else if (a.kind == A_PET) boops++;
+    else if (a.kind == A_TAB_LIST) tabs_open();                   // mirrors ui_habitat.c's dispatch
     else if (a.kind == A_PANE_PREV || a.kind == A_PANE_NEXT) {   // mirrors ui_habitat.c's dispatch
         int i = s.active < 0 ? 0 : (s.active + (a.kind == A_PANE_NEXT ? 1 : s.count - 1)) % s.count;
         action_t pane = {.kind = A_AGENT}; COPY(pane.id, s.agents[i].id); dispatch(pane);
@@ -1744,6 +1745,28 @@ int main(int argc, char **argv) {
     // The Focus SKIN's home face, footer and all — the "focus" portrait above is the legacy
     // focus-face option on the default character, which draws no microphone.
     reset(); ht_character_select(&character, HT_CHARACTER_FOCUS); scene_take(); portrait(dir, "focus-skin");
+    // THE TWO DOORS on Focus: the tab pill opens the tab list, the agent's name the pane list —
+    // pressed and released like the microphone, so a thumb that drifts or lingers still opens them.
+    workspace_setup(); ht_character_select(&character, HT_CHARACTER_FOCUS); scene_take();
+    tap(1000, 233, 80); assert(s.view == TABS);
+    workspace_setup(); ht_character_select(&character, HT_CHARACTER_FOCUS); scene_take();
+    tap(1000, 233, 142); assert(s.view == AGENTS && !starts);
+    workspace_setup(); ht_character_select(&character, HT_CHARACTER_FOCUS); scene_take();
+    habitat_touch(true, 233, 80, 1000); habitat_touch(true, 247, 90, 1400); habitat_touch(false, 247, 90, 1900);
+    assert(s.view == TABS);
+    workspace_setup(); ht_character_select(&character, HT_CHARACTER_FOCUS); scene_take();
+    habitat_touch(true, 233, 142, 1000); habitat_touch(true, 247, 152, 1400); habitat_touch(false, 247, 152, 1900);
+    assert(s.view == AGENTS);
+    // ⌄ marks each door only when there is another to choose.
+    {
+        workspace_setup(); ht_character_select(&character, HT_CHARACTER_FOCUS); scene_take();
+        int downs = 0;
+        for (int i = 0; i < scene.count; i++) if (!strcmp(scene.runs[i].text, HT_DOWN)) downs++;
+        assert(downs == 2);   // four tabs, two panes
+        s.tab_count = 1; s.count = 1; scene_take(); downs = 0;
+        for (int i = 0; i < scene.count; i++) if (!strcmp(scene.runs[i].text, HT_DOWN)) downs++;
+        assert(downs == 0);
+    }
     // THE PANE ARROWS either side of the Focus microphone: a sideways swipe, as buttons, and only when
     // the tab has another agent to go to.
     reset(); ht_character_select(&character, HT_CHARACTER_FOCUS); scene_take(); portrait(dir, "focus-arrows");
