@@ -137,7 +137,11 @@ Each hint is also a plain-text button: clicking it inserts the prefix into the
 same editor and keeps typing focus there. Selected harnesses open with Enter.
 Machines use Enter to **Manage**: focus moves to their controls without invoking
 one. Models use five sections: **Subscriptions**, **APIs**, **Your models**,
-the downloads, and **Shared with you**. Headers are plain muted text and never
+the downloads, and **Shared with you**. Grid is an add-on: on a computer where
+it is not set up, local and shared models are one row under Your models,
+**[ Set up local & shared models ]**, and the downloads and Shared with you
+headings are not shown. Enter on it sets Grid up with the Harness account (no
+second sign-in); opening the picker never does. Headers are plain muted text and never
 take selection. Put **[ Add ]** within APIs. Your models puts downloaded models
 first, followed by models served on the user's machines. The downloads are
 headed with the machine they are for and its memory (`Get for this Mac · 64 GB`),

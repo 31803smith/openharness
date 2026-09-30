@@ -349,6 +349,7 @@ class _SwarmResourcePreviewState extends State<SwarmResourcePreview> {
       if (widget.search.canSelectModel(row) ||
           widget.search.canGetModelForUse(row) ||
           widget.search.isModelDownloadsRow(row) ||
+          widget.search.isGridSetupRow(row) ||
           widget.search.canExpandApi(row)) {
         _open();
         return true;
@@ -657,6 +658,7 @@ class _SwarmResourcePreviewState extends State<SwarmResourcePreview> {
               widget.search.canSelectModel(row) ||
               widget.search.canGetModel(row) ||
               widget.search.isModelDownloadsRow(row) ||
+              widget.search.isGridSetupRow(row) ||
               widget.search.canExpandApi(row))
         '$enter ${managing
             ? 'select'
@@ -664,7 +666,7 @@ class _SwarmResourcePreviewState extends State<SwarmResourcePreview> {
             ? 'Use'
             : widget.search.canGetModel(row)
             ? 'Get'
-            : widget.search.isModelDownloadsRow(row) || widget.search.canExpandApi(row)
+            : widget.search.isModelDownloadsRow(row) || widget.search.isGridSetupRow(row) || widget.search.canExpandApi(row)
             ? widget.search.actionLabel(row)
             : _isManagement
             ? _machineSetup
@@ -700,8 +702,17 @@ class _SwarmResourcePreviewState extends State<SwarmResourcePreview> {
     if (search.isModelDownloadsRow(selected)) {
       return [
         _ResourceAction(
-          search.modelDownloadsVisible ? 'Hide catalog' : 'Get models',
+          search.actionLabel(selected),
           _open,
+          command: 'picker.accept',
+        ),
+      ];
+    }
+    if (search.isGridSetupRow(selected)) {
+      return [
+        _ResourceAction(
+          search.actionLabel(selected),
+          search.models!.manager.settingUpGrid || app.signingIn ? null : _open,
           command: 'picker.accept',
         ),
       ];
@@ -1053,6 +1064,35 @@ class _SwarmResourcePreviewState extends State<SwarmResourcePreview> {
 
   Widget _modelPreview() {
     final catalog = widget.search.models!;
+    if (widget.search.isGridSetupRow(row)) {
+      final manager = catalog.manager;
+      final here = thisComputerName();
+      // Signed out of Harness: the set-up is done with the Harness account, so this starts there.
+      // What a person reads names Harness only; Grid is how it works, not what they chose.
+      final signedOut = app.isGuest;
+      return _details([
+        'Local & shared models',
+        'Download models to run on $here, and use the models other people share with you.',
+        '',
+        if (signedOut) ...[
+          "You're using Harness on this computer only. Local and shared models belong to your "
+              'Harness account, so you need to sign in to use them.',
+          "Sign in opens in your browser. Setup finishes here on its own once you're signed in.",
+        ] else
+          "Set up gets $here ready for them with your Harness account. You won't be asked to "
+              'sign in again.',
+        if (manager.settingUpGrid) ...[
+          '',
+          'Setting up…',
+        ] else if (manager.setUpWaitsForSignIn) ...[
+          '',
+          'Signing in… Finish in your browser, and setup continues here.',
+        ] else if (!signedOut && manager.gridSetupError != null) ...[
+          '',
+          'Could not set up: ${manager.gridSetupError}',
+        ],
+      ], controls: true);
+    }
     if (widget.search.isModelDownloadsRow(row)) {
       return _details(
         widget.search.modelDownloadsVisible

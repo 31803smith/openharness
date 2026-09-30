@@ -509,10 +509,13 @@ class _SwarmSearchResultsState extends State<SwarmSearchResults> {
           if (search.modelSection(row) == section) index,
       ];
       // An empty section still says it is there, so there is somewhere to add to — except the
-      // downloads, which a machine with the whole catalog, or none, has nothing under.
+      // downloads, which a machine with the whole catalog, or none, has nothing under, and what is
+      // shared with you while Grid is not set up: the Set up row under Your models stands for it.
       if (indices.isEmpty &&
           (search.matchQuery.trim().isNotEmpty ||
-              section == ModelSearchSection.catalog)) {
+              section == ModelSearchSection.catalog ||
+              (section == ModelSearchSection.shared &&
+                  search.gridSetupOffered))) {
         continue;
       }
       if (items.isNotEmpty) items.add((index: null, heading: null, key: null));
@@ -1384,11 +1387,14 @@ class _SearchRowContentState extends State<_SearchRowContent> {
             : !widget.enabled ||
                   (row.isModel &&
                       !widget.search.isModelDownloadsRow(row) &&
+                      !widget.search.isGridSetupRow(row) &&
                       !widget.search.canExpandApi(row) &&
                       !widget.search.canSelectModel(row) &&
                       !widget.search.canGetModel(row))
             ? theme.foreground.withValues(alpha: .28)
-            : row.isCreate || widget.search.isModelDownloadsRow(row)
+            : row.isCreate ||
+                  widget.search.isModelDownloadsRow(row) ||
+                  widget.search.isGridSetupRow(row)
             ? theme.cursor
             : theme.foreground,
       );
