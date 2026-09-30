@@ -52,6 +52,17 @@ describe('prompt swarm origin', () => {
     expect(scopes.current(agent)).toBe(b)
   })
 
+  it('ignores SGR mouse reports from clicking into or scrolling the pane', () => {
+    const scopes = new SwarmPromptScopes()
+    // Recorded shape: click to focus (split press/release), a wheel burst, then ⌥⏎ lines.
+    for (const chunk of ['\x1b[<0;12;34M', '\x1b[<0;12;34m', '\x1b[<65;40;20M'.repeat(19), '\x1b', '[<64;4', '0;20M', '\x1b\r', '\x1b\r', 'ok', '\r']) scopes.raw(agent, bytes(chunk), 'swarm-a')
+    scopes.started(agent, '\n\nok', 'hook', 'claude')
+    expect(scopes.current(agent)).toBe(a)
+    scopes.raw(agent, bytes('x\x1b[<0;12M\r'), 'swarm-b') // A malformed report is not a mouse event.
+    scopes.started(agent, 'x', 'hook', 'claude')
+    expect(scopes.current(agent)).toBeNull()
+  })
+
   it('still fails closed on ⌥⌫ and on other CSI keys that share the ⇧⏎ prefix', () => {
     const scopes = new SwarmPromptScopes()
     scopes.raw(agent, bytes('one two\x1b\x7f\r'), 'swarm-a')

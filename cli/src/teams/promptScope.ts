@@ -127,6 +127,12 @@ export class SwarmPromptScopes {
         // Inside a paste the engine receives those bytes literally, so they fail closed there.
         if (state.escape === '\x1b[13;2u' && !state.paste) { state.escape = ''; insert('\n'); continue }
         if (state.escape === '\x1b\r' && escaped && !state.paste) { state.escape = ''; insert('\n'); metaReturn = true; continue }
+        // SGR mouse reports (focus clicks, wheel) never type text. If a click did move the engine's
+        // caret, the draft stops matching the accepted prompt, which still fails closed.
+        if (state.escape.startsWith('\x1b[<') && !state.paste) {
+          if (/^\x1b\[<[\d;]*$/.test(state.escape) && state.escape.length < 32) continue
+          if (/^\x1b\[<\d+;\d+;\d+[Mm]$/.test(state.escape)) { state.escape = ''; continue }
+        }
         if (['\x1b', '\x1b[', '\x1b[1', '\x1b[13', '\x1b[13;', '\x1b[13;2', '\x1b[2', '\x1b[20', '\x1b[200', '\x1b[201', '\x1b[3', '\x1bO'].includes(state.escape)) continue
         const sequence = state.escape
         state.escape = ''
