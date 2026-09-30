@@ -2115,7 +2115,7 @@ class _TerminalPanelState extends State<TerminalPanel>
     final machineState = widget.notifier.stateOf(session.machineId);
     final remote = machineState != null && !machineState.isLocalMachine;
     final showComposer = _showsComposer;
-    // Behind harnesses: each part paints its own fill at this opacity (the
+    // Over a Background: each part paints its own fill at this opacity (the
     // header, the screen) or solid (the composer), over nothing — a fill
     // underneath them all would stack with theirs.
     final paneOpacity = PaneOpacity.of(context);
