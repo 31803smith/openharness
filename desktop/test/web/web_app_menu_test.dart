@@ -16,6 +16,7 @@ import 'package:harness/web/shell/web_workspace.dart';
 import 'package:harness/widgets/new_harness_form.dart';
 import 'package:harness/widgets/swarm_switcher.dart';
 import 'package:harness/widgets/workspace_bar_control.dart';
+import 'package:harness/widgets/workspace_machine_prompt.dart';
 
 Future<AppNotifier> _mount(
   WidgetTester tester, {
@@ -75,21 +76,25 @@ void main() {
     app.dispose();
   });
 
-  testWidgets('New harness opens the form on a connected machine', (
+  testWidgets('an empty tab opens New harness on a connected machine', (
     tester,
   ) async {
     // The app opens New Harness in the box; tests default to the old form.
     newHarnessOpensInBox = true;
     addTearDown(() => newHarnessOpensInBox = false);
     final app = await _mount(tester, connectedMachine: 'remote-box');
-    // New work starts where a new tab opens: its "Start an agent" row.
-    await tester.tap(find.byKey(const ValueKey('welcome-agent.new')));
+    // A browser is never a machine: the connected one is where it starts,
+    // with no "Choose a machine" step in between.
     await tester.runAsync(
       () => Future<void>.delayed(const Duration(milliseconds: 200)),
     );
     await tester.pump(const Duration(milliseconds: 400));
+    await tester.pump();
+    expect(find.byType(WorkspaceMachinePrompt), findsNothing);
     expect(find.byType(NewHarnessForm), findsOneWidget);
-    expect(find.byType(SwarmSearchResults), findsNothing);
+    // The browser attaches files to a new harness; desktop's box has no 📎.
+    expect(find.byKey(const ValueKey('new-harness-attach')), findsOneWidget);
+    expect(find.byKey(const ValueKey('new-harness-drop')), findsOneWidget);
     expect(tester.takeException(), isNull);
     await tester.pumpWidget(const SizedBox.shrink());
     app.dispose();

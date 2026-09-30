@@ -65,6 +65,7 @@ abstract final class AppIcons {
   static const externalLink = LucideIcons.externalLink400;
   static const eye = LucideIcons.eye400;
   static const eyeOff = LucideIcons.eyeOff400;
+  static const file = LucideIcons.file400;
   static const fileText = LucideIcons.fileText400;
   static const film = LucideIcons.film400;
   static const flaskConical = LucideIcons.flaskConical400;
@@ -103,6 +104,7 @@ abstract final class AppIcons {
   static const packageCheck = LucideIcons.packageCheck400;
   static const packageOpen = LucideIcons.packageOpen400;
   static const palette = LucideIcons.palette400;
+  static const paperclip = LucideIcons.paperclip400;
   static const panelsTopLeft = LucideIcons.panelsTopLeft400;
   static const pause = LucideIcons.pause400;
   static const pencil = LucideIcons.pencil400;
