@@ -15,12 +15,11 @@ import '../shared/theme/app_theme.dart' as grid;
 import '../state/dial_status.dart';
 import '../theme/app_theme.dart';
 import '../widgets/daemon_illustration.dart';
-import 'companion_chat.dart';
 import 'companion_dial.dart';
 import 'companion_story.dart';
 
-/// The native viewer for the hidden companion DSH. Its world is a full tab;
-/// chat uses the same pair brain, lessons, and permissions as the quick controls.
+/// The illustrated left viewer of the companion DSH. The shared workspace
+/// canvas owns its real agent terminal on the right.
 /// The illustrated editorial surface is intentionally distinct from terminal
 /// chrome (the owner's requested storybook treatment).
 class CompanionHome extends StatefulWidget {
@@ -31,20 +30,18 @@ class CompanionHome extends StatefulWidget {
     required this.onHatch,
     required this.onOpenControls,
     this.onOpenConversation,
-    this.canOpenConversation,
+    this.terminalStatus,
     this.dial,
     this.onDeviceSettings,
-    this.focusRequest = 0,
   });
   final DaemonFace face;
   final DaemonBrain brain;
   final ValueChanged<ZooEgg> onHatch;
   final ValueChanged<String> onOpenControls;
   final VoidCallback? onOpenConversation;
-  final bool Function()? canOpenConversation;
+  final String? terminalStatus;
   final DialState? dial;
   final void Function(String, Map<String, Object?>)? onDeviceSettings;
-  final int focusRequest;
 
   @override
   State<CompanionHome> createState() => _CompanionHomeState();
@@ -59,6 +56,7 @@ class _CompanionHomeState extends State<CompanionHome> {
   final _name = TextEditingController();
   final _scroll = ScrollController();
   late final _lessons = DaemonLessons(widget.brain)..addListener(_changed);
+  Timer? _memoryRefresh;
   ZooController get zoo => widget.face.zoo;
   ZooDaemon? get individual =>
       _previewSpecies != null ? null : zoo.zoo.byUid(_viewingUid) ?? zoo.paired;
@@ -74,15 +72,6 @@ class _CompanionHomeState extends State<CompanionHome> {
     zoo.addListener(_changed);
     widget.face.addListener(_changed);
     widget.brain.addListener(_changed);
-  }
-
-  @override
-  void didUpdateWidget(CompanionHome old) {
-    super.didUpdateWidget(old);
-    if (old.focusRequest != widget.focusRequest) {
-      // Chat becomes its own view only when the two panes cannot fit.
-      if (MediaQuery.sizeOf(context).width < 980) _section = 'Chat';
-    }
   }
 
   void _changed() {
@@ -110,6 +99,14 @@ class _CompanionHomeState extends State<CompanionHome> {
 
   void _selectSection(String value) {
     setState(() => _section = value);
+    _memoryRefresh?.cancel();
+    _memoryRefresh = value == 'Memories'
+        ? Timer.periodic(const Duration(seconds: 30), (_) {
+            if (widget.brain.active && !_lessons.busy) {
+              unawaited(_lessons.refresh());
+            }
+          })
+        : null;
     if (_scroll.hasClients) _scroll.jumpTo(0);
     if (value == 'Memories' && widget.brain.active && !_lessons.busy) {
       unawaited(_lessons.refresh());
@@ -178,19 +175,6 @@ class _CompanionHomeState extends State<CompanionHome> {
       color: AppColors.background,
       child: LayoutBuilder(
         builder: (context, constraints) {
-          final scale = MediaQuery.textScalerOf(context).scale(14) / 14;
-          final split = constraints.maxWidth >= 980 * math.min(scale, 1.35);
-          final chat = CompanionChat(
-            key: ValueKey('companion-chat:${zoo.scope}:${zoo.paired?.uid}'),
-            brain: widget.brain,
-            daemon: zoo.paired,
-            traits: zoo.traitsOf(zoo.paired),
-            preview: zoo.isPreview,
-            onOpenConversation: widget.onOpenConversation,
-            canOpenConversation: widget.canOpenConversation,
-            onOpenControls: () => widget.onOpenControls('settings'),
-            focusRequest: widget.focusRequest,
-          );
           final viewer = Column(
             children: [
               Padding(
@@ -229,7 +213,6 @@ class _CompanionHomeState extends State<CompanionHome> {
                             'Story',
                             'Collection',
                             'Memories',
-                            if (!split) 'Chat',
                           ])
                             Semantics(
                               selected: _section == section,
@@ -246,44 +229,45 @@ class _CompanionHomeState extends State<CompanionHome> {
                   ],
                 ),
               ),
-              Expanded(
-                child: !split && _section == 'Chat'
-                    ? chat
-                    : SingleChildScrollView(
-                        controller: _scroll,
-                        padding: const EdgeInsets.fromLTRB(28, 6, 28, 40),
-                        child: Align(
-                          alignment: Alignment.topCenter,
-                          child: ConstrainedBox(
-                            constraints: const BoxConstraints(maxWidth: 1100),
-                            child: switch (_section) {
-                              'Collection' => _collection(),
-                              'Memories' => _memories(),
-                              _ =>
-                                zoo.zoo.daemons.isEmpty &&
-                                        _previewSpecies == null
-                                    ? _nest()
-                                    : _story(),
-                            },
-                          ),
+              if (widget.terminalStatus != null)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(28, 0, 28, 10),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          widget.terminalStatus!,
+                          style: ink(13, AppColors.textSoft),
                         ),
                       ),
+                      if (widget.onOpenConversation != null)
+                        _button('Open terminal', widget.onOpenConversation),
+                    ],
+                  ),
+                ),
+              Expanded(
+                child: SingleChildScrollView(
+                  controller: _scroll,
+                  padding: const EdgeInsets.fromLTRB(28, 6, 28, 40),
+                  child: Align(
+                    alignment: Alignment.topCenter,
+                    child: ConstrainedBox(
+                      constraints: const BoxConstraints(maxWidth: 1100),
+                      child: switch (_section) {
+                        'Collection' => _collection(),
+                        'Memories' => _memories(),
+                        _ =>
+                          zoo.zoo.daemons.isEmpty && _previewSpecies == null
+                              ? _nest()
+                              : _story(),
+                      },
+                    ),
+                  ),
+                ),
               ),
             ],
           );
-          return Row(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Expanded(child: viewer),
-              if (split) ...[
-                VerticalDivider(width: 1, color: AppColors.border),
-                SizedBox(
-                  width: (constraints.maxWidth * .30).clamp(340, 430),
-                  child: chat,
-                ),
-              ],
-            ],
-          );
+          return viewer;
         },
       ),
     );
@@ -844,12 +828,20 @@ class _CompanionHomeState extends State<CompanionHome> {
                 : 'Your memory book is ready to open.',
             style: ink(14, AppColors.textSoft),
           )
-        else if (learned.isEmpty)
+        else if (learned.isEmpty && _lessons.learning == null)
           _memoryCard(
             Icons.auto_stories_outlined,
             'Room for a first memory',
             'When a useful lesson is proposed and you approve it, it will appear here. No memories are invented.',
           ),
+        if (widget.brain.active && _lessons.learning != null) ...[
+          _memoryCard(
+            Icons.auto_stories_outlined,
+            _lessons.learning!.title,
+            _lessons.learning!.detail,
+          ),
+          const SizedBox(height: 18),
+        ],
         for (final lesson in learned) ...[
           Container(
             padding: const EdgeInsets.all(20),
@@ -1013,6 +1005,7 @@ class _CompanionHomeState extends State<CompanionHome> {
 
   @override
   void dispose() {
+    _memoryRefresh?.cancel();
     zoo.removeListener(_changed);
     widget.face.removeListener(_changed);
     widget.brain.removeListener(_changed);
