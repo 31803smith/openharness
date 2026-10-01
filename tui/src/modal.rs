@@ -175,36 +175,36 @@ pub const COMMANDS: &[(&str, &str, &str, &str, &str)] = &[
     ("open", "Harnesses…", "⌥P", "every harness on every machine", "Harness"),
     ("projects", "Projects…", "⌥O", "a project, then one of its harnesses", "Harness"),
     ("models", "Models…", "⌥I", "local, shared, subscriptions, APIs — use one on this harness", "Harness"),
-    ("new", "New Harness…", "⌥N", "", "Harness"),
-    ("terminal", "New Terminal", "⌥⇧T", "a shell on this pane's machine", "Harness"),
+    ("new", "New harness…", "⌥N", "", "Harness"),
+    ("terminal", "New terminal", "⌥⇧T", "a shell on this pane's machine", "Harness"),
     ("inbox", "Harnesses needing input", "⌥⇧I", "", "Harness"),
     ("next-waiting", "Next harness waiting on you", "⌥A", "oldest question first", "Harness"),
     ("send", "Send to harness…", "⌥B", "type a task — Harness picks who", "Harness"),
     ("broadcast", "Broadcast to this swarm…", "", "one message to every harness in the swarm", "Harness"),
-    ("clone", "Clone Harness", "⌥⇧N", "a second one with this one's history", "Harness"),
-    ("restart", "Restart Harness", "⌥⇧E", "", "Harness"),
-    ("pause", "Pause Harness", "", "stop the engine, keep the conversation", "Harness"),
-    ("rename", "Rename Harness…", "", "", "Harness"),
-    ("take", "Take Control", "", "reclaim all panes across every tab", "General"),
-    ("tab", "New Swarm", "⌥T", "", "Swarms"),
-    ("rename-tab", "Rename Swarm…", "⌥⇧R", "", "Swarms"),
-    ("close-tab", "Close Swarm", "⌥⇧W", "harnesses keep running", "Swarms"),
-    ("next-tab", "Next Swarm", "⌥}", "", "Swarms"),
-    ("prev-tab", "Previous Swarm", "⌥{", "", "Swarms"),
-    ("tab-left", "Move Swarm Left", "⌥<", "", "Swarms"),
-    ("tab-right", "Move Swarm Right", "⌥>", "", "Swarms"),
-    ("split-right", "Split Right", "⌥\\", "", "Panes"),
-    ("split-down", "Split Down", "⌥-", "", "Panes"),
-    ("close-pane", "Close Pane", "⌥W", "the harness keeps running", "Panes"),
-    ("zoom", "Zoom Pane", "⌥Z", "", "Panes"),
+    ("clone", "Clone harness", "⌥⇧N", "a second one with this one's history", "Harness"),
+    ("restart", "Restart harness", "⌥⇧E", "", "Harness"),
+    ("pause", "Pause harness", "", "stop the engine, keep the conversation", "Harness"),
+    ("rename", "Rename harness…", "", "", "Harness"),
+    ("take", "Take control", "", "reclaim all panes across every tab", "General"),
+    ("tab", "New swarm", "⌥T", "", "Swarms"),
+    ("rename-tab", "Rename swarm…", "⌥⇧R", "", "Swarms"),
+    ("close-tab", "Close swarm", "⌥⇧W", "harnesses keep running", "Swarms"),
+    ("next-tab", "Next swarm", "⌥}", "", "Swarms"),
+    ("prev-tab", "Previous swarm", "⌥{", "", "Swarms"),
+    ("tab-left", "Move swarm left", "⌥<", "", "Swarms"),
+    ("tab-right", "Move swarm right", "⌥>", "", "Swarms"),
+    ("split-right", "Split right", "⌥\\", "", "Panes"),
+    ("split-down", "Split down", "⌥-", "", "Panes"),
+    ("close-pane", "Close pane", "⌥W", "the harness keeps running", "Panes"),
+    ("zoom", "Zoom pane", "⌥Z", "", "Panes"),
     ("layout", "Layout…", "⌥L", "grid, columns, main + stack…", "Panes"),
-    ("equalize", "Equalize Panes", "⌥=", "", "Panes"),
-    ("pane-tab", "Move Pane to New Swarm", "", "", "Panes"),
-    ("find", "Find in Pane…", "⌥⇧F", "search this pane's history", "Panes"),
+    ("equalize", "Equalize panes", "⌥=", "", "Panes"),
+    ("pane-tab", "Move pane to a new swarm", "", "", "Panes"),
+    ("find", "Find in pane…", "⌥⇧F", "search this pane's history", "Panes"),
     // (Not "keyboard": `keyb` is Keybinds.)
-    ("copy-mode", "Copy Mode", "⌥V", "move over the pane's text, select and copy", "Panes"),
+    ("copy-mode", "Copy mode", "⌥V", "move over the pane's text, select and copy", "Panes"),
     ("machines", "Machines", "⌥M", "", "Machines"),
-    ("store", "Harness Store", "⌥S", "", "Machines"),
+    ("store", "Harness store", "⌥S", "", "Machines"),
     // ── machines & devices ──
     ("connect-machine", "Connect a machine…", "", "a machine not linked yet, with its remote password", "Machines"),
     ("add-phone", "Add phone…", "", "a QR code your phone scans to sign in and pair", "Machines"),
@@ -360,6 +360,19 @@ pub fn launcher_kind(query: &str, current: &PickerKind) -> PickerKind {
     }
 }
 
+// ── tabs ──
+
+/// The launcher's tabs, in order: the query's first character that opens each (none: harnesses).
+pub const LAUNCHER_TABS: &[(Option<char>, &str)] = &[(None, "harnesses"), (Some('>'), "commands"), (Some('@'), "machines"),
+    (Some('#'), "projects"), (Some(':'), "models"), (Some('*'), "store"), (Some('?'), "help")];
+
+/// The query that opens the tab [step] along from [query]'s — round from the last to the first.
+pub fn next_tab(query: &str, step: i64) -> String {
+    let here = crate::picker::scope_of(query);
+    let at = LAUNCHER_TABS.iter().position(|(c, _)| *c == here).unwrap_or(0) as i64;
+    LAUNCHER_TABS[(at + step).rem_euclid(LAUNCHER_TABS.len() as i64) as usize].0.map(String::from).unwrap_or_default()
+}
+
 pub fn is_launcher(kind: &PickerKind) -> bool {
     matches!(kind, PickerKind::Open { .. } | PickerKind::Palette | PickerKind::Machines | PickerKind::Projects | PickerKind::Models | PickerKind::Store | PickerKind::Help)
 }
@@ -373,7 +386,9 @@ pub fn launcher_title(app: &App, kind: &PickerKind) -> (String, String) {
         PickerKind::Palette => ("commands".into(), "Run anything by name".into()),
         PickerKind::Machines => ("machines".into(), "Choose a machine, then one of its harnesses".into()),
         PickerKind::Projects => ("projects".into(), "Choose a project, then one of its harnesses".into()),
-        PickerKind::Models => ("models".into(), "Search models — Enter uses one on the focused harness".into()),
+        // (Which harness Enter moves, in the title: the focused one, or the only one on screen.)
+        PickerKind::Models => (crate::models::target(app).and_then(|t| app.fleet.agent(&t.machine, &t.agent)).map(|a| format!("models · for {}", a.name)).unwrap_or_else(|| "models".into()),
+            "Search models — Enter uses one on the focused harness".into()),
         PickerKind::Store => ("store".into(), "Find a harness in the Store".into()),
         PickerKind::Help => ("quick access".into(), "What this box can do".into()),
         _ => (String::new(), String::new()),
@@ -484,23 +499,57 @@ pub fn palette_rows(app: &App) -> Vec<Row> {
 pub fn command_rows(app: &App) -> Vec<Row> {
     let own = COMMANDS.iter().map(|(id, title, _, hint, group)| {
         let key = own_key(app, id).unwrap_or_default();
-        // (Ranked above a tmux command that matches as well: `appe` is Appearance, not a word in
-        // set-buffer's description.)
-        Row::new(format!("cmd:{id}"), *title).extra(format!("{id} {hint} {group}")).detail(vec![span(*hint, fg(theme::MUTED))]).right(key).group(*group).boost(40)
+        // (Tier 0: searched, listed above every tmux command that matches — `appe` is Appearance,
+        // not a word in set-buffer's description.)
+        Row::new(format!("cmd:{id}"), *title).extra(format!("{id} {hint} {group}")).detail(vec![span(*hint, fg(theme::MUTED))]).right(key).group(*group)
     });
-    let tmux = crate::commands::COMMANDS.iter().map(|(name, alias, about)| {
+    // tmux's after them, grouped (Windows, Panes…), and none one of hn's runs already (Copy mode is
+    // copy-mode): each group's rows together, in TMUX_GROUPS' order.
+    let ours: Vec<&str> = COMMANDS.iter().filter_map(|(id, ..)| runs_of(id)).collect();
+    let mut tmux: Vec<(usize, Row)> = crate::commands::COMMANDS.iter().filter(|(name, ..)| !ours.contains(name)).map(|(name, alias, about)| {
         let key = app.keymap.key_for_name(name).unwrap_or_default();
+        let group = tmux_group(name);
         // (Found by its name and alias: its description is shown, not searched — a word in it
         // would outrank what you meant, `appe` → set-buffer's "appends".)
-        Row::new(format!("tmux:{name}"), *name).extra(alias.to_string()).detail(vec![span(*about, fg(theme::MUTED))]).right(key).group("tmux commands")
-    });
-    own.chain(tmux).collect()
+        let row = Row::new(format!("tmux:{name}"), *name).extra(alias.to_string()).detail(vec![span(*about, fg(theme::MUTED))]).right(key).group(format!("tmux · {group}")).tier(1);
+        (TMUX_GROUPS.iter().position(|g| *g == group).unwrap_or(TMUX_GROUPS.len()), row)
+    }).collect();
+    tmux.sort_by_key(|(g, _)| *g);
+    own.chain(tmux.into_iter().map(|(_, r)| r)).collect()
 }
 
-/// The command list as it shows: hn's own commands when it opens, tmux's too once you search —
-/// they are many, and there for the one you type.
-pub fn command_rows_for(app: &App, searching: bool) -> Vec<Row> {
-    command_rows(app).into_iter().filter(|r| searching || !r.id.starts_with("tmux:")).collect()
+/// tmux's commands' groups, in the order the list shows them.
+const TMUX_GROUPS: &[&str] = &["Windows", "Panes", "Layouts", "Copy & buffers", "Harnesses", "Sessions & clients", "Keys", "Options & config", "Messages & prompts"];
+
+/// The group a tmux command is listed under, by what it acts on.
+fn tmux_group(name: &str) -> &'static str {
+    let has = |w: &str| name.contains(w);
+    if has("harness") || has("task") || has("broadcast") || matches!(name, "send-message" | "take-control" | "open-viewer" | "new-terminal") { "Harnesses" }
+    else if has("layout") { "Layouts" }
+    else if has("buffer") || name == "copy-mode" { "Copy & buffers" }
+    else if has("window-option") || has("option") || has("environment") || matches!(name, "source-file" | "customize-mode") { "Options & config" }
+    else if has("pane") || matches!(name, "split-window" | "clear-history") { "Panes" }
+    else if has("window") { "Windows" }
+    else if has("session") || has("client") || matches!(name, "kill-server" | "choose-tree") { "Sessions & clients" }
+    else if has("key") { "Keys" }
+    else { "Messages & prompts" }
+}
+
+/// The command list as it shows: hn's own commands and one row for tmux's — searched, tmux's too,
+/// after hn's (their tier); [in_tmux] (Enter on that row): tmux's alone, grouped.
+pub fn command_rows_for(app: &App, searching: bool, in_tmux: bool) -> Vec<Row> {
+    let all = command_rows(app);
+    if in_tmux { return all.into_iter().filter(|r| r.id.starts_with("tmux:")).collect() }
+    let n = crate::commands::COMMANDS.len();
+    let more = Row::new("cmd:tmux-commands", "tmux commands…").extra("tmux every command")
+        .detail(vec![span(format!("every tmux command, grouped — {n} of them"), fg(theme::MUTED))]).group("Settings & help");
+    let (own, tmux): (Vec<Row>, Vec<Row>) = all.into_iter().partition(|r| r.id.starts_with("cmd:"));
+    // (The row for tmux's after hn's own settings, before Close hn.)
+    let at = own.iter().position(|r| r.id == "cmd:quit").unwrap_or(own.len());
+    let mut rows = own;
+    rows.insert(at, more);
+    if searching { rows.extend(tmux) }
+    rows
 }
 
 /// The key (prefix, then the key) that runs one of hn's own commands, as the prefix table has it
@@ -862,6 +911,42 @@ mod theme_row_tests {
     }
 
     fn right(app: &App, title: &str) -> String { keybind_rows(app).into_iter().find(|r| r.label == title).map(|r| r.right).unwrap() }
+
+    // ── commands ──
+
+    /// The command list: hn's own commands, each named in sentence case, and one row for tmux's —
+    /// Enter on it lists them, grouped (Windows, Panes…), none that one of hn's runs already. A
+    /// search finds both, hn's first.
+    #[test]
+    fn commands_are_hns_then_tmuxs_grouped_and_never_twice() {
+        let app = app();
+        let rows = command_rows_for(&app, false, false);
+        let own: Vec<&Row> = rows.iter().filter(|r| r.id.starts_with("cmd:")).collect();
+        assert!(rows.iter().all(|r| r.id.starts_with("cmd:")), "tmux's are behind their one row");
+        assert!(own.iter().any(|r| r.id == "cmd:tmux-commands"));
+        let inside = command_rows_for(&app, false, true);
+        assert!(inside.iter().all(|r| r.id.starts_with("tmux:")), "inside: tmux's only");
+        let tmux: Vec<&Row> = inside.iter().collect();
+        // Sentence case: no word after the first starts with a capital (but hn and names).
+        for r in &own {
+            let caps: Vec<&str> = r.label.split_whitespace().skip(1).filter(|w| w.starts_with(|c: char| c.is_uppercase())).collect();
+            assert!(caps.is_empty(), "{:?} {caps:?}", r.label);
+        }
+        // Grouped: each group's rows together, every group named for tmux.
+        let mut groups: Vec<String> = Vec::new();
+        for g in tmux.iter().filter_map(|r| r.group.clone()) { if groups.last() != Some(&g) { assert!(!groups.contains(&g), "{g} split"); groups.push(g) } }
+        assert!(groups.len() > 3 && groups.iter().all(|g| g.starts_with("tmux · ")), "{groups:?}");
+        // Never twice: copy-mode, new-window, clone-harness are hn's own already.
+        for name in ["copy-mode", "new-window", "clone-harness", "kill-pane"] { assert!(!tmux.iter().any(|r| r.label == name), "{name} twice") }
+        assert!(tmux.iter().any(|r| r.label == "select-layout"));
+        // Searched: hn's matches before tmux's, whatever they score.
+        let mut p = crate::picker::Picker::new("Commands", "");
+        p.set_rows(command_rows_for(&app, true, false));
+        p.set_query("lay");
+        let shown: Vec<&str> = p.visible.iter().map(|(i, _)| p.rows[*i].id.as_str()).collect();
+        let first_tmux = shown.iter().position(|id| id.starts_with("tmux:")).unwrap();
+        assert!(shown[..first_tmux].contains(&"cmd:layout") && shown[first_tmux..].iter().all(|id| id.starts_with("tmux:")), "{shown:?}");
+    }
 
     /// Keybinds: the prefix and the second one first, then the commands grouped with their keys
     /// now. Appearance has no keys section.

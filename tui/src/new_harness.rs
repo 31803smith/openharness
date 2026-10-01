@@ -1948,6 +1948,8 @@ mod tests {
                                 assert_eq!(hit.intersection(area), *hit);
                             }
                             if form.area.width > 0 {
+                                // The form's panel: its own height, one size and place whatever is open.
+                                assert_eq!(form.area, crate::settings::area(area, crate::settings::PanelSize::Form, view::HEIGHT));
                                 assert!(form.area.width <= 60 && form.area.height <= 17);
                                 let left = form.area.x - area.x;
                                 let right = area.right() - form.area.right();

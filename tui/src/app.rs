@@ -3594,6 +3594,8 @@ impl App {
     /// the mouse opened is up (tmux's MODE_MOUSE_ALL).
     pub fn wants_motion(&self) -> bool {
         matches!(&self.modal, Some(crate::modal::Modal::Menu(m)) if !m.no_mouse)
+            // (A panel's list: the row under the mouse is the one chosen.)
+            || matches!(&self.modal, Some(crate::modal::Modal::Picker { kind, .. }) if crate::settings::is_panel(kind) && !crate::theme::fzf_opts().no_mouse)
             || self.rects.iter().any(|(id, _)| self.panes.get(id).map(|p| p.mode().contains(alacritty_terminal::term::TermMode::MOUSE_MOTION)).unwrap_or(false))
     }
 

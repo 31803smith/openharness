@@ -46,6 +46,10 @@ pub(super) fn put(buf: &mut Buffer, x: u16, y: u16, width: u16, text: &str, styl
     buf.set_stringn(x, y, out, width as usize, style);
 }
 
+/// The form's height: enough rows for every agent's settings, the same whatever is open, so
+/// changing agents or opening an editor never moves it.
+pub(super) const HEIGHT: u16 = 17;
+
 /// The form's surface, as the settings panel draws its own: filled, no border.
 fn panel(buf: &mut Buffer, r: Rect, base: Style) {
     crate::settings::fill(buf, r, base)
@@ -75,13 +79,11 @@ pub fn draw(buf: &mut Buffer, body: Rect, form: &mut Form) -> Option<Position> {
         ..
     } = crate::settings::chrome();
     crate::settings::backdrop(buf, body, backdrop);
-    // Center the form, not the combined form and chooser. Reserve enough rows for every
-    // agent's settings so changing agents or opening an editor never moves the form.
-    let form_w = body.width.saturating_sub(4).min(60);
-    let form_h = body.height.saturating_sub(2).clamp(5, 17);
-    let x = body.x + (body.width - form_w) / 2;
-    let y = body.y + (body.height - form_h) / 2;
-    let r = Rect::new(x, y, form_w, form_h);
+    // The form is a Form panel (settings::area): centred — the form, not the form and its chooser —
+    // and as tall as every agent's settings need, so changing agents or opening an editor never
+    // moves it. A chooser opens beside it where there is room, else in its place.
+    let r = crate::settings::area(body, crate::settings::PanelSize::Form, HEIGHT);
+    let (x, y, form_w, form_h) = (r.x, r.y, r.width, r.height);
     let side_w = body.right().saturating_sub(r.right() + 4).min(60);
     let side = side_w >= 32;
     let child_w = if side { side_w } else { form_w };
