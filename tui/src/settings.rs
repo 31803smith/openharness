@@ -102,18 +102,21 @@ pub fn back_to_commands_at(app: &App, picker: &mut Picker, at: &str) {
 /// Put the cursor on the row [id] (where the filter shows it).
 pub fn cursor_to(picker: &mut Picker, id: &str) { picker.select(id) }
 
-// ── keys: a command's key, chosen in the panel ───────────────────────────────────
+// ── keys: the prefix and a command's key, chosen in the panel ────────────────────
 
-/// What the next key becomes: [command]'s key after the prefix. [pending]: a key that runs
-/// another command, pressed once — the same key again replaces it.
+/// What the next key becomes: the prefix ([second]: the second one), or [command]'s key after the
+/// prefix. [pending]: a key that runs another command, pressed once — the same key again replaces it.
 #[derive(Clone, Debug)]
-pub enum Capture { Command { command: String, title: String, own: bool, pending: Option<crate::keys::Chord> } }
+pub enum Capture {
+    Prefix { second: bool },
+    Command { command: String, title: String, own: bool, pending: Option<crate::keys::Chord> },
+}
 
 const PRESS: &str = "press a key · Esc cancels";
 const AGAIN: &str = "press another key · Esc cancels";
 
-/// A Keybinds row chosen: a command's (`key`, its index) waits for the next key pressed; the
-/// prefix's says where it is set. None: not a Keybinds row.
+/// A Keybinds row chosen: the next key pressed becomes the prefix (`prefix`, `prefix2`) or a
+/// command's (`key`, its index). None: not a Keybinds row.
 pub fn set_key(app: &mut App, knob: &str, value: &str) -> Option<String> {
     match knob {
         "key" => {
@@ -121,9 +124,39 @@ pub fn set_key(app: &mut App, knob: &str, value: &str) -> Option<String> {
             app.capturing = Some(Capture::Command { command: runs.to_string(), title: title.to_string(), own: true, pending: None });
             Some(format!("{}: {PRESS}", title.trim_end_matches('…')))
         }
-        "prefix" => Some(format!("The prefix is {} — set `prefix` in tui.toml to change it", crate::keys::name(&app.keymap.prefix))),
+        "prefix" => { app.capturing = Some(Capture::Prefix { second: false }); Some(format!("Prefix: press the new one — Ctrl, ⌥ or ⌘ with a key · Esc cancels")) }
+        "prefix2" => { app.capturing = Some(Capture::Prefix { second: true }); Some(format!("Second prefix: press it — Ctrl, ⌥ or ⌘ with a key · ⌫ none · Esc cancels")) }
         _ => None,
     }
+}
+
+/// The prefix (or the second one, [chord] None: none) set as `set -g prefix` sets it — every hn
+/// window takes it — and written to tui.toml, so it is the prefix the next time hn starts too.
+fn apply_prefix(app: &mut App, second: bool, chord: Option<crate::keys::Chord>) -> String {
+    let option = if second { "prefix2" } else { "prefix" };
+    let name = chord.map(|c| crate::keys::name(&c)).unwrap_or_else(|| "None".to_string());
+    crate::commands::execute(app, &format!("set -g {option} {}", crate::tmuxconf::quote_word(&name)));
+    app.server_dirty = true;
+    let saved = crate::config::write_top(option, chord.is_some().then_some(name.as_str()));
+    let what = if second { "Second prefix" } else { "Prefix" };
+    let shown = if chord.is_some() { name } else { "none".into() };
+    match saved { Ok(()) => format!("{what}: {shown} — saved to tui.toml"), Err(e) => format!("{what}: {shown} — could not write tui.toml: {e}") }
+}
+
+/// The key pressed for a prefix: one with Ctrl, ⌥ or ⌘ (a plain key would be lost to typing);
+/// for the second, ⌫ is none. (Said, and whether it is still waiting.)
+fn captured_prefix(app: &mut App, second: bool, key: crossterm::event::KeyEvent) -> (String, bool) {
+    use crossterm::event::{KeyCode, KeyModifiers};
+    let chord = crate::keys::of(&key);
+    let name = crate::keys::name(&chord);
+    if key.code == KeyCode::Esc && key.modifiers.is_empty() { return ("Unchanged".into(), false) }
+    if second && key.code == KeyCode::Backspace && key.modifiers.is_empty() { return (apply_prefix(app, true, None), false) }
+    if !key.modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER | KeyModifiers::META) {
+        return (format!("{name}: a prefix needs Ctrl, ⌥ or ⌘ — like C-a · Esc cancels"), true)
+    }
+    if second && chord == app.keymap.prefix { return (format!("{name} is the prefix already — {AGAIN}"), true) }
+    if !second && Some(chord) == app.keymap.prefix2 { return (format!("{name} is the second prefix — {AGAIN}"), true) }
+    (apply_prefix(app, second, Some(chord)), false)
 }
 
 /// Alt-k on a command in the command panel: its key is the next key you press. A command with
@@ -143,7 +176,15 @@ pub fn capture_for_row(app: &mut App, picker: &mut Picker) {
 /// keeps it; else it becomes the command's. What happened is said in the panel, whose rows show it.
 pub fn captured(app: &mut App, key: crossterm::event::KeyEvent) {
     use crossterm::event::KeyCode;
-    let Some(Capture::Command { command, title, own, pending }) = app.capturing.take() else { return };
+    let (command, title, own, pending) = match app.capturing.take() {
+        Some(Capture::Command { command, title, own, pending }) => (command, title, own, pending),
+        Some(Capture::Prefix { second }) => {
+            let (said, waiting) = captured_prefix(app, second, key);
+            if waiting { app.capturing = Some(Capture::Prefix { second }) }
+            return show_captured(app, said);
+        }
+        None => return,
+    };
     let chord = crate::keys::of(&key);
     let name = crate::keys::name(&chord);
     let prefix = crate::keys::name(&app.keymap.prefix);
@@ -159,7 +200,11 @@ pub fn captured(app: &mut App, key: crossterm::event::KeyEvent) {
         }
         else { (rebind(app, &command, &title, own, chord), None) };
     app.capturing = next;
-    // The panel's rows again, with the key as it is now.
+    show_captured(app, said)
+}
+
+/// The panel's rows again, with the keys as they are now, and [said] in it.
+fn show_captured(app: &mut App, said: String) {
     if let Some(crate::modal::Modal::Picker { kind, picker }) = app.modal.take() {
         let mut picker = picker;
         let at = picker.current_id();

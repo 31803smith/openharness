@@ -80,9 +80,9 @@ try:
     start()
     started = True
 
-    # C-b Enter → keyb → Enter: Keybinds, its own panel, the prefix first and fixed.
+    # C-b Enter → keyb → Enter: Keybinds, its own panel, the prefixes first.
     keys('C-b', 'Enter'); shows('Commands')
-    type_text('keyb'); keys('Enter'); shows('(fixed)')
+    type_text('keyb'); keys('Enter'); shows('Second prefix')
     s = screen()
     assert 'Keybinds' in s and 'Split right' in s and 'Preview' not in s and 'Appearance' not in s, s
     # Split right → Enter → h.
@@ -91,7 +91,7 @@ try:
     keys('h'); shows('saved to tui.toml')
     assert any('Split right' in l and 'C-b h' in l for l in screen().splitlines()), screen()
     # Esc back to Commands, Esc closes.
-    keys('Escape'); shows('Commands'); gone('(fixed)')
+    keys('Escape'); shows('Commands'); gone('Second prefix')
     keys('Escape'); gone('Commands')
     toml = TOML.read_text()
     assert '[prefix_keys]' in toml and '"h" = "split-window -h"' in toml and '"%" = "none"' in toml, toml
@@ -111,6 +111,24 @@ try:
     keys('C-b', '%'); time.sleep(.5)
     assert panes() == before + 1, 'C-b % still free after a restart'
     print('PASS Keybinds: after a restart C-b h still splits', flush=True)
+
+    # The prefix: Keybinds → Prefix → Enter → C-a. A plain key is refused; C-a is saved to tui.toml.
+    keys('C-b', 'Enter'); shows('Commands')
+    type_text('keyb'); keys('Enter'); shows('Second prefix')
+    keys('Enter'); shows('Prefix: press')
+    keys('q'); shows('a prefix needs Ctrl')
+    keys('C-a'); shows('Prefix: C-a')
+    keys('Escape'); keys('Escape'); gone('Commands')
+    toml = TOML.read_text()
+    assert 'prefix = "C-a"' in toml, toml
+    before = panes()
+    keys('C-a', 'h'); wait(lambda: panes() == before + 1, 'C-a h splits')
+    hn('kill-server', ok=False); tmux('kill-server', ok=False); started = False
+    time.sleep(.3)
+    start(); started = True
+    before = panes()
+    keys('C-a', 'h'); wait(lambda: panes() == before + 1, 'C-a h splits after a restart')
+    print('PASS Keybinds: the prefix changed to C-a in the panel, saved, and still C-a after a restart', flush=True)
 
 finally:
     try:

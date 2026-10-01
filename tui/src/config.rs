@@ -293,6 +293,26 @@ fn table_of(line: &str) -> Option<&str> {
     (after.is_empty() || after.starts_with('#')).then(|| name.trim())
 }
 
+/// [text] with the top-level `key = "value"` set ([value] None: taken out), the rest as written.
+fn with_top(text: &str, key: &str, value: Option<&str>) -> String {
+    let mut lines: Vec<String> = text.lines().map(str::to_string).collect();
+    let end = lines.iter().position(|l| table_of(l).is_some() || is_section_header(l.trim())).unwrap_or(lines.len());
+    let line = value.map(|v| format!("{key} = {}", toml_str(v)));
+    match (lines[..end].iter().position(|l| sets(l, key)), line) {
+        (Some(i), Some(l)) => lines[i] = l,
+        (Some(i), None) => { lines.remove(i); }
+        (None, Some(l)) => {
+            // After the top's last setting (before the blank line that ends it).
+            let at = lines[..end].iter().rposition(|l| !l.trim().is_empty()).map(|i| i + 1).unwrap_or(0);
+            lines.insert(at, l);
+        }
+        (None, None) => {}
+    }
+    let mut out = lines.join("\n");
+    out.push('\n');
+    out
+}
+
 /// [text] with `"entry" = "value"` in [table] (made when there is none), the rest as written.
 fn with_entry(text: &str, table: &str, entry: &str, value: &str) -> String {
     let mut lines: Vec<String> = text.lines().map(str::to_string).collect();
@@ -323,6 +343,9 @@ fn rewrite(change: impl FnOnce(&str) -> String) -> std::io::Result<()> {
     if let Some(dir) = p.parent() { std::fs::create_dir_all(dir)? }
     std::fs::write(p, change(&existing))
 }
+
+/// `prefix` / `prefix2` in tui.toml ([value] None: taken out).
+pub fn write_top(key: &str, value: Option<&str>) -> std::io::Result<()> { rewrite(|t| with_top(t, key, value)) }
 
 /// One key after the prefix in tui.toml's `[prefix_keys]`: its command, or "none".
 pub fn write_prefix_key(key: &str, command: &str) -> std::io::Result<()> { rewrite(|t| with_entry(t, "prefix_keys", key, command)) }
@@ -538,6 +561,22 @@ mod tests {
     }
 
     // ── keys ──
+
+    /// The prefix goes into tui.toml as the panel sets it: the top's `prefix` replaced (or added,
+    /// before the first table), `prefix2` added and taken out, every other line as it was.
+    #[test]
+    fn the_prefix_chosen_in_the_panel_is_written_into_tui_toml() {
+        let text = "# mine\nprefix = \"D-b\"\n\n[look]\nfocus = \"line\"\n";
+        let t = with_top(text, "prefix", Some("C-a"));
+        assert_eq!(t, "# mine\nprefix = \"C-a\"\n\n[look]\nfocus = \"line\"\n");
+        let t = with_top(&t, "prefix2", Some("C-b"));
+        assert_eq!(t, "# mine\nprefix = \"C-a\"\nprefix2 = \"C-b\"\n\n[look]\nfocus = \"line\"\n");
+        assert_eq!(with_top(&t, "prefix2", None), "# mine\nprefix = \"C-a\"\n\n[look]\nfocus = \"line\"\n");
+        // A file with only tables: the prefix goes on top, before them.
+        assert_eq!(with_top("[look]\nfocus = \"line\"\n", "prefix", Some("C-a")), "prefix = \"C-a\"\n[look]\nfocus = \"line\"\n");
+        let v: toml::Value = t.parse().unwrap();
+        assert_eq!(v["prefix"].as_str(), Some("C-a"));
+    }
 
     /// A command's key goes into tui.toml as the panel sets it: `[prefix_keys]` made or added
     /// to, every other line as it was — and read back at start as written.

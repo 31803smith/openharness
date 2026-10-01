@@ -3108,12 +3108,14 @@ mod theme_render_tests {
         let Some(Modal::Picker { kind, picker }) = &app.modal else { panic!("closed") };
         assert!(matches!(kind, PickerKind::Keybinds) && picker.from_commands);
         assert_eq!(picker.screen_area.get(), at, "the panel stayed where it was");
-        assert!(s.contains("Keybinds") && s.contains("Prefix") && s.contains("C-b  (fixed)") && s.contains("Split right") && s.contains("Navigation"), "{s}");
-        assert!(!s.contains("Preview") && !s.contains("Appearance") && !s.contains("Second prefix"), "{s}");
-        // The prefix: information only.
+        assert!(s.contains("Keybinds") && s.contains("Prefix") && s.contains("Second prefix") && s.contains("Split right") && s.contains("Navigation"), "{s}");
+        assert!(!s.contains("Preview") && !s.contains("Appearance"), "{s}");
+        // The prefix: Enter waits for the new one; Esc leaves it.
         assert_eq!(picker.current_id().as_deref(), Some("prefix"));
         key(&mut app, KeyCode::Enter);
-        assert!(app.capturing.is_none() && said(&app).contains("tui.toml"), "{}", said(&app));
+        assert!(app.capturing.is_some() && said(&app).starts_with("Prefix: press"), "{}", said(&app));
+        key(&mut app, KeyCode::Esc);
+        assert!(app.capturing.is_none() && said(&app) == "Unchanged", "{}", said(&app));
         // Split right onto n (Next swarm's): named first, replaced on the second press.
         if let Some(Modal::Picker { picker, .. }) = &mut app.modal { let i = crate::modal::KEYBINDS.iter().position(|k| k.0 == "Split right").unwrap(); picker.select(&format!("key:{i}")) }
         key(&mut app, KeyCode::Enter);

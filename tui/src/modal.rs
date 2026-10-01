@@ -49,7 +49,7 @@ pub enum PickerKind {
     Theme,
     /// C-b Enter: every command by name, in the settings panel — type a few letters, Enter runs it.
     Commands,
-    /// Keybinds: the prefix (fixed) and each command's key after it — Enter on one changes it.
+    /// Keybinds: the prefixes and each command's key after them — Enter on one changes it.
     Keybinds,
     /// A task routed to a harness; [voice]: the dial's spoken task it answers.
     Route { text: String, voice: Option<String> },
@@ -561,12 +561,16 @@ pub const KEYBINDS: &[(&str, &str, &str)] = &[
     ("Detach", "detach-client", "General"),
 ];
 
-/// The Keybinds panel: the prefix (fixed here: tui.toml's), then each command with its key now
-/// (or —). Enter on one: the next key you press is it.
+/// The Keybinds panel: the prefix and the second one, then each command with its key now (or —).
+/// Enter on one: the next key you press is it.
 pub fn keybind_rows(app: &App) -> Vec<Row> {
     let prefix = crate::keys::name(&app.keymap.prefix);
-    let fixed = Row::new("prefix", "Prefix").detail(vec![span("the key before every command — set in tui.toml", fg(theme::MUTED))]).right(format!("{prefix}  (fixed)"));
-    std::iter::once(fixed).chain(KEYBINDS.iter().enumerate().map(|(i, (title, runs, group))| {
+    let prefixes = [
+        Row::new("prefix", "Prefix").detail(vec![span("the key before every command — Enter changes it", fg(theme::MUTED))]).right(prefix.clone()).group("Prefix"),
+        Row::new("prefix2", "Second prefix").detail(vec![span("one more, for a terminal that keeps ⌘ keys", fg(theme::MUTED))])
+            .right(app.keymap.prefix2.map(|c| crate::keys::name(&c)).unwrap_or_else(|| "none".into())).group("Prefix"),
+    ];
+    prefixes.into_iter().chain(KEYBINDS.iter().enumerate().map(|(i, (title, runs, group))| {
         let key = key_running(app, runs).map(|c| format!("{prefix} {}", crate::keys::name(&c))).unwrap_or_else(|| "—".into());
         Row::new(format!("key:{i}"), *title).right(key).group(*group)
     })).collect()
@@ -859,22 +863,45 @@ mod theme_row_tests {
 
     fn right(app: &App, title: &str) -> String { keybind_rows(app).into_iter().find(|r| r.label == title).map(|r| r.right).unwrap() }
 
-    /// Keybinds: the prefix first — fixed, information only — then the commands grouped with
-    /// their keys now. Appearance has no keys section.
+    /// Keybinds: the prefix and the second one first, then the commands grouped with their keys
+    /// now. Appearance has no keys section.
     #[test]
-    fn keybinds_are_the_fixed_prefix_then_every_command_grouped() {
-        let mut app = app();
+    fn keybinds_are_the_prefixes_then_every_command_grouped() {
+        let app = app();
         let rows = keybind_rows(&app);
-        assert_eq!((rows[0].id.as_str(), rows[0].label.as_str(), rows[0].right.as_str()), ("prefix", "Prefix", "C-b  (fixed)"));
-        assert!(rows.iter().all(|r| !r.id.starts_with("prefix2")), "no second prefix row");
+        assert_eq!((rows[0].id.as_str(), rows[0].label.as_str(), rows[0].right.as_str()), ("prefix", "Prefix", "C-b"));
+        assert_eq!((rows[1].id.as_str(), rows[1].right.as_str()), ("prefix2", "none"));
         let mut groups: Vec<String> = Vec::new();
         for g in rows.iter().filter_map(|r| r.group.clone()) { if groups.last() != Some(&g) { groups.push(g) } }
-        assert_eq!(groups, ["Navigation", "Panes", "Swarms (windows)", "Harnesses", "General"]);
+        assert_eq!(groups, ["Prefix", "Navigation", "Panes", "Swarms (windows)", "Harnesses", "General"]);
         assert_eq!(right(&app, "Split right"), "C-b %");
-        // Enter on the prefix: said where it is set, nothing waits for a key.
-        assert!(crate::settings::set_key(&mut app, "prefix", "").is_some_and(|s| s.contains("tui.toml")));
-        assert!(app.capturing.is_none());
         assert!(theme_sections(&app).iter().all(|r| r.id != "section:keys") && theme_options(&app, "keys").is_empty());
+    }
+
+    /// The prefix changes in the panel: Enter, then the key — which needs Ctrl, ⌥ or ⌘ (a plain
+    /// key would be lost to typing). The second prefix too; ⌫ leaves none. Both saved to tui.toml.
+    #[test]
+    fn the_prefix_changes_to_a_key_with_a_modifier() {
+        let mut app = app();
+        assert!(crate::settings::set_key(&mut app, "prefix", "").is_some_and(|s| s.contains("press")));
+        for code in [KeyCode::Char('a'), KeyCode::Enter, KeyCode::Char('1')] {
+            assert!(press(&mut app, code, KeyModifiers::NONE).contains("needs Ctrl"), "{code:?} refused");
+            assert!(app.capturing.is_some(), "still waiting");
+        }
+        assert_eq!(press(&mut app, KeyCode::Char('a'), KeyModifiers::CONTROL), "Prefix: C-a — saved to tui.toml");
+        assert_eq!(crate::keys::name(&app.keymap.prefix), "C-a");
+        assert!(app.capturing.is_none());
+        // The second prefix, then none.
+        let _ = crate::settings::set_key(&mut app, "prefix2", "");
+        assert!(press(&mut app, KeyCode::Char('b'), KeyModifiers::CONTROL).starts_with("Second prefix: C-b"));
+        assert_eq!(app.keymap.prefix2.map(|c| crate::keys::name(&c)).as_deref(), Some("C-b"));
+        let _ = crate::settings::set_key(&mut app, "prefix2", "");
+        assert_eq!(press(&mut app, KeyCode::Backspace, KeyModifiers::NONE), "Second prefix: none — saved to tui.toml");
+        assert_eq!(app.keymap.prefix2, None);
+        // Esc: unchanged.
+        let _ = crate::settings::set_key(&mut app, "prefix", "");
+        assert_eq!(press(&mut app, KeyCode::Esc, KeyModifiers::NONE), "Unchanged");
+        assert_eq!(crate::keys::name(&app.keymap.prefix), "C-a");
     }
 
     /// A key chosen is the command's: its old key given up, the command in full kept (Rename
