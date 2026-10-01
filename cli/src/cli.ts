@@ -358,6 +358,13 @@ const ROUTE_CLASSIFY_APP_MS = 20_000
  * installed, and cost most of a morning proving otherwise.
  */
 let appPaneAgents: string[] = []
+/**
+ * The window's tabs, kept for the same reason: a window can connect while this daemon is still
+ * booting (the app no longer waits for its first scan), and an `app_swarms` that lands before the
+ * cable host exists was dropped — the dial then had no tab, drew "Choose a pane" and took no swipe
+ * or voice until the window happened to send its tabs again (measured 2026-10-01: 80 s).
+ */
+let appSwarmsLatest: Parameters<DaemonCableHost['setSwarms']>[0] = null
 /** Module scope for the same reason cableRef is: shutdown() has to release the socket. */
 let deviceLinkRef: DeviceLink | null = null
 
@@ -5049,6 +5056,7 @@ async function runForeground(session: AuthSession | null): Promise<void> {
     // the agent and offers the rest — and, through setSwarms, what makes the desk strict: a present
     // window with an empty swarm is an empty carousel, not the whole machine.
     onAppSwarms: (swarms) => {
+      appSwarmsLatest = swarms
       cableHostRef?.setSwarms(swarms)
       void cableRef?.syncSwarms()
       void cableRef?.syncAgents()
@@ -7133,6 +7141,7 @@ async function runForeground(session: AuthSession | null): Promise<void> {
   cableHostRef = cableHost
   // Anything the window said while this was still being built.
   cableHost.setDesk(appPaneAgents)
+  cableHost.setSwarms(appSwarmsLatest)
   // The dial's log now lives with the app's, one file a day — see dialLog.ts. The old unbounded
   // `cli/data/dial.log` is cut down to a pointer, for anyone with a bookmark.
   const legacyDialLog = join(env.ADAPTER_DATA_DIR, 'dial.log')
