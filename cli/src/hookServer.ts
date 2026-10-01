@@ -119,6 +119,11 @@ export interface HookServerHandlers {
   onGroupList?: () => PairOutcome
   onGroupSync?: () => PairOutcome
   onGroupRemove?: (selector: string) => PairOutcome
+  /** `harness devices list|remove|rebaseline` and the window's Devices list — the account's device key
+   *  log as this machine verified it (lib/e2ee/deviceLogSyncer.ts). */
+  onDevicesList?: () => Promise<PairOutcome>
+  onDevicesRemove?: (pub: string) => Promise<PairOutcome>
+  onDevicesRebaseline?: (confirm: boolean) => Promise<PairOutcome>
   /** Local dashboard status snapshot (GET /api/status). */
   onStatus?: () => Record<string, unknown> | Promise<Record<string, unknown>>
   /** Recent adapter log tail (GET /api/logs). */
@@ -386,6 +391,8 @@ async function awaitHermesKind(body: RegisterInput, handlers: HookServerHandlers
 export interface HookServerOptions {
   /** Also serve on this Unix socket (see lib/localSocket.ts). Null or absent: TCP only. */
   socketPath?: string | null
+  /** A private socket identifies this user's daemon even when another OS user holds the TCP port. */
+  allowPortFallback?: boolean
 }
 
 export function startHookServer(
@@ -704,6 +711,31 @@ export function startHookServer(
         const out = handlers.onGroupRemove(body.selector.trim()); json(out.status, out.body); return
       }
 
+      // `harness devices list` / the window's Devices list → the account's devices, as this machine's
+      // verified copy of the device key log has them. Read-only (public keys and labels).
+      if (req.method === 'GET' && url === '/api/devices') {
+        if (!handlers.onDevicesList) { json(503, { error: 'UNAVAILABLE' }); return }
+        const out = await handlers.onDevicesList(); json(out.status, out.body); return
+      }
+      // `harness devices remove <fp>` / Remove in the window → out of the log, signed by this machine.
+      if (req.method === 'POST' && url === '/api/devices/remove') {
+        if (!localOk) { json(403, { error: 'FORBIDDEN' }); return }
+        if (!handlers.onDevicesRemove) { json(503, { error: 'UNAVAILABLE' }); return }
+        let body: { pub?: unknown }
+        try { body = JSON.parse(await readBody(req)) as typeof body } catch { json(400, { error: 'bad json' }); return }
+        if (typeof body.pub !== 'string' || !body.pub) { json(400, { error: 'MISSING_PUB' }); return }
+        const out = await handlers.onDevicesRemove(body.pub); json(out.status, out.body); return
+      }
+      // `harness devices rebaseline` → what trusting the backend's log again would change; `confirm`
+      // does it (the only way out of a frozen log).
+      if (req.method === 'POST' && url === '/api/devices/rebaseline') {
+        if (!localOk) { json(403, { error: 'FORBIDDEN' }); return }
+        if (!handlers.onDevicesRebaseline) { json(503, { error: 'UNAVAILABLE' }); return }
+        let body: { confirm?: unknown }
+        try { body = JSON.parse(await readBody(req)) as typeof body } catch { json(400, { error: 'bad json' }); return }
+        const out = await handlers.onDevicesRebaseline(body.confirm === true); json(out.status, out.body); return
+      }
+
       // `harness remote-password status` → whether one is set, and its fingerprint. Read-only, same
       // gating tier as /api/pairs.
       if (req.method === 'GET' && url === '/api/remote-password/status') {
@@ -835,36 +867,49 @@ export function startHookServer(
   const server = http.createServer(handle)
 
   return new Promise((resolve, reject) => {
-    server.once('error', (err: NodeJS.ErrnoException) => {
-      // FIXED port — no OS-assigned fallback. A free-port fallback made the daemon land on an
-      // unpredictable port, so a leftover/zombie couldn't be found by `lsof :<port>`. On a clash we
-      // fail loudly with the exact port instead (the CLI turns this into a clear "already running?").
+    let fellBack = false
+    const failed = (err: NodeJS.ErrnoException): void => {
+      if (err.code === 'EADDRINUSE' && !fellBack && options.allowPortFallback && options.socketPath) {
+        fellBack = true
+        console.log(`[hooks] control port ${port} unavailable; assigning a separate port for this user`)
+        server.once('error', failed)
+        server.listen(0, '127.0.0.1')
+        return
+      }
       if (err.code === 'EADDRINUSE') {
         console.error(`[hooks] 127.0.0.1:${port} is already in use — another adapter is probably running.`)
-        console.error(`        Stop it:  harness stop      or find it:  lsof -ti :${port} | xargs kill`)
+        console.error('        Use a different PORT; no other user\'s daemon was stopped.')
       } else {
         console.error('[hooks] listen failed:', err)
       }
       reject(err)
-    })
-    server.listen(port, '127.0.0.1', () => {
+    }
+    server.once('error', failed)
+    server.once('listening', () => {
       const actual = (server.address() as AddressInfo).port
       hosts = loopbackHosts(actual)
       console.log(`[hooks] listening on 127.0.0.1:${actual} (SessionStart/SessionEnd callbacks)`)
       const socketPath = options.socketPath
       if (!socketPath) { resolve({ server, port: actual, localSocket: null }); return }
-      // After the port, never before: holding it is what makes a socket file already there stale.
-      // A socket that cannot be opened costs the app its fast path, not the daemon its start.
+      // The private socket is mandatory when opting into multi-user startup. A duplicate daemon
+      // must not survive on a random port while another one owns this user's socket.
       listenLocalSocket(handle, socketPath).then(
         (localSocket) => {
           console.log(`[hooks] listening on ${socketPath}`)
           resolve({ server, port: actual, localSocket })
         },
         (error: unknown) => {
+          if (options.allowPortFallback) {
+            server.closeAllConnections()
+            server.close()
+            reject(error)
+            return
+          }
           console.warn(`[hooks] local socket unavailable (${socketPath}): ${error instanceof Error ? error.message : error}`)
           resolve({ server, port: actual, localSocket: null })
         },
       )
     })
+    server.listen(port, '127.0.0.1')
   })
 }

@@ -193,6 +193,24 @@ class _Rows extends StatelessWidget {
   final bool showCompanion;
   final void Function(String id, Map<String, Object?> patch) onChanged;
 
+  /// The languages the microphone can be transcribed as, each named in itself. The codes are what
+  /// the dial sends with every capture and what the backend accepts — VOICE_LANGS in
+  /// backend/src/lib/deepgram.ts; edit the two together, or a language offered here is quietly
+  /// transcribed as English there. The LVGL firmware offered the same six.
+  static const _voiceLangs = [
+    SelectOption(value: 'en', label: 'English'),
+    SelectOption(value: 'vi', label: 'Tiếng Việt'),
+    SelectOption(value: 'es', label: 'Español'),
+    SelectOption(value: 'fr', label: 'Français'),
+    SelectOption(value: 'ja', label: '日本語'),
+    SelectOption(value: 'it', label: 'Italiano'),
+  ];
+
+  /// Whether the robot offers a choice of who is on the screen. Off while the companion skins are
+  /// unfinished (owner, 2026-09-30): the firmware wears Focus whatever it is asked, so a Skin row or a
+  /// companion switch would be a control that does nothing. Flip it with HABITAT_FOCUS_ONLY.
+  static const _petSkins = false;
+
   /// The characters this firmware ships. Ids are the device's own, from character.h.
   static const _skins = [
     SelectOption(value: 0, label: 'Tim', note: 'The octopus'),
@@ -265,7 +283,7 @@ class _Rows extends StatelessWidget {
         _Group(
           title: 'Appearance',
           children: [
-            if (showCompanion && settings.followCompanion != null)
+            if (_petSkins && showCompanion && settings.followCompanion != null)
               SettingRow(
                 title: 'Follow desktop companion',
                 detail: settings.companion == null
@@ -277,17 +295,18 @@ class _Rows extends StatelessWidget {
                   'Follow desktop companion',
                 ),
               ),
-            SettingRow(
-              title: 'Skin',
-              detail: settings.companion == null
-                  ? 'Who lives on the screen.'
-                  : 'Used when you stop following the desktop companion.',
-              control: field(
-                settings.character,
-                _skins,
-                (v) => set({'character': v}),
+            if (_petSkins)
+              SettingRow(
+                title: 'Skin',
+                detail: settings.companion == null
+                    ? 'Who lives on the screen.'
+                    : 'Used when you stop following the desktop companion.',
+                control: field(
+                  settings.character,
+                  _skins,
+                  (v) => set({'character': v}),
+                ),
               ),
-            ),
             SettingRow(
               title: 'Brightness',
               detail: '${settings.brightness}%',
@@ -313,19 +332,8 @@ class _Rows extends StatelessWidget {
               detail: 'Stops the artwork animating. Nothing else changes.',
               control: toggle('quiet', settings.quiet, 'Still companion'),
             ),
-            // Round only. A square face has no arc to bend a title along, so the row is not drawn at
-            // all — a greyed control still claims the setting is there. It is the last of these: rim
-            // scrolling was the other, and it was removed from the device entirely.
-            if (settings.round)
-              SettingRow(
-                title: 'Edge text',
-                detail:
-                    "Names and status on the rim's curve, or straight across.",
-                control: field(settings.straightTitle, const [
-                  SelectOption(value: false, label: 'Curved'),
-                  SelectOption(value: true, label: 'Straight'),
-                ], (v) => set({'straightTitle': v})),
-              ),
+            // No Edge text row: the robot draws its titles straight across (owner, 2026-10-01), and
+            // a Focus-only firmware ignores the field — a choice here would change nothing.
           ],
         ),
         _Group(
@@ -369,10 +377,13 @@ class _Rows extends StatelessWidget {
               detail:
                   'What the microphone is transcribed as. The robot’s own choice, not this '
                   'computer’s.',
-              control: field(settings.voiceLang == 'vi' ? 'vi' : 'en', const [
-                SelectOption(value: 'en', label: 'English'),
-                SelectOption(value: 'vi', label: 'Tiếng Việt'),
-              ], (v) => set({'voiceLang': v})),
+              control: field(
+                _voiceLangs.any((o) => o.value == settings.voiceLang)
+                    ? settings.voiceLang
+                    : 'en',
+                _voiceLangs,
+                (v) => set({'voiceLang': v}),
+              ),
             ),
           ],
         ),

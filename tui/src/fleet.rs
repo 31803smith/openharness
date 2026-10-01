@@ -112,6 +112,28 @@ pub struct Agent {
     /// When its transcript last changed, as the daemon last read it (tokenUsage.updatedAt, ms):
     /// what it last did, while no window was watching too.
     pub usage_at: u64,
+    // ── models: the model its engine is pointed at (the frame's `grid`) ──
+    /// A grid's or a saved API's model (`grid.model`; empty on its own login), that endpoint
+    /// (`grid.baseUrl`, which tells one API from another), whether the computers serving it rest
+    /// (`grid.state`: asleep, waking), and why it will not answer now (`grid.note`: its reason —
+    /// offline, not_served — the model, and the computer).
+    pub grid_model: String,
+    pub grid_base_url: String,
+    pub grid_state: String,
+    pub grid_note: Option<(String, String, String)>,
+}
+
+/// `grid.note`, read as the desktop reads it: a reason it does not know, or one missing the names
+/// its sentence needs, is no note.
+fn grid_note(note: &Value) -> Option<(String, String, String)> {
+    let model = s(note, "model");
+    let machine = s(note, "machine");
+    match s(note, "reason").as_str() {
+        _ if model.is_empty() => None,
+        "not_served" => Some(("not_served".into(), model, machine)),
+        "offline" if !machine.is_empty() => Some(("offline".into(), model, machine)),
+        _ => None,
+    }
 }
 
 /// A pull request for an agent's branch: its number, state (Open, Draft, Merged, Closed), link.
@@ -315,6 +337,11 @@ pub fn agent_from(machine_id: &str, row: &Value, previous: Option<&Agent>) -> Ag
         usage_at: row.get("tokenUsage").map(|u| time(u, "updatedAt")).filter(|t| *t > 0).or(previous.map(|p| p.usage_at)).unwrap_or(0),
         todos: previous.map(|p| p.todos.clone()).unwrap_or_default(),
         subagents: previous.map(|p| p.subagents.clone()).unwrap_or_default(),
+        // ── models ── (the daemon pushes the row again when its note clears)
+        grid_model: s(&row["grid"], "model"),
+        grid_base_url: s(&row["grid"], "baseUrl"),
+        grid_state: s(&row["grid"], "state"),
+        grid_note: grid_note(&row["grid"]["note"]),
     }
 }
 
@@ -541,15 +568,20 @@ impl Fleet {
 // ── the roster between runs ────────────────────────────────────────────────────
 
 fn cache_path() -> std::path::PathBuf {
-    std::path::PathBuf::from(std::env::var("HOME").unwrap_or_default()).join(".harness").join("tui").join("fleet.json")
+    crate::app::state_dir().join("fleet.json")
 }
 
 impl Fleet {
-    /// Last run's machines and harnesses — searchable the instant the TUI opens, replaced by the
-    /// live rosters as each machine answers.
-    pub fn load_cache(&mut self) {
+    /// Restore only after this user's daemon identifies the current account's machine. Old caches
+    /// had no owner and may have come from another OS user's TCP listener; never adopt those.
+    pub fn load_cache(&mut self, owner: &str) {
         let Ok(text) = std::fs::read_to_string(cache_path()) else { return };
         let Ok(value) = serde_json::from_str::<Value>(&text) else { return };
+        self.restore_cache(&value, owner);
+    }
+
+    fn restore_cache(&mut self, value: &Value, owner: &str) {
+        if owner.is_empty() || value.get("owner").and_then(Value::as_str) != Some(owner) { return }
         for m in value.get("machines").and_then(Value::as_array).into_iter().flatten() {
             let id = s(m, "id");
             if id.is_empty() || self.machine(&id).is_some() { continue }
@@ -567,7 +599,7 @@ impl Fleet {
     }
 
     pub fn save_cache(&self) {
-        if self.agents.is_empty() { return }
+        if self.agents.is_empty() || self.local_id.is_empty() || crate::local::is_local(&self.local_id) { return }
         let machines: Vec<Value> = self.machines.iter().map(|m| serde_json::json!({ "id": m.id, "name": m.name, "local": m.local, "status": m.status })).collect();
         let agents: Vec<Value> = self.agents.values().map(|a| serde_json::json!({
             "machine": a.machine_id, "activeAt": a.active_at,
@@ -578,7 +610,7 @@ impl Fleet {
         let path = cache_path();
         if let Some(dir) = path.parent() { let _ = std::fs::create_dir_all(dir); }
         let temp = path.with_extension("json.tmp");
-        if std::fs::write(&temp, serde_json::json!({ "machines": machines, "agents": agents }).to_string()).is_ok() { let _ = std::fs::rename(temp, path); }
+        if std::fs::write(&temp, serde_json::json!({ "owner": self.local_id, "machines": machines, "agents": agents }).to_string()).is_ok() { let _ = std::fs::rename(temp, path); }
     }
 }
 
@@ -597,6 +629,25 @@ pub fn ago(ms: u64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cache_needs_the_current_accounts_owner_and_drops_legacy_unscoped_data() {
+        let mut cached = serde_json::json!({
+            "owner": "account-a", "machines": [{"id": "remote-a", "name": "private-machine"}],
+            "agents": [{"machine": "remote-a", "row": {"id": "private-agent", "name": "private work"}}]
+        });
+        let mut fleet = Fleet::default();
+        fleet.restore_cache(&cached, "account-b");
+        assert!(fleet.machines.is_empty() && fleet.agents.is_empty());
+        cached.as_object_mut().unwrap().remove("owner");
+        fleet.restore_cache(&cached, "account-a");
+        fleet.restore_cache(&cached, "");
+        assert!(fleet.machines.is_empty() && fleet.agents.is_empty());
+        cached["owner"] = serde_json::json!("account-a");
+        fleet.restore_cache(&cached, "account-a");
+        assert_eq!(fleet.machines.len(), 1);
+        assert_eq!(fleet.agents.len(), 1);
+    }
 
     #[test]
     fn local_shells_share_the_app_name_without_changing_their_transport() {

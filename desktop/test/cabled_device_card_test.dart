@@ -68,53 +68,36 @@ Future<List<(String, Map<String, Object?>)>> _pump(
 }
 
 void main() {
-  testWidgets(
-    'companion following is gated and changes only the named device preference',
-    (tester) async {
-      const devices = [
-        DialStatus(
-          attached: true,
-          id: 'dial',
-          settings: DeviceSettings(
-            brightness: 40,
-            character: 2,
-            face: 466,
-            muted: true,
-            quiet: false,
-            straightTitle: false,
-            focusFace: false,
-            scrollReversed: false,
-            round: true,
-            voiceLang: 'en',
-            followCompanion: true,
-            companion: 'gnu',
-          ),
+  testWidgets('while the robot wears Focus only, nothing offers another face', (
+    tester,
+  ) async {
+    // The firmware ignores a skin or a companion until the companion skins are finished, so
+    // neither row is drawn — even with the experimental companion switch on.
+    const devices = [
+      DialStatus(
+        attached: true,
+        id: 'dial',
+        settings: DeviceSettings(
+          brightness: 40,
+          character: 2,
+          face: 466,
+          muted: true,
+          quiet: false,
+          straightTitle: false,
+          focusFace: false,
+          scrollReversed: false,
+          round: true,
+          voiceLang: 'en',
+          followCompanion: true,
+          companion: 'gnu',
         ),
-      ];
-      await _pump(tester, devices);
-      expect(find.text('Follow desktop companion'), findsNothing);
-      final sent = await _pump(tester, devices, showCompanion: true);
-      expect(find.text('Follow desktop companion'), findsOneWidget);
-      expect(find.text('Showing GNU from your Zoo.'), findsOneWidget);
-      await _tap(tester, const ValueKey('device-followCompanion-dial'));
-      expect(sent, hasLength(1));
-      expect(sent.single.$1, 'dial');
-      expect(sent.single.$2, {'followCompanion': false});
-      // The switch waits for the device's read-back acknowledgement.
-      expect(
-        tester
-            .widget<Switch>(
-              find.byKey(const ValueKey('device-followCompanion-dial')),
-            )
-            .value,
-        isTrue,
-      );
-      await _pump(tester, const [
-        DialStatus(attached: true, id: 'old', settings: _round),
-      ], showCompanion: true);
-      expect(find.text('Follow desktop companion'), findsNothing);
-    },
-  );
+      ),
+    ];
+    await _pump(tester, devices, showCompanion: true);
+    expect(find.text('Follow desktop companion'), findsNothing);
+    expect(find.text('Skin'), findsNothing);
+    expect(find.text('Brightness'), findsOneWidget);
+  });
 
   testWidgets('the pane names the robot it is changing, before any row', (
     tester,
@@ -137,13 +120,40 @@ void main() {
     expect(find.textContaining('habitat 0.0.86'), findsOneWidget);
   });
 
-  testWidgets('a round face offers the rows a circle has', (tester) async {
+  testWidgets('no robot offers Edge text: titles are straight across', (
+    tester,
+  ) async {
     await _pump(tester, const [
       DialStatus(attached: true, id: 'AA:01', settings: _round),
     ]);
-    expect(find.text('Skin'), findsOneWidget);
-    expect(find.text('Edge text'), findsOneWidget);
+    expect(find.text('Edge text'), findsNothing);
     expect(find.text('Voice language'), findsOneWidget);
+  });
+
+  testWidgets('the voice language shows what the robot holds, of all six', (
+    tester,
+  ) async {
+    // The picker once knew only English and Vietnamese, and read a Japanese dial as English.
+    await _pump(tester, const [
+      DialStatus(
+        attached: true,
+        id: 'AA:01',
+        settings: DeviceSettings(
+          brightness: 60,
+          character: 2,
+          face: 466,
+          muted: false,
+          quiet: false,
+          straightTitle: false,
+          focusFace: false,
+          scrollReversed: false,
+          round: true,
+          voiceLang: 'ja',
+        ),
+      ),
+    ]);
+    expect(find.text('日本語'), findsOneWidget);
+    expect(find.text('English'), findsNothing);
   });
 
   testWidgets('a square face HIDES the row it has no meaning for', (
@@ -155,7 +165,6 @@ void main() {
     ]);
     expect(find.text('Edge text'), findsNothing);
     expect(find.text('Rim scrolling'), findsNothing);
-    expect(find.text('Skin'), findsOneWidget);
     expect(find.text('Reverse scrolling'), findsOneWidget);
   });
 
@@ -184,7 +193,7 @@ void main() {
     ]);
     expect(find.text('Unplugged'), findsOneWidget);
     expect(
-      find.text('Skin'),
+      find.text('Brightness'),
       findsOneWidget,
       reason: 'the values stay readable',
     );
@@ -209,12 +218,12 @@ void main() {
     expect(find.text('These settings apply to'), findsOneWidget);
     expect(find.textContaining('aa:bb'), findsOneWidget);
     expect(find.textContaining('cc:dd'), findsOneWidget);
-    // Opens on the first attached robot, which is round, so its two round-only rows are drawn once.
-    expect(find.text('Edge text'), findsOneWidget);
+    // Opens on the first attached robot, whose voice is English; the second's is Vietnamese.
+    expect(find.text('English'), findsOneWidget);
 
     await tester.tap(find.textContaining('cc:dd'));
     await tester.pumpAndSettle();
-    expect(find.text('Edge text'), findsNothing);
+    expect(find.text('Tiếng Việt'), findsOneWidget);
     await _tap(tester, const ValueKey('device-quiet-BB:02'));
     expect(
       sent.single.$1,
@@ -233,7 +242,7 @@ void main() {
         find.textContaining('keeps its settings on the glass'),
         findsOneWidget,
       );
-      expect(find.text('Skin'), findsNothing);
+      expect(find.text('Brightness'), findsNothing);
     },
   );
 }
