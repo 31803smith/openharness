@@ -4058,10 +4058,15 @@ class AppNotifier extends ChangeNotifier {
       if (previous == null || previous.computerId != endpoint.computerId) {
         continue;
       }
-      if (!mapEquals(previous.agentProjects, endpoint.agentProjects)) {
+      final scanEnded = previous.scanning && !endpoint.scanning;
+      if (!mapEquals(previous.agentProjects, endpoint.agentProjects) ||
+          previous.scanning != endpoint.scanning) {
         machine.localEndpoint = endpoint;
         changed = true;
       }
+      // The list this window loaded while the daemon was still on its first scan may have been
+      // missing agents (see LocalCliEndpoint.scanning): ask again now that it is complete.
+      if (scanEnded) unawaited(_loadMachineData(machine, force: true));
       if (!kUnderTest) {
         for (final project in endpoint.agentProjects.values) {
           unawaited(_localGitProjects.read(project.cwd));
