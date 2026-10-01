@@ -52,6 +52,8 @@ import '../widgets/notification_inbox.dart';
 import '../widgets/workspace_notifications_button.dart';
 import '../state/harness_sessions.dart';
 import '../state/harness_monitor.dart';
+import '../state/machine_resource_monitor.dart';
+import '../widgets/workspace_machine_resources.dart';
 import '../state/harness_activity.dart';
 import '../state/harness_attachments.dart';
 import '../state/harness_placement.dart';
@@ -572,6 +574,8 @@ class _SwarmScreenState extends State<SwarmScreen> {
     app.deviceFormCommand = _deviceFormCommand;
     _pullRequest = WorkspacePullRequest(app)..addListener(_statusPrefsChanged);
     _harnessMonitor = HarnessMonitor(app)..addListener(_monitorChanged);
+    _machineResources = MachineResourceMonitor(app)
+      ..addListener(_monitorChanged);
     app.reviewSessionClose = _reviewSessionClose;
     _keymap.addListener(_keymapChanged);
     app.hasNavigationRail = false;
@@ -713,6 +717,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
         // Subscription usage is read ahead, so opening a menu shows it without waiting.
         _modelsMenu!.start();
         _harnessMonitor.start();
+        _machineResources.start();
       });
     }
     if (_menuHost) {
@@ -774,6 +779,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
   @override
   void dispose() {
     _harnessMonitor.dispose();
+    _machineResources.dispose();
     if (app.reviewSessionClose == _reviewSessionClose) {
       app.reviewSessionClose = null;
     }
@@ -1475,6 +1481,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
   }
 
   late final HarnessMonitor _harnessMonitor;
+  late final MachineResourceMonitor _machineResources;
   void _monitorChanged() {
     if (!mounted) return;
     if (_menuHost) _syncNative();
@@ -1775,6 +1782,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
         'family': barStyle.fontFamily,
         'fallback': barStyle.fontFamilyFallback,
         'size': workspaceBarFontSize,
+        'groupGapCells': workspaceBarGroupGapCells,
         'foreground': terminalTheme.foreground.toARGB32(),
         'selection': terminalTheme.selection.toARGB32(),
       },
@@ -1799,6 +1807,21 @@ class _SwarmScreenState extends State<SwarmScreen> {
           {'text': _harnessMonitor.label},
         ],
         'interactive': _shortcutsEnabled,
+      },
+      'machineResources': {
+        'text': _machineResources.label,
+        'label': _machineResources.detail,
+        'detail': _machineResources.detail,
+        'segments': [
+          {'text': _machineResources.metricsLabel()},
+        ],
+        'compactSegments': [
+          {'text': _machineResources.metricsLabel(gpu: false)},
+        ],
+        'minimalSegments': [
+          {'text': _machineResources.metricsLabel(ram: false, gpu: false)},
+        ],
+        'interactive': false,
       },
       'footerCovered':
           !_showWorkspaceFooter ||
@@ -6993,26 +7016,25 @@ class _SwarmScreenState extends State<SwarmScreen> {
       final download = kIsWeb && !_compact(context);
       final downloadWidth = download ? available * .16 : 0.0;
       final usage = _subscriptionUsage;
+      final resourceGap = cell.width * (workspaceBarGroupGapCells - 2);
       final resourceBudget = math.max(
         0.0,
         available -
             shareWidth -
             downloadWidth -
             (!kIsWeb && _slotShown ? 44 : 0) -
-            cell.width * 5,
+            cell.width * 5 -
+            resourceGap * 2,
       );
-      final monitorWidth = resourceBudget * .55;
+      final monitorWidth = math.min(
+        workspaceBarTextSizeOf(context, _harnessMonitor.label).width +
+            cell.width * 2,
+        resourceBudget * .4,
+      );
+      final hardwareWidth = resourceBudget * .42;
       final usageWidth = constraints.maxWidth < 1050
           ? 0.0
-          : math.max(
-                  0.0,
-                  available -
-                      shareWidth -
-                      downloadWidth -
-                      (!kIsWeb && _slotShown ? 44 : 0) -
-                      cell.width * 5,
-                ) *
-                .22;
+          : resourceBudget * .22;
       final paneContext = Row(
         mainAxisAlignment: MainAxisAlignment.end,
         children: [
@@ -7090,7 +7112,16 @@ class _SwarmScreenState extends State<SwarmScreen> {
                     ),
                   ),
                 ),
-                if (usageWidth > 0)
+                SizedBox(width: resourceGap),
+                ConstrainedBox(
+                  constraints: BoxConstraints(maxWidth: hardwareWidth),
+                  child: WorkspaceMachineResources(
+                    key: const ValueKey('workspace-machine-resources'),
+                    monitor: _machineResources,
+                  ),
+                ),
+                if (usageWidth > 0) ...[
+                  SizedBox(width: resourceGap),
                   ConstrainedBox(
                     constraints: BoxConstraints(maxWidth: usageWidth),
                     child: WorkspaceBarControl(
@@ -7115,8 +7146,9 @@ class _SwarmScreenState extends State<SwarmScreen> {
                                     foreground: theme.foreground,
                                     surface: grid.AppPalette.swarmField,
                                   ))
-                                    TextSpan(
-                                      text: part.text,
+                                    workspaceBarGroupTextSpan(
+                                      part.text,
+                                      cellWidth: cell.width,
                                       style: TextStyle(color: part.foreground),
                                     ),
                                 ],
@@ -7132,6 +7164,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
                       ),
                     ),
                   ),
+                ],
                 SizedBox(width: cell.width * 2),
                 if (!kIsWeb && _slotShown) _daemonTabButton(),
                 if (download) ...[

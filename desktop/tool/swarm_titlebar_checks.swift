@@ -1542,7 +1542,7 @@ private extension SwarmTabStrip {
       newButton.frame.maxX < searchButton.frame.minX, "Tabs precede the search and Store controls")
     try checkTitlebar(tabs[0].frame.width < 136 && tabs[0].displayLabel == "code",
       "Overflow tabs keep readable names without persistent number prefixes")
-    try checkTitlebar(subviews.count == 4 && statusBar.subviews.count == 7 && pullRequestButton.isHidden && subscriptionUsageButton.isHidden && harnessMonitorButton.isHidden && daemonButton.isHidden && voiceLabel.isHidden && shareButton.isHidden,
+    try checkTitlebar(subviews.count == 4 && statusBar.subviews.count == 8 && machineResourcesLabel.isHidden && pullRequestButton.isHidden && subscriptionUsageButton.isHidden && harnessMonitorButton.isHidden && daemonButton.isHidden && voiceLabel.isHidden && shareButton.isHidden,
       "Navigation lives in the titlebar and focused context lives in the footer")
     let controls = [newButton]
     for control in controls {
@@ -2508,9 +2508,13 @@ do {
 private extension SwarmTabStrip {
   func checkHarnessMonitor() throws {
     var state: [String: Any] = ["enabled": true,
-      "harnessMonitor": ["text": "10 live · 1.4 GB · 12% CPU", "segments": [["text": "10 live · 1.4 GB · 12% CPU"]], "label": "Harness Monitor", "detail": "RAM includes child processes", "interactive": true],
-      "subscriptionUsage": ["text": "Claude 12% Codex 30%", "interactive": true],
-      "focusedContext": ["text": "Computer > project > branch", "interactive": true],
+      "harnessMonitor": ["text": "Harnesses 10", "segments": [["text": "Harnesses 10"]], "label": "Harness Monitor", "detail": "View running harnesses", "interactive": true],
+      "machineResources": ["text": "CPU 20%   RAM 50%   GPU 10%", "label": "M2 machine resources", "detail": "This computer's resources", "interactive": false,
+        "segments": [["text": "CPU 20%   RAM 50%   GPU 10%"]],
+        "compactSegments": [["text": "CPU 20%   RAM 50%"]],
+        "minimalSegments": [["text": "CPU 20%"]]],
+      "subscriptionUsage": ["text": "Claude 100%   Codex 90%", "segments": [["text": "Claude 100%   Codex 90%"]], "interactive": true],
+      "focusedContext": ["text": "M2 > openharness > main", "segments": [["text": "M2 > openharness > main"]], "interactive": true],
       "tabs": [["id": "work", "name": "Work"]], "activeId": "work"]
     var calls: [String] = []
     emit = { method, _ in calls.append(method) }
@@ -2521,19 +2525,33 @@ private extension SwarmTabStrip {
         harnessMonitorButton.frame.minX > 0 && harnessMonitorButton.frame.width > 0 &&
         harnessMonitorButton.frame.maxX <= contextButton.frame.minX,
         "Resource monitor stays at bottom left without overlapping context at width \(width)")
+      try checkTitlebar(!machineResourcesLabel.isHidden && !machineResourcesLabel.isEnabled &&
+        machineResourcesLabel.accessibilityRole() == .staticText &&
+        machineResourcesLabel.frame.minX >= harnessMonitorButton.frame.maxX &&
+        machineResourcesLabel.frame.maxX <= contextButton.frame.minX,
+        "Read-only hardware never overlaps count or focused context at width \(width)")
       try checkTitlebar(harnessMonitorButton.accessibilityLabel() == "Harness Monitor",
         "The resource counter names its action for VoiceOver")
       try checkTitlebar(subscriptionUsageButton.isHidden == (width < 1050),
         "Narrow footers retain the monitor while subscriptions remain accessible through Models")
+      if let capture = ProcessInfo.processInfo.environment["HARNESS_RESOURCE_CAPTURE_DIR"] {
+        let root = URL(fileURLWithPath: capture)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        try statusBar.renderedTree(background: NSColor(white: 0.12, alpha: 1))
+          .representation(using: .png, properties: [:])!.write(to:
+            root.appendingPathComponent("native-resources-\(Int(width)).png"))
+      }
     }
+    machineResourcesLabel.performClick(nil)
     harnessMonitorButton.performClick(nil)
-    try checkTitlebar(calls == ["resourceMonitor"], "The footer opens the session monitor, never a new agent")
+    try checkTitlebar(calls == ["resourceMonitor"], "Only the session count opens a panel; hardware stays read-only")
     state["enabled"] = false
     update(state)
     harnessMonitorButton.performClick(nil)
-    try checkTitlebar(calls.count == 1, "A covered or modal footer cannot open its monitor")
+    machineResourcesLabel.performClick(nil)
+    try checkTitlebar(calls.count == 1, "A covered or modal footer cannot open the session monitor")
     update([:])
-    try checkTitlebar(harnessMonitorButton.isHidden && !harnessMonitorButton.isEnabled,
-      "Clearing workspace state clears the counter and action")
+    try checkTitlebar(harnessMonitorButton.isHidden && !harnessMonitorButton.isEnabled && machineResourcesLabel.isHidden && !machineResourcesLabel.isEnabled,
+      "Clearing workspace state clears the counter, hardware and actions")
   }
 }

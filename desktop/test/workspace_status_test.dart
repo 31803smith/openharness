@@ -380,20 +380,20 @@ void main() {
           subscription('claude', 'aaaaaa', 0),
           subscription('codex', 'bbbbbb', 50),
         ]).text,
-        'Claude 0%  Codex 50%',
+        'Claude 100%   Codex 50%',
       );
       final all = WorkspaceSubscriptionUsage.fromRows([
         subscription('claude', 'aaaaaa', 0),
         subscription('claude', 'cccccc', .3, status: '<1% remaining'),
         subscription('codex', 'bbbbbb', null, status: 'Usage unavailable'),
       ]);
-      expect(all.text, 'Claude aaaaaa 0%  Claude cccccc <1%  Codex —');
+      expect(all.text, 'Claude aaaaaa 100%   Claude cccccc 100%   Codex -');
       expect(all.detail, contains('Codex (bbbbbb): Usage unavailable'));
       expect(all.segments.map((part) => part.tone), [
         WorkspaceUsageTone.normal,
-        WorkspaceUsageTone.exhausted,
         WorkspaceUsageTone.normal,
-        WorkspaceUsageTone.low,
+        WorkspaceUsageTone.normal,
+        WorkspaceUsageTone.normal,
         WorkspaceUsageTone.normal,
         WorkspaceUsageTone.normal,
       ]);
@@ -407,7 +407,7 @@ void main() {
     },
   );
 
-  test('only low and exhausted percentages carry readable warning ink', () {
+  test('all subscription percentages use neutral readable ink', () {
     final oldBrightness = grid.AppTheme.brightness.value;
     addTearDown(() => grid.AppTheme.brightness.value = oldBrightness);
     final usage = WorkspaceSubscriptionUsage.fromRows([
@@ -422,15 +422,8 @@ void main() {
           foreground: palette.foreground,
           surface: palette.workspace,
         );
-        expect(parts[1].foreground, isNot(palette.foreground));
-        expect(parts[3].foreground, isNot(palette.foreground));
-        expect(
-          parts[1].foreground,
-          parts[3].foreground,
-          reason: 'Exhausted allowance shares quiet amber with low allowance.',
-        );
-        for (final index in [0, 2, 4, 5]) {
-          expect(parts[index].foreground, palette.foreground);
+        for (final part in parts) {
+          expect(part.foreground, palette.foreground);
         }
         for (final part in parts) {
           final ink = part.foreground.computeLuminance();
@@ -464,6 +457,7 @@ void main() {
             subscription('codex', 'bbbbbb', 13),
           ];
         final app = createApp();
+        app.machineStates['m']!.localOnly = true;
         final pane = app.adoptSessionForTest(terminal('a0', []));
         addTearDown(app.dispose);
         addTearDown(subscriptions.dispose);
@@ -481,23 +475,20 @@ void main() {
           ),
         );
         await tester.pumpAndSettle();
-        const label = 'Claude 0%  Codex 13%';
+        const label = 'Claude 100%   Codex 87%';
         if (native) {
           expect(updates.last['subscriptionUsage']['text'], label);
           final parts = updates.last['subscriptionUsage']['segments'] as List;
           expect(parts.map((part) => part['text']), [
             'Claude ',
-            '0%',
-            '  Codex ',
-            '13%',
+            '100%',
+            '   Codex ',
+            '87%',
           ]);
           expect(parts[0]['foreground'], parts[2]['foreground']);
-          expect(parts[1]['foreground'], isNot(parts[0]['foreground']));
-          expect(parts[3]['foreground'], isNot(parts[0]['foreground']));
-          expect(
-            updates.last['subscriptionUsage']['detail'],
-            contains('remaining'),
-          );
+          expect(parts[1]['foreground'], parts[0]['foreground']);
+          expect(parts[3]['foreground'], parts[0]['foreground']);
+          expect(updates.last['subscriptionUsage']['detail'], contains('used'));
         } else {
           expect(find.text(label), findsOneWidget);
           final usage = find.byKey(
@@ -524,10 +515,39 @@ void main() {
           }
           tester.view.physicalSize = const Size(1280, 800);
         }
+        if (native) {
+          expect(
+            updates.last['machineResources']['text'],
+            'CPU -   RAM -   GPU -',
+          );
+          expect(
+            updates.last['machineResources']['detail'],
+            startsWith('Test host'),
+          );
+          expect(updates.last['machineResources']['interactive'], isFalse);
+          final done = Completer<void>();
+          messenger.handlePlatformMessage(
+            channel.name,
+            const StandardMethodCodec().encodeMethodCall(
+              const MethodCall('machineResources'),
+            ),
+            (_) => done.complete(),
+          );
+          await tester.pumpAndSettle();
+          await done.future;
+        } else {
+          await tester.tap(
+            find.byKey(const ValueKey('workspace-machine-resources')),
+          );
+          await tester.pumpAndSettle();
+        }
+        expect(find.text('Memory pressure'), findsNothing);
+        expect(app.focusedPane, same(pane));
+        expect(app.panes, [pane]);
         subscriptions.update([subscription('codex', 'bbbbbb', 27)]);
         await tester.pump();
         if (native) {
-          expect(updates.last['subscriptionUsage']['text'], 'Codex 27%');
+          expect(updates.last['subscriptionUsage']['text'], 'Codex 73%');
           final done = Completer<void>();
           messenger.handlePlatformMessage(
             channel.name,
@@ -539,7 +559,7 @@ void main() {
           await tester.pumpAndSettle();
           await done.future;
         } else {
-          expect(find.text('Codex 27%'), findsOneWidget);
+          expect(find.text('Codex 73%'), findsOneWidget);
           await tester.tap(
             find.byKey(const ValueKey('workspace-subscription-usage')),
           );
