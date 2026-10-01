@@ -778,6 +778,8 @@ pub struct App {
     pub mouse_changed: bool,
     /// Whether the terminal window has focus (focus reporting) — notifications go out when it does not.
     pub terminal_focused: bool,
+    /// Waiting for a key to become the prefix, or a command's key (settings.rs): the next key.
+    pub capturing: Option<crate::settings::Capture>,
     /// The Harness device on this desk, and hn's half of talking to it (dial.rs).
     pub dial: crate::dial::Dial,
     /// A key table of your own the next key is looked up in (`switch-client -T`).
@@ -994,6 +996,7 @@ impl App {
             desk_stale: false,
             lastw: Vec::new(),
             terminal_focused: true,
+            capturing: None,
             dial: Default::default(),
             options: Default::default(),
             jobs: Default::default(),

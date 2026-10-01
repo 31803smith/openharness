@@ -3087,6 +3087,94 @@ mod theme_render_tests {
         assert!(matches!(kind, PickerKind::Commands));
         assert_eq!(picker.current_id().as_deref(), Some("cmd:theme"));
     }
+
+    // ── keys ──
+
+    /// A plain-key prefix (`` ` ``, Enter) is the prefix over the panes, and only there: in a list
+    /// or a line being typed, the key is the list's (typed into the search, Enter chooses). A prefix
+    /// with a modifier works over the lists, as before.
+    #[test]
+    fn a_plain_key_prefix_leaves_the_lists_their_keys() {
+        use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
+        let mut app = app();
+        app.keymap.prefix = crate::keys::parse("`").unwrap();
+        let key = |app: &mut App, code: KeyCode, mods: KeyModifiers| crate::input::handle(app, Event::Key(KeyEvent::new(code, mods)));
+        key(&mut app, KeyCode::Char('`'), KeyModifiers::NONE);
+        assert!(app.prefix, "over the panes, ` is the prefix");
+        app.prefix = false;
+        crate::commands::execute_bound(&mut app, "choose-command");
+        key(&mut app, KeyCode::Char('`'), KeyModifiers::NONE);
+        let Some(Modal::Picker { picker, .. }) = &app.modal else { panic!("closed") };
+        assert!(!app.prefix && picker.query == "`", "in a list, ` is typed: {:?}", picker.query);
+        // A prefix with a modifier still works over a list.
+        app.keymap.prefix = crate::keys::parse("C-a").unwrap();
+        key(&mut app, KeyCode::Char('a'), KeyModifiers::CONTROL);
+        assert!(app.prefix, "C-a over a list is the prefix");
+    }
+
+    /// Keybinds from the command list: its own panel in the same place — no preview, the
+    /// prefix first and fixed — where Enter on a command waits for its key, a key in use is
+    /// replaced on its second press, and Esc steps back to the commands.
+    #[test]
+    fn keybinds_open_from_commands_change_a_key_and_esc_goes_back() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        let mut app = app();
+        // (As the client takes a key: a key being waited for goes there first.)
+        let key = |app: &mut App, code: KeyCode| {
+            let k = KeyEvent::new(code, KeyModifiers::NONE);
+            if app.capturing.is_some() { crate::settings::captured(app, k) } else { crate::input::modal_key(app, k) }
+        };
+        let said = |app: &App| match &app.modal { Some(Modal::Picker { picker, .. }) => picker.flash.as_ref().map(|f| f.0.clone()).unwrap_or_default(), _ => panic!("closed") };
+        crate::commands::execute_bound(&mut app, "choose-command");
+        screen(&mut app);
+        let at = match &app.modal { Some(Modal::Picker { picker, .. }) => picker.screen_area.get(), _ => panic!("no panel") };
+        for c in "keyb".chars() { key(&mut app, KeyCode::Char(c)) }
+        let Some(Modal::Picker { picker, .. }) = &app.modal else { panic!("closed") };
+        assert_eq!(picker.current_id().as_deref(), Some("cmd:keybinds"));
+        key(&mut app, KeyCode::Enter);
+        let s = screen(&mut app);
+        let Some(Modal::Picker { kind, picker }) = &app.modal else { panic!("closed") };
+        assert!(matches!(kind, PickerKind::Keybinds) && picker.from_commands);
+        assert_eq!(picker.screen_area.get(), at, "the panel stayed where it was");
+        assert!(s.contains("Keybinds") && s.contains("Prefix") && s.contains("Second prefix") && s.contains("Split right") && s.contains("Navigation"), "{s}");
+        assert!(!s.contains("Preview") && !s.contains("Appearance"), "{s}");
+        // The prefix: Enter waits for the new one; Esc leaves it.
+        assert_eq!(picker.current_id().as_deref(), Some("prefix"));
+        key(&mut app, KeyCode::Enter);
+        assert!(app.capturing.is_some() && said(&app).starts_with("Prefix: press"), "{}", said(&app));
+        key(&mut app, KeyCode::Esc);
+        assert!(app.capturing.is_none() && said(&app) == "Unchanged", "{}", said(&app));
+        // Split right onto n (Next swarm's): named first, replaced on the second press.
+        if let Some(Modal::Picker { picker, .. }) = &mut app.modal { let i = crate::modal::KEYBINDS.iter().position(|k| k.0 == "Split right").unwrap(); picker.select(&format!("key:{i}")) }
+        key(&mut app, KeyCode::Enter);
+        assert_eq!(said(&app), "Split right: press a key · Esc cancels");
+        key(&mut app, KeyCode::Char('n'));
+        assert_eq!(said(&app), "C-b n is Next swarm — n again to replace · Esc to keep");
+        key(&mut app, KeyCode::Char('n'));
+        assert!(said(&app).starts_with("Split right: C-b n"), "{}", said(&app));
+        let s = screen(&mut app);
+        assert!(s.lines().any(|l| l.contains("Split right") && l.contains("C-b n")), "the row shows its key now:\n{s}");
+        // Esc: back to the commands, the cursor on Keybinds.
+        key(&mut app, KeyCode::Esc);
+        let Some(Modal::Picker { kind, picker }) = &app.modal else { panic!("Esc closed it") };
+        assert!(matches!(kind, PickerKind::Commands));
+        assert_eq!(picker.current_id().as_deref(), Some("cmd:keybinds"));
+        // Alt-k on a command in the list: the same — a key in use is named first.
+        if let Some(Modal::Picker { picker, .. }) = &mut app.modal { picker.select("cmd:split-down") }
+        crate::input::modal_key(&mut app, KeyEvent::new(KeyCode::Char('k'), KeyModifiers::ALT));
+        assert!(app.capturing.is_some());
+        key(&mut app, KeyCode::Char('n'));
+        assert!(said(&app).starts_with("C-b n is Split right — n again"), "{}", said(&app));
+        key(&mut app, KeyCode::Esc);
+        assert_eq!(said(&app), "Unchanged");
+        assert_eq!(app.keymap.prefix_command(&crate::keys::parse("n").unwrap()).map(|b| b.command.as_str()), Some("split-window -h"));
+        // Opened by name (not from the list), Esc closes it.
+        app.modal = None;
+        crate::input::run(&mut app, "keybinds");
+        assert!(matches!(&app.modal, Some(Modal::Picker { kind: PickerKind::Keybinds, picker }) if !picker.from_commands));
+        key(&mut app, KeyCode::Esc);
+        assert!(app.modal.is_none());
+    }
 }
 
 #[cfg(test)]

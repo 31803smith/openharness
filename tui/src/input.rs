@@ -52,6 +52,9 @@ fn on_key(app: &mut App, key: KeyEvent) {
     app.key_name = Some(keys::name(&chord));
     // A message goes on the next key, as tmux's does.
     app.toast = None;
+    // ── keys ── Waiting for a key (a prefix, or a command's key, chosen in the panel): this is it,
+    // whatever it is — the prefix too.
+    if app.capturing.is_some() { crate::settings::captured(app, key); return }
     // display-panes (cmd_display_panes_key), before any table: a number, or a letter for 10 on,
     // runs its template for that pane (select-pane) and closes it — as does one no pane has;
     // any other key (every key with -N) closes it and goes on as it would have.
@@ -128,9 +131,11 @@ fn on_key(app: &mut App, key: KeyEvent) {
         app.repeat_until = None;
     }
     // The prefix works over the lists too (they are tmux's choose modes); only a line being typed
-    // at the status line keeps it.
+    // at the status line keeps it — and a plain-key prefix (`` ` ``, Enter) is the prefix over the
+    // panes alone: in a list it is typed into the search, or chooses.
     let line_edit = matches!(app.modal, Some(Modal::Prompt(_)) | Some(Modal::Confirm { .. }) | Some(Modal::Popup { .. }) | Some(Modal::Menu { .. }) | Some(Modal::NewHarness(_)));
-    if !line_edit && (chord == app.keymap.prefix || Some(chord) == app.keymap.prefix2) {
+    let listed = chord.plain() && app.modal.is_some();
+    if !line_edit && !listed && (chord == app.keymap.prefix || Some(chord) == app.keymap.prefix2) {
         app.status_redraws += 1;
         app.prefix = true;
         app.prefix_at = Some(std::time::Instant::now());
@@ -680,7 +685,9 @@ fn fill_rows(app: &App, kind: &PickerKind, picker: &mut Picker) {
         }
         // (Typed into, it ranks by match, best first, as fzf does; empty, it keeps its groups. A
         // query matches a command's name and keywords, not the description shown beside it.)
-        PickerKind::Commands => { picker.live = true; picker.set_rows(modal::command_rows_for(app, !picker.query.is_empty())); picker.hints = vec![("enter", "run")] }
+        PickerKind::Commands => { picker.live = true; picker.set_rows(modal::command_rows_for(app, !picker.query.is_empty())); picker.hints = vec![("enter", "run"), ("M-k", "change its key")] }
+        // ── keys ──
+        PickerKind::Keybinds => { picker.keep_order = true; picker.set_rows(modal::keybind_rows(app)); picker.hints = vec![("enter", "change"), ("esc", "done")] }
         PickerKind::Help => { picker.set_rows(modal::mode_rows(app)); picker.hints = vec![("enter", "go")] }
         PickerKind::Store => {
             let catalog = app.dsh.get(&app.fleet.local_id).cloned().unwrap_or_default();
@@ -839,6 +846,8 @@ pub fn run(app: &mut App, command: &str) {
         "help" => launch(app, "?", Filter::All),
         "layout" => picker(app, PickerKind::Layout, "layout", ""),
         "theme" | "appearance" => picker(app, PickerKind::Theme, "Appearance", "Search appearance"),
+        // ── keys ── Keybinds: a panel of its own (from the command list it opens in place).
+        "keybinds" => picker(app, PickerKind::Keybinds, "Keybinds", "Search keybinds"),
         "commands" => picker(app, PickerKind::Commands, "Commands", "Type a command — appearance, new, layout, models…"),
         "store" => launch(app, "*", Filter::All),
         "new" => crate::new_harness::open(app, None, None),
@@ -1057,7 +1066,7 @@ pub fn refill(app: &mut App) {
     if let Some(Modal::Picker { kind, mut picker }) = app.modal.take() {
         let was = picker.current_id();
         // (The settings panel changes only by your keys: a refresh would step out of its section.)
-        if !matches!(kind, PickerKind::Route { .. } | PickerKind::Palette | PickerKind::Help | PickerKind::Layout | PickerKind::Theme | PickerKind::Commands) { fill(app, &kind, &mut picker) }
+        if !matches!(kind, PickerKind::Route { .. } | PickerKind::Palette | PickerKind::Help | PickerKind::Layout | PickerKind::Theme | PickerKind::Commands | PickerKind::Keybinds) { fill(app, &kind, &mut picker) }
         // (The cursor put on another row by the list, not by a key: a moment before it answers.)
         if was.is_some() && picker.current_id() != was { picker.landed = Some(Instant::now()) }
         app.modal = Some(Modal::Picker { kind, picker });
@@ -1963,6 +1972,12 @@ fn picker_key(app: &mut App, key: KeyEvent, kind: PickerKind, picker: Picker) {
     let _ = was;
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
     let alt = key.modifiers.contains(KeyModifiers::ALT);
+    // ── keys ── Alt-k on a command: the next key you press is its key (Ctrl-k moves, as in fzf).
+    if matches!(kind, PickerKind::Commands) && alt && !ctrl && key.code == KeyCode::Char('k') {
+        crate::settings::capture_for_row(app, &mut picker);
+        app.modal = Some(Modal::Picker { kind, picker });
+        return;
+    }
     // Jump mode consumes one key, then fires jump or jump-cancel as fzf does.
     if let Some(accept) = picker.jumping.take() {
         let mut event = "jump-cancel";
@@ -2046,6 +2061,12 @@ fn picker_key(app: &mut App, key: KeyEvent, kind: PickerKind, picker: Picker) {
                 app.modal = Some(Modal::Picker { kind: PickerKind::Commands, picker });
                 return;
             }
+        }
+        // ── keys ── Keybinds opened from the command list: Esc is a step back to it.
+        if matches!(kind, PickerKind::Keybinds) && key.code == KeyCode::Esc && picker.from_commands {
+            crate::settings::back_to_commands_at(app, &mut picker, "cmd:keybinds");
+            app.modal = Some(Modal::Picker { kind: PickerKind::Commands, picker });
+            return;
         }
         match key.code {
             KeyCode::Esc => { SPLIT.with(|s| s.set(None)); return }
@@ -2561,8 +2582,14 @@ fn choose(app: &mut App, kind: PickerKind, mut picker: Picker, choice: Choice) {
     let keep = |app: &mut App, kind: PickerKind, picker: Picker| app.modal = Some(Modal::Picker { kind, picker });
     // A list of keys, buffers, commands or text: only Enter picks — the harness lists' keys (C-v
     // beside, C-x below, M-p pause …) do nothing here, as keys fzf has no action for.
-    if choice != Choice::Enter && matches!(kind, PickerKind::Keys | PickerKind::Buffers | PickerKind::Palette | PickerKind::Commands | PickerKind::Help | PickerKind::Messages | PickerKind::Output { .. }) { return keep(app, kind, picker) }
+    if choice != Choice::Enter && matches!(kind, PickerKind::Keys | PickerKind::Buffers | PickerKind::Palette | PickerKind::Commands | PickerKind::Keybinds | PickerKind::Help | PickerKind::Messages | PickerKind::Output { .. }) { return keep(app, kind, picker) }
     match kind.clone() {
+        // ── keys ── Enter on a command: the next key pressed is its key; on the prefix, where it is set.
+        PickerKind::Keybinds => {
+            let (knob, value) = id.as_deref().map(|id| id.split_once(':').unwrap_or((id, ""))).unwrap_or_default();
+            if let Some(msg) = crate::settings::set_key(app, knob, value) { picker.say(msg) }
+            return keep(app, kind, picker);
+        }
         PickerKind::Open { .. } if id.as_deref().map(|i| i.starts_with("session:")).unwrap_or(false) => {
             let sid = id.as_deref().and_then(|i| i.strip_prefix("session:")).and_then(|n| n.parse().ok()).unwrap_or(app.session_id);
             SPLIT.with(|s| s.set(None));
@@ -2729,6 +2756,10 @@ fn choose(app: &mut App, kind: PickerKind, mut picker: Picker, choice: Choice) {
                 // Settings open in this same panel, where the command list was.
                 crate::settings::into_settings(app, &mut picker);
                 return keep(app, PickerKind::Theme, picker);
+            } else if id == "cmd:keybinds" {
+                // ── keys ── (in this same panel too; Esc comes back here)
+                crate::settings::into_keybinds(app, &mut picker);
+                return keep(app, PickerKind::Keybinds, picker);
             } else if let Some(view) = id.strip_prefix("cmd:").and_then(crate::devices::View::of) {
                 // ── machines & devices ── (in this same panel too; Esc comes back here)
                 return crate::devices::from_commands(app, picker, view);
@@ -2899,7 +2930,7 @@ pub fn is_command(id: &str) -> bool {
         | "broadcast" | "clone" | "restart" | "pause" | "take" | "rename" | "tab" | "rename-tab" | "close-tab" | "next-tab" | "prev-tab"
         | "split-right" | "split-down" | "close-pane" | "zoom" | "equalize" | "pane-tab" | "copy-mode" | "find" | "tab-left" | "tab-right"
         | "last-tab" | "next-waiting" | "prev-waiting" | "resume-focused" | "last-harness" | "tree" | "info" | "messages" | "keys"
-        | "theme" | "appearance" | "commands" | "choose-buffer" | "quit"
+        | "theme" | "appearance" | "commands" | "choose-buffer" | "quit" | "keybinds"
         // ── machines & devices ──
         | "connect-machine" | "add-phone" | "devices")
 }
