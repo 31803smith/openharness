@@ -2,6 +2,8 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
+
 import '../core/harness_cli_runner.dart';
 import 'phone_sign_in.dart';
 import 'sign_in_client.dart';
@@ -53,6 +55,11 @@ class CliLogin implements SignInClient, PhoneSignInClient {
   int _loginRevision = 0;
 
   CliLogin({HarnessCliRunner? runner}) : _runner = runner ?? HarnessCliRunner();
+
+  /// While a sign-in waits on something before it can start — another sign-in on this computer
+  /// still holding the daemon spawn lock — what the CLI said about it (its `waiting` event); null
+  /// otherwise. A wait the app shows nothing for reads as a sign-in that is broken.
+  final ValueNotifier<String?> waitingNote = ValueNotifier(null);
 
   @override
   Future<CliAuthStatus> checkStatus() async {
@@ -138,7 +145,11 @@ class CliLogin implements SignInClient, PhoneSignInClient {
         } catch (_) {
           continue;
         }
+        if (json['type'] != 'waiting') waitingNote.value = null;
         switch (json['type']) {
+          case 'waiting':
+            final note = json['message'];
+            if (note is String && note.isNotEmpty) waitingNote.value = note;
           case 'authorize_url':
             // Asked for a QR and given a browser page: a CLI from before `--qr`, which ignores the
             // flag and starts SSO. Nothing would ever be shown — stop it and say why.
@@ -192,6 +203,7 @@ class CliLogin implements SignInClient, PhoneSignInClient {
       }
     } finally {
       if (identical(_activeProcess, process)) _activeProcess = null;
+      if (revision == _loginRevision) waitingNote.value = null;
     }
   }
 
@@ -200,6 +212,7 @@ class CliLogin implements SignInClient, PhoneSignInClient {
   @override
   void cancel() {
     ++_loginRevision;
+    waitingNote.value = null;
     final process = _activeProcess;
     _activeProcess = null;
     process?.kill();

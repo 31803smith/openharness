@@ -375,7 +375,11 @@ const PALETTE_SHARE_H: u16 = 7;
 const LARGE_MAX_W: u16 = 160;
 /// (Room for a command's name, its hint and its key apart.)
 const PALETTE_W: u16 = 96;
-const FORM_W: u16 = 80;
+/// (New harness's form: its chooser opens beside it where there is room.)
+const FORM_W: u16 = 60;
+/// A form keeps this many rows however short the window (its action stays on screen), up to the
+/// window's own.
+const FORM_MIN_H: u16 = 5;
 /// A palette's top: this part of the way down the window (in its upper third).
 const PALETTE_TOP: u16 = 6;
 /// A palette's rows around its list: the title, the query, the gaps and the footer.
@@ -404,7 +408,7 @@ pub fn area(body: Rect, size: PanelSize, content: u16) -> Rect {
     let (w, h) = match size {
         PanelSize::Large => (most_w.min(LARGE_MAX_W), most_h),
         PanelSize::Palette => (most_w.min(PALETTE_W), content.saturating_add(PALETTE_CHROME).min(body.height * PALETTE_SHARE_H / 10).min(most_h)),
-        PanelSize::Form => (most_w.min(FORM_W), content.min(most_h)),
+        PanelSize::Form => (most_w.min(FORM_W), content.min(most_h).max(FORM_MIN_H.min(body.height))),
     };
     let x = body.x + (body.width - w) / 2;
     let y = if size == PanelSize::Palette { body.y + (body.height - h).min(body.height / PALETTE_TOP) } else { body.y + (body.height - h) / 2 };
@@ -1113,11 +1117,11 @@ mod tests {
         // (Rows and chrome; at most seven tenths of the height; in the upper third.)
         assert_eq!(area(medium, PanelSize::Palette, 5), Rect::new(12, 6, 96, 13));
         assert_eq!(area(medium, PanelSize::Palette, 100), Rect::new(12, 6, 96, 28));
-        assert_eq!(area(medium, PanelSize::Form, 20), Rect::new(20, 10, 80, 20));
+        assert_eq!(area(medium, PanelSize::Form, 20), Rect::new(30, 10, 60, 20));
         let wide = Rect::new(0, 0, 400, 60);
         assert_eq!(area(wide, PanelSize::Large, 0), Rect::new(120, 3, 160, 54));
         assert_eq!(area(wide, PanelSize::Palette, 5), Rect::new(152, 10, 96, 13));
-        assert_eq!(area(wide, PanelSize::Form, 20), Rect::new(160, 20, 80, 20));
+        assert_eq!(area(wide, PanelSize::Form, 20), Rect::new(170, 20, 60, 20));
     }
 
     /// Each list says its size: the launcher's lists, Models, Machines, Store, Appearance and the

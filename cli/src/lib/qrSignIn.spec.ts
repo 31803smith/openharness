@@ -58,6 +58,16 @@ describe('qrSignIn', () => {
     expect(b.paths()).toContain('/api/auth/qr/cancel')
   })
 
+  it('hands its caller a way to take the code back, the moment there is one', async () => {
+    // `harness login --json` keeps it: when the app driving it goes away, the code goes with it.
+    const b = backend([{ status: 'approved', email: 'dee@example.com' }])
+    let takeBack: (() => Promise<void>) | undefined
+    await qrSignIn({ ...b.deps(), onStarted: (cancel) => { takeBack = cancel } })
+    expect(takeBack).toBeTypeOf('function')
+    await takeBack!()
+    expect(b.calls.at(-1)).toEqual({ path: '/api/auth/qr/cancel', body: { pollToken: 'hnp_poll' } })
+  })
+
   it('reports a denial', async () => {
     const r = await qrSignIn(backend([{ status: 'denied' }]).deps())
     expect(r).toMatchObject({ ok: false, code: 'DENIED' })

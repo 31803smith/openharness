@@ -42,6 +42,8 @@ export interface QrSignInDeps {
   sleep?: (ms: number) => Promise<void>
   now?: () => number
   pollEveryMs?: number
+  /** Called once the code exists, with how to take it back — for a caller that must stop early. */
+  onStarted?: (cancel: () => Promise<void>) => void
 }
 
 /** Extend the code this long before it runs out, so an approval given at the last moment counts. */
@@ -62,6 +64,7 @@ export async function qrSignIn(deps: QrSignInDeps): Promise<QrSignInResult> {
   let expiresAt = now() + started.expiresIn * 1000
   deps.show(link, started.expiresIn)
   const cancel = async (): Promise<void> => { await deps.post('/api/auth/qr/cancel', { pollToken }).catch(() => {}) }
+  deps.onStarted?.(cancel)
   for (;;) {
     await sleep(every)
     if (expiresAt - now() < EXTEND_BEFORE_MS) {

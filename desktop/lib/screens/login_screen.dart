@@ -509,6 +509,8 @@ class _ActionState extends State<_Action> {
     final url = notifier.pendingAuthorizeUrl;
     final message =
         notifier.loginBrowserError ??
+        // The CLI is waiting before it can even start: say on what.
+        notifier.loginWaitingNote ??
         (url != null && _copyFailureUrl == url
             ? 'Couldn’t copy the link. Try opening your browser again.'
             : null);
@@ -822,12 +824,18 @@ class _SignInSheetState extends State<_SignInSheet> {
     // ⚠️ Esc is bound OUT HERE, around the screen, so the screen's own Esc — which
     // cancels a sign-in that is in flight — wins while there is one to cancel.
     // The X itself is the SCREEN's, on its card: see LoginScreen.onClose.
+    // ⚠️ This route is built once, apart from the shell that rebuilds the
+    // full-window screen, so it follows the notifier itself: a sign-in shows
+    // what arrives mid-flight here too — the phone's QR, then whose account.
     return CallbackShortcuts(
       bindings: {
         const SingleActivator(LogicalKeyboardKey.escape, includeRepeats: false):
             _dismiss,
       },
-      child: LoginScreen(notifier: notifier, onClose: _dismiss),
+      child: ListenableBuilder(
+        listenable: notifier,
+        builder: (_, _) => LoginScreen(notifier: notifier, onClose: _dismiss),
+      ),
     );
   }
 
