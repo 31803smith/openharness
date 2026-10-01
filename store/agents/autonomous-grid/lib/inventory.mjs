@@ -142,6 +142,11 @@ export function defaultRoots(env = process.env, home = homedir()) {
     { source: 'lm-studio', path: join(home, '.lmstudio', 'models') },
     { source: 'lm-studio', path: join(home, '.cache', 'lm-studio', 'models') },
     { source: 'huggingface', path: hub },
+    // llama.cpp's own `-hf` downloads: LLAMA_CACHE, else its platform cache folder. Newer builds put them in
+    // the Hugging Face cache above instead (they read HF_HUB_CACHE and HF_HOME), so both are looked at.
+    ...(env.LLAMA_CACHE ? [{ source: 'llama.cpp', path: env.LLAMA_CACHE }] : []),
+    { source: 'llama.cpp', path: join(home, 'Library', 'Caches', 'llama.cpp') },
+    { source: 'llama.cpp', path: join(env.XDG_CACHE_HOME || join(home, '.cache'), 'llama.cpp') },
     { source: 'folder', path: join(home, 'models') },
     { source: 'folder', path: join(home, 'Models') },
     { source: 'folder', path: join(home, 'Downloads'), depth: 3 },
@@ -537,6 +542,35 @@ export function modelFamily(name) {
 }
 
 /**
+ * The engine a model on disk starts with: the app whose folder holds it, because that app downloaded it
+ * and is known to load it. Grid's engine can be older than the app and refuse a new architecture, so a
+ * file is moved to it only when its own app is not installed. `~/.grid/models`, the Hugging Face cache and
+ * plain folders have no app of their own: GGUF goes to Grid's engine, MLX to mlx-lm, safetensors to vLLM
+ * or SGLang. `running` says whether that app already answers here; `null` engine means nothing here runs it.
+ */
+export function startWith(model, machine, answering = []) {
+  const installed = kind => machine.engines.some(e => e.kind === kind);
+  const yourLlama = machine.engines.find(e => e.kind === 'llama.cpp' && e.note !== "Grid's own engine" && e.version);
+  const up = kind => answering.some(e => e.kind === kind);
+  const grid = { engine: 'llama.cpp', label: "Grid's llama.cpp" };
+  const byFormat = () => {
+    if (model.format === 'gguf') return grid;
+    if (model.format === 'mlx') {
+      if (!machine.canRun.includes('mlx-lm')) return null;
+      return !installed('mlx-lm') && installed('lm-studio') ? { engine: 'lm-studio', label: 'lm-studio', running: up('lm-studio') } : { engine: 'mlx-lm', label: 'mlx-lm' };
+    }
+    const gpu = ['vllm', 'sglang'].filter(kind => machine.canRun.includes(kind));
+    if (!gpu.length) return null;
+    const here = gpu.filter(installed);
+    return { engine: (here[0] ?? gpu[0]), label: here.length ? here.join(' or ') : `${gpu.join(' or ')} (not installed)` };
+  };
+  if (model.source === 'ollama' && installed('ollama')) return { engine: 'ollama', label: 'ollama', running: up('ollama') };
+  if (model.source === 'lm-studio' && installed('lm-studio')) return { engine: 'lm-studio', label: 'lm-studio', running: up('lm-studio') };
+  if (model.source === 'llama.cpp' && yourLlama) return { engine: 'llama.cpp', label: 'your llama.cpp', path: yourLlama.path };
+  return byFormat();
+}
+
+/**
  * The inventory as a short table an agent reads directly, so it never writes its own filter over the
  * JSON (an agent's hand-written `jq` once dropped every MLX model and reported none on disk).
  */
@@ -552,7 +586,7 @@ export function summarize({ machine, engines, models, joined = [] }, contextToke
     `joined    ${joined.map(j => `${j.grid ?? j.gridId} serving [${j.models.join(', ')}]${j.at ? ` at ${j.at}` : ''}`).join(' · ') || 'none'}${joined.length ? ' — a join to that grid adds to what it serves (Grid 0.3.53+)' : ''}`,
     `ports in use ${machine.listeningPorts.join(' ')}`,
     '',
-    `FORMAT       SIZE     CONTEXT  CACHE@${contextTokens / 1024}K  TOOLS VISION  READ BY                     MODEL (where)`,
+    `FORMAT       SIZE     CONTEXT  CACHE@${contextTokens / 1024}K  TOOLS VISION  START WITH                  MODEL (where)`,
   ];
   // On Apple silicon with an MLX engine installed, a GGUF that also exists as an MLX folder says so on
   // its own row: an agent handed the rule "prefer the MLX copy" still served the GGUF, because nothing
@@ -574,11 +608,13 @@ export function summarize({ machine, engines, models, joined = [] }, contextToke
     lines.push([
       m.format.padEnd(11), gb(m.bytes).padStart(8), String(facts.contextLength ?? '—').padStart(8),
       (kv ? gb(kv * contextTokens) : '—').padStart(10), String(facts.toolCalls ?? '?').padEnd(5), (m.projector ? 'yes' : 'no').padEnd(6),
-      m.readableBy.join(',').padEnd(27), `${m.name} (${m.source}${m.alsoAt.length ? `, also ${m.alsoAt.map(a => a.source).join('/')}` : ''})${note ? `  ! ${note}` : ''}`,
+      startLabel(startWith(m, machine, engines)).padEnd(27), `${m.name} (${m.source}${m.alsoAt.length ? `, also ${m.alsoAt.map(a => a.source).join('/')}` : ''})${note ? `  ! ${note}` : ''}`,
     ].join(' '));
   }
   return lines.join('\n');
 }
+
+const startLabel = start => (start ? `${start.label}${start.running === undefined ? '' : start.running ? ' (running)' : ' (start it)'}` : '—');
 
 /** The whole picture for one start decision: memory now, engines answering, and models on disk. */
 export async function inventory({ extraRoots = [], extraPorts = [], env = process.env, home = homedir() } = {}) {
@@ -592,5 +628,5 @@ export async function inventory({ extraRoots = [], extraPorts = [], env = proces
     try { grids = JSON.parse(await output(env.GRID_CLI || 'grid', ['ls', '--json'], 8_000)); } catch {}
     for (const row of joined) row.grid = (Array.isArray(grids) ? grids : []).find(g => g.id === row.gridId)?.grid ?? null;
   }
-  return { machine, engines, joined, ...disk };
+  return { machine, engines, joined, ...disk, models: disk.models.map(model => ({ ...model, startWith: startWith(model, machine, engines) })) };
 }

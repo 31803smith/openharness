@@ -2113,8 +2113,9 @@ export class BackendSocket {
           // ⚠️ Run against grid AS IT STANDS — never set up first. A Grid harness session issues these
           // on its own the moment its viewer comes up (every open one, on every daemon start), so
           // setting grid up here signed a machine in to grid right after a Harness-only sign-in,
-          // with nobody asking. A person sets grid up through the picker's Set up or by opening the
-          // Model Manager; until then grid answers these in its own words.
+          // with nobody asking. Grid is set up by the picker's Set up, by making or opening a Model
+          // Manager, and by that harness's own `harness grid setup`; until then grid answers these in
+          // its own words.
           void this.gridFleet.run(connId, requestId, request)
             .then(result => reply(type, requestId, { ...result }))
             .catch(() => reply(type, requestId, { ok: false, code: 1, error: 'Grid command failed unexpectedly.' }))
