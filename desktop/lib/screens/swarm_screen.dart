@@ -7081,7 +7081,8 @@ class _SwarmScreenState extends State<SwarmScreen> {
                   SizedBox(width: cell.width),
                   ConstrainedBox(
                     constraints: BoxConstraints(maxWidth: downloadWidth),
-                    child: const WebDownloadButton(),
+                    // One filled action in the bar: Share when it is on.
+                    child: WebDownloadButton(prominent: !_showShareButton),
                   ),
                 ],
                 if (_showShareButton) ...[
