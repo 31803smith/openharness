@@ -1719,8 +1719,8 @@ mod tests {
                                 assert_eq!(hit.intersection(area), *hit);
                             }
                             if form.area.width > 0 {
-                                // The menus' panel: one size and place whatever is open.
-                                assert_eq!(form.area, crate::settings::area(area));
+                                // The form's panel: its own height, one size and place whatever is open.
+                                assert_eq!(form.area, crate::settings::area(area, crate::settings::PanelSize::Form, view::HEIGHT));
                                 let left = form.area.x - area.x;
                                 let right = area.right() - form.area.right();
                                 assert!(left.abs_diff(right) <= 1, "not centered in {area:?}");

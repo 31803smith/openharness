@@ -46,6 +46,13 @@ fn put(buf: &mut Buffer, x: u16, y: u16, width: u16, text: &str, style: Style) {
     buf.set_stringn(x, y, out, width as usize, style);
 }
 
+/// The most fields the form shows (Agent, Project, Options, Model, Approvals, Profile, Branch,
+/// Worktree, Create).
+const MOST_FIELDS: u16 = 9;
+/// The form's height: its most fields, two rows apart, two rows over them — the same collapsed or
+/// expanded, so it does not move.
+pub(super) const HEIGHT: u16 = 2 + MOST_FIELDS * 2;
+
 /// The form's surface, as the settings panel draws its own: filled, no border.
 fn panel(buf: &mut Buffer, r: Rect, base: Style) { crate::settings::fill(buf, r, base) }
 
@@ -67,11 +74,11 @@ pub fn draw(buf: &mut Buffer, body: Rect, form: &mut Form) -> Option<Position> {
     // The settings panel's colours, and its quiet backdrop over the working panes.
     let crate::settings::Chrome { base, muted, accent, backdrop, .. } = crate::settings::chrome();
     crate::settings::backdrop(buf, body, backdrop);
-    // The form is the menus' panel: centred, the one size whatever is open — and a chooser (an
-    // agent, a machine, a folder…) opens in its place, as a section of Appearance does, so
-    // nothing moves.
+    // The form is a Form panel: centred, as tall as its fields, the one size whatever is open —
+    // and a chooser (an agent, a machine, a folder…) opens in its place, as a section of
+    // Appearance does, so nothing moves.
     let side = false;
-    let r = crate::settings::area(body);
+    let r = crate::settings::area(body, crate::settings::PanelSize::Form, HEIGHT);
     let (x, y, form_w, form_h) = (r.x, r.y, r.width, r.height);
     let (child_w, child_h) = (form_w, form_h);
     let fields = form.fields();

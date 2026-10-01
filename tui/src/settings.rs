@@ -94,9 +94,25 @@ pub fn back_to_commands_at(app: &App, picker: &mut Picker, at: &str) {
     picker.live = true;
     picker.clear_query();
     picker.rows.clear();
-    picker.set_rows(crate::modal::command_rows_for(app, false));
+    picker.set_rows(crate::modal::command_rows_for(app, false, false));
     picker.scroll = 0;
     cursor_to(picker, at);
+}
+
+// ── tmux's commands: one row in the command list, Enter lists them here ──
+
+/// The command list is showing tmux's commands (Enter on their row; Esc comes back).
+pub fn in_tmux(picker: &Picker) -> bool { picker.theme_in.as_deref() == Some("tmux") }
+
+/// Enter on "tmux commands…": tmux's commands, grouped, in this same panel.
+pub fn into_tmux(app: &App, picker: &mut Picker) {
+    picker.theme_in = Some("tmux".into());
+    picker.placeholder = "Search tmux commands".into();
+    picker.clear_query();
+    picker.rows.clear();
+    picker.set_rows(crate::modal::command_rows_for(app, false, true));
+    picker.scroll = 0;
+    picker.vset(0, 1);
 }
 
 /// Put the cursor on the row [id] (where the filter shows it).
@@ -207,7 +223,7 @@ fn show_captured(app: &mut App, said: String) {
         let at = picker.current_id();
         match &kind {
             PickerKind::Keybinds => picker.set_rows(crate::modal::keybind_rows(app)),
-            PickerKind::Commands => picker.set_rows(crate::modal::command_rows_for(app, !picker.query.is_empty())),
+            PickerKind::Commands => picker.set_rows(crate::modal::command_rows_for(app, !picker.query.is_empty(), in_tmux(&picker))),
             _ => {}
         }
         if let Some(at) = at { cursor_to(&mut picker, &at) }
@@ -345,13 +361,54 @@ pub fn put(buf: &mut Buffer, x: u16, y: u16, width: u16, text: &str, style: Styl
     used as u16
 }
 
-/// Where the panel goes in [body]: centred, and the same size whatever the list holds.
-pub fn area(body: Rect) -> Rect {
-    // (Room for a preview that can be read: nine tenths of the window each way, and at least 4
-    // columns and 2 rows of it around the panel.)
-    let w = (body.width * 9 / 10).min(body.width.saturating_sub(4));
-    let h = (body.height * 9 / 10).min(body.height.saturating_sub(2));
-    Rect::new(body.x + (body.width - w) / 2, body.y + (body.height - h) / 2, w, h)
+// ── sizes ──
+
+/// A panel's size: Large for a list with a preview, Palette for a short menu near the top, Form
+/// for a form, as tall as its fields.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PanelSize { Large, Palette, Form }
+
+/// Of the window, in tenths: the most a panel takes each way (a palette's height, its own).
+const SHARE: u16 = 9;
+const PALETTE_SHARE_H: u16 = 7;
+/// Large: as wide as this at most, however wide the window.
+const LARGE_MAX_W: u16 = 160;
+/// (Room for a command's name, its hint and its key apart.)
+const PALETTE_W: u16 = 96;
+const FORM_W: u16 = 80;
+/// A palette's top: this part of the way down the window (in its upper third).
+const PALETTE_TOP: u16 = 6;
+/// A palette's rows around its list: the title, the query, the gaps and the footer.
+const PALETTE_CHROME: u16 = 8;
+/// Around any panel, at least 4 columns and 2 rows of the window.
+const MARGIN_W: u16 = 4;
+const MARGIN_H: u16 = 2;
+
+impl PickerKind {
+    /// Each list's size, in one place: a new kind does not compile until it has one.
+    pub fn size(&self) -> PanelSize {
+        match self {
+            // (Every launcher tab is the same size — Help too — so ←/→ on the tab row never moves it.)
+            PickerKind::Open { .. } | PickerKind::Palette | PickerKind::Projects | PickerKind::Models | PickerKind::Inbox | PickerKind::Machines | PickerKind::Store | PickerKind::Help | PickerKind::Theme
+                | PickerKind::Route { .. } | PickerKind::Messages | PickerKind::Keys | PickerKind::Buffers | PickerKind::Output { .. } | PickerKind::Devices(_) => PanelSize::Large,
+            PickerKind::Commands | PickerKind::Keybinds | PickerKind::Layout => PanelSize::Palette,
+        }
+    }
+}
+
+/// Where a panel of [size] goes in [body]; [content]: the rows it needs (a palette's list rows, a
+/// form's height) — a large panel's size is the window's.
+pub fn area(body: Rect, size: PanelSize, content: u16) -> Rect {
+    let most_w = (body.width * SHARE / 10).min(body.width.saturating_sub(MARGIN_W));
+    let most_h = (body.height * SHARE / 10).min(body.height.saturating_sub(MARGIN_H));
+    let (w, h) = match size {
+        PanelSize::Large => (most_w.min(LARGE_MAX_W), most_h),
+        PanelSize::Palette => (most_w.min(PALETTE_W), content.saturating_add(PALETTE_CHROME).min(body.height * PALETTE_SHARE_H / 10).min(most_h)),
+        PanelSize::Form => (most_w.min(FORM_W), content.min(most_h)),
+    };
+    let x = body.x + (body.width - w) / 2;
+    let y = if size == PanelSize::Palette { body.y + (body.height - h).min(body.height / PALETTE_TOP) } else { body.y + (body.height - h) / 2 };
+    Rect::new(x, y, w, h)
 }
 
 /// Draw the panel for [picker] over [body]; returns where the terminal cursor goes (the query),
@@ -367,7 +424,10 @@ pub fn draw(buf: &mut Buffer, app: &App, body: Rect, kind: &PickerKind, picker: 
         put(buf, body.x, body.y, body.width, &format!("{} · resize or Esc", title(app, kind, picker)), c.base);
         return (None, None);
     }
-    let r = area(body);
+    // (A palette as tall as all its rows, not the ones a search leaves, so it stays put as you type;
+    // Commands' search reaches every tmux command, so theirs is the most a palette takes.)
+    let all = if matches!(kind, PickerKind::Commands) { u16::MAX } else { picker.rows.len().min(u16::MAX as usize) as u16 };
+    let r = area(body, kind.size(), all);
     fill(buf, r, c.base);
     picker.screen_area.set(r);
     let (x, right) = (r.x + 2, r.right().saturating_sub(2));
@@ -379,8 +439,10 @@ pub fn draw(buf: &mut Buffer, app: &App, body: Rect, kind: &PickerKind, picker: 
         at += put(buf, at, r.y + 1, right.saturating_sub(at), "  ›  ", c.muted);
         at += put(buf, at, r.y + 1, right.saturating_sub(at), section_title(section), c.accent);
     }
-    // What the list says of itself (a count, "searching…"), before the way out.
-    let status = picker.busy.clone().unwrap_or_else(|| picker.status.clone());
+    // What the list says of itself (a count, "searching…"), before the way out — with a spinner
+    // while it waits on something (a read, a model moving), so a still panel is not a stuck one.
+    let working = picker.busy.clone().or_else(|| if matches!(kind, PickerKind::Models) { crate::models::working(app) } else { None });
+    let status = match working { Some(w) => format!("{} {w}", theme::spinner(app.tick)), None => picker.status.clone() };
     if !status.is_empty() {
         let w = (status.width() as u16).min(right.saturating_sub(at + 8));
         put(buf, right.saturating_sub(w + 6), r.y + 1, w, &status, c.muted);
@@ -398,24 +460,31 @@ pub fn draw(buf: &mut Buffer, app: &App, body: Rect, kind: &PickerKind, picker: 
     picker.prompt_at.set((qy, x + 2));
     let before: String = picker.query.chars().take(picker.qcursor).collect();
     let cursor = Position::new((x + 2 + before.width() as u16).min(right), qy);
+    // (On the tab row the keys are not the query's: no text cursor.)
+    let cursor = Some(cursor).filter(|_| !picker.on_tabs);
 
     if launcher {
-        // After the query: the lists it switches between, the one you are in marked.
+        // After the query: the tabs it switches between, the one you are in marked — lit while the
+        // tab row has the keys (↓ past the list's last row).
         let here = crate::picker::scope_of(&picker.query);
         let mut sx = x + 2 + qw + 3;
-        for (ch, name) in [(Some('>'), "commands"), (Some('@'), "machines"), (Some('#'), "projects"), (Some(':'), "models"), (Some('*'), "store"), (Some('?'), "help")] {
-            let text = format!("{} {name}", ch.unwrap_or(' '));
+        for (ch, name) in crate::modal::LAUNCHER_TABS {
+            let text = ch.map(|ch| format!("{ch} {name}")).unwrap_or_else(|| name.to_string());
+            // (The one you are in in brackets — seen in any theme, colour or none.)
+            let text = if here == *ch { format!("[{text}]") } else { text };
             if sx + text.width() as u16 > right { break }
-            let on = here == ch;
-            sx += put(buf, sx, qy, right.saturating_sub(sx), &text, if on { c.base.add_modifier(Modifier::BOLD | Modifier::UNDERLINED) } else { c.muted }) + 3;
+            let style = match (here == *ch, picker.on_tabs) { (true, true) => c.selected.add_modifier(Modifier::BOLD), (true, false) => c.base.add_modifier(Modifier::BOLD | Modifier::UNDERLINED), _ => c.muted };
+            sx += put(buf, sx, qy, right.saturating_sub(sx), &text, style) + 3;
         }
         // Over it: how many rows match of how many (and how many marked), a rule after.
         let count = format!("{}/{} ({})", picker.visible.len(), picker.rows.len(), picker.marked.len());
         let cw = put(buf, x, qy - 1, inner_w, &count, c.muted);
         for cx in x + cw + 1..right { put(buf, cx, qy - 1, 1, "─", c.muted.remove_modifier(Modifier::BOLD)); }
-        // Over that: this list's keys, `key what` · `key what`, the keys bold.
+        // Over that: this list's keys, `key what` · `key what`, the keys bold (the tab row's own,
+        // while it has the keys).
         let mut kx = x;
-        for (i, (k, what)) in picker.hints.iter().enumerate() {
+        let tab_keys = [("← →", "switch"), ("↑", "list"), ("type", "to search")];
+        for (i, (k, what)) in if picker.on_tabs { &tab_keys[..] } else { &picker.hints[..] }.iter().enumerate() {
             if i > 0 { kx += put(buf, kx, qy - 2, right.saturating_sub(kx), " · ", c.muted); }
             kx += put(buf, kx, qy - 2, right.saturating_sub(kx), k, c.base.add_modifier(Modifier::BOLD));
             kx += put(buf, kx, qy - 2, right.saturating_sub(kx), &format!(" {what}"), c.muted);
@@ -432,7 +501,8 @@ pub fn draw(buf: &mut Buffer, app: &App, body: Rect, kind: &PickerKind, picker: 
     // that is the whole answer — output, messages, keys — has none either.)
     // (Keybinds are keys, not a look: no preview; the list takes the width, a key beside each.)
     let settings = matches!(kind, PickerKind::Theme);
-    let side = inner_w >= 64 && (settings || (picker.preview && !matches!(kind, PickerKind::Commands | PickerKind::Theme | PickerKind::Keybinds)));
+    // (A palette is a list only.)
+    let side = inner_w >= 64 && kind.size() == PanelSize::Large && (settings || (picker.preview && !matches!(kind, PickerKind::Commands | PickerKind::Theme)));
     // (A list's preview gets at least half: a harness's screen, a machine's, a model's facts —
     // the list room for a row's name and what it says, a harness's doing.)
     let list_w = if !side { inner_w } else if settings { (inner_w * 2 / 5).clamp(28, 40) } else { (inner_w / 2).clamp(30, 56) };
@@ -463,6 +533,7 @@ pub fn draw(buf: &mut Buffer, app: &App, body: Rect, kind: &PickerKind, picker: 
     let fy = r.bottom().saturating_sub(if launcher { 4 } else if keyed(kind) { 2 } else { 1 });
     let flash = picker.flash.as_ref().filter(|(_, at)| at.elapsed().as_secs() < 3).map(|(t, _)| t.clone());
     let keys = match kind {
+        PickerKind::Commands if in_tmux(picker) => Some("↑↓ move   enter run   type to search   esc back"),
         PickerKind::Commands => Some("↑↓ move   enter run   type to search   esc close"),
         PickerKind::Theme if picker.theme_in.is_some() => Some("↑↓ move   enter apply   ← back   esc back"),
         PickerKind::Theme if picker.from_commands => Some("↑↓ move   → open   type to search   esc back"),
@@ -477,7 +548,7 @@ pub fn draw(buf: &mut Buffer, app: &App, body: Rect, kind: &PickerKind, picker: 
         (None, Some(keys)) => { put(buf, x, fy, inner_w, keys, c.muted); }
         (None, None) => {}
     }
-    (Some(cursor), shown)
+    (cursor, shown)
 }
 
 /// The menus, whose footer says their keys (the other lists give that row to their rows).
@@ -503,6 +574,8 @@ pub fn section_title(section: &str) -> &'static str {
         "theme" => "Theme",
         // ── status bar ──
         "bar" => "Status bar", "boxes" => "Borders",
+        // (The command list's tmux commands.)
+        "tmux" => "tmux commands",
         _ => "",
     }
 }
@@ -560,8 +633,11 @@ pub fn list_from(buf: &mut Buffer, picker: &mut Picker, r: Rect, c: &Chrome, det
     let at_line = lines.iter().position(|l| *l == Some(picker.cursor)).unwrap_or(0);
     // (The cursor's heading comes into view with it.)
     let top = if !bottom_up && at_line >= 1 && titles.iter().any(|(i, _)| *i + 1 == at_line) { at_line - 1 } else { at_line };
-    if top < picker.scroll { picker.scroll = top }
-    if at_line >= picker.scroll + n { picker.scroll = at_line + 1 - n }
+    // (Scrolled by the wheel: the list stays where it was put, the cursor wherever it is.)
+    if !picker.free_scroll {
+        if top < picker.scroll { picker.scroll = top }
+        if at_line >= picker.scroll + n { picker.scroll = at_line + 1 - n }
+    }
     picker.scroll = picker.scroll.min(lines.len().saturating_sub(n));
     for (slot, line) in lines.iter().enumerate().skip(picker.scroll).take(n).map(|(i, l)| (i - picker.scroll, (i, *l))) {
         let y = if bottom_up { r.bottom() - 1 - slot as u16 } else { r.y + slot as u16 };
@@ -1021,6 +1097,62 @@ mod tests {
         assert!(lum(b.base) > lum(a.base), "a light theme gives a light panel");
         assert_ne!(a.base.bg, a.backdrop.bg, "the panel stands out from its backdrop");
         assert_ne!(a.base.bg, a.selected.bg, "the cursor's row stands out");
+    }
+
+    // ── sizes ──
+
+    /// Each size's numbers on a small, a medium and a very wide body.
+    #[test]
+    fn each_size_has_its_numbers_on_small_medium_and_very_wide_bodies() {
+        let small = Rect::new(0, 0, 40, 12);
+        assert_eq!(area(small, PanelSize::Large, 0), Rect::new(2, 1, 36, 10));
+        assert_eq!(area(small, PanelSize::Palette, 5), Rect::new(2, 2, 36, 8));
+        assert_eq!(area(small, PanelSize::Form, 20), Rect::new(2, 1, 36, 10));
+        let medium = Rect::new(0, 0, 120, 40);
+        assert_eq!(area(medium, PanelSize::Large, 0), Rect::new(6, 2, 108, 36));
+        // (Rows and chrome; at most seven tenths of the height; in the upper third.)
+        assert_eq!(area(medium, PanelSize::Palette, 5), Rect::new(12, 6, 96, 13));
+        assert_eq!(area(medium, PanelSize::Palette, 100), Rect::new(12, 6, 96, 28));
+        assert_eq!(area(medium, PanelSize::Form, 20), Rect::new(20, 10, 80, 20));
+        let wide = Rect::new(0, 0, 400, 60);
+        assert_eq!(area(wide, PanelSize::Large, 0), Rect::new(120, 3, 160, 54));
+        assert_eq!(area(wide, PanelSize::Palette, 5), Rect::new(152, 10, 96, 13));
+        assert_eq!(area(wide, PanelSize::Form, 20), Rect::new(160, 20, 80, 20));
+    }
+
+    /// Each list says its size: the launcher's lists, Models, Machines, Store, Appearance and the
+    /// devices are large; Commands and Help a palette.
+    #[test]
+    fn each_kind_has_its_size() {
+        let open = PickerKind::Open { filter: modal::Filter::All, machine: None, project: None };
+        for k in [open, PickerKind::Models, PickerKind::Machines, PickerKind::Store, PickerKind::Help, PickerKind::Theme, PickerKind::Devices(crate::devices::View::Machines)] { assert_eq!(k.size(), PanelSize::Large, "{k:?}") }
+        for k in [PickerKind::Commands, PickerKind::Keybinds] { assert_eq!(k.size(), PanelSize::Palette, "{k:?}") }
+    }
+
+    /// Commands is a palette near the top, narrower than the harnesses' panel; its height does not
+    /// change as a search narrows it.
+    #[test]
+    fn commands_is_a_palette_narrower_than_harnesses() {
+        let app = app((200, 51));
+        let body = Rect::new(0, 0, 200, 50);
+        let mut c = Picker::new("Commands", "Type a command");
+        c.set_rows(modal::command_rows_for(&app, false, false));
+        draw(&mut Buffer::empty(body), &app, body, &PickerKind::Commands, &mut c);
+        let mut h = Picker::new("harnesses", "");
+        draw(&mut Buffer::empty(body), &app, body, &PickerKind::Open { filter: modal::Filter::All, machine: None, project: None }, &mut h);
+        let (cr, hr) = (c.screen_area.get(), h.screen_area.get());
+        assert!(cr.width < hr.width, "{cr:?} {hr:?}");
+        assert!(cr.y < body.height / 3, "{cr:?}");
+        c.set_query("lay");
+        draw(&mut Buffer::empty(body), &app, body, &PickerKind::Commands, &mut c);
+        assert_eq!(c.screen_area.get(), cr);
+        let mut help = Picker::new("help", "");
+        help.set_rows(modal::mode_rows(&app));
+        draw(&mut Buffer::empty(body), &app, body, &PickerKind::Help, &mut help);
+        let before = help.screen_area.get();
+        help.set_query("zzz");
+        draw(&mut Buffer::empty(body), &app, body, &PickerKind::Help, &mut help);
+        assert_eq!(help.screen_area.get(), before, "the palette does not jump as you type");
     }
 
     #[test]
