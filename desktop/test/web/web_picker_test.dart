@@ -83,6 +83,25 @@ void main() {
     app.dispose();
   });
 
+  testWidgets('a resource\'s actions keep a gap above the panel\'s edge', (
+    tester,
+  ) async {
+    final app = await _mount(tester);
+    await _tap(tester, 'search-category-Machines');
+    // Key hints are hidden here, and they were the only space under the row.
+    expect(find.byKey(const ValueKey('resource-control-hints')), findsNothing);
+    final actions = tester.getRect(
+      find.byKey(const ValueKey('swarm-search-resource-actions')),
+    );
+    final panel = tester.getRect(
+      find.byKey(const ValueKey('swarm-search-results')),
+    );
+    expect(panel.bottom - actions.bottom, greaterThanOrEqualTo(12));
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox.shrink());
+    app.dispose();
+  });
+
   testWidgets('the close button dismisses the picker', (tester) async {
     final app = await _mount(tester);
     await _tap(tester, 'search-close');
