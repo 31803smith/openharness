@@ -2716,7 +2716,9 @@ void habitat_touch(bool down, int x, int y, uint32_t now)
             ht_gesture_guard(&gesture, now);
             if (s.connected && !s.loading && active()) {
                 ESP_LOGI("habitat", "focus touch: start voice");
-                dispatch((action_t){.kind = A_VOICE});
+                // Built as the old microphone's was: make_action names the agent on the face, and
+                // main-surface voice without a recipient is dropped.
+                dispatch(make_action((hit_t){.action = A_VOICE}));
             }
         } else if (result == HT_TOUCH_TAP && pressed_action.kind == A_PET &&
                    (surface || s.view == VOICE || s.view == SELECTION)) {

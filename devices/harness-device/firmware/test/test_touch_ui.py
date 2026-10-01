@@ -1771,6 +1771,7 @@ int main(int argc, char **argv) {
             workspace_setup(); ht_character_select(&character, HT_CHARACTER_FOCUS); strcpy(s.agents[0].engine, "claude");
             ui_project_emit(s.agents[0].id, "sess", "summary", "Retry queue shipped.", "Retry queue shipped.");
             scene_take(); tap(1000, at[k][0], at[k][1]); assert(starts == 1 && s.view == VOICE);
+            assert(!strcmp(target, s.agents[0].id));   // to the agent on the face: none is dropped on glass
         }
     }
     // And on a face with nothing yet to say.
@@ -1788,7 +1789,7 @@ int main(int argc, char **argv) {
         habitat_touch(true, 233, 260, 1000);
         habitat_touch(true, 233 + drift / 2, 260 + drift, 1000 + held / 2);
         habitat_touch(false, 233 + drift / 2, 260 + drift, 1000 + held);
-        assert(starts == 1 && s.view == VOICE);
+        assert(starts == 1 && s.view == VOICE && !strcmp(target, s.agents[0].id));
     }
     workspace_setup(); ht_character_select(&character, HT_CHARACTER_FOCUS); scene_take();
     habitat_touch(true, 233, 260, 1000); habitat_touch(true, 233, 300, 1100); habitat_touch(false, 233, 300, 1200);
