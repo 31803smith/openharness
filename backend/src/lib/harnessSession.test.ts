@@ -100,7 +100,7 @@ describe('scan to sign in — the handoff', () => {
     expect(fakes.sessions[0].refreshHash).not.toBe(tokens!.refreshToken)
 
     await expect(authenticateAccessToken(tokens!.token)).resolves.toEqual({
-      sub: USER.id, email: USER.email, role: 'user', autonomousEnv: 'prod', harnessSessionId: 's1',
+      sub: USER.id, email: USER.email, role: 'user', autonomousEnv: 'prod', harnessSessionId: 's1', harnessSessionKind: 'viewer',
     })
     expect(fetchSpy).not.toHaveBeenCalled()
     expect(fakes.findByEmail).not.toHaveBeenCalled()

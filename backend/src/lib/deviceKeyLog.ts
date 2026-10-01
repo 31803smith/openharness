@@ -1,6 +1,7 @@
 import { prisma } from './prisma.js'
 import { pub, publishDeviceKeysChanged, publishDown } from './bus.js'
 import { logger } from '../utils/logger.js'
+import { revokeHarnessSessionById } from './harnessSession.js'
 import {
   applyDevLogEntries, DevLogError, emptyDevLogState, parseDevLogEntry,
   type DevLogEntry, type DevLogHead, type DevLogState,
@@ -30,7 +31,7 @@ export type DeviceKeyAppendResult = { ok: true; head: DevLogHead } | ({ ok: fals
 
 /** Who is appending: a machine over its adapter socket, or a viewer over REST. */
 export type DeviceKeyChannel =
-  | { kind: 'machine'; machineId: string }
+  | { kind: 'machine'; machineId: string; harnessSessionId?: string }
   | { kind: 'viewer'; harnessSessionId?: string }
 
 export async function readDeviceKeyLog(userId: string, since: number): Promise<{ acct: string; head: DevLogHead; entries: unknown[] }> {
@@ -90,7 +91,9 @@ export async function appendDeviceKey(userId: string, raw: unknown, channel: Dev
     await prisma.deviceKeyLogEntry.create({
       data: {
         userId, seq: entry.seq, hash: head.hash, entry: JSON.stringify(entry),
-        sessionId: entry.op === 'add' && channel.kind === 'viewer' ? channel.harnessSessionId ?? null : null,
+        // The Harness session that added this key (a phone signed in by QR, or a computer a phone
+        // signed in), so removing the key signs that session out too.
+        sessionId: entry.op === 'add' ? channel.harnessSessionId ?? null : null,
       },
     })
   } catch (err) {
@@ -119,8 +122,11 @@ async function signOut(userId: string, kind: string, machineId: string, pubKey: 
       // Named, so the machine knows its KEY is gone (not just its sign-in) and signs in again with a new
       // one; a daemon that predates the log reads only the type, as for a deleted machine.
       await publishDown(machineId, { connId: '', frame: { type: 'machine_revoked', payload: { reason: 'device_removed', pub: pubKey } } })
-    } else if (sessionId) {
-      await prisma.harnessSession.updateMany({ where: { id: sessionId, userId, OR: [{ revokedAt: null }, { revokedAt: { isSet: false } }] }, data: { revokedAt: new Date() } })
+    }
+    // A Harness session (a phone, or a computer a phone signed in by QR) ends here too — a machine
+    // that ignores `machine_revoked` must not keep a session it could sign a new key in with.
+    if (sessionId) {
+      await revokeHarnessSessionById(sessionId, userId)
     }
   } catch (err) {
     logger.warn('device key removal sign-out failed', { userId, kind, error: String(err) })

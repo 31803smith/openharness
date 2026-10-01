@@ -127,6 +127,14 @@ describe('appendDeviceKey', () => {
     expect(m.publishDown).toHaveBeenCalledWith(MID2, { connId: '', frame: { type: 'machine_revoked', payload: { reason: 'device_removed', pub: box2.pub } } })
   })
 
+  it('ends the Harness session of a removed computer that a phone signed in by QR', async () => {
+    await appendDeviceKey(USER, await addEntry(box1, 'machine', MID1, 'box1'), { kind: 'machine', machineId: MID1 })
+    await appendDeviceKey(USER, await addEntry(box2, 'machine', MID2, 'box2'), { kind: 'machine', machineId: MID2, harnessSessionId: 'sess-qr' })
+    await appendDeviceKey(USER, await removeEntry(box2.pub, box1), { kind: 'machine', machineId: MID1 })
+    expect(m.publishDown).toHaveBeenCalledWith(MID2, expect.objectContaining({ frame: expect.objectContaining({ type: 'machine_revoked' }) }))
+    expect(m.revoke).toHaveBeenCalledWith({ where: { id: 'sess-qr', userId: USER, OR: [{ revokedAt: null }, { revokedAt: { isSet: false } }] }, data: { revokedAt: expect.any(Date) } })
+  })
+
   it('refuses a machine signing a removal with another machine key', async () => {
     await appendDeviceKey(USER, await addEntry(box1, 'machine', MID1, 'box1'), { kind: 'machine', machineId: MID1 })
     await appendDeviceKey(USER, await addEntry(box2, 'machine', MID2, 'box2'), { kind: 'machine', machineId: MID2 })
