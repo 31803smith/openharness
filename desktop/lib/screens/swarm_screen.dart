@@ -5540,14 +5540,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
       onClose: _dismissSearch,
       onRefocus: _focusSearch,
       previewBuilder: preview,
-      hostBar: widget.chrome?.pickerBar?.call(
-        context,
-        WorkspacePicker(
-          search: search,
-          focus: _focusSearch,
-          close: _dismissSearch,
-        ),
-      ),
+      showsBack: widget.chrome?.pickerShowsBack ?? false,
     );
     final scoped = Semantics(
       scopesRoute: true,
