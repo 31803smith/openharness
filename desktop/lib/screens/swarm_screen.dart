@@ -2976,9 +2976,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
       swarmId: swarmId,
       split: split,
       placement: placement,
-      attachments: widget.chrome?.attachesFiles == true
-          ? HarnessAttachments(onDeliveryProblem: _showPaneActionHint)
-          : null,
+      attachments: HarnessAttachments(onDeliveryProblem: _showPaneActionHint),
     );
     _newHarnessFormKey = GlobalKey<NewHarnessFormState>();
     _newHarnessDevicePort = DeviceFormPort();
