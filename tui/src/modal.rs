@@ -49,6 +49,8 @@ pub enum PickerKind {
     Theme,
     /// C-b Enter: every command by name, in the settings panel — type a few letters, Enter runs it.
     Commands,
+    /// Keybinds: the prefix (fixed) and each command's key after it — Enter on one changes it.
+    Keybinds,
     /// A task routed to a harness; [voice]: the dial's spoken task it answers.
     Route { text: String, voice: Option<String> },
     /// `show-messages`, `list-keys`, `choose-buffer`.
@@ -199,7 +201,8 @@ pub const COMMANDS: &[(&str, &str, &str, &str, &str)] = &[
     ("equalize", "Equalize Panes", "⌥=", "", "Panes"),
     ("pane-tab", "Move Pane to New Swarm", "", "", "Panes"),
     ("find", "Find in Pane…", "⌥⇧F", "search this pane's history", "Panes"),
-    ("copy-mode", "Copy Mode", "⌥V", "select and copy with the keyboard", "Panes"),
+    // (Not "keyboard": `keyb` is Keybinds.)
+    ("copy-mode", "Copy Mode", "⌥V", "move over the pane's text, select and copy", "Panes"),
     ("machines", "Machines", "⌥M", "", "Machines"),
     ("store", "Harness Store", "⌥S", "", "Machines"),
     // ── machines & devices ──
@@ -208,7 +211,7 @@ pub const COMMANDS: &[(&str, &str, &str, &str, &str)] = &[
     ("devices", "Machines & devices…", "", "this computer's password, your machines, links, add a machine", "Machines"),
     // (hn itself: how it looks, its keys, and closing it.)
     ("theme", "Appearance…", "", "theme, status bar, borders, focus, layout — settings", "Settings & help"),
-    ("keybinds", "Keybinds…", "", "the prefix and every command's key, grouped — Enter changes one", "Settings & help"),
+    ("keybinds", "Keybinds…", "", "every command's key after the prefix — Enter changes one", "Settings & help"),
     ("help", "Quick help", "⌥/", "what the search box can do: > @ # : * ?", "Settings & help"),
     ("quit", "Close hn", "⌥Q", "your harnesses keep running", "Settings & help"),
 ];
@@ -558,22 +561,15 @@ pub const KEYBINDS: &[(&str, &str, &str)] = &[
     ("Detach", "detach-client", "General"),
 ];
 
-/// The Keybinds page: the prefix and the second one, then each command with its key now (or —).
-/// Enter on one: the next key you press is it.
+/// The Keybinds panel: the prefix (fixed here: tui.toml's), then each command with its key now
+/// (or —). Enter on one: the next key you press is it.
 pub fn keybind_rows(app: &App) -> Vec<Row> {
     let prefix = crate::keys::name(&app.keymap.prefix);
-    let key_row = |id: String, title: &str, key: String, hint: &str, group: &str| Row::new(id, title)
-        .detail(vec![span(hint, fg(theme::MUTED))]).right(key).group(group);
-    let mut rows = vec![
-        key_row("prefix:press".into(), "Prefix", prefix.clone(), "the key before every command", "Prefix"),
-        key_row("prefix2:press".into(), "Second prefix", app.keymap.prefix2.map(|c| crate::keys::name(&c)).unwrap_or_else(|| "none".into()),
-            "one more — for a terminal that keeps ⌘ keys (⌫ while choosing: none)", "Prefix"),
-    ];
-    rows.extend(KEYBINDS.iter().enumerate().map(|(i, (title, runs, group))| {
+    let fixed = Row::new("prefix", "Prefix").detail(vec![span("the key before every command — set in tui.toml", fg(theme::MUTED))]).right(format!("{prefix}  (fixed)"));
+    std::iter::once(fixed).chain(KEYBINDS.iter().enumerate().map(|(i, (title, runs, group))| {
         let key = key_running(app, runs).map(|c| format!("{prefix} {}", crate::keys::name(&c))).unwrap_or_else(|| "—".into());
-        key_row(format!("key:{i}"), title, key, "", group)
-    }));
-    rows
+        Row::new(format!("key:{i}"), *title).right(key).group(*group)
+    })).collect()
 }
 
 /// The tmux command one of hn's own commands is on a key as.
@@ -654,8 +650,7 @@ pub fn theme_sections(app: &App) -> Vec<Row> {
         // ── status bar ──
         sec("section:bar", "Status bar", "status_bar", status_bar_of(app)),
         sec("section:boxes", "Borders", "every pane its own box", if border_style_of(app) == "box" { "on" } else { "off" }),
-        // ── keys ──
-        sec("section:keys", "Keybinds", "the prefix, and every command's key", &crate::keys::name(&app.keymap.prefix)),
+        // (Keys are Keybinds', a panel of their own in Commands.)
     ]
 }
 
@@ -692,8 +687,6 @@ pub fn theme_options(app: &App, section: &str) -> Vec<Row> {
             let dim = Row::new(if on { "dim:off" } else { "dim:on" }, "Dim other panes").lead(lead(on))
                 .detail(vec![span(if on { "on" } else { "the panes you are not in, a little quieter" }, fg(theme::MUTED))]);
             styles.chain(std::iter::once(dim)).collect() }
-        // ── keys ──
-        "keys" => keybind_rows(app),
         "theme" => {
             let cur = o.get("@hn-theme", "", None).unwrap_or_default();
             // First, no theme: the terminal's own colours.
@@ -799,9 +792,7 @@ mod theme_row_tests {
         let ids: Vec<&str> = rows.iter().map(|r| r.id.as_str()).collect();
         assert_eq!(ids, vec!["section:status", "section:focus", "section:theme",
             // ── status bar ──
-            "section:bar", "section:boxes",
-            // ── keys ──
-            "section:keys"]);
+            "section:bar", "section:boxes"]);
         // Each section shows its current value and opens onto a non-empty option list.
         assert!(rows.iter().all(|r| !r.right.is_empty()), "each section shows a value");
         for r in &rows {
@@ -848,49 +839,119 @@ mod theme_row_tests {
 
     // ── keys ──
 
-    /// Keybinds: the prefixes first, then the commands grouped with their keys now. A key chosen
-    /// there is the command's (its old key given up, the command in full kept); Esc changes
-    /// nothing; the prefix is the key pressed; ⌫ leaves no second prefix.
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    /// A key pressed while a command's key is being chosen; what was said (no panel open: the
+    /// client's message).
+    fn press(app: &mut App, code: KeyCode, mods: KeyModifiers) -> String {
+        crate::settings::captured(app, KeyEvent::new(code, mods));
+        app.toast.as_ref().map(|t| t.0.clone()).unwrap_or_default()
+    }
+
+    /// What the key after the prefix runs now.
+    fn runs(app: &App, code: KeyCode, mods: KeyModifiers) -> Option<String> { app.keymap.prefix_command(&crate::keys::of(&KeyEvent::new(code, mods))).map(|b| b.command.clone()) }
+
+    /// Enter on [title]'s Keybinds row: its key is the next one pressed.
+    fn change(app: &mut App, title: &str) -> Option<String> {
+        let i = KEYBINDS.iter().position(|k| k.0 == title).unwrap().to_string();
+        crate::settings::set_key(app, "key", &i)
+    }
+
+    fn right(app: &App, title: &str) -> String { keybind_rows(app).into_iter().find(|r| r.label == title).map(|r| r.right).unwrap() }
+
+    /// Keybinds: the prefix first — fixed, information only — then the commands grouped with
+    /// their keys now. Appearance has no keys section.
     #[test]
-    fn keybinds_show_every_key_grouped_and_change_one() {
-        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    fn keybinds_are_the_fixed_prefix_then_every_command_grouped() {
         let mut app = app();
         let rows = keybind_rows(&app);
-        assert_eq!((rows[0].id.as_str(), rows[1].id.as_str()), ("prefix:press", "prefix2:press"));
+        assert_eq!((rows[0].id.as_str(), rows[0].label.as_str(), rows[0].right.as_str()), ("prefix", "Prefix", "C-b  (fixed)"));
+        assert!(rows.iter().all(|r| !r.id.starts_with("prefix2")), "no second prefix row");
         let mut groups: Vec<String> = Vec::new();
         for g in rows.iter().filter_map(|r| r.group.clone()) { if groups.last() != Some(&g) { groups.push(g) } }
-        assert_eq!(groups, ["Prefix", "Navigation", "Panes", "Swarms (windows)", "Harnesses", "General"]);
-        let right = |app: &App, title: &str| keybind_rows(app).into_iter().find(|r| r.label == title).map(|r| r.right).unwrap();
+        assert_eq!(groups, ["Navigation", "Panes", "Swarms (windows)", "Harnesses", "General"]);
         assert_eq!(right(&app, "Split right"), "C-b %");
-        let press = |app: &mut App, code: KeyCode, mods: KeyModifiers| crate::settings::captured(app, KeyEvent::new(code, mods));
-        let chord = |code: KeyCode| crate::keys::of(&KeyEvent::new(code, KeyModifiers::NONE));
-        // Split right onto h: % is free again.
-        let i = KEYBINDS.iter().position(|k| k.0 == "Split right").unwrap().to_string();
-        assert!(crate::settings::set_key(&mut app, "key", &i).is_some_and(|s| s.contains("Press")));
-        press(&mut app, KeyCode::Char('h'), KeyModifiers::NONE);
-        assert_eq!(app.keymap.prefix_command(&chord(KeyCode::Char('h'))).map(|b| b.command.as_str()), Some("split-window -h"));
-        assert!(app.keymap.prefix_command(&chord(KeyCode::Char('%'))).is_none());
-        assert_eq!(right(&app, "Split right"), "C-b h");
-        // Rename swarm keeps its prompt on its new key.
-        let i = KEYBINDS.iter().position(|k| k.0 == "Rename swarm…").unwrap().to_string();
-        let _ = crate::settings::set_key(&mut app, "key", &i);
-        press(&mut app, KeyCode::Char('R'), KeyModifiers::SHIFT);
-        assert!(app.keymap.prefix_command(&crate::keys::of(&KeyEvent::new(KeyCode::Char('R'), KeyModifiers::SHIFT))).is_some_and(|b| b.command.contains("command-prompt")));
-        // Esc: nothing changes.
-        let _ = crate::settings::set_key(&mut app, "key", &i);
-        press(&mut app, KeyCode::Esc, KeyModifiers::NONE);
+        // Enter on the prefix: said where it is set, nothing waits for a key.
+        assert!(crate::settings::set_key(&mut app, "prefix", "").is_some_and(|s| s.contains("tui.toml")));
         assert!(app.capturing.is_none());
-        assert_eq!(app.keymap.prefix_command(&chord(KeyCode::Char('h'))).map(|b| b.command.as_str()), Some("split-window -h"));
-        // The prefix, then no second prefix.
-        let _ = crate::settings::set_key(&mut app, "prefix", "press");
-        press(&mut app, KeyCode::Char('a'), KeyModifiers::CONTROL);
-        assert_eq!(crate::keys::name(&app.keymap.prefix), "C-a");
-        let _ = crate::settings::set_key(&mut app, "prefix2", "press");
-        press(&mut app, KeyCode::Char('b'), KeyModifiers::CONTROL);
-        assert_eq!(app.keymap.prefix2.map(|c| crate::keys::name(&c)).as_deref(), Some("C-b"));
-        let _ = crate::settings::set_key(&mut app, "prefix2", "press");
-        press(&mut app, KeyCode::Backspace, KeyModifiers::NONE);
-        assert_eq!(app.keymap.prefix2, None);
+        assert!(theme_sections(&app).iter().all(|r| r.id != "section:keys") && theme_options(&app, "keys").is_empty());
+    }
+
+    /// A key chosen is the command's: its old key given up, the command in full kept (Rename
+    /// swarm still asks for the name).
+    #[test]
+    fn a_key_chosen_frees_the_old_one_and_keeps_the_full_command() {
+        let mut app = app();
+        assert!(change(&mut app, "Split right").is_some_and(|s| s == "Split right: press a key · Esc cancels"));
+        assert!(press(&mut app, KeyCode::Char('h'), KeyModifiers::NONE).starts_with("Split right: C-b h"));
+        assert_eq!(runs(&app, KeyCode::Char('h'), KeyModifiers::NONE).as_deref(), Some("split-window -h"));
+        assert_eq!(runs(&app, KeyCode::Char('%'), KeyModifiers::NONE), None);
+        assert_eq!(right(&app, "Split right"), "C-b h");
+        assert!(app.capturing.is_none());
+        let _ = change(&mut app, "Rename swarm…");
+        press(&mut app, KeyCode::F(5), KeyModifiers::NONE);
+        assert!(runs(&app, KeyCode::F(5), KeyModifiers::NONE).is_some_and(|c| c.contains("command-prompt") && c.contains("rename-window")));
+        assert_eq!(runs(&app, KeyCode::Char(','), KeyModifiers::NONE), None);
+    }
+
+    /// A key that runs another command is replaced only on its second press: the first says
+    /// what it runs.
+    #[test]
+    fn a_key_in_use_needs_a_second_press() {
+        let mut app = app();
+        let _ = change(&mut app, "Split right");
+        assert_eq!(press(&mut app, KeyCode::Char('n'), KeyModifiers::NONE), "C-b n is Next swarm — n again to replace · Esc to keep");
+        assert!(app.capturing.is_some(), "still waiting");
+        assert_eq!(runs(&app, KeyCode::Char('n'), KeyModifiers::NONE).as_deref(), Some("next-window"));
+        assert_eq!(runs(&app, KeyCode::Char('%'), KeyModifiers::NONE).as_deref(), Some("split-window -h"));
+        assert!(press(&mut app, KeyCode::Char('n'), KeyModifiers::NONE).starts_with("Split right: C-b n"));
+        assert!(app.capturing.is_none());
+        assert_eq!(runs(&app, KeyCode::Char('n'), KeyModifiers::NONE).as_deref(), Some("split-window -h"));
+        assert_ne!(right(&app, "Next swarm"), "C-b n");
+        // A command with no title of its own is named by its command.
+        let _ = change(&mut app, "Split down");
+        assert!(press(&mut app, KeyCode::Char('t'), KeyModifiers::NONE).starts_with("C-b t is clock-mode — t again"));
+    }
+
+    /// Esc — or any other key, once a key in use is named — keeps every key as it was.
+    #[test]
+    fn esc_or_another_key_keeps_every_key() {
+        let mut app = app();
+        let _ = change(&mut app, "Split right");
+        assert_eq!(press(&mut app, KeyCode::Esc, KeyModifiers::NONE), "Unchanged");
+        assert!(app.capturing.is_none());
+        for other in [KeyCode::Esc, KeyCode::Char('y')] {
+            let _ = change(&mut app, "Split right");
+            press(&mut app, KeyCode::Char('n'), KeyModifiers::NONE);
+            assert_eq!(press(&mut app, other, KeyModifiers::NONE), "Unchanged");
+            assert!(app.capturing.is_none());
+            assert_eq!(runs(&app, KeyCode::Char('n'), KeyModifiers::NONE).as_deref(), Some("next-window"));
+            assert_eq!(runs(&app, KeyCode::Char('%'), KeyModifiers::NONE).as_deref(), Some("split-window -h"));
+            assert_eq!(runs(&app, KeyCode::Char('y'), KeyModifiers::NONE), None);
+        }
+    }
+
+    /// The prefix (and the second one), Enter, and Esc with a modifier are refused, each with
+    /// why; the panel keeps waiting for a key.
+    #[test]
+    fn the_prefix_enter_and_a_modified_esc_are_refused() {
+        let mut app = app();
+        app.keymap.prefix2 = Some(crate::keys::parse("C-a").unwrap());
+        let _ = change(&mut app, "Split right");
+        let before = app.keymap.prefix_table.clone();
+        for (code, mods, why) in [
+            (KeyCode::Char('b'), KeyModifiers::CONTROL, "C-b is the prefix — press another key · Esc cancels"),
+            (KeyCode::Char('a'), KeyModifiers::CONTROL, "C-a is the second prefix — press another key · Esc cancels"),
+            (KeyCode::Enter, KeyModifiers::NONE, "Enter can not be a key here (C-b Enter is Commands) — press another key · Esc cancels"),
+            (KeyCode::Esc, KeyModifiers::ALT, "Esc can not be a key here (it cancels) — press another key · Esc cancels"),
+            (KeyCode::Esc, KeyModifiers::CONTROL, "Esc can not be a key here (it cancels) — press another key · Esc cancels"),
+        ] {
+            assert_eq!(press(&mut app, code, mods), why);
+            assert!(app.capturing.is_some(), "still waiting after {why}");
+        }
+        assert_eq!(app.keymap.prefix_table.len(), before.len());
+        assert!(app.keymap.prefix_table.iter().zip(&before).all(|(a, b)| a.chord == b.chord && a.command == b.command), "nothing rebound");
+        assert_eq!(press(&mut app, KeyCode::Esc, KeyModifiers::NONE), "Unchanged");
     }
 
     // ── status bar ──

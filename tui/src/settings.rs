@@ -22,7 +22,7 @@ pub fn set_fzf_lists(on: bool) { FZF_LISTS.store(on, std::sync::atomic::Ordering
 /// The lists drawn as this panel rather than as fzf's full-screen list: every one, unless
 /// `@hn-lists fzf` asks for fzf's.
 pub fn is_panel(kind: &PickerKind) -> bool {
-    matches!(kind, PickerKind::Theme | PickerKind::Commands | PickerKind::Devices(_) | PickerKind::Models) || !FZF_LISTS.load(std::sync::atomic::Ordering::Relaxed)
+    matches!(kind, PickerKind::Theme | PickerKind::Commands | PickerKind::Keybinds | PickerKind::Devices(_) | PickerKind::Models) || !FZF_LISTS.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 /// Whether [kind]'s list reads top-down (↑ toward its first row): fzf's under --layout=reverse,
@@ -67,8 +67,26 @@ pub fn into_settings(app: &App, picker: &mut Picker) {
     picker.vset(0, 1);
 }
 
+// ── keys ──
+/// Keybinds chosen in the command list: the same panel lists the keys, and Esc comes back.
+pub fn into_keybinds(app: &App, picker: &mut Picker) {
+    picker.from_commands = true;
+    picker.placeholder = "Search keybinds".into();
+    picker.keep_order = true;
+    picker.live = false;
+    picker.theme_in = None;
+    picker.clear_query();
+    picker.rows.clear();
+    picker.set_rows(crate::modal::keybind_rows(app));
+    picker.scroll = 0;
+    picker.vset(0, 1);
+}
+
 /// Back from the settings to the command list, the cursor on Settings.
-pub fn back_to_commands(app: &App, picker: &mut Picker) {
+pub fn back_to_commands(app: &App, picker: &mut Picker) { back_to_commands_at(app, picker, "cmd:theme") }
+
+/// Back to the command list, the cursor on [at] (the command that opened the panel).
+pub fn back_to_commands_at(app: &App, picker: &mut Picker, at: &str) {
     picker.from_commands = false;
     picker.theme_in = None;
     picker.placeholder = "Type a command — appearance, new, layout, models…".into();
@@ -78,45 +96,34 @@ pub fn back_to_commands(app: &App, picker: &mut Picker) {
     picker.rows.clear();
     picker.set_rows(crate::modal::command_rows_for(app, false));
     picker.scroll = 0;
-    cursor_to(picker, "cmd:theme");
+    cursor_to(picker, at);
 }
 
 /// Put the cursor on the row [id] (where the filter shows it).
 pub fn cursor_to(picker: &mut Picker, id: &str) { picker.select(id) }
 
-// ── keys: the prefix and a command's key, chosen in the panel ────────────────────
+// ── keys: a command's key, chosen in the panel ───────────────────────────────────
 
-/// What the next key becomes: the prefix, the second prefix, or [command]'s key after the prefix.
+/// What the next key becomes: [command]'s key after the prefix. [pending]: a key that runs
+/// another command, pressed once — the same key again replaces it.
 #[derive(Clone, Debug)]
-pub enum Capture { Prefix, Prefix2, Command { command: String, title: String, own: bool } }
+pub enum Capture { Command { command: String, title: String, own: bool, pending: Option<crate::keys::Chord> } }
 
-const PRESS: &str = "Press the key you want · Esc cancels";
+const PRESS: &str = "press a key · Esc cancels";
+const AGAIN: &str = "press another key · Esc cancels";
 
-/// Appearance's Prefix and Second prefix: a key chosen (`C-b`, `none`), or `press` — the next
-/// key you press. None: not one of these knobs.
+/// A Keybinds row chosen: a command's (`key`, its index) waits for the next key pressed; the
+/// prefix's says where it is set. None: not a Keybinds row.
 pub fn set_key(app: &mut App, knob: &str, value: &str) -> Option<String> {
-    // A Keybinds row: its command's key is the next key pressed.
-    if knob == "key" {
-        let (title, runs, _) = value.parse::<usize>().ok().and_then(|i| crate::modal::KEYBINDS.get(i))?;
-        app.capturing = Some(Capture::Command { command: runs.to_string(), title: title.to_string(), own: true });
-        return Some(format!("{}: {PRESS}", title.trim_end_matches('…')));
+    match knob {
+        "key" => {
+            let (title, runs, _) = value.parse::<usize>().ok().and_then(|i| crate::modal::KEYBINDS.get(i))?;
+            app.capturing = Some(Capture::Command { command: runs.to_string(), title: title.to_string(), own: true, pending: None });
+            Some(format!("{}: {PRESS}", title.trim_end_matches('…')))
+        }
+        "prefix" => Some(format!("The prefix is {} — set `prefix` in tui.toml to change it", crate::keys::name(&app.keymap.prefix))),
+        _ => None,
     }
-    let second = match knob { "prefix" => false, "prefix2" => true, _ => return None };
-    if value == "press" { app.capturing = Some(if second { Capture::Prefix2 } else { Capture::Prefix }); return Some(PRESS.into()) }
-    let chord = if value == "none" { None } else { match crate::keys::parse(value) { Ok(c) => Some(c), Err(e) => return Some(e) } };
-    Some(apply_prefix(app, second, chord))
-}
-
-/// The prefix (or the second one, [chord] None: none) set as `set -g prefix` sets it — every
-/// hn window takes it — and written to tui.toml.
-fn apply_prefix(app: &mut App, second: bool, chord: Option<crate::keys::Chord>) -> String {
-    let (option, name) = (if second { "prefix2" } else { "prefix" }, chord.map(|c| crate::keys::name(&c)));
-    let Some(name) = name.or_else(|| second.then(|| "None".to_string())) else { return String::new() };
-    crate::commands::execute(app, &format!("set -g {option} {}", crate::tmuxconf::quote_word(&name)));
-    app.server_dirty = true;
-    let saved = crate::config::write_top(option, (name != "None").then_some(name.as_str()));
-    let what = if second { "Second prefix" } else { "Prefix" };
-    match saved { Ok(()) => format!("{what}: {name} — saved to tui.toml"), Err(e) => format!("{what}: {name} — could not write tui.toml: {e}") }
 }
 
 /// Alt-k on a command in the command panel: its key is the next key you press. A command with
@@ -128,37 +135,62 @@ pub fn capture_for_row(app: &mut App, picker: &mut Picker) {
         else { id.strip_prefix("cmd:").and_then(crate::modal::runs_of).map(str::to_string) };
     let Some(command) = command else { picker.say(format!("{title} can not have a key here: it asks for words")); return };
     picker.say(format!("{}: {PRESS}", title.trim_end_matches('…')));
-    app.capturing = Some(Capture::Command { command, title, own: id.starts_with("cmd:") });
+    app.capturing = Some(Capture::Command { command, title, own: id.starts_with("cmd:"), pending: None });
 }
 
-/// The key pressed while waiting ([Capture]): Esc cancels; else it becomes what was asked. What
-/// changed is said in the panel, whose rows show it.
+/// The key pressed while waiting ([Capture]): Esc cancels; a key that can not be one is refused,
+/// and one that runs another command is named first — the same key again replaces it, any other
+/// keeps it; else it becomes the command's. What happened is said in the panel, whose rows show it.
 pub fn captured(app: &mut App, key: crossterm::event::KeyEvent) {
-    let Some(what) = app.capturing.take() else { return };
+    use crossterm::event::KeyCode;
+    let Some(Capture::Command { command, title, own, pending }) = app.capturing.take() else { return };
     let chord = crate::keys::of(&key);
-    let plain = |code: crossterm::event::KeyCode| key.code == code && key.modifiers.is_empty();
-    let said = if plain(crossterm::event::KeyCode::Esc) { "Unchanged".to_string() } else {
-        match what {
-            Capture::Prefix => apply_prefix(app, false, Some(chord)),
-            // (⌫: no second prefix.)
-            Capture::Prefix2 if plain(crossterm::event::KeyCode::Backspace) => apply_prefix(app, true, None),
-            Capture::Prefix2 => apply_prefix(app, true, Some(chord)),
-            Capture::Command { command, title, own } => rebind(app, &command, &title, own, chord),
+    let name = crate::keys::name(&chord);
+    let prefix = crate::keys::name(&app.keymap.prefix);
+    let wait = |pending| Some(Capture::Command { command: command.clone(), title: title.clone(), own, pending });
+    let (said, next) = if key.code == KeyCode::Esc && key.modifiers.is_empty() { ("Unchanged".to_string(), None) }
+        else if let Some(p) = pending { if p == chord { (rebind(app, &command, &title, own, chord), None) } else { ("Unchanged".to_string(), None) } }
+        else if chord == app.keymap.prefix { (format!("{name} is the prefix — {AGAIN}"), wait(None)) }
+        else if Some(chord) == app.keymap.prefix2 { (format!("{name} is the second prefix — {AGAIN}"), wait(None)) }
+        else if key.code == KeyCode::Enter { (format!("Enter can not be a key here ({prefix} Enter is Commands) — {AGAIN}"), wait(None)) }
+        else if key.code == KeyCode::Esc { (format!("Esc can not be a key here (it cancels) — {AGAIN}"), wait(None)) }
+        else if let Some(other) = app.keymap.prefix_command(&chord).map(|b| b.command.clone()).filter(|c| *c != full_command(app, &command, own)) {
+            (format!("{prefix} {name} is {} — {name} again to replace · Esc to keep", running(app, &chord, &other)), wait(Some(chord)))
         }
-    };
+        else { (rebind(app, &command, &title, own, chord), None) };
+    app.capturing = next;
     // The panel's rows again, with the key as it is now.
     if let Some(crate::modal::Modal::Picker { kind, picker }) = app.modal.take() {
         let mut picker = picker;
+        let at = picker.current_id();
         match &kind {
-            PickerKind::Theme => if let Some(section) = picker.theme_in.clone() { let at = picker.current_id(); picker.set_rows(crate::modal::theme_options(app, &section)); if let Some(at) = at { cursor_to(&mut picker, &at) } }
-            else { picker.set_rows(crate::modal::theme_sections(app)) },
-            PickerKind::Commands => { let at = picker.current_id(); picker.set_rows(crate::modal::command_rows_for(app, !picker.query.is_empty())); if let Some(at) = at { cursor_to(&mut picker, &at) } }
+            PickerKind::Keybinds => picker.set_rows(crate::modal::keybind_rows(app)),
+            PickerKind::Commands => picker.set_rows(crate::modal::command_rows_for(app, !picker.query.is_empty())),
             _ => {}
         }
+        if let Some(at) = at { cursor_to(&mut picker, &at) }
         picker.say(said);
         app.modal = Some(crate::modal::Modal::Picker { kind, picker });
     } else { app.say(said, theme::MUTED) }
     app.redraw_all = true;
+}
+
+/// What [chord] (running [command]) is called: its Keybinds title, else the command itself.
+fn running(app: &App, chord: &crate::keys::Chord, command: &str) -> String {
+    crate::modal::KEYBINDS.iter().find(|(_, runs, _)| crate::modal::key_running(app, runs).as_ref() == Some(chord))
+        .map(|(title, _, _)| title.trim_end_matches('…').to_string()).unwrap_or_else(|| command.to_string())
+}
+
+/// [command]'s key now: the one running exactly it — or, for one of hn's own commands, the key
+/// the panel shows for it (its command with words after it).
+fn current_key(app: &App, command: &str, own: bool) -> Option<crate::keys::Chord> {
+    if own { crate::modal::key_running(app, command) } else { app.keymap.prefix_table.iter().find(|b| b.command == command).map(|b| b.chord) }
+}
+
+/// What [command]'s key runs in full (a rename still asks for the name) — [command] itself where
+/// it has no key.
+fn full_command(app: &App, command: &str, own: bool) -> String {
+    current_key(app, command, own).and_then(|o| app.keymap.prefix_command(&o)).map(|b| b.command.clone()).unwrap_or_else(|| command.to_string())
 }
 
 /// [command] on [chord] after the prefix, and on no other key (a command with two keys, `%` and
@@ -170,11 +202,8 @@ fn rebind(app: &mut App, command: &str, title: &str, own: bool, chord: crate::ke
     let key = crate::keys::name(&chord);
     let was = app.keymap.prefix_command(&chord).map(|b| b.command.clone()).filter(|c| c != command && !c.contains(command));
     let mut saved = Ok(());
-    // Its key now: the one running exactly it — or, for one of hn's own commands, the key the
-    // panel shows for it (its command with words after it).
-    let old = if own { crate::modal::key_running(app, command) } else { app.keymap.prefix_table.iter().find(|b| b.command == command).map(|b| b.chord) };
-    // The new key runs what the old one did, in full (a rename still asks for the name).
-    let full = old.and_then(|o| app.keymap.prefix_command(&o)).map(|b| b.command.clone()).unwrap_or_else(|| command.to_string());
+    // The new key runs what the old one did, in full.
+    let full = full_command(app, command, own);
     let olds: Vec<crate::keys::Chord> = app.keymap.prefix_table.iter().filter(|b| b.command == full && b.chord != chord).map(|b| b.chord).collect();
     for old in olds {
         app.keymap.unbind(Table::Prefix, &old);
@@ -360,8 +389,8 @@ pub fn draw(buf: &mut Buffer, app: &App, body: Rect, kind: &PickerKind, picker: 
     // (Commands need no preview: the list takes the width, a row's hint beside its name. A list
     // that is the whole answer — output, messages, keys — has none either.)
     // (Keybinds are keys, not a look: no preview; the list takes the width, a key beside each.)
-    let settings = matches!(kind, PickerKind::Theme) && picker.theme_in.as_deref() != Some("keys");
-    let side = inner_w >= 64 && (settings || (picker.preview && !matches!(kind, PickerKind::Commands | PickerKind::Theme)));
+    let settings = matches!(kind, PickerKind::Theme);
+    let side = inner_w >= 64 && (settings || (picker.preview && !matches!(kind, PickerKind::Commands | PickerKind::Theme | PickerKind::Keybinds)));
     // (A list's preview gets at least half: a harness's screen, a machine's, a model's facts —
     // the list room for a row's name and what it says, a harness's doing.)
     let list_w = if !side { inner_w } else if settings { (inner_w * 2 / 5).clamp(28, 40) } else { (inner_w / 2).clamp(30, 56) };
@@ -396,6 +425,9 @@ pub fn draw(buf: &mut Buffer, app: &App, body: Rect, kind: &PickerKind, picker: 
         PickerKind::Theme if picker.theme_in.is_some() => Some("↑↓ move   enter apply   ← back   esc back"),
         PickerKind::Theme if picker.from_commands => Some("↑↓ move   → open   type to search   esc back"),
         PickerKind::Theme => Some("↑↓ move   → open   type to search   esc close"),
+        // ── keys ──
+        PickerKind::Keybinds if picker.from_commands => Some("↑↓ move   enter change   type to search   esc back"),
+        PickerKind::Keybinds => Some("↑↓ move   enter change   type to search   esc close"),
         _ => None,
     };
     match (flash, keys) {
@@ -407,13 +439,14 @@ pub fn draw(buf: &mut Buffer, app: &App, body: Rect, kind: &PickerKind, picker: 
 }
 
 /// The menus, whose footer says their keys (the other lists give that row to their rows).
-fn keyed(kind: &PickerKind) -> bool { matches!(kind, PickerKind::Theme | PickerKind::Commands) }
+fn keyed(kind: &PickerKind) -> bool { matches!(kind, PickerKind::Theme | PickerKind::Commands | PickerKind::Keybinds) }
 
 /// The panel's title: the list's own name (the launcher's for its lists, else what opened it).
 fn title(app: &App, kind: &PickerKind, picker: &Picker) -> String {
     match kind {
         PickerKind::Theme => "Appearance".into(),
         PickerKind::Commands => "Commands".into(),
+        PickerKind::Keybinds => "Keybinds".into(),
         PickerKind::Devices(view) => view.title().into(),
         k if crate::modal::is_launcher(k) => capital(&crate::modal::launcher_title(app, k).0),
         _ => capital(&picker.heading.clone().unwrap_or_else(|| picker.title.clone())),
@@ -428,8 +461,6 @@ pub fn section_title(section: &str) -> &'static str {
         "theme" => "Theme",
         // ── status bar ──
         "bar" => "Status bar", "boxes" => "Borders",
-        // ── keys ──
-        "keys" => "Keybinds",
         _ => "",
     }
 }
