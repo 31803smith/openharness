@@ -171,7 +171,7 @@ export function handleAdapterUpgrade(req: IncomingMessage, socket: Duplex, head:
   const countryCode = countryCodeFromHeaders(req.headers)
   void (async () => {
     let user
-    try { user = await authenticateAccessToken(accessToken, autonomousEnv, { allowHarnessSession: false }) } catch (err) {
+    try { user = await authenticateAccessToken(accessToken, autonomousEnv, { allowHarnessSession: 'computer' }) } catch (err) {
       if (err instanceof SsoAuthError && (err.code === 'AUTONOMOUS_ENV_MISMATCH' || err.code === 'AUTONOMOUS_ENV_NOT_ALLOWED')) {
         try { socket.write('HTTP/1.1 403 Forbidden\r\nConnection: close\r\nContent-Length: 0\r\n\r\n') } catch { /* ignore */ }
         socket.destroy()
@@ -186,7 +186,7 @@ export function handleAdapterUpgrade(req: IncomingMessage, socket: Duplex, head:
     if (!machineBillingAllowsDataPlane(machine)) { denyPayment(); return }
     // Single-computer claim BEFORE upgrade/attach, so a rejected second computer never supersedes the first.
     if (!(await claimMachineOwner(machineId, computerId, PRESENCE_TTL_SEC))) { denyBusy(); return }
-    wss.handleUpgrade(req, socket, head, (ws) => void attachAdapter(ws, machineId, machine.userId, machine.name, label, computerId, clientVersion, countryCode))
+    wss.handleUpgrade(req, socket, head, (ws) => void attachAdapter(ws, machineId, machine.userId, machine.name, label, computerId, clientVersion, countryCode, user.harnessSessionId))
   })().catch((err) => {
     if (err instanceof AppError) {
       // 403 is the revoked-machine answer from `resolveOrCreateForComputer`, 429 its new-id rate limit
@@ -201,7 +201,7 @@ export function handleAdapterUpgrade(req: IncomingMessage, socket: Duplex, head:
   })
 }
 
-async function attachAdapter(ws: WebSocket, machineId: string, userId: string, currentName: string | null, label?: string, computerId?: string, clientVersion?: string, countryCode?: string): Promise<void> {
+async function attachAdapter(ws: WebSocket, machineId: string, userId: string, currentName: string | null, label?: string, computerId?: string, clientVersion?: string, countryCode?: string, harnessSessionId?: string): Promise<void> {
   // A different computer was already rejected at the upgrade (denyBusy), so this only closes our OWN
   // stale local socket on a same-computer reconnect landing on this worker.
   owners.get(machineId)?.close(4000, 'superseded')
@@ -452,7 +452,7 @@ async function attachAdapter(ws: WebSocket, machineId: string, userId: string, c
           send({ t: 'down', connId: '', frame: { type: 'devlog_append_result', payload: { requestId, error: 'RATE_LIMITED' } } })
           return
         }
-        void appendDeviceKey(userId, p.entry, { kind: 'machine', machineId })
+        void appendDeviceKey(userId, p.entry, { kind: 'machine', machineId, ...(harnessSessionId ? { harnessSessionId } : {}) })
           .then((r) => send({ t: 'down', connId: '', frame: { type: 'devlog_append_result', payload: r.ok
             ? { requestId, head: r.head }
             : { requestId, error: r.code, ...('head' in r ? { head: r.head } : {}) } } }))

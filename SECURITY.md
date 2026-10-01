@@ -26,6 +26,14 @@ This is deliberate, and it is not prevented, only made visible: each device anno
 not trusted before ("New device: X"), the device list shows every one with a Remove, and devices
 compare the log among themselves so a backend cannot show one device a key the others do not see.
 
+**A phone can sign a computer in by scanning its QR.** Approving one hands that computer the account's
+terminals, so two mistakes matter: approving a stranger's computer (a QR you were shown), and a
+stranger approving yours with their phone (a QR they photographed). The phone shows what is asking,
+where from, and whether it is on the phone's network — another network takes a two-second hold, not a
+tap — and the computer asks its own person whose account approved it before any session exists.
+A computer signed in this way can add a phone of its own; that chain is intended. Its session is
+Harness's own, so billing and grid still need an SSO sign-in.
+
 ## For implementers
 
 Two obligations in the protocol are security-relevant, and both are easy to get subtly wrong:

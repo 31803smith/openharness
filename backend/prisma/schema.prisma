@@ -710,6 +710,9 @@ model HarnessSession {
   refreshHash String    @unique
   /// What the device calls itself ("Dee's iPhone"), for a list of signed-in devices.
   label       String
+  /// `computer` — a computer signed in by a phone scanning its QR (lib/harnessSession.ts): it may
+  /// connect AS a machine. Absent (every older row) or `viewer` — an app, which may not.
+  kind        String?
   createdAt   DateTime  @default(now())
   lastUsedAt  DateTime  @default(now())
   /// Slides forward on every refresh: a phone in use stays signed in, one left in a drawer does not.
