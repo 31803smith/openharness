@@ -105,7 +105,7 @@ pub fn cursor_to(picker: &mut Picker, id: &str) { picker.select(id) }
 // ── keys: the prefix and a command's key, chosen in the panel ────────────────────
 
 /// What the next key becomes: the prefix ([second]: the second one), or [command]'s key after the
-/// prefix. [pending]: a key that runs another command, pressed once — the same key again replaces it.
+/// prefix. [pending]: a key that runs another command, pressed once — the same key again takes it.
 #[derive(Clone, Debug)]
 pub enum Capture {
     Prefix { second: bool },
@@ -124,39 +124,37 @@ pub fn set_key(app: &mut App, knob: &str, value: &str) -> Option<String> {
             app.capturing = Some(Capture::Command { command: runs.to_string(), title: title.to_string(), own: true, pending: None });
             Some(format!("{}: {PRESS}", title.trim_end_matches('…')))
         }
-        "prefix" => { app.capturing = Some(Capture::Prefix { second: false }); Some(format!("Prefix: press the new one — Ctrl, ⌥ or ⌘ with a key · Esc cancels")) }
-        "prefix2" => { app.capturing = Some(Capture::Prefix { second: true }); Some(format!("Second prefix: press it — Ctrl, ⌥ or ⌘ with a key · ⌫ none · Esc cancels")) }
+        "prefix" => { app.capturing = Some(Capture::Prefix { second: false }); Some(format!("Prefix: {PRESS}")) }
+        "prefix2" => { app.capturing = Some(Capture::Prefix { second: true }); Some("Second prefix: press a key · ⌫ none · Esc cancels".into()) }
         _ => None,
     }
 }
 
-/// The prefix (or the second one, [chord] None: none) set as `set -g prefix` sets it — every hn
-/// window takes it — and written to tui.toml, so it is the prefix the next time hn starts too.
-fn apply_prefix(app: &mut App, second: bool, chord: Option<crate::keys::Chord>) -> String {
+/// `set -g prefix` (or `prefix2`; [chord] None: none) — every hn window takes it — and tui.toml's
+/// `prefix`, so it is the prefix the next time hn starts too.
+fn set_prefix_option(app: &mut App, second: bool, chord: Option<crate::keys::Chord>) -> std::io::Result<()> {
     let option = if second { "prefix2" } else { "prefix" };
     let name = chord.map(|c| crate::keys::name(&c)).unwrap_or_else(|| "None".to_string());
     crate::commands::execute(app, &format!("set -g {option} {}", crate::tmuxconf::quote_word(&name)));
     app.server_dirty = true;
-    let saved = crate::config::write_top(option, chord.is_some().then_some(name.as_str()));
-    let what = if second { "Second prefix" } else { "Prefix" };
-    let shown = if chord.is_some() { name } else { "none".into() };
-    match saved { Ok(()) => format!("{what}: {shown} — saved to tui.toml"), Err(e) => format!("{what}: {shown} — could not write tui.toml: {e}") }
+    crate::config::write_top(option, chord.is_some().then_some(name.as_str()))
 }
 
-/// The key pressed for a prefix: one with Ctrl, ⌥ or ⌘ (a plain key would be lost to typing);
-/// for the second, ⌫ is none. (Said, and whether it is still waiting.)
-fn captured_prefix(app: &mut App, second: bool, key: crossterm::event::KeyEvent) -> (String, bool) {
-    use crossterm::event::{KeyCode, KeyModifiers};
-    let chord = crate::keys::of(&key);
-    let name = crate::keys::name(&chord);
-    if key.code == KeyCode::Esc && key.modifiers.is_empty() { return ("Unchanged".into(), false) }
-    if second && key.code == KeyCode::Backspace && key.modifiers.is_empty() { return (apply_prefix(app, true, None), false) }
-    if !key.modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER | KeyModifiers::META) {
-        return (format!("{name}: a prefix needs Ctrl, ⌥ or ⌘ — like C-a · Esc cancels"), true)
-    }
-    if second && chord == app.keymap.prefix { return (format!("{name} is the prefix already — {AGAIN}"), true) }
-    if !second && Some(chord) == app.keymap.prefix2 { return (format!("{name} is the second prefix — {AGAIN}"), true) }
-    (apply_prefix(app, second, Some(chord)), false)
+/// The prefix (or the second one, [chord] None: none) set and saved — as `set -g prefix` does in
+/// tmux: no binding added or changed (what the key ran after the prefix it still runs).
+fn apply_prefix(app: &mut App, second: bool, chord: Option<crate::keys::Chord>) -> String {
+    let what = if second { "Second prefix" } else { "Prefix" };
+    let shown = chord.map(|c| crate::keys::name(&c)).unwrap_or_else(|| "none".into());
+    match set_prefix_option(app, second, chord) { Ok(()) => format!("{what}: {shown} — saved"), Err(e) => format!("{what}: {shown} — could not save: {e}") }
+}
+
+/// The key pressed for a prefix: any key the terminal sends becomes it at once (Esc cancels; for
+/// the second, ⌫ is none). A key that also runs something is the person's to choose, as in tmux.
+fn captured_prefix(app: &mut App, second: bool, key: crossterm::event::KeyEvent) -> String {
+    use crossterm::event::KeyCode;
+    if key.code == KeyCode::Esc && key.modifiers.is_empty() { return "Unchanged".into() }
+    if second && key.code == KeyCode::Backspace && key.modifiers.is_empty() { return apply_prefix(app, true, None) }
+    apply_prefix(app, second, Some(crate::keys::of(&key)))
 }
 
 /// Alt-k on a command in the command panel: its key is the next key you press. A command with
@@ -179,8 +177,7 @@ pub fn captured(app: &mut App, key: crossterm::event::KeyEvent) {
     let (command, title, own, pending) = match app.capturing.take() {
         Some(Capture::Command { command, title, own, pending }) => (command, title, own, pending),
         Some(Capture::Prefix { second }) => {
-            let (said, waiting) = captured_prefix(app, second, key);
-            if waiting { app.capturing = Some(Capture::Prefix { second }) }
+            let said = captured_prefix(app, second, key);
             return show_captured(app, said);
         }
         None => return,

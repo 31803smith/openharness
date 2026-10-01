@@ -3084,6 +3084,28 @@ mod theme_render_tests {
 
     // ── keys ──
 
+    /// A plain-key prefix (`` ` ``, Enter) is the prefix over the panes, and only there: in a list
+    /// or a line being typed, the key is the list's (typed into the search, Enter chooses). A prefix
+    /// with a modifier works over the lists, as before.
+    #[test]
+    fn a_plain_key_prefix_leaves_the_lists_their_keys() {
+        use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
+        let mut app = app();
+        app.keymap.prefix = crate::keys::parse("`").unwrap();
+        let key = |app: &mut App, code: KeyCode, mods: KeyModifiers| crate::input::handle(app, Event::Key(KeyEvent::new(code, mods)));
+        key(&mut app, KeyCode::Char('`'), KeyModifiers::NONE);
+        assert!(app.prefix, "over the panes, ` is the prefix");
+        app.prefix = false;
+        crate::commands::execute_bound(&mut app, "choose-command");
+        key(&mut app, KeyCode::Char('`'), KeyModifiers::NONE);
+        let Some(Modal::Picker { picker, .. }) = &app.modal else { panic!("closed") };
+        assert!(!app.prefix && picker.query == "`", "in a list, ` is typed: {:?}", picker.query);
+        // A prefix with a modifier still works over a list.
+        app.keymap.prefix = crate::keys::parse("C-a").unwrap();
+        key(&mut app, KeyCode::Char('a'), KeyModifiers::CONTROL);
+        assert!(app.prefix, "C-a over a list is the prefix");
+    }
+
     /// Keybinds from the command list: its own panel in the same place — no preview, the
     /// prefix first and fixed — where Enter on a command waits for its key, a key in use is
     /// replaced on its second press, and Esc steps back to the commands.

@@ -566,8 +566,8 @@ pub const KEYBINDS: &[(&str, &str, &str)] = &[
 pub fn keybind_rows(app: &App) -> Vec<Row> {
     let prefix = crate::keys::name(&app.keymap.prefix);
     let prefixes = [
-        Row::new("prefix", "Prefix").detail(vec![span("the key before every command — Enter changes it", fg(theme::MUTED))]).right(prefix.clone()).group("Prefix"),
-        Row::new("prefix2", "Second prefix").detail(vec![span("one more, for a terminal that keeps ⌘ keys", fg(theme::MUTED))])
+        Row::new("prefix", "Prefix").detail(vec![span("the key before every command", fg(theme::MUTED))]).right(prefix.clone()).group("Prefix"),
+        Row::new("prefix2", "Second prefix").detail(vec![span("another key that works as the prefix", fg(theme::MUTED))])
             .right(app.keymap.prefix2.map(|c| crate::keys::name(&c)).unwrap_or_else(|| "none".into())).group("Prefix"),
     ];
     prefixes.into_iter().chain(KEYBINDS.iter().enumerate().map(|(i, (title, runs, group))| {
@@ -878,30 +878,33 @@ mod theme_row_tests {
         assert!(theme_sections(&app).iter().all(|r| r.id != "section:keys") && theme_options(&app, "keys").is_empty());
     }
 
-    /// The prefix changes in the panel: Enter, then the key — which needs Ctrl, ⌥ or ⌘ (a plain
-    /// key would be lost to typing). The second prefix too; ⌫ leaves none. Both saved to tui.toml.
+    /// Any key the terminal sends becomes the prefix at once — Esc cancels, so not Esc — as `set -g
+    /// prefix` does: no binding added or changed (prefix Enter is still Commands with Enter as the
+    /// prefix). The second prefix the same; ⌫ none. Saved to tui.toml.
     #[test]
-    fn the_prefix_changes_to_a_key_with_a_modifier() {
+    fn any_key_becomes_the_prefix_and_no_binding_changes() {
         let mut app = app();
-        assert!(crate::settings::set_key(&mut app, "prefix", "").is_some_and(|s| s.contains("press")));
-        for code in [KeyCode::Char('a'), KeyCode::Enter, KeyCode::Char('1')] {
-            assert!(press(&mut app, code, KeyModifiers::NONE).contains("needs Ctrl"), "{code:?} refused");
-            assert!(app.capturing.is_some(), "still waiting");
+        let prefix = |app: &App| crate::keys::name(&app.keymap.prefix);
+        let set = |app: &mut App, knob: &str| crate::settings::set_key(app, knob, "").unwrap_or_default();
+        let before: Vec<(String, String)> = app.keymap.prefix_table.iter().map(|b| (crate::keys::name(&b.chord), b.command.clone())).collect();
+        for (code, mods, name) in [(KeyCode::Char('a'), KeyModifiers::CONTROL, "C-a"), (KeyCode::Enter, KeyModifiers::NONE, "Enter"), (KeyCode::F(12), KeyModifiers::NONE, "F12"), (KeyCode::Char('`'), KeyModifiers::NONE, "`")] {
+            assert_eq!(set(&mut app, "prefix"), "Prefix: press a key · Esc cancels");
+            assert_eq!(press(&mut app, code, mods), format!("Prefix: {name} — saved"));
+            assert_eq!(prefix(&app), name);
+            assert!(app.capturing.is_none());
         }
-        assert_eq!(press(&mut app, KeyCode::Char('a'), KeyModifiers::CONTROL), "Prefix: C-a — saved to tui.toml");
-        assert_eq!(crate::keys::name(&app.keymap.prefix), "C-a");
-        assert!(app.capturing.is_none());
-        // The second prefix, then none.
-        let _ = crate::settings::set_key(&mut app, "prefix2", "");
-        assert!(press(&mut app, KeyCode::Char('b'), KeyModifiers::CONTROL).starts_with("Second prefix: C-b"));
-        assert_eq!(app.keymap.prefix2.map(|c| crate::keys::name(&c)).as_deref(), Some("C-b"));
-        let _ = crate::settings::set_key(&mut app, "prefix2", "");
-        assert_eq!(press(&mut app, KeyCode::Backspace, KeyModifiers::NONE), "Second prefix: none — saved to tui.toml");
-        assert_eq!(app.keymap.prefix2, None);
-        // Esc: unchanged.
-        let _ = crate::settings::set_key(&mut app, "prefix", "");
+        let after: Vec<(String, String)> = app.keymap.prefix_table.iter().map(|b| (crate::keys::name(&b.chord), b.command.clone())).collect();
+        assert_eq!(after, before, "no binding added or changed");
+        assert_eq!(runs(&app, KeyCode::Enter, KeyModifiers::NONE).as_deref(), Some("choose-command"), "prefix Enter is still Commands");
+        let _ = set(&mut app, "prefix");
         assert_eq!(press(&mut app, KeyCode::Esc, KeyModifiers::NONE), "Unchanged");
-        assert_eq!(crate::keys::name(&app.keymap.prefix), "C-a");
+        assert_eq!(prefix(&app), "`");
+        assert_eq!(set(&mut app, "prefix2"), "Second prefix: press a key · ⌫ none · Esc cancels");
+        assert_eq!(press(&mut app, KeyCode::Char('b'), KeyModifiers::CONTROL), "Second prefix: C-b — saved");
+        assert_eq!(app.keymap.prefix2.map(|c| crate::keys::name(&c)).as_deref(), Some("C-b"));
+        let _ = set(&mut app, "prefix2");
+        assert_eq!(press(&mut app, KeyCode::Backspace, KeyModifiers::NONE), "Second prefix: none — saved");
+        assert_eq!(app.keymap.prefix2, None);
     }
 
     /// A key chosen is the command's: its old key given up, the command in full kept (Rename

@@ -46,6 +46,9 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 pub struct Chord { pub code: KeyCode, pub mods: KeyModifiers }
 
 impl Chord {
+    /// A key typed as itself — no Ctrl, ⌥ or ⌘ (Shift alone still types): `a`, `` ` ``, Enter, F12.
+    pub fn plain(&self) -> bool { !self.mods.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER) }
+
     /// One spelling per key: letters lower-case with SHIFT as a modifier; a shifted symbol (`{`,
     /// `?`) is its own character, without SHIFT.
     pub fn normal(code: KeyCode, mods: KeyModifiers) -> Chord {

@@ -131,9 +131,11 @@ fn on_key(app: &mut App, key: KeyEvent) {
         app.repeat_until = None;
     }
     // The prefix works over the lists too (they are tmux's choose modes); only a line being typed
-    // at the status line keeps it.
+    // at the status line keeps it — and a plain-key prefix (`` ` ``, Enter) is the prefix over the
+    // panes alone: in a list it is typed into the search, or chooses.
     let line_edit = matches!(app.modal, Some(Modal::Prompt(_)) | Some(Modal::Confirm { .. }) | Some(Modal::Popup { .. }) | Some(Modal::Menu { .. }) | Some(Modal::NewHarness(_)));
-    if !line_edit && (chord == app.keymap.prefix || Some(chord) == app.keymap.prefix2) {
+    let listed = chord.plain() && app.modal.is_some();
+    if !line_edit && !listed && (chord == app.keymap.prefix || Some(chord) == app.keymap.prefix2) {
         app.status_redraws += 1;
         app.prefix = true;
         app.prefix_at = Some(std::time::Instant::now());

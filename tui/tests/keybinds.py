@@ -112,23 +112,23 @@ try:
     assert panes() == before + 1, 'C-b % still free after a restart'
     print('PASS Keybinds: after a restart C-b h still splits', flush=True)
 
-    # The prefix: Keybinds → Prefix → Enter → C-a. A plain key is refused; C-a is saved to tui.toml.
+    # The prefix, any key: Keybinds → Prefix → Enter → ` — set at once, as `set -g prefix` does.
+    # Saved to tui.toml; ` h splits, still after a restart.
     keys('C-b', 'Enter'); shows('Commands')
     type_text('keyb'); keys('Enter'); shows('Second prefix')
-    keys('Enter'); shows('Prefix: press')
-    keys('q'); shows('a prefix needs Ctrl')
-    keys('C-a'); shows('Prefix: C-a')
+    keys('Enter'); shows('Prefix: press a key')
+    type_text('`'); shows('Prefix: ` — saved')
     keys('Escape'); keys('Escape'); gone('Commands')
     toml = TOML.read_text()
-    assert 'prefix = "C-a"' in toml, toml
+    assert 'prefix = "`"' in toml and 'send-prefix' not in toml, toml
     before = panes()
-    keys('C-a', 'h'); wait(lambda: panes() == before + 1, 'C-a h splits')
+    type_text('`'); keys('h'); wait(lambda: panes() == before + 1, '` h splits')
     hn('kill-server', ok=False); tmux('kill-server', ok=False); started = False
     time.sleep(.3)
     start(); started = True
     before = panes()
-    keys('C-a', 'h'); wait(lambda: panes() == before + 1, 'C-a h splits after a restart')
-    print('PASS Keybinds: the prefix changed to C-a in the panel, saved, and still C-a after a restart', flush=True)
+    type_text('`'); keys('h'); wait(lambda: panes() == before + 1, '` h splits after a restart')
+    print('PASS Keybinds: ` as the prefix, set at once and saved, still ` after a restart', flush=True)
 
 finally:
     try:
