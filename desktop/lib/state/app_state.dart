@@ -15,6 +15,7 @@ import 'package:flutter/widgets.dart'
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../models/model_manager_controller.dart';
+import '../companions/coding_memory_connection.dart';
 import '../api/api_client.dart';
 import '../viewer/sign_in_browser.dart';
 import '../viewer/direct_link.dart';
@@ -651,6 +652,42 @@ class AppNotifier extends ChangeNotifier {
     return false;
   }
 
+  final _ownerMemoryConnections = <LocalCodingMemoryConnection>{};
+
+  /// Only the already-discovered daemon on this computer. Inspecting memories
+  /// never provisions a service, connects a remote machine or launches an agent.
+  CodingMemoryConnection? openCodingMemoryConnection() {
+    if (_disposed || viewer != null || kIsWeb) return null;
+    final machine = machineStates.values
+        .where((m) => m.usesLocalTransport)
+        .firstOrNull;
+    final endpoint = machine?.localEndpoint;
+    if (machine == null || endpoint == null) return null;
+    final auth = _authRevision, owner = currentUser?.id;
+    final id = machine.machine.machineId;
+    late final LocalCodingMemoryConnection connection;
+    connection = LocalCodingMemoryConnection(
+      endpoint: endpoint,
+      machineId: id,
+      isCurrent: () =>
+          _authWorkCurrent(auth) &&
+          currentUser?.id == owner &&
+          machineStates[id]?.localEndpoint?.wsUri == endpoint.wsUri &&
+          machineStates[id]?.localEndpoint?.protocolVersion ==
+              endpoint.protocolVersion,
+      onClosed: () => _ownerMemoryConnections.remove(connection),
+    );
+    _ownerMemoryConnections.add(connection);
+    return connection;
+  }
+
+  void _closeOwnerMemories() {
+    for (final connection in _ownerMemoryConnections.toList()) {
+      connection.invalidate();
+    }
+    _ownerMemoryConnections.clear();
+  }
+
   Stream<void> get modelsRequests => _modelsRequests.stream;
   final LocalManualFixture? localManualFixture;
   final Duration turnActivityTimeout;
@@ -849,6 +886,7 @@ class AppNotifier extends ChangeNotifier {
       !_disposed && revision == _authRevision;
 
   int _invalidateAuthWork() {
+    _closeOwnerMemories();
     _stopMachineRecovery();
     api.resetAccountCache();
     _sessionExpired = false;
@@ -916,6 +954,7 @@ class AppNotifier extends ChangeNotifier {
   CurrentUserProfile? _currentUser;
   CurrentUserProfile? get currentUser => _currentUser;
   set currentUser(CurrentUserProfile? profile) {
+    if (_currentUser?.id != profile?.id) _closeOwnerMemories();
     _currentUser = profile;
     final id = profile?.id;
     experimentalFeatures.bind(
@@ -2100,6 +2139,17 @@ class AppNotifier extends ChangeNotifier {
 
   /// Whether this build can sign in by a phone at all (the CLI's, and a viewer's, can).
   bool get canSignInWithPhone => cliLogin is PhoneSignInClient;
+
+  /// What a sign-in in progress is waiting on before it can start — another sign-in on this
+  /// computer, say — for the login screen to show; null when it is not waiting.
+  String? get loginWaitingNote => switch (cliLogin) {
+    CliLogin(:final waitingNote) => waitingNote.value,
+    _ => null,
+  };
+
+  void _loginWaitingChanged() {
+    if (!_disposed) notifyListeners();
+  }
   bool openingLoginBrowser = false;
   String? loginBrowserError;
   int _loginBrowserRevision = 0;
@@ -2175,6 +2225,9 @@ class AppNotifier extends ChangeNotifier {
                : null) {
     _cliLink = cliLink;
     this.cliLogin = cliLogin ?? this.viewer?.login ?? CliLogin();
+    if (this.cliLogin case final CliLogin cli) {
+      cli.waitingNote.addListener(_loginWaitingChanged);
+    }
     this.peerLinks = peerLinks ?? this.viewer?.links ?? this.cliLink;
     _autonomousEnv = this.config.autonomousEnv;
     api = _newApiClient();
@@ -4075,10 +4128,15 @@ class AppNotifier extends ChangeNotifier {
       if (previous == null || previous.computerId != endpoint.computerId) {
         continue;
       }
-      if (!mapEquals(previous.agentProjects, endpoint.agentProjects)) {
+      final scanEnded = previous.scanning && !endpoint.scanning;
+      if (!mapEquals(previous.agentProjects, endpoint.agentProjects) ||
+          previous.scanning != endpoint.scanning) {
         machine.localEndpoint = endpoint;
         changed = true;
       }
+      // The list this window loaded while the daemon was still on its first scan may have been
+      // missing agents (see LocalCliEndpoint.scanning): ask again now that it is complete.
+      if (scanEnded) unawaited(_loadMachineData(machine, force: true));
       if (!kUnderTest) {
         for (final project in endpoint.agentProjects.values) {
           unawaited(_localGitProjects.read(project.cwd));
@@ -13834,6 +13892,10 @@ class AppNotifier extends ChangeNotifier {
 
   @override
   void dispose() {
+    if (cliLogin case final CliLogin cli) {
+      cli.waitingNote.removeListener(_loginWaitingChanged);
+    }
+    _closeOwnerMemories();
     experimentalFeatures.dispose();
     viewer?.auth.dispose();
     _deviceVisit?.dispose();
