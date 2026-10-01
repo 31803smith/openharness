@@ -26,7 +26,7 @@ import { AutonomousDeviceDirect } from './lib/autonomous-device/direct.js'
  */
 
 import 'dotenv/config'
-import { readFileSync, readdirSync, writeFileSync, mkdirSync, openSync, existsSync, rmSync, statSync } from 'fs'
+import { readFileSync, readdirSync, writeFileSync, mkdirSync, openSync, existsSync, rmSync, statSync, renameSync } from 'fs'
 import { dirname, join, resolve } from 'path'
 import { fileURLToPath } from 'url'
 import { execFile as execFileCb, spawn } from 'child_process'
@@ -70,6 +70,9 @@ import { LocalPresence, PAIR_HARNESS_DSH, ZooTurnCounter, ZooTurnReporter } from
 import { ZooLessonReporter } from './lib/zooLessons.js'
 import { DAEMONS_OFF, DAEMONS_OFF_DETAIL, DaemonsSwitch, localKillSwitch, zooPassthrough, type ZooRead } from './lib/daemonsSwitch.js'
 import { handOffToGrid } from './lib/gridHandoff.js'
+import { qrSignIn } from './lib/qrSignIn.js'
+import { pickSignInMethod } from './lib/signInMethodPicker.js'
+import { terminalQr } from './lib/terminalQr.js'
 import { ensureGridInstalled } from './lib/gridInstall.js'
 import { ensureHarnessGrid, type EnsureStatus } from './lib/gridEnsure.js'
 import { passThroughToGridLogout } from './lib/gridLogout.js'
@@ -230,6 +233,8 @@ import { MachinePeerStore } from './lib/e2ee/machinePeers.js'
 import { connectWithPassword, type PwConnectProgress } from './lib/e2ee/relayClient.js'
 import type { LinkedPeer } from './lib/e2ee/manager.js'
 import { GroupSyncer, relayRequester, SELF_STAMP } from './lib/e2ee/groupSyncer.js'
+import { DeviceLogSyncer, type DeviceLogFetched } from './lib/e2ee/deviceLogSyncer.js'
+import { DeviceLogStore } from './lib/e2ee/deviceLogStore.js'
 import { TrustGroupStore, type GroupMember } from './lib/e2ee/trustGroup.js'
 import {
   startSelfUpdater, restore as restoreUpdate, confirm as confirmUpdate,
@@ -395,8 +400,10 @@ ${PROCESS_ENGINES.map((engine) => `  ${ENGINE_CLI_COMMANDS[engine]}`).join('\n')
 A launcher that hands the pane to one of these works the same — "ori claude" is a Claude Code agent.
 
 Machine:
-  harness login                sign in with SSO and save this computer's session
-  harness login --force        stop the daemon and sign in with a different SSO account
+  harness login                sign in (asks: SSO in your browser, or scan a QR with your phone)
+  harness login --sso          sign in with SSO in your browser, without asking
+  harness login --qr           sign in by scanning a QR with Harness on your phone, without asking
+  harness login --force        stop the daemon and sign in with a different account
   harness login --json         emit machine-readable NDJSON instead of opening a browser (for GUI clients)
   harness login --entry-point=desktop   record which surface started the sign-in (GUI clients; default cli)
   harness auth status --json   print {loggedIn,...} for this computer's saved session
@@ -466,6 +473,11 @@ every future connect, until you change or clear it:
                                machine and every member reaches it both ways, no more passwords
   harness group sync           compare with every reachable member now (it also happens on its own)
   harness group remove <id>    drop a member (machine id, # or fingerprint) from every member
+  harness devices list         the account's devices — signing in on one is what makes the others trust
+                               it; a device you do not recognise is someone else signed in as you
+  harness devices remove <fp>  take a device (# or fingerprint) out of the account on every device
+  harness devices rebaseline   the device list froze (the backend served one that does not match what
+                               this machine verified): show what changed, --yes to trust it again
   (both \`remote-password set\` and \`link connect\` prompt for the password interactively, or read one
   line from stdin with --stdin; add --json for NDJSON output instead of the human-readable text)
 
@@ -697,9 +709,15 @@ async function authStatusCommand(json: boolean): Promise<void> {
     machineId: latest?.machineId,
     autonomousEnv: latest?.autonomousEnv,
     expiresAt: latest?.expiresAt,
+    method: latest?.method ?? 'sso',
   }
   if (json) console.log(JSON.stringify(payload))
-  else console.log(`\n  ${payload.loggedIn ? '✓ Signed in' : '✗ Not signed in'}${payload.machineId ? ` (machine ${payload.machineId})` : ''}\n`)
+  else {
+    console.log(`\n  ${payload.loggedIn ? '✓ Signed in' : '✗ Not signed in'}${payload.machineId ? ` (machine ${payload.machineId})` : ''}${payload.loggedIn && payload.method === 'qr' ? ' — by your phone' : ''}\n`)
+    // A session a phone approved is Harness's own: the Autonomous services behind billing and grid
+    // do not take it. Say so where the person looks, not only when one of them refuses.
+    if (payload.loggedIn && payload.method === 'qr') console.log('  Billing and grid need an SSO sign-in: harness login --force --sso\n')
+  }
 }
 
 /**
@@ -756,7 +774,7 @@ async function loginCommand(
   foreground: boolean,
   force: boolean,
   json: boolean,
-  opts: { chained?: boolean; entryPoint?: string } = {},
+  opts: { chained?: boolean; entryPoint?: string; method?: 'sso' | 'qr' | 'ask' } = {},
 ): Promise<SignInOutcome> {
   if (foreground) throw new Error('`harness login` does not run the adapter. Use `harness start -f`.')
   // Which surface asked to sign in. A person in a terminal is `cli`; the desktop app runs this same
@@ -766,13 +784,19 @@ async function loginCommand(
   // Harness only. Grid is an add-on: this computer is signed in to it the first time a grid feature is
   // used (`ensureGrid` in the daemon, `lib/gridAttach.ts`) — with this session's token, no second
   // browser — and never as a side effect of signing in to Harness.
-  const succeed = async (alreadySignedIn: boolean): Promise<SignInOutcome> => {
+  const succeed = async (alreadySignedIn: boolean, email?: string): Promise<SignInOutcome> => {
     if (opts.chained) return { signedIn: true, alreadySignedIn }
-    if (json) emit(alreadySignedIn ? { type: 'result', status: 'success', alreadySignedIn: true } : { type: 'result', status: 'success' })
+    if (json) emit(alreadySignedIn ? { type: 'result', status: 'success', alreadySignedIn: true } : { type: 'result', status: 'success', ...(email ? { email } : {}) })
     else if (alreadySignedIn) console.log('\n  ✓ Already signed in. Run `harness start` to connect this computer.\n')
-    else console.log('\n  ✓ Signed in. Run `harness start` to connect this computer.\n')
+    else console.log(`\n  ✓ Signed in${email ? ` as ${email}` : ''}. Run \`harness start\` to connect this computer.\n`)
     return { signedIn: true, alreadySignedIn }
   }
+  // SSO in the browser, or a QR the phone scans. Asked only of a person at a terminal with no flag; a
+  // client driving --json says `--qr` or gets the browser, as before.
+  let method: 'sso' | 'qr' = opts.method === 'qr' ? 'qr' : 'sso'
+  const signIn = (): Promise<SignInOutcome> => method === 'qr'
+    ? qrSignInCommand(json, emit, (email) => succeed(false, email))
+    : browserSignIn(json, emit, () => succeed(false), entryPoint)
   if (readAuthSession() && !force) {
     // Guarded exactly like the identical call after the exchange below. Unguarded, a hiccup on
     // `/api/machines/resolve-computer` reached `onError`, which is JSON-unaware — so the ONE mode a
@@ -793,7 +817,16 @@ async function loginCommand(
     }
     return await succeed(true)
   }
-  if (!force) return await browserSignIn(json, emit, () => succeed(false), entryPoint)
+  if (opts.method === 'ask') {
+    const picked = await askSignInMethod()
+    if (!picked) {
+      console.error('\n  ✗ Not signed in.\n')
+      process.exitCode = 1
+      return { signedIn: false }
+    }
+    method = picked
+  }
+  if (!force) return await signIn()
   // A forced login may intentionally switch SSO accounts. The old daemon must not keep streaming
   // under its existing socket while this process replaces the durable session — and no NEW daemon
   // may come up on the old session in the meantime. The desktop app re-runs `harness start` whenever
@@ -810,7 +843,7 @@ async function loginCommand(
       // the browser. There is nothing to race either: the lock is held, and the identity swap happens
       // afterwards, once there is an identity to swap to (`restartDaemonForIdentity`).
       if (readAuthSession()) await stopDaemonProcess()
-      return await browserSignIn(json, emit, () => succeed(false), entryPoint)
+      return await signIn()
     }, {
       onWaiting: (owner) => console.error(`  the daemon is ${describeSpawnLockOwner(owner)} — waiting for it to finish…`),
     })
@@ -831,6 +864,84 @@ async function loginCommand(
     process.exitCode = 1
     return { signedIn: false }
   }
+}
+
+/** `harness login` at a terminal, with no flag: which way to sign in. Enter is SSO, as it always was. */
+async function askSignInMethod(): Promise<'sso' | 'qr' | null> {
+  const method = await pickSignInMethod({ input: process.stdin, output: process.stdout })
+  if (method) console.log(`  (next time: harness login --${method})`)
+  return method
+}
+
+/** One line from standard input — the person at the terminal, or the app driving `--json`. */
+function askLine(question: string): Promise<string> {
+  return new Promise((resolve) => {
+    const rl = createInterface({ input: process.stdin, ...(question ? { output: process.stdout } : {}) })
+    let done = false
+    const finish = (line: string): void => { if (done) return; done = true; rl.close(); resolve(line) }
+    rl.on('close', () => finish(''))
+    if (question) rl.question(question, finish)
+    else rl.once('line', finish)
+  })
+}
+
+/**
+ * The QR half of a sign-in (lib/qrSignIn.ts): show a QR, wait for a signed-in phone to approve it,
+ * ask the person here whether to sign in as the account that approved, then save the session.
+ * Under --json the QR is an event (`{"type":"qr"}`) and the question is one too
+ * (`{"type":"confirm","email"}`), answered with a `yes` or `no` line on standard input.
+ */
+async function qrSignInCommand(
+  json: boolean,
+  emit: (line: Record<string, unknown>) => void,
+  succeed: (email: string) => Promise<SignInOutcome>,
+): Promise<SignInOutcome> {
+  const fail = (code: string, message: string): SignInOutcome => {
+    if (json) emit({ type: 'result', status: 'error', code, message })
+    else console.error(`\n  ✗ ${message}\n`)
+    process.exitCode = 1
+    return { signedIn: false }
+  }
+  let shown = false
+  const result = await qrSignIn({
+    post: (path, body) => postJson(path, body),
+    label: hostname().slice(0, 80),
+    computerId: computerId(),
+    show: (link, expiresIn) => {
+      if (json) { emit({ type: 'qr', url: link, expiresIn }); return }
+      if (shown) return
+      shown = true
+      console.log('\n  On your phone, open Harness ▸ Settings ▸ Sign in a computer, and scan:\n')
+      console.log(terminalQr(link).split('\n').map((l) => `    ${l}`).join('\n'))
+      console.log('\n  Waiting for your phone…')
+    },
+    confirm: async (email) => {
+      if (json) {
+        emit({ type: 'confirm', email })
+        return (await askLine('')).trim().toLowerCase() === 'yes'
+      }
+      const answer = await askLine(`\n  Your phone approved this sign-in for ${email}.\n  Sign in as ${email}? [Y/n] `)
+      return !/^n/i.test(answer.trim())
+    },
+  })
+  if (!result.ok) return fail(result.code, result.message)
+  const { tokens } = result
+  writeAuthSession({
+    version: 1,
+    accessToken: tokens.token,
+    ...(tokens.refreshToken ? { refreshToken: tokens.refreshToken } : {}),
+    ...(tokens.expiresIn ? { expiresAt: Date.now() + tokens.expiresIn * 1000 } : {}),
+    autonomousEnv: tokens.autonomousEnv ?? env.AUTONOMOUS_ENV,
+    computerId: computerId(),
+    method: 'qr',
+    updatedAt: Date.now(),
+  })
+  try {
+    await resolveComputerMachine()
+  } catch (err) {
+    return fail('BACKEND_ERROR', (err as Error).message)
+  }
+  return await succeed(tokens.email)
 }
 
 /**
@@ -1948,6 +2059,14 @@ async function runForeground(session: AuthSession | null): Promise<void> {
   // The trust group (lib/e2ee/groupSyncer.ts). Built once the relay pool exists, far below; the hook
   // handlers and the backend callbacks declared before then reach it through this.
   let groupSyncer: GroupSyncer | null = null
+  // The account's device key log (lib/e2ee/deviceLogSyncer.ts): signing in is what makes this machine's
+  // devices trust it, and it them. Built beside the trust group, which it feeds.
+  let devLogSyncer: DeviceLogSyncer | null = null
+  /** The identity this machine was removed under is never used again: the next start mints a new one. */
+  const spendIdentity = (): void => {
+    const identityFile = join(env.ADAPTER_DATA_DIR, 'e2e', 'identity.json')
+    try { renameSync(identityFile, `${identityFile}.removed-${Date.now()}`) } catch { /* already gone */ }
+  }
   const backend = new BackendSocket(session?.machineId ?? computerId(), auth, (connected) => {
     if (!connected) return
     const sessions = registry.advertised()
@@ -4168,7 +4287,30 @@ async function runForeground(session: AuthSession | null): Promise<void> {
       const found = findGroupMember(selector)
       if (!found.ok) return { status: found.error === 'AMBIGUOUS' ? 409 : 404, body: { error: found.error } }
       groupSyncer?.remove(found.pub)
+      // And out of the device key log, or the next read of it would put the device back.
+      void devLogSyncer?.remove(found.pub)
       return { status: 200, body: { label: found.label, fingerprint: found.fingerprint } }
+    },
+    onDevicesList: async () => {
+      if (!devLogSyncer) return { status: 503, body: { error: 'UNAVAILABLE' } }
+      // When each key last opened a session, from the backend — a hint for removing apps not used in a
+      // long while. Without it the list is still the list.
+      const seen = await proxyBackend('GET', '/api/device-keys/seen').catch(() => null)
+      const lastSeen = seen?.status === 200 ? (seen.body.data as { seen?: unknown } | undefined)?.seen : undefined
+      return { status: 200, body: { ...devLogSyncer.list(), lastSeen: lastSeen && typeof lastSeen === 'object' ? lastSeen : {} } }
+    },
+    onDevicesRemove: async (pub) => {
+      if (!devLogSyncer) return { status: 503, body: { error: 'UNAVAILABLE' } }
+      groupSyncer?.remove(pub)
+      const r = await devLogSyncer.remove(pub)
+      if (r.ok) return { status: 200, body: { ok: true } }
+      const status = r.error === 'NOT_IN_LOG' ? 404 : r.error === 'UNAVAILABLE' ? 503 : 409
+      return { status, body: { error: r.error, ...(r.detail ? { detail: r.detail } : {}) } }
+    },
+    onDevicesRebaseline: async (confirm) => {
+      if (!devLogSyncer) return { status: 503, body: { error: 'UNAVAILABLE' } }
+      const r = await devLogSyncer.rebaseline(confirm)
+      return r ? { status: 200, body: { ...r, applied: confirm } } : { status: 502, body: { error: 'LOG_UNAVAILABLE' } }
     },
     // Local dashboard (GET /api/status): adapter health + computer fingerprint + local pairings. It
     // deliberately does NOT expose chat/transcripts — those live in the cloud web (WEB_URL/commander).
@@ -4295,7 +4437,17 @@ async function runForeground(session: AuthSession | null): Promise<void> {
     env.BACKEND_WS_URL.replace(/\/$/, ''),
     relayIdentityStore.getIdentity(),
     relayPeers,
-    { onSessionReady: (machineId) => groupSyncer?.sessionOpened(machineId) },
+    {
+      onSessionReady: (machineId) => groupSyncer?.sessionOpened(machineId),
+      // A machine the account's device key log names under this very key will trust us as soon as it
+      // reads the log: keep its pin through a few denials, and nudge it (and us) to read.
+      expectsTrust: (machineId, pub) => {
+        const m = devLogSyncer?.list().members.find((x) => x.pub === pub)
+        const expected = !!m && m.kind === 'machine' && m.machineId === machineId
+        if (expected) void devLogSyncer?.refresh()
+        return expected
+      },
+    },
   )
   // Every machine and phone linked to this one, directly or through another member, trusts every other:
   // rosters are swapped over any session that opens, and pushed on whenever they change.
@@ -4317,8 +4469,74 @@ async function runForeground(session: AuthSession | null): Promise<void> {
   })
   backend.groupSync = groupSyncer
   backend.onPeerLinked = (peer) => groupSyncer?.linked(peer)
-  backend.onUnpaired = (pub) => groupSyncer?.unpaired(pub)
+  backend.onUnpaired = (pub) => {
+    groupSyncer?.unpaired(pub)
+    // Unpairing a device here takes it out of the account's log too — or the log would trust it again.
+    void devLogSyncer?.remove(pub)
+  }
   if (session?.machineId) groupSyncer.start()
+  devLogSyncer = new DeviceLogSyncer({
+    store: new DeviceLogStore(),
+    identity: () => { const id = relayIdentityStore.getIdentity(); return { pub: b64e(id.pub), priv: id.priv } },
+    self: () => ({ machineId: readAuthSession()?.machineId ?? null, label: hostname().slice(0, 60) }),
+    fetch: async (since) => {
+      const r = await proxyBackend('GET', `/api/device-keys?since=${since}`)
+      const data = r.status === 200 ? r.body.data as Partial<DeviceLogFetched> | undefined : undefined
+      const head = data?.head as { seq?: unknown; hash?: unknown } | undefined
+      if (!data || typeof data.acct !== 'string' || !Array.isArray(data.entries) || typeof head?.seq !== 'number' || typeof head.hash !== 'string') return null
+      return { acct: data.acct, head: { seq: head.seq, hash: head.hash }, entries: data.entries }
+    },
+    append: async (entry) => {
+      const p = await backend.appendDeviceLog(entry as unknown as Record<string, unknown>)
+      if (!p) return null
+      const head = p.head as { seq?: unknown; hash?: unknown } | undefined
+      const parsedHead = typeof head?.seq === 'number' && typeof head.hash === 'string' ? { seq: head.seq, hash: head.hash } : undefined
+      if (typeof p.error === 'string') return { error: p.error, ...(parsedHead ? { head: parsedHead } : {}) }
+      return parsedHead ? { head: parsedHead } : null
+    },
+    adopt: (members) => groupSyncer?.adoptFromLog(members),
+    drop: (pub) => { groupSyncer?.remove(pub) },
+    knownBefore: (pub) => backend.pairedPeers().some((p) => p.identityPub === pub)
+      || relayPeers.list().some((p) => p.pub === pub) || !!groupSyncer?.isMember(pub),
+    tombstoned: (pub) => !!groupSyncer?.tombstoned(pub),
+    blocked: (pub) => !!groupSyncer?.isBlocked(pub),
+    announce: (m) => {
+      const fp = e2eeCoreFingerprint(e2eeCoreDecode(m.pub))
+      console.log(`[devlog] NEW DEVICE on this account: ${m.label || '(no name)'} (${m.kind}) ${fp} — not yours? harness devices remove ${fp}`)
+      backend.sendLocal({ type: 'device_key_added', payload: { pub: m.pub, label: m.label, kind: m.kind, machineId: m.machineId, at: m.addedAt, fingerprint: fp } })
+    },
+    signedOut: () => {
+      // This machine's key was removed from the account: it is signed out, and comes back — after a
+      // new `harness login` — with a NEW key, which every other device announces as a new device.
+      console.log('[devlog] this machine was removed from the account\'s devices — signing out')
+      spendIdentity()
+      backend.onRevoked?.()
+    },
+    changed: () => backend.sendLocal({ type: 'device_keys_changed', payload: {} }),
+    log: (line) => console.log(line),
+  })
+  groupSyncer.devlog = devLogSyncer
+  // Removed while online: the backend's `machine_revoked` arrives before this machine reads the log, and
+  // stops it. The key is spent all the same, or the next `harness login` would come back under a banned
+  // key and be signed out again.
+  backend.onDeviceRemoved = (pub) => {
+    if (pub === b64e(relayIdentityStore.getIdentity().pub)) spendIdentity()
+  }
+  // A removal the trust group carried in — typically `harness group remove` on a machine that predates
+  // the log — goes into the log as well, signed by this machine, so a device that only reads the log
+  // stops trusting that key too. A key the log no longer has is left alone.
+  groupSyncer.onDropped = (pub) => {
+    if (devLogSyncer?.list().members.some((m) => m.pub === pub && !m.self)) void devLogSyncer.remove(pub)
+  }
+  backend.onDeviceKeysChanged = () => { void devLogSyncer?.refresh() }
+  if (session?.machineId) {
+    // Every time the link comes up: a sign-in from before the log existed joins it with no one doing
+    // anything, and one that joined already only reads what it missed while offline.
+    backend.onLinkUp = () => { void devLogSyncer?.register() }
+    // The link may have come up before this line; a second register in flight is harmless.
+    void devLogSyncer.register()
+    setInterval(() => { void devLogSyncer?.refresh() }, 10 * 60_000).unref()
+  }
   // THE PAIR BRAIN (pair/brain.ts, daemons/BRAIN.md): thinks only while a window or `hn` is attached to
   // THIS daemon — the computer you are at. Other linked machines are read over background relay sessions
   // (never the window's own) with sealed `pair_*`. Everything it says goes out through sendLocal.
@@ -7726,7 +7944,7 @@ async function groupCommand(sub: string | undefined, arg: string | undefined, js
       console.log('\n  No trust group yet. Link another machine (`harness link connect <machineId>`) or a phone to start one.\n')
       process.exit(0)
     }
-    console.log('\n  Trust group — each of these reaches every other without a password:\n')
+    console.log('\n  Trust group — each of these reaches every other:\n')
     members.forEach((m, i) => {
       const id = m.kind === 'machine' ? m.machineId : 'viewer app'
       console.log(`   ${String(i + 1).padStart(2)}. ${m.label}  ${id}  ${m.fingerprint}`)
@@ -7755,6 +7973,70 @@ async function groupCommand(sub: string | undefined, arg: string | undefined, js
     process.exit(0)
   }
   console.error(`Unknown command: group ${sub}`)
+  process.exit(1)
+}
+
+/** `harness devices list|remove|rebaseline` — the account's device key log, as this machine verified it. */
+async function devicesCommand(sub: string | undefined, arg: string | undefined, flags: string[]): Promise<void> {
+  const json = flags.includes('--json')
+  const call = async (method: 'GET' | 'POST', path: string, body?: unknown): Promise<{ status: number; json: Record<string, unknown> }> => {
+    try {
+      const { res, json: out } = await daemonCall(method, path, body)
+      return { status: res.status, json: out }
+    } catch {
+      console.error('\n  ✗ Harness is not running here. Run: harness start\n')
+      process.exit(1)
+    }
+  }
+  type Row = { pub: string; label: string; kind: string; machineId: string; addedAt: number; fingerprint: string; self: boolean }
+  const listing = async (): Promise<{ members: Row[]; frozen: { reason: string } | null; frozenPeers: string[]; lastSeen?: Record<string, number> }> => {
+    const { status, json: out } = await call('GET', '/api/devices')
+    if (status !== 200) { console.error('\n  ✗ The device list is not available (is this machine signed in?).\n'); process.exit(1) }
+    return out as never
+  }
+  if (!sub || sub === 'list') {
+    const out = await listing()
+    if (json) { console.log(JSON.stringify(out)); process.exit(0) }
+    if (out.frozen) console.log(`\n  ⚠ FROZEN (${out.frozen.reason}): the backend served a device list that does not match what this machine verified. No device is added until you review it: harness devices rebaseline`)
+    if (out.frozenPeers.length) console.log(`\n  ⚠ Frozen on: ${out.frozenPeers.join(', ')}`)
+    console.log('\n  Devices on this account — each one trusts every other:\n')
+    out.members.forEach((m, i) => {
+      const what = m.kind === 'machine' ? `machine ${m.machineId.slice(0, 8)}` : 'app'
+      const seen = out.lastSeen?.[m.pub]
+      console.log(`   ${String(i + 1).padStart(2)}. ${m.label || '(no name)'}  ${what}  ${m.fingerprint}  added ${new Date(m.addedAt).toLocaleString()}`
+        + `${seen ? `  last seen ${new Date(seen).toLocaleDateString()}` : ''}${m.self ? '  (this machine)' : ''}`)
+    })
+    console.log('\n  Not yours? harness devices remove <#|fingerprint>\n')
+    process.exit(0)
+  }
+  if (sub === 'remove') {
+    if (!arg) { console.error('Usage: harness devices remove <#|fingerprint>   (see: harness devices list)'); process.exit(1) }
+    const { members } = await listing()
+    const norm = (v: string): string => v.toUpperCase().replace(/[·\s-]/g, '')
+    const byIndex = /^\d+$/.test(arg) ? members[Number(arg) - 1] : undefined
+    const matches = byIndex ? [byIndex] : members.filter((m) => norm(m.fingerprint).startsWith(norm(arg)))
+    if (matches.length !== 1) { console.error(`\n  ✗ ${matches.length ? 'More than one device matches' : 'No device matches'} "${arg}".\n`); process.exit(1) }
+    const target = matches[0]
+    if (target.self) { console.error('\n  ✗ That is this machine. Sign out with: harness logout\n'); process.exit(1) }
+    const { status, json: out } = await call('POST', '/api/devices/remove', { pub: target.pub })
+    if (status !== 200) { console.error(`\n  ✗ Could not remove ${target.label}: ${String(out.error ?? status)}${out.detail ? ` (${String(out.detail)})` : ''}\n`); process.exit(1) }
+    console.log(`\n  ✓ Removed ${target.label}. Every device stops trusting it; it is signed out.\n`)
+    process.exit(0)
+  }
+  if (sub === 'rebaseline') {
+    const confirm = flags.includes('--yes')
+    const { status, json: out } = await call('POST', '/api/devices/rebaseline', { confirm })
+    if (status !== 200) { console.error('\n  ✗ Could not read a valid device list from the backend.\n'); process.exit(1) }
+    const r = out as { added: Row[]; removed: Row[] }
+    if (json) { console.log(JSON.stringify(out)); process.exit(0) }
+    console.log('\n  Trusting the backend\'s device list again would:')
+    for (const m of r.added) console.log(`    + add     ${m.label || '(no name)'}  ${m.kind}`)
+    for (const m of r.removed) console.log(`    − remove  ${m.label || '(no name)'}  ${m.kind}`)
+    if (!r.added.length && !r.removed.length) console.log('    (change no device)')
+    console.log(confirm ? '\n  ✓ Done.\n' : '\n  Only if every device listed is yours: harness devices rebaseline --yes\n')
+    process.exit(0)
+  }
+  console.error(`Unknown command: devices ${sub}`)
   process.exit(1)
 }
 
@@ -8070,7 +8352,10 @@ switch (cmd) {
   case 'login':
     // The result line goes out FIRST (loginCommand prints it), then the daemon is swapped onto the
     // account: the desktop app reads that line and does not wait for a restart it observes anyway.
-    loginCommand(foreground, flags.includes('--force'), flags.includes('--json'), { entryPoint: entryPointFlag() })
+    loginCommand(foreground, flags.includes('--force'), flags.includes('--json'), {
+      entryPoint: entryPointFlag(),
+      method: flags.includes('--qr') ? 'qr' : flags.includes('--sso') || flags.includes('--json') || !process.stdin.isTTY ? 'sso' : 'ask',
+    })
       .then((outcome) => outcome.signedIn ? restartDaemonForIdentity() : undefined)
       .catch(onError)
     break
@@ -8244,6 +8529,9 @@ switch (cmd) {
     break
   case 'group':
     groupCommand(args[0], args[1], flags.includes('--json')).catch(onError)
+    break
+  case 'devices':
+    devicesCommand(args[0], args[1], flags).catch(onError)
     break
   case 'remote-password':
     if (args[0] === 'set') remotePasswordSetCommand(flags.includes('--json'), flags.includes('--stdin')).catch(onError)

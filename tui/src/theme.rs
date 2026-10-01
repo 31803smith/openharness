@@ -437,10 +437,13 @@ pub fn accent_of(bg: [u8; 3], colours: &[(usize, [u8; 3])]) -> [u8; 3] {
         if mx == 0.0 { 0.0 } else { (mx - mn) / mx }
     };
     let bg_lum = lum(bg);
+    // (Colour 7 is the palette's white: never an accent, or a dark theme's focused border is just
+    // its text colour. The rest: as far from the background as it is vivid, both 0 to 1.)
+    let hues: Vec<[u8; 3]> = colours.iter().filter(|(i, _)| (1..=6).contains(i)).map(|(_, c)| *c).collect();
     let mut best = colours.iter().find(|(i, _)| *i == 6).or(colours.first()).map(|(_, c)| *c).unwrap_or([95, 215, 230]);
     let mut best_score = f64::MIN;
-    for (_, p) in colours {
-        let score = (lum(*p) - bg_lum).abs() * 0.7 + chroma(*p) * 0.3;
+    for p in &hues {
+        let score = (lum(*p) - bg_lum).abs() / 255.0 + chroma(*p);
         if score > best_score { best_score = score; best = *p; }
     }
     best
@@ -1302,16 +1305,52 @@ pub fn most_urgent(states: impl Iterator<Item = State>) -> Option<State> {
     states.min_by_key(rank)
 }
 
-thread_local! { static ANIMATIONS: std::cell::Cell<bool> = const { std::cell::Cell::new(true) }; }
-pub fn set_animations(on: bool) { ANIMATIONS.with(|a| a.set(on)) }
+thread_local! {
+    static ANIMATIONS: std::cell::Cell<bool> = const { std::cell::Cell::new(true) };
+    static ANIMATION_USED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+pub fn begin_animation_frame(on: bool) {
+    ANIMATIONS.with(|a| a.set(on));
+    ANIMATION_USED.with(|a| a.set(false));
+}
 pub fn animations() -> bool { ANIMATIONS.with(|a| a.get()) }
+pub fn needs_animation_frame() -> bool { ANIMATION_USED.with(|a| a.get()) }
+
+/// Reading an animated frame records demand for the next one. Static screens
+/// and reduced-motion indicators do not keep an animation timer running.
+pub fn animation_frame() -> usize {
+    if !animations() { return 0 }
+    ANIMATION_USED.with(|a| a.set(true));
+    (std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() / 100).unwrap_or(0)) as usize
+}
 
 /// A spinner frame for things in motion (working dots, connecting cards).
 pub fn spinner(_tick: u64) -> &'static str {
     // fzf's frames, in its order.
     const FRAMES: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
-    let frame = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() / 100).unwrap_or(0);
-    FRAMES[if animations() { frame as usize % FRAMES.len() } else { 0 }]
+    FRAMES[animation_frame() % FRAMES.len()]
+}
+
+#[cfg(test)]
+mod animation_tests {
+    #[test]
+    fn only_moving_content_requests_animation_and_each_frame_starts_fresh() {
+        use super::*;
+        begin_animation_frame(true);
+        state_mark(State::Ready, 0);
+        state_mark(State::NeedsInput, 0);
+        assert!(!needs_animation_frame());
+        state_mark(State::Working, 0);
+        assert!(needs_animation_frame());
+        begin_animation_frame(true);
+        assert!(!needs_animation_frame());
+        animation_frame(); // the picker's ASCII and Unicode loading frames
+        assert!(needs_animation_frame());
+        begin_animation_frame(false);
+        assert_eq!(spinner(0), "⠋");
+        assert_eq!(animation_frame(), 0);
+        assert!(!needs_animation_frame());
+    }
 }
 
 #[cfg(test)]
@@ -1437,5 +1476,14 @@ mod accent_theme_tests {
         assert!(a.len() == 7 && a.starts_with('#'));
         let b = theme_accent_hex("Gruvbox Dark").expect("known theme has an accent");
         assert_ne!(a, b);
+        // A colour, never the theme's white or its text: Dracula's focused border is not #f8f8f2.
+        for name in ["Dracula", "Atom One Dark", "Gruvbox Dark", "Adwaita", "Nord"] {
+            let Some(t) = crate::terminal_themes::TERMINAL_THEMES.iter().find(|t| t.name == name) else { continue };
+            let c = theme_accent_rgb(t);
+            assert_ne!(c, t.foreground, "{name}");
+            assert_ne!(c, t.palette[7], "{name}");
+            let (mx, mn) = (c.iter().max().copied().unwrap_or(0) as f64, c.iter().min().copied().unwrap_or(0) as f64);
+            assert!(mx > 0.0 && (mx - mn) / mx > 0.25, "{name}: {c:?} is a colour");
+        }
     }
 }

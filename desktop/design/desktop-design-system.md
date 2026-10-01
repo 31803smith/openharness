@@ -363,6 +363,20 @@ Companion and sharing controls sit after usage without shifting the context.
 at page scale. Related settings use grouping and whitespace. Existing artwork,
 terminal previews, native toolbar/footer components and domain-specific visuals
 retain their meaning. Read-only loading/error views use the same hierarchy.
+
+**macOS notification menu** — one Notifications section with up to five unread
+session rows and a route to the full inbox. Use a 13-point semibold session title,
+13-point message preview capped at two lines, and quiet 12-point timestamps.
+The name and message are the content hierarchy. Use the same Harness activity
+marks and theme colors as tabs and panes; do not add status captions or unread
+dots beside them. Tab/machine context, full text and status descriptions remain
+in accessibility and tooltips. Questions precede results; each kind is newest
+first. Mark all read is the shared close icon in a 32-point target beside the
+heading. Working starts expanded, with 28-point name/status/elapsed rows, and
+is absent when empty. Its shared Braille clock only runs while the menu is
+open and expanded, respecting Reduce Motion. The unread count excludes work in progress. Use
+native menu selection and system colors; no inner cards or decorative borders.
+Settings stays in the application menu; this menu ends with Show Harness and Quit.
 Pane-resize guidance is app navigation: use the shared popover surface, system
 type and wrapping keyboard hints. It must not look like terminal output.
 

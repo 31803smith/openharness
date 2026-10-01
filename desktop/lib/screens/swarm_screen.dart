@@ -1740,6 +1740,8 @@ class _SwarmScreenState extends State<SwarmScreen> {
       terminalThemeStore.value,
     );
     final barStyle = workspaceBarTextStyle();
+    int activityInk(HarnessActivity activity) =>
+        activityColor(activity, terminalTheme, color: prefs.color).toARGB32();
     final payload = {
       'enabled': _routeIsCurrent && !_dialogOpen && !_spokenPaletteOpen,
       'reduceMotion': _reduceMotion,
@@ -1867,7 +1869,16 @@ class _SwarmScreenState extends State<SwarmScreen> {
           },
       ],
       'attention': _attention,
-      if (_native) 'statusMenuEntries': statusMenuEntries(app),
+      if (_native)
+        'statusMenuEntries': statusMenuEntries(
+          app,
+          colorForActivity: activityInk,
+        ),
+      if (_native)
+        'statusMenuWorkingEntries': statusMenuWorkingEntries(
+          app,
+          colorForActivity: activityInk,
+        ),
       // The fallback bell and the macOS menu use the same unread ledger.
       'unread': _unread,
       'sessionsOpen': _harnessesVisible,
@@ -1923,16 +1934,10 @@ class _SwarmScreenState extends State<SwarmScreen> {
                 )
                 .length,
             if (tabActivity(app, swarm) case final activity?)
-              'activity': {
-                'mark': activity.mark,
-                'label': activity.label,
-                'working': activity == HarnessActivity.working,
-                'color': activityColor(
-                  activity,
-                  terminalTheme,
-                  color: prefs.color,
-                ).toARGB32(),
-              },
+              'activity': nativeActivityPayload(
+                activity,
+                color: activityInk(activity),
+              ),
           },
       ],
     };
@@ -2971,9 +2976,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
       swarmId: swarmId,
       split: split,
       placement: placement,
-      attachments: widget.chrome?.attachesFiles == true
-          ? HarnessAttachments(onDeliveryProblem: _showPaneActionHint)
-          : null,
+      attachments: HarnessAttachments(onDeliveryProblem: _showPaneActionHint),
     );
     _newHarnessFormKey = GlobalKey<NewHarnessFormState>();
     _newHarnessDevicePort = DeviceFormPort();
@@ -5690,12 +5693,17 @@ class _SwarmScreenState extends State<SwarmScreen> {
     if (!statusMenuReceiptIsCurrent(app, receipt)) return;
     final machineId = receipt['machineId'] as String;
     final agentId = receipt['agentId'] as String;
-    final row = statusMenuEntries(app)
+    final working = receipt['unread'] == false;
+    final candidates = working
+        ? statusMenuWorkingEntries(app)
+        : statusMenuEntries(app);
+    final row = candidates
         .where(
           (row) => row['machineId'] == machineId && row['agentId'] == agentId,
         )
         .firstOrNull;
     if (row == null || row['unavailable'] != null) return;
+    if (working && row['sessionId'] != receipt['sessionId']) return;
     // Keep the tab shown in the menu even if the active tab changed while it
     // was open. If that view moved or closed, resolve the session's new home.
     final destination =
@@ -6867,7 +6875,70 @@ class _SwarmScreenState extends State<SwarmScreen> {
       ? workspaceBarControlHeight(context) + kWorkspaceInset
       : 0;
 
-  Widget _statusBar() => LayoutBuilder(
+  Widget _statusBar() {
+    final compactFooter = widget.chrome?.compactFooter;
+    if (compactFooter != null && _compact(context)) {
+      return compactFooter(context, _workspaceFooter());
+    }
+    return _fullStatusBar();
+  }
+
+  /// The status bar's content for a host that draws its own compact footer.
+  WorkspaceFooter _workspaceFooter() {
+    final focused = WorkspacePaneContext.focused(app);
+    final links = focused == null ? null : _contextLinks(focused);
+    final pr = _pullRequest.value;
+    WorkspaceFooterItem? link(
+      StatusLineField field,
+      String title,
+      String? detail,
+    ) => detail == null || detail.isEmpty || links?[field] == null
+        ? null
+        : WorkspaceFooterItem(
+            title: title,
+            detail: detail,
+            onPressed: links![field]!.onPressed,
+          );
+    return WorkspaceFooter(
+      summary: focused == null
+          ? _subscriptionUsage.text
+          : [
+              focused.machineName,
+              focused.branch ?? focused.projectName,
+            ].where((part) => part.isNotEmpty).join(' · '),
+      items: [
+        WorkspaceFooterItem(
+          title: 'Subscriptions',
+          detail: _subscriptionUsage.text,
+          onPressed: _shortcutsEnabled
+              ? () => _toggleModels(initialTab: ModelsTab.subscriptions)
+              : null,
+        ),
+        ?link(StatusLineField.machine, 'Machine', focused?.machineName),
+        ?link(StatusLineField.project, 'Project', focused?.projectName),
+        ?link(StatusLineField.branch, 'Branch', focused?.branch),
+        if (pr != null)
+          WorkspaceFooterItem(
+            title: pr.label,
+            detail: 'Open on GitHub',
+            onPressed: _shortcutsEnabled
+                ? () => _openFocusedPullRequest(pr.url.toString())
+                : null,
+          ),
+      ],
+      share: !_showShareButton
+          ? null
+          : WorkspaceFooterItem(
+              title: _shareLabel(focused),
+              detail: _shareTooltip(focused),
+              onPressed: _canExecuteCommand('agent.share')
+                  ? () => _runShortcut('agent.share')
+                  : null,
+            ),
+    );
+  }
+
+  Widget _fullStatusBar() => LayoutBuilder(
     builder: (context, constraints) {
       final cell = workspaceBarCellSizeOf(context);
       final focused = WorkspacePaneContext.focused(app);

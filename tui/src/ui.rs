@@ -2,7 +2,7 @@
 //! The tmux split tree remains intact beneath presentation insets. Classic and tmux looks
 //! retain line borders; the search keeps fzf's layout and colours with a preview window.
 
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use alacritty_terminal::term::cell::Flags;
 use alacritty_terminal::term::TermMode;
@@ -24,6 +24,123 @@ use crate::picker::Picker;
 use crate::theme::{self, bold, fg, engine_mark, state_mark};
 use crate::input::{home_rows, HomeRow};
 
+/// Time-dependent content asks for its next repaint; a static surface asks for
+/// none. Hints and messages are deadlines, independent of reduced motion.
+pub fn next_repaint(app: &App, frame_started: Instant) -> Option<Instant> {
+    // A deadline crossed during rendering still needs one more frame. The next
+    // draw starts after it, so expired messages cannot create a repaint loop.
+    let now = frame_started;
+    let mut next = theme::needs_animation_frame().then(|| now + Duration::from_millis(100));
+    let mut deadline = |at: Instant, ms: u64| {
+        if let Some(at) = at.checked_add(Duration::from_millis(ms)).filter(|at| *at > now) {
+            next = Some(next.map_or(at, |old| old.min(at)));
+        }
+    };
+    if let Some((_, _, at)) = app.toast.as_ref().filter(|_| app.toast_ms() != u64::MAX) {
+        deadline(*at, app.toast_ms());
+    }
+    let hints = !(app.options.tmux_look() && app.options.get("@hn-hint-time", "", None).is_none());
+    if app.prefix && hints {
+        if let Some(at) = app.prefix_at { deadline(at, app.keymap.hint_ms); }
+    }
+    next
+}
+
+#[cfg(test)]
+mod repaint_tests {
+    use super::*;
+
+    fn app() -> App {
+        let (sink, _) = tokio::sync::mpsc::unbounded_channel();
+        let mut app = App::new(19789, sink, (100, 30));
+        app.started = Instant::now() - Duration::from_secs(4);
+        app
+    }
+
+    fn render(app: &mut App) {
+        let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 30)).unwrap();
+        term.draw(|frame| draw(frame, app)).unwrap();
+    }
+
+    #[test]
+    fn rendered_formats_start_and_stop_motion_and_terminal_titles_count_too() {
+        let mut app = app();
+        render(&mut app);
+        assert!(next_repaint(&app, Instant::now()).is_none(), "an empty, settled home is static");
+        app.options.global_session.insert("status-right".into(), "#{spinner}".into());
+        render(&mut app);
+        assert!(next_repaint(&app, Instant::now()).is_some());
+        app.options.global_session.insert("@hn-animations".into(), "off".into());
+        render(&mut app);
+        assert!(next_repaint(&app, Instant::now()).is_none());
+        app.options.global_session.insert("@hn-animations".into(), "on".into());
+        app.options.global_session.insert("status".into(), "off".into());
+        render(&mut app);
+        assert!(next_repaint(&app, Instant::now()).is_none(), "a hidden status must not keep its spinner alive");
+        app.options.global_session.insert("set-titles-string".into(), "#{spinner}".into());
+        assert!(app.window_title().is_some());
+        assert!(next_repaint(&app, Instant::now()).is_some(), "terminal titles are expanded after the screen");
+        app.options.global_session.insert("set-titles-string".into(), "Harness".into());
+        render(&mut app);
+        app.window_title();
+        assert!(next_repaint(&app, Instant::now()).is_none());
+    }
+
+    #[test]
+    fn timed_notices_and_hints_keep_their_deadlines_without_motion() {
+        let mut app = app();
+        theme::begin_animation_frame(false);
+        let at = Instant::now();
+        app.toast = Some(("notice".into(), Color::Yellow, at));
+        app.display_ms = 2500;
+        app.prefix = true;
+        app.prefix_at = Some(at);
+        app.keymap.hint_ms = 1000;
+        assert_eq!(next_repaint(&app, Instant::now()), Some(at + Duration::from_millis(1000)));
+        app.prefix = false;
+        assert_eq!(next_repaint(&app, Instant::now()), Some(at + Duration::from_millis(2500)));
+        app.toast_exact = Some(0);
+        assert!(next_repaint(&app, Instant::now()).is_none(), "until-keypress notices have no expiry timer");
+        app.toast_exact = Some(20);
+        app.toast.as_mut().unwrap().2 = at - Duration::from_secs(1);
+        app.prefix = true;
+        app.prefix_at = Some(at - Duration::from_secs(2));
+        assert!(next_repaint(&app, Instant::now()).is_none(), "expired deadlines must not spin the loop");
+        app.keymap.hint_ms = u64::MAX;
+        next_repaint(&app, Instant::now()); // user-configured delays must not overflow Instant
+    }
+
+    #[test]
+    fn a_deadline_crossed_during_drawing_gets_one_more_frame() {
+        let mut app = app();
+        theme::begin_animation_frame(false);
+        let now = Instant::now();
+        let at = now - Duration::from_millis(100);
+        app.toast = Some(("notice".into(), Color::Yellow, at));
+        app.toast_exact = Some(90);
+        assert_eq!(next_repaint(&app, at), Some(at + Duration::from_millis(90)));
+        assert!(next_repaint(&app, now).is_none());
+        app.toast = None;
+        app.prefix = true;
+        app.prefix_at = Some(at);
+        app.keymap.hint_ms = 90;
+        assert_eq!(next_repaint(&app, at), Some(at + Duration::from_millis(90)));
+        assert!(next_repaint(&app, now).is_none());
+    }
+
+    #[test]
+    fn tmux_hints_only_request_a_frame_when_enabled() {
+        let mut app = app();
+        theme::begin_animation_frame(false);
+        app.options.global_session.insert("@hn-look".into(), "tmux".into());
+        app.prefix = true;
+        app.prefix_at = Some(Instant::now());
+        assert!(next_repaint(&app, Instant::now()).is_none());
+        app.options.global_session.insert("@hn-hint-time".into(), "600".into());
+        assert_eq!(next_repaint(&app, Instant::now()), app.prefix_at.map(|at| at + Duration::from_millis(600)));
+    }
+}
+
 /// screen_write_box_border_set: a box's corners, sides and its rule's joins, for tmux's box
 /// lines (single, double, heavy, simple, rounded, padded, none).
 fn box_set(lines: &str) -> (&'static str, &'static str, &'static str, &'static str, &'static str, &'static str, &'static str, &'static str) {
@@ -38,7 +155,7 @@ fn box_set(lines: &str) -> (&'static str, &'static str, &'static str, &'static s
 }
 
 pub fn draw(frame: &mut Frame, app: &mut App) {
-    theme::set_animations(app.options.animations());
+    theme::begin_animation_frame(app.options.animations());
     app.renumber();
     // automatic-rename as of this frame: a pane that went into a mode ([tmux]) or out of one is
     // named so in the window list it is drawn with.
@@ -252,9 +369,14 @@ fn which_key(buf: &mut Buffer, app: &App, body: Rect) {
 fn window(buf: &mut Buffer, app: &mut App, body: Rect) -> Option<Position> {
     let focus = app.focused();
     let surfaces = app.options.pane_look();
+    // A theme chosen in Appearance is the panes' too, as a terminal's theme is: their default text
+    // and background, and the sixteen colours programs name (None: the terminal's own).
+    let themed = chosen_theme(app);
     if surfaces {
         crate::term_out::clear_extras(body);
         buf.set_style(body, Style::default().bg(Color::Reset));
+    } else if let Some(t) = themed {
+        buf.set_style(body, Style::default().bg(theme::depth_fit(rgb(t.background))));
     }
     let rects = app.rects.clone();
     let mut cursor = None;
@@ -263,9 +385,15 @@ fn window(buf: &mut Buffer, app: &mut App, body: Rect) -> Option<Position> {
         let content = app.content_of(app.tab(), *rect);
         // tmux's window-style / window-active-style: the default colours a pane's cells fall back to.
         // tty_default_colours: the active pane's window-active-style where it sets a colour, else
-        // window-style (both the pane's own, its window's or the global ones).
+        // window-style (both the pane's own, its window's or the global ones) — else the theme's.
         let (a, w) = (app.style_of("window-active-style", app.active, Some(*id)), app.style_of("window-style", app.active, Some(*id)));
         let window = if active { (a.fg.or(w.fg), a.bg.or(w.bg)) } else { (w.fg, w.bg) };
+        // (A style's `default` is Reset: the terminal's colour, which the theme stands in for.)
+        let set = |c: Option<Color>| c.filter(|c| *c != Color::Reset);
+        let window = match themed {
+            Some(t) => (set(window.0).or(Some(theme::depth_fit(rgb(t.foreground)))), set(window.1).or(Some(theme::depth_fit(rgb(t.background))))),
+            None => window,
+        };
         if surfaces {
             let f = crate::pane_frame::frame(*rect, app.window_area(app.tab()), app.box_inner(app.tab()), app.pane_status(app.tab()));
             // Single and zoomed panes also sit directly on the terminal background.
@@ -292,6 +420,7 @@ fn window(buf: &mut Buffer, app: &mut App, body: Rect) -> Option<Position> {
             if let Some(pos) = pane_body(buf, pane, content, active, window) { cursor = Some(pos) }
             pane.dirty = false;
         }
+        if let Some(t) = themed { theme_ansi(buf, content, t) }
         // `@hn-dim on`: a pane you are not in, a little quieter (with one pane, nothing to set apart).
         if !active && rects.len() > 1 && app.options.dim_others() {
             let pal = theme::pane_palette();
@@ -546,6 +675,34 @@ fn empty_window(buf: &mut Buffer, app: &App, area: Rect) {
         buf.set_line(x, y, line, area.width.saturating_sub(x - area.x));
     }
     themed_home(buf, area);
+}
+
+// ── a theme over the panes ──
+
+fn rgb(c: [u8; 3]) -> Color { Color::Rgb(c[0], c[1], c[2]) }
+
+/// The theme chosen in Appearance (`@hn-theme`), where one is and colour is on.
+fn chosen_theme(app: &App) -> Option<&'static crate::terminal_themes::TerminalTheme> {
+    if theme::no_color() { return None }
+    let name = app.options.get("@hn-theme", "", None).filter(|n| !n.is_empty())?;
+    crate::terminal_themes::TERMINAL_THEMES.iter().find(|t| t.name == name)
+}
+
+/// The sixteen colours a program names (red, bright green…), in [area], as [t] has them — what a
+/// terminal with that theme would show. Colours a program gives exactly (256-colour, RGB) stay.
+fn theme_ansi(buf: &mut Buffer, area: Rect, t: &crate::terminal_themes::TerminalTheme) {
+    let ansi = |c: Color| -> Color {
+        let i = match c {
+            Color::Black => 0, Color::Red => 1, Color::Green => 2, Color::Yellow => 3, Color::Blue => 4, Color::Magenta => 5, Color::Cyan => 6, Color::Gray => 7,
+            Color::DarkGray => 8, Color::LightRed => 9, Color::LightGreen => 10, Color::LightYellow => 11, Color::LightBlue => 12, Color::LightMagenta => 13, Color::LightCyan => 14, Color::White => 15,
+            Color::Indexed(i) if i < 16 => i as usize,
+            other => return other,
+        };
+        theme::depth_fit(rgb(t.palette[i]))
+    };
+    for y in area.y..area.bottom() { for x in area.x..area.right() {
+        if let Some(c) = buf.cell_mut((x, y)) { c.fg = ansi(c.fg); c.bg = ansi(c.bg); }
+    } }
 }
 
 /// With a theme chosen (Settings → Theme), the home screen stands on the theme's background where
@@ -1297,7 +1454,7 @@ fn fzf(buf: &mut Buffer, body: Rect, picker: &mut Picker, kind: &PickerKind, sea
     const SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
     const ASCII_SPINNER: [&str; 8] = ["-", "\\", "|", "/", "-", "\\", "|", "/"];
     let frames: &[&str] = if theme::fzf().unicode { &SPINNER } else { &ASCII_SPINNER };
-    let spinner = frames[if theme::animations() { (std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0) / 100) as usize % frames.len() } else { 0 }];
+    let spinner = frames[if reading { theme::animation_frame() % frames.len() } else { 0 }];
     let w = ia.width as i32;
     let put = |pbuf: &mut Buffer, x: i32, y: u16, s: &str, st: Style| { if x >= 0 && x < w && !s.is_empty() { pbuf.set_stringn(ia.x + x as u16, y, s, (w - x) as usize, st); } };
     let bar = |pbuf: &mut Buffer, x: i32, y: u16, n: i32| {
@@ -2709,6 +2866,21 @@ mod fzf_list_tests {
         p.set_query("zzz");
         assert!(!screen(&mut p).contains("(empty)"));
     }
+
+    #[test]
+    fn only_loading_pickers_ask_for_animation_frames() {
+        let mut p = Picker::new("t", "");
+        for busy in [false, true, false] {
+            theme::begin_animation_frame(true);
+            p.busy = busy.then(|| "loading".into());
+            screen(&mut p);
+            assert_eq!(theme::needs_animation_frame(), busy);
+        }
+        theme::begin_animation_frame(false);
+        p.busy = Some("loading".into());
+        screen(&mut p);
+        assert!(!theme::needs_animation_frame());
+    }
 }
 
 #[cfg(test)]
@@ -2785,6 +2957,22 @@ mod theme_render_tests {
         }
         crate::input::modal_key(&mut app, KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE));
         assert!(outside(&mut app).is_empty(), "{:?}", outside(&mut app));
+    }
+
+    /// A chosen theme is the panes' too: the sixteen colours a program names take the theme's
+    /// palette (red is Dracula's red), and a colour given exactly stays as it was.
+    #[test]
+    fn a_theme_gives_the_panes_its_sixteen_colours() {
+        let t = crate::terminal_themes::TERMINAL_THEMES.iter().find(|t| t.name == "Dracula").unwrap();
+        let area = Rect::new(0, 0, 3, 1);
+        let mut buf = Buffer::empty(area);
+        buf[(0, 0)].set_fg(Color::Red);
+        buf[(1, 0)].set_fg(Color::Indexed(12)).set_bg(Color::Black);
+        buf[(2, 0)].set_fg(Color::Rgb(1, 2, 3));
+        theme_ansi(&mut buf, area, t);
+        assert_eq!(buf[(0, 0)].fg, theme::depth_fit(rgb(t.palette[1])));
+        assert_eq!((buf[(1, 0)].fg, buf[(1, 0)].bg), (theme::depth_fit(rgb(t.palette[12])), theme::depth_fit(rgb(t.palette[0]))));
+        assert_eq!(buf[(2, 0)].fg, Color::Rgb(1, 2, 3));
     }
 
     /// The home screen follows a chosen theme: the wordmark in its accent, the screen on its

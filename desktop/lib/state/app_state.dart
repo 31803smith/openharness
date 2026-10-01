@@ -23,6 +23,7 @@ import '../viewer/viewer_location.dart';
 import '../viewer/group_sync.dart' show GroupSyncOutcome;
 import '../auth/auth_session.dart';
 import '../auth/peer_link_client.dart';
+import '../auth/phone_sign_in.dart';
 import '../auth/sign_in_client.dart';
 import '../auth/cli_link.dart';
 import '../auth/cli_login.dart';
@@ -36,6 +37,7 @@ import '../core/agent_preference.dart';
 import '../core/dsh_catalog.dart';
 import '../core/harness_catalog.dart';
 import '../core/engine_availability.dart';
+import '../core/browser_label.dart';
 import '../core/local_hostname.dart';
 import '../core/local_git_projects.dart';
 import '../core/test_run.dart';
@@ -99,6 +101,8 @@ import '../notify/agent_alerts.dart';
 import '../notify/alert_sounds.dart';
 import '../notify/system_notifications.dart';
 import '../notify/system_notifications.dart' as notify_system;
+import 'account_devices.dart';
+import '../viewer/device_log_sync.dart';
 
 enum AppStatus {
   bootstrapping,
@@ -2081,6 +2085,21 @@ class AppNotifier extends ChangeNotifier {
   // over. It identifies the current sign-in link; [signingIn] tracks the whole
   // attempt, including CLI startup and workspace restoration.
   String? pendingAuthorizeUrl;
+
+  /// Signing in by a phone (`auth/phone_sign_in.dart`): the QR to show while a phone approves it.
+  String? pendingQrLink;
+
+  /// The account a phone approved this sign-in for, waiting on [confirmPhoneSignIn] — someone
+  /// else's phone may have approved it, and nothing is signed in until the person here says yes.
+  String? pendingConfirmEmail;
+
+  /// Who was signed in here before, so the confirmation can say when the account changes.
+  String? previousAccountEmail;
+
+  Completer<bool>? _phoneConfirm;
+
+  /// Whether this build can sign in by a phone at all (the CLI's, and a viewer's, can).
+  bool get canSignInWithPhone => cliLogin is PhoneSignInClient;
   bool openingLoginBrowser = false;
   String? loginBrowserError;
   int _loginBrowserRevision = 0;
@@ -2159,6 +2178,7 @@ class AppNotifier extends ChangeNotifier {
     this.peerLinks = peerLinks ?? this.viewer?.links ?? this.cliLink;
     _autonomousEnv = this.config.autonomousEnv;
     api = _newApiClient();
+    _initDeviceLog();
     // `grid.AppTheme.palette`, not the prefs store: main.dart copies the saved
     // choice into the palette notifier while rebuilding, so the store fires
     // before the colours the panes actually use have moved.
@@ -3613,6 +3633,13 @@ class AppNotifier extends ChangeNotifier {
     // desk (`Desk{userId}`), so a guest has none — asking for one would earn a
     // 401 on every poll for a document that cannot exist.
     if (signedIn) _deskEnsure(revision);
+    // The account's device key log: this app's key joins it (an existing sign-in too, from before
+    // the log existed), and every machine it names is trusted with no password.
+    if (signedIn) {
+      if (_deviceLog case final log?) {
+        unawaited(log.register(freshSignIn: viewer?.auth.consumeFreshSignIn() ?? false));
+      }
+    }
     try {
       await refreshMachines();
     } catch (error) {
@@ -4514,6 +4541,83 @@ class AppNotifier extends ChangeNotifier {
     if (_authWorkCurrent(revision)) notifyListeners();
   }
 
+  /// Sign in by a QR a signed-in phone approves, then a yes here to the account it names.
+  Future<void> loginWithPhone() async {
+    final client = cliLogin;
+    if (_disposed || signingIn || signingOut || signOutError != null || client is! PhoneSignInClient) return;
+    final wasGuest = isGuest;
+    final revision = _invalidateAuthWork();
+    previousAccountEmail = currentUser?.email;
+    _closedHistory.clear();
+    _monitorHarnesses.clear();
+    _lastError = null;
+    status = AppStatus.bootstrapping;
+    signingIn = true;
+    pendingAuthorizeUrl = null;
+    _clearPhoneSignIn();
+    notifyListeners();
+    try {
+      if (_workspaceCleanup case final cleanup?) {
+        await cleanup;
+        if (!_authWorkCurrent(revision)) return;
+      }
+      await (client as PhoneSignInClient).loginWithPhone(
+        onQr: (link, _) {
+          if (!_authWorkCurrent(revision) || pendingQrLink == link) return;
+          pendingQrLink = link;
+          notifyListeners();
+        },
+        onConfirm: (email) {
+          if (!_authWorkCurrent(revision)) return Future.value(false);
+          final answer = _phoneConfirm = Completer<bool>();
+          pendingConfirmEmail = email;
+          notifyListeners();
+          return answer.future;
+        },
+      );
+      if (!_authWorkCurrent(revision)) return;
+      _loginAuthorized = true;
+      _clearPhoneSignIn();
+      notifyListeners();
+      signedIn = true;
+      await _finishBootstrapSignedIn();
+      if (!_authWorkCurrent(revision) || status != AppStatus.authenticated) return;
+      _guestDeskRestorePending = false;
+    } catch (error) {
+      if (!_authWorkCurrent(revision)) return;
+      status = wasGuest ? AppStatus.authenticated : AppStatus.unauthenticated;
+      _lastError = error.toString();
+      _lastErrorRetryable = true;
+      if (wasGuest && _guestDeskRestorePending && !signedIn) {
+        unawaited(_becomeGuest(revision: revision));
+      }
+    } finally {
+      if (_authWorkCurrent(revision)) {
+        _loginAuthorized = false;
+        _clearPhoneSignIn();
+        signingIn = false;
+      }
+    }
+    if (_authWorkCurrent(revision)) notifyListeners();
+  }
+
+  /// The person's answer to "Sign in as [pendingConfirmEmail]?".
+  void confirmPhoneSignIn(bool yes) {
+    final answer = _phoneConfirm;
+    _phoneConfirm = null;
+    pendingConfirmEmail = null;
+    if (answer != null && !answer.isCompleted) answer.complete(yes);
+    notifyListeners();
+  }
+
+  void _clearPhoneSignIn() {
+    pendingQrLink = null;
+    pendingConfirmEmail = null;
+    final answer = _phoneConfirm;
+    _phoneConfirm = null;
+    if (answer != null && !answer.isCompleted) answer.complete(false);
+  }
+
   void _resetLoginBrowser() {
     ++_loginBrowserRevision;
     openingLoginBrowser = false;
@@ -4571,6 +4675,7 @@ class AppNotifier extends ChangeNotifier {
     final revision = _invalidateAuthWork();
     signingIn = false;
     pendingAuthorizeUrl = null;
+    _clearPhoneSignIn();
     status = isGuest ? AppStatus.authenticated : AppStatus.unauthenticated;
     _lastError = null;
     _lastErrorRetryable = false;
@@ -4604,6 +4709,13 @@ class AppNotifier extends ChangeNotifier {
   }
 
   Future<void> _logout() async {
+    // Signing out takes this app's key out of the account's devices, while the sign-in still works
+    // to say so. Best effort, and brief: signing out must not wait on the network.
+    if (_deviceLog case final log?) {
+      try {
+        await log.leave().timeout(const Duration(seconds: 5));
+      } catch (_) {}
+    }
     final revision = _invalidateAuthWork();
     final previousMachineId = localMachineState?.machine.machineId;
     cliLogin.cancel();
@@ -4661,6 +4773,9 @@ class AppNotifier extends ChangeNotifier {
       return;
     }
     if (code != 4404) return;
+    // A machine the account's device key log names may simply not have read it yet: read it again,
+    // and the link retry below picks the machine up once it has.
+    if (_deviceLog case final log?) unawaited(log.refresh());
     // The local CLI's relay found no linked trust for this machine — it now owns E2EE entirely.
     // A `harness link connect` run in a terminal (or another app instance) has no way to notify
     // this one directly, so poll every few seconds until it's picked up instead of waiting for
@@ -4761,6 +4876,7 @@ class AppNotifier extends ChangeNotifier {
         machine.connectionStatus = nextStatus;
         if (nextStatus == ConnectionStatus.connected) {
           _onMachineConnected(machineId, machine);
+          _refreshDeviceLogAfterReconnect();
         } else if (nextStatus == ConnectionStatus.reconnecting ||
             nextStatus == ConnectionStatus.disconnected) {
           _stopAgentSyncTimer(machineId);
@@ -5585,6 +5701,127 @@ class AppNotifier extends ChangeNotifier {
     }
   }
 
+  // -- the account's devices: the device key log (viewer/device_log_sync.dart) --------------------
+
+  /// Viewer builds only: this app's copy of the account's device key log. A desktop build's daemon
+  /// keeps its own (`harness devices`), and the Devices list reads it from there.
+  ViewerDeviceLog? _deviceLog;
+
+  /// Devices that joined the account and this end had never trusted, not yet dismissed.
+  final List<NewDeviceNotice> newDevices = [];
+
+  /// Bumped whenever the account's devices may have changed; the Devices list re-reads on it.
+  int devicesRevision = 0;
+
+  void _initDeviceLog() {
+    final services = viewer;
+    if (services == null) return;
+    final log = _deviceLog = ViewerDeviceLog(
+      keys: services.keys,
+      fetch: (since) => api.deviceKeys(since),
+      append: (entry) => api.appendDeviceKey(entry),
+      label: _deviceLabel,
+      onAnnounce: (m) => _announceDevice(NewDeviceNotice.fromMember(m)),
+      onSignedOut: _deviceRemovedHere,
+      onChanged: () {
+        devicesRevision++;
+        if (!_disposed) notifyListeners();
+      },
+    );
+    services.links.deviceLog = log;
+  }
+
+  /// How this app names itself in the account's devices.
+  String _deviceLabel() {
+    // A browser has no computer name to give: "Chrome on macOS". An existing "Browser" entry is
+    // renamed to this on its next sync (`viewer/device_log_sync.dart`).
+    if (kIsWeb) return browserLabel();
+    final host = localHostnameOrNull();
+    return host != null && host.isNotEmpty ? host : 'Desktop app';
+  }
+
+  DateTime? _deviceLogReadAt;
+
+  /// A socket came back: a `device_keys_changed` sent while this app was offline reached nobody, so
+  /// read the log again — at most every half minute, since a reconnect is every machine at once.
+  void _refreshDeviceLogAfterReconnect() {
+    final log = _deviceLog;
+    if (log == null) return;
+    final now = DateTime.now();
+    if (_deviceLogReadAt case final last? when now.difference(last) < const Duration(seconds: 30)) return;
+    _deviceLogReadAt = now;
+    unawaited(log.refresh());
+  }
+
+  void _announceDevice(NewDeviceNotice notice) {
+    if (newDevices.any((d) => d.pub == notice.pub)) return;
+    newDevices.add(notice);
+    devicesRevision++;
+    systemNotifications.postNotice(
+      id: 'harness-device:${notice.pub}',
+      title: 'New device on your account',
+      body: '${notice.sentence} Not yours? Remove it in Settings ▸ Devices.',
+    );
+    notifyListeners();
+  }
+
+  /// The devices list was opened: every device announced so far has been seen.
+  void seenNewDevices() {
+    if (newDevices.isEmpty) return;
+    newDevices.clear();
+    notifyListeners();
+  }
+
+  void dismissNewDevice(String pub) {
+    newDevices.removeWhere((d) => d.pub == pub);
+    notifyListeners();
+  }
+
+  /// This app's key was removed from the account: its identity is spent, and it signs out. The
+  /// next sign-in is a new device, which every other device announces.
+  Future<void> _deviceRemovedHere() async {
+    final services = viewer;
+    if (services == null) return;
+    // Sign out first: it takes this app's key out of the log, which needs the key it is about.
+    await logout();
+    await services.keys.forgetIdentity();
+  }
+
+  /// The account's devices, from whichever end verified the log. Null when it cannot be read.
+  Future<AccountDevices?> loadDevices() async {
+    if (_deviceLog case final log?) {
+      final listing = AccountDevices.fromListing(await log.list());
+      return listing.withLastSeen(await api.deviceKeysSeen());
+    }
+    return AccountDevices.fromDaemon(await api.daemonDevices());
+  }
+
+  /// Take [pub] out of the account on every device. Null when done, else why not.
+  Future<String?> removeDevice(String pub) async {
+    final error = _deviceLog != null ? await _deviceLog!.remove(pub) : await api.daemonRemoveDevice(pub);
+    if (error == null) newDevices.removeWhere((d) => d.pub == pub);
+    devicesRevision++;
+    notifyListeners();
+    return error;
+  }
+
+  /// What trusting the backend's device list again would change; [confirm] does it — the one way
+  /// out of a frozen list. Null when no valid list could be read.
+  Future<DevicesRebaseline?> rebaselineDevices({required bool confirm}) async {
+    final DevicesRebaseline? result;
+    if (_deviceLog case final log?) {
+      final r = await log.rebaseline(confirm: confirm);
+      result = r == null ? null : DevicesRebaseline.fromViewer(r);
+    } else {
+      result = DevicesRebaseline.fromDaemon(await api.daemonRebaselineDevices(confirm: confirm));
+    }
+    if (confirm) {
+      devicesRevision++;
+      notifyListeners();
+    }
+    return result;
+  }
+
   final Map<String, DateTime> _groupSyncedAt = {};
   static const _groupResync = Duration(minutes: 5);
 
@@ -5605,7 +5842,7 @@ class AppNotifier extends ChangeNotifier {
     // Fire-and-forget from the connection handler: a state file that is locked for a moment must not
     // surface as an unhandled error. The next session retries.
     try {
-      final label = localHostnameOrNull() ?? 'Desktop';
+      final label = _deviceLabel();
       final GroupSyncOutcome outcome = await links.syncGroup(
         machineId,
         label: label,
@@ -7748,7 +7985,12 @@ class AppNotifier extends ChangeNotifier {
     }
   };
 
-  void _raiseAlert(MachineState machine, String agentId, AlertKind kind) {
+  void _raiseAlert(
+    MachineState machine,
+    String agentId,
+    AlertKind kind, {
+    String? message,
+  }) {
     // Nothing at all for the agent on screen in front of you. A sound, a banner
     // and a count are three ways of saying "look over here", and all three are
     // noise about the pane you are already in.
@@ -7766,7 +8008,13 @@ class AppNotifier extends ChangeNotifier {
     final agent = machine.agents.where((a) => a.id == agentId).firstOrNull;
     // Before the banner and outside its switch: the mark is what the window can
     // still say when somebody has turned the interrupting halves off.
-    agentUnread.mark(machine.machine.machineId, agentId, kind, fresh: true);
+    agentUnread.mark(
+      machine.machine.machineId,
+      agentId,
+      kind,
+      fresh: true,
+      message: message,
+    );
     alerts.play(kind);
     final alert = AgentAlert(
       machineId: machine.machine.machineId,
@@ -7887,6 +8135,11 @@ class AppNotifier extends ChangeNotifier {
   /// the refusal remains the thing that guarantees no turn is lost.
   bool agentIsProcessing(String machineId, String agentId) =>
       machineStates[machineId]?.processingAgentIds.contains(agentId) ?? false;
+
+  /// Unknown after attaching to a turn already under way; do not invent an
+  /// elapsed time from the last heartbeat or the last time its pane was opened.
+  DateTime? agentWorkingSince(String machineId, String agentId) =>
+      harnessStats.turnStartedAt(_turnActivityKey(machineId, agentId));
 
   // ── blocked agents ────────────────────────────────────────────────────────
 
@@ -13118,6 +13371,23 @@ class AppNotifier extends ChangeNotifier {
         // payload is only a reason; the list itself is re-read.
         unawaited(_rereadMachinesInBackground(pushed: true));
         break;
+      case 'device_keys_changed':
+        // The account's device key log grew. A viewer re-reads and verifies it itself; a desktop
+        // build's daemon already did, and the Devices list re-reads it from there.
+        if (_deviceLog case final log?) unawaited(log.refresh());
+        devicesRevision++;
+        notifyListeners();
+        break;
+      case 'device_key_added':
+        // Only this computer's own daemon says this (a viewer build has no daemon, and a machine's
+        // frame must not be able to raise a notice here).
+        if (viewer == null) {
+          final pub = payload['pub'], label = payload['label'], kind = payload['kind'];
+          if (pub is String && kind is String) {
+            _announceDevice(NewDeviceNotice(pub: pub, label: label is String ? label : '', kind: kind));
+          }
+        }
+        break;
       case 'desk_changed':
         unawaited(experimentalFeatures.refresh());
         if (_swarmSettings case final settings?) unawaited(settings.refresh());
@@ -13391,9 +13661,9 @@ class AppNotifier extends ChangeNotifier {
           // is a turn already under way, and counting one would report an agent
           // this app merely reconnected to as work somebody just asked for.
           if (type == 'turn_started') {
-            harnessStats.onTurnStarted(
-              _turnActivityKey(machine.machine.machineId, agentId),
-            );
+            final key = _turnActivityKey(machine.machine.machineId, agentId);
+            changed = harnessStats.turnStartedAt(key) == null || changed;
+            harnessStats.onTurnStarted(key);
           }
         } else {
           final sessionId = _eventSessionId(event, payload);
@@ -13402,7 +13672,8 @@ class AppNotifier extends ChangeNotifier {
           }
         }
         // Renew the watchdog on every heartbeat, but redraw only when the
-        // agent first becomes busy. Expiry and turn end publish separately.
+        // agent becomes busy or its start time becomes known. Expiry and turn
+        // end publish separately.
         if (!changed) return;
         break;
       case 'turn_summary':
@@ -13417,7 +13688,14 @@ class AppNotifier extends ChangeNotifier {
         while (_deliveredNotifications.length > 512) {
           _deliveredNotifications.remove(_deliveredNotifications.first);
         }
-        _raiseAlert(machine, agentId, AlertKind.done);
+        _raiseAlert(
+          machine,
+          agentId,
+          AlertKind.done,
+          message:
+              previewText(payload['recap'], limit: 600) ??
+              previewText(payload['text'], limit: 600),
+        );
         break;
       case 'turn_ended':
         final agentId = _eventAgentId(machine, event, payload);
