@@ -59,7 +59,7 @@ import { awakeTimeout } from './lib/sleepAware.js'
 import {
   BIND_WAIT_MS, connectFailure, defaultLaunchDeps, removePidFileIf, waitForBind, waitForReady,
 } from './lib/daemonLaunch.js'
-import { SpawnLockBusyError, describeSpawnLockBusyPlainly, describeSpawnLockFailure, describeSpawnLockOwner, withSpawnLock } from './lib/daemonSpawnLock.js'
+import { SpawnLockBusyError, describeSpawnLockBusyPlainly, describeSpawnLockFailure, describeSpawnLockOwner, describeSpawnLockWaitPlainly, withSpawnLock } from './lib/daemonSpawnLock.js'
 import { stopDaemonProcess } from './lib/daemonStop.js'
 import { ensureTmuxOnPath } from './lib/tmuxOnPath.js'
 import { flashCommand } from './lib/flash.js'
@@ -72,6 +72,7 @@ import { DAEMONS_OFF, DAEMONS_OFF_DETAIL, DaemonsSwitch, localKillSwitch, zooPas
 import { handOffToGrid } from './lib/gridHandoff.js'
 import { qrSignIn } from './lib/qrSignIn.js'
 import { pickSignInMethod } from './lib/signInMethodPicker.js'
+import { watchJsonDriver, type JsonDriver } from './lib/jsonDriver.js'
 import { terminalQr } from './lib/terminalQr.js'
 import { ensureGridInstalled } from './lib/gridInstall.js'
 import { ensureHarnessGrid, type EnsureStatus } from './lib/gridEnsure.js'
@@ -737,6 +738,16 @@ type SignInOutcome =
   /** Refused. Under `--json` its own coded result line has already been emitted. */
   | { signedIn: false }
 
+/** What the `--json` client and the sign-in itself tell each other beyond the result line. */
+interface SignInHooks {
+  /** The --json client's answers. */
+  driver?: JsonDriver | null
+  /** The QR exists: how to take it back. */
+  onStarted?: (cancel: () => Promise<void>) => void
+  /** The person said yes / the browser came back: finish the sign-in, do not abandon it. */
+  onCommitted?: () => void
+}
+
 /**
  * The account's private grid exists — its name minted or read, then the grid itself created if it is
  * not there yet.
@@ -780,7 +791,10 @@ async function loginCommand(
   // Which surface asked to sign in. A person in a terminal is `cli`; the desktop app runs this same
   // command and says so with `--entry-point=desktop`. Analytics only — it names no privilege.
   const entryPoint = opts.entryPoint ?? 'cli'
-  const emit = (line: Record<string, unknown>): void => { if (json) console.log(JSON.stringify(line)) }
+  // Once the sign-in has been abandoned nothing more is written: the reader is gone, and a late line
+  // would only meet a closed pipe.
+  let abandoned = false
+  const emit = (line: Record<string, unknown>): void => { if (json && !abandoned) console.log(JSON.stringify(line)) }
   // Harness only. Grid is an add-on: this computer is signed in to it the first time a grid feature is
   // used (`ensureGrid` in the daemon, `lib/gridAttach.ts`) — with this session's token, no second
   // browser — and never as a side effect of signing in to Harness.
@@ -794,9 +808,49 @@ async function loginCommand(
   // SSO in the browser, or a QR the phone scans. Asked only of a person at a terminal with no flag; a
   // client driving --json says `--qr` or gets the browser, as before.
   let method: 'sso' | 'qr' = opts.method === 'qr' ? 'qr' : 'sso'
-  const signIn = (): Promise<SignInOutcome> => method === 'qr'
-    ? qrSignInCommand(json, emit, (email) => succeed(false, email))
-    : browserSignIn(json, emit, () => succeed(false), entryPoint)
+  // The app driving --json: its answers, and its going away. A sign-in it left behind (the app quit
+  // or restarted) would otherwise wait on — minutes, holding the daemon spawn lock — and the app's
+  // next sign-in would sit behind it with nothing on screen. So while it waits on a person it takes
+  // its QR back and stops. Once the person has said yes the sign-in finishes instead: the session
+  // write is quick, and cancelling the code then would race its claim.
+  const driver = json ? watchJsonDriver() : null
+  const GONE = 'Sign-in stopped: the app that started it has gone.'
+  let takeBack: (() => Promise<void>) | null = null
+  let waiting = false
+  let driverGone = false
+  const abandon = async (message: string): Promise<void> => {
+    if (abandoned) return
+    emit({ type: 'result', status: 'error', code: 'CANCELLED', message })
+    abandoned = true
+    await Promise.race([takeBack?.() ?? Promise.resolve(), new Promise((r) => setTimeout(r, 3_000))])
+    process.exit(1)
+  }
+  // An app that went away before the wait began (during the lock wait) is acted on the moment it does.
+  const setWaiting = (on: boolean): void => {
+    waiting = on
+    if (on && driverGone) void abandon(GONE)
+  }
+  if (driver) {
+    // EPIPE once the app has gone: `gone` handles that. Left unhandled it would crash the process
+    // before the QR is taken back.
+    process.stdout.on('error', () => {})
+    void driver.gone.then(() => {
+      driverGone = true
+      if (waiting) void abandon(GONE)
+    })
+    // The app's Cancel / quit sends SIGTERM — the code goes back with it. Otherwise exit as SIGTERM
+    // would, with the spawn-lock exit hook still run.
+    process.on('SIGTERM', () => { if (waiting) void abandon('Sign-in was cancelled.'); else process.exit(143) })
+  }
+  const signIn = async (): Promise<SignInOutcome> => {
+    try {
+      return method === 'qr'
+        ? await qrSignInCommand(json, emit, (email) => succeed(false, email), { driver, onStarted: (cancel) => { takeBack = cancel }, onCommitted: () => setWaiting(false) })
+        : await browserSignIn(json, emit, () => succeed(false), entryPoint, { onCommitted: () => setWaiting(false) })
+    } finally {
+      setWaiting(false)
+    }
+  }
   if (readAuthSession() && !force) {
     // Guarded exactly like the identical call after the exchange below. Unguarded, a hiccup on
     // `/api/machines/resolve-computer` reached `onError`, which is JSON-unaware — so the ONE mode a
@@ -826,6 +880,7 @@ async function loginCommand(
     }
     method = picked
   }
+  setWaiting(true)
   if (!force) return await signIn()
   // A forced login may intentionally switch SSO accounts. The old daemon must not keep streaming
   // under its existing socket while this process replaces the durable session — and no NEW daemon
@@ -845,9 +900,15 @@ async function loginCommand(
       if (readAuthSession()) await stopDaemonProcess()
       return await signIn()
     }, {
-      onWaiting: (owner) => console.error(`  the daemon is ${describeSpawnLockOwner(owner)} — waiting for it to finish…`),
+      onWaiting: (owner) => {
+        // On stdout too, for the app: stderr is a developer's, and a sign-in that shows nothing while
+        // it waits looks broken.
+        emit({ type: 'waiting', message: describeSpawnLockWaitPlainly(owner) })
+        console.error(`  the daemon is ${describeSpawnLockOwner(owner)} — waiting for it to finish…`)
+      },
     })
   } catch (err) {
+    setWaiting(false)
     if (!(err instanceof SpawnLockBusyError)) throw err
     // A holder that outlived the wait is not something a sign-in can override the way `stop` does:
     // signing in AROUND it is the race above. Say so and stop. The person gets what Harness is still
@@ -895,6 +956,7 @@ async function qrSignInCommand(
   json: boolean,
   emit: (line: Record<string, unknown>) => void,
   succeed: (email: string) => Promise<SignInOutcome>,
+  hooks: SignInHooks = {},
 ): Promise<SignInOutcome> {
   const fail = (code: string, message: string): SignInOutcome => {
     if (json) emit({ type: 'result', status: 'error', code, message })
@@ -905,6 +967,7 @@ async function qrSignInCommand(
   let shown = false
   const result = await qrSignIn({
     post: (path, body) => postJson(path, body),
+    ...(hooks.onStarted ? { onStarted: hooks.onStarted } : {}),
     label: hostname().slice(0, 80),
     computerId: computerId(),
     show: (link, expiresIn) => {
@@ -918,10 +981,14 @@ async function qrSignInCommand(
     confirm: async (email) => {
       if (json) {
         emit({ type: 'confirm', email })
-        return (await askLine('')).trim().toLowerCase() === 'yes'
+        const yes = ((hooks.driver ? await hooks.driver.nextLine() : await askLine('')) ?? '').trim().toLowerCase() === 'yes'
+        if (yes) hooks.onCommitted?.()
+        return yes
       }
       const answer = await askLine(`\n  Your phone approved this sign-in for ${email}.\n  Sign in as ${email}? [Y/n] `)
-      return !/^n/i.test(answer.trim())
+      const yes = !/^n/i.test(answer.trim())
+      if (yes) hooks.onCommitted?.()
+      return yes
     },
   })
   if (!result.ok) return fail(result.code, result.message)
@@ -955,6 +1022,7 @@ async function browserSignIn(
   emit: (line: Record<string, unknown>) => void,
   succeed: () => Promise<SignInOutcome>,
   entryPoint: string,
+  hooks: Pick<SignInHooks, 'onCommitted'> = {},
 ): Promise<SignInOutcome> {
   const callback = createServer()
   await new Promise<void>((resolve, reject) => {
@@ -1001,6 +1069,8 @@ async function browserSignIn(
     } finally {
       manual?.cancel()
     }
+    // The browser came back: from here the exchange and the session write run to the end.
+    hooks.onCommitted?.()
     let exchanged: { token?: string; refreshToken?: string; expiresIn?: number; autonomousEnv?: 'prod' | 'stag' }
     try {
       exchanged = await postJson<{ token?: string; refreshToken?: string; expiresIn?: number; autonomousEnv?: 'prod' | 'stag' }>('/api/auth/exchange', {

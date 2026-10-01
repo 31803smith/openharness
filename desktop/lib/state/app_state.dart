@@ -2100,6 +2100,17 @@ class AppNotifier extends ChangeNotifier {
 
   /// Whether this build can sign in by a phone at all (the CLI's, and a viewer's, can).
   bool get canSignInWithPhone => cliLogin is PhoneSignInClient;
+
+  /// What a sign-in in progress is waiting on before it can start — another sign-in on this
+  /// computer, say — for the login screen to show; null when it is not waiting.
+  String? get loginWaitingNote => switch (cliLogin) {
+    CliLogin(:final waitingNote) => waitingNote.value,
+    _ => null,
+  };
+
+  void _loginWaitingChanged() {
+    if (!_disposed) notifyListeners();
+  }
   bool openingLoginBrowser = false;
   String? loginBrowserError;
   int _loginBrowserRevision = 0;
@@ -2175,6 +2186,9 @@ class AppNotifier extends ChangeNotifier {
                : null) {
     _cliLink = cliLink;
     this.cliLogin = cliLogin ?? this.viewer?.login ?? CliLogin();
+    if (this.cliLogin case final CliLogin cli) {
+      cli.waitingNote.addListener(_loginWaitingChanged);
+    }
     this.peerLinks = peerLinks ?? this.viewer?.links ?? this.cliLink;
     _autonomousEnv = this.config.autonomousEnv;
     api = _newApiClient();
@@ -13839,6 +13853,9 @@ class AppNotifier extends ChangeNotifier {
 
   @override
   void dispose() {
+    if (cliLogin case final CliLogin cli) {
+      cli.waitingNote.removeListener(_loginWaitingChanged);
+    }
     experimentalFeatures.dispose();
     viewer?.auth.dispose();
     _deviceVisit?.dispose();
