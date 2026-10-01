@@ -2620,14 +2620,24 @@ class _SwarmScreenState extends State<SwarmScreen> {
 
   /// Harness ▸ Add Phone… and `> add phone`: the QR a phone scans to sign in
   /// and pair with this computer. See `widgets/add_phone_dialog.dart`.
-  Future<void> _addPhone() => _dialog(
-    () => showAddPhoneDialog(
-      context,
-      app,
-      keymap: _keymap,
-      onConnectMachine: () => unawaited(_openMachines()),
-    ),
-  );
+  Future<void> _addPhone() async {
+    // "Manage devices…" pops the dialog and asks for Settings, but this
+    // [_dialog] is still open until the pop lands — a [_settings] made from
+    // the callback would be refused. So it is remembered, and opened after.
+    var manageDevices = false;
+    await _dialog(
+      () => showAddPhoneDialog(
+        context,
+        app,
+        keymap: _keymap,
+        onConnectMachine: () => unawaited(_openMachines()),
+        onManageDevices: () => manageDevices = true,
+      ),
+    );
+    if (manageDevices && mounted) {
+      await _settings(SettingsSection.accountDevices);
+    }
+  }
 
   /// Settings, by section, as rows of the box: `> usage` goes straight to
   /// Settings ▸ Usage. A palette that finds a setting by name is how an editor
