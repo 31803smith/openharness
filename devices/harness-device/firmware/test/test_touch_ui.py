@@ -1998,7 +1998,7 @@ int main(int argc, char **argv) {
         view(AGENTS); scene_take(); portrait(dir,"focus-panes");
         int rows=0, rims=0;
         for(int i=0;i<scene.count;i++) {
-            if (scene.runs[i].box.h == 58 && scene.runs[i].box.border == color(0x5b8cff)) {
+            if (scene.runs[i].box.h == 58 && scene.runs[i].box.border == color(HT_THEME_VOICE)) {
                 rims++; assert(scene.runs[i].y + 29 < 233);                     // the first card, above the middle
             }
             for(int k=0;k<3;k++) if(!strcmp(scene.runs[i].text,names[k])) {

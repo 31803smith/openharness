@@ -1113,7 +1113,7 @@ static void focus_header(ht_scene_t *f, const char *title)
  * FOCUS'S PANE LIST, in the LVGL firmware's TABS picker (swarm_picker_build / _rebuild at
  * e96fc50c^), one line to a row (owner, 2026-10-01): black, the 60 x 32 close pill at the top, a
  * grey spaced "PANES" at y 62, then a column of cards 8 apart — Geist Medium 28 centred, padded
- * 16 x 10, radius 16, #16161c at 60 % — the pane on the face at full fill with a 1 px accent rim.
+ * 16 x 10, radius 16, #16161c at 60 % — the pane on the face at full fill with a 1 px Focus-green rim.
  * The column is centred 10 px below the middle. Four rows is what a 360 px card keeps inside the
  * round glass; past four the list scrolls a row at a time. Each card is its own tap; the cross, back.
  */
@@ -1122,7 +1122,7 @@ static void render_focus_panes(ht_scene_t *f)
     enum { CARD_X = 53, CARD_W = 360, CARD_H = 58, CARD_GAP = 8, CARD_R = 16 };
     const ht_font_t *font = &ht_lv_geist_med_28.base;
     uint16_t fg = color(0xeaeaf0), card = color(0x16161c), rest = color(0x0d0d11),
-             pressed_fill = color(0x23252f), rim = color(0x5b8cff);
+             pressed_fill = color(0x23252f), rim = color(HT_THEME_VOICE);   // Focus green (owner, 2026-10-01)
     focus_header(f, "PANES");
     if (!s.count) {
         focus_centred(f, 180, 348, font, FG, BG, s.loading ? "Loading..." : "No panes in this tab.");
