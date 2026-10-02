@@ -317,6 +317,24 @@ by its listed tests. Cmd-T/Cmd-O retarget the same draft/search; Store requests 
 product and machine. `test/benchmarks/swarm_benchmark.dart` measures large synthetic inventories;
 its headless debug timings do not establish native display or network latency.
 
+A New Harness box takes files three ways, all into the same `HarnessAttachments`: 📎, a drop, and a
+paste (`widgets/new_harness_paste.dart`). ⌘V/Ctrl-V in the task asks the clipboard three things, in
+this order. Files copied in a file manager come first (`NativeClipboard.readFilePaths` — the runner's
+`readFilePaths` on `harness/clipboard_image`, NSPasteboard file URLs on macOS and GTK's
+`text/uri-list` on Linux — read off disk by `clipboard/copied_files.dart`, which names a file over
+the limit without ever reading it): Finder leaves each file's NAME as text and its ICON as a picture
+beside them, and neither is what was copied. Then text, which pastes into the task and wins whenever
+it is there — except a lone web address, which is what Safari's Copy Image puts beside the picture
+(`pastedTextWins`). Then a picture — a screenshot, Copy Image — attached as `pasted-image.png` through
+the same `NativeClipboard` the terminal reads. In a browser the page's `paste` event carries the files
+instead (`clipboard/pasted_files.dart`, a no-op natively), because Flutter leaves ⌘V to the browser
+there and `PasteTextIntent` never fires. Pasted files are numbered, never swapped for one of the same name — every
+clipboard picture is called alike. The field's own paste is the fallback and must be captured inside
+`Action.invoke`: `callingAction` is gone by the time a clipboard read returns. A chip
+(`widgets/new_harness_attachment_chip.dart`) shows a picture as itself and any other file by the mark
+of its kind — `fileTypeIcon` in `shared/theme/file_type_icon.dart`, one table from extension to icon;
+add a kind there, not at the call site.
+
 ### Terminals
 
 - `TerminalPane` (`lib/state/terminal_pane.dart`) separates **intent** (machine + agent id, stable
