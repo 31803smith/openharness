@@ -1,5 +1,6 @@
 #include "focus.h"
 #include "pets.h"
+#include "roboto_fonts.h"
 #include "theme.h"
 #include <stdio.h>
 #include <string.h>
@@ -7,10 +8,10 @@
 /*
  * THE FOCUS FACE — the agent screen, laid out like the octopus's (owner, 2026-10-01).
  *
- * The session's name curves along the top edge in the octopus's own arc (ht_arc_title, GeistMono 24);
+ * The session's name curves along the top edge in the octopus's own arc (ht_arc_title_face + ht_arc_roboto, RobotoMono 24);
  * the engine's mark stands where the octopus does, 56 px (focus_marks.c) — for an engine with a pet
  * (Claude, Codex: pets.c) it is the animated pet instead, centred in the same box; under it the recap in a card
- * that always holds four lines of geist_med_28 — as many as the octopus reads — a shorter recap centred
+ * that always holds four lines of roboto_med_28 — as many as the octopus reads — a shorter recap centred
  * in it. With no recap there is no card: the working line, or a resting line ("Let's build it", …),
  * is centred on the glass. In every state the mark stands halfway between the name and what is under
  * it, so the gap above it equals the gap below. There is no tab pill and no microphone: a tap anywhere
@@ -44,7 +45,7 @@ enum { MARK_SIZE = 56, TITLE_BOTTOM = HT_ARC_Y + HT_ARC_CELL_HEIGHT, CARD_X = 41
  * invitation rather than a report, picked at random each time the resting face appears — on arrival,
  * after a turn, on another agent, back from voice — and never the same line twice running (owner,
  * 2026-10-02). It holds while that face stays up, so a redraw never swaps it. Each fits two lines of
- * geist_reg_38 at EMPTY_W.
+ * roboto_reg_38 at EMPTY_W.
  */
 static const char *const RESTING[] = {
     "Let's build it", "Do anything", "What's next?", "Ready when you are",
@@ -377,8 +378,8 @@ void ht_focus_face(ht_scene_t *s, const ht_character_face_t *f, uint8_t frame, u
     bool retry = !has_recap && !working && f->status && *f->status;
 
     // The live line: listening meter, the working verb and its seconds, or a status of its own.
-    const ht_font_t *sf = &ht_lv_geist_med_32.base, *ef = &ht_lv_geist_reg_38.base,
-                    *rf = &ht_lv_geist_med_28.base;
+    const ht_font_t *sf = &ht_lv_roboto_med_32.base, *ef = &ht_lv_roboto_reg_38.base,
+                    *rf = &ht_lv_roboto_med_28.base;
     char status[HT_TEXT_BYTES] = "";
     if (!has_recap && f->mood == HT_CHARACTER_LISTENING) snprintf(status, sizeof status, "%s", meter(f->pose.level));
     else if (working) status_text(status, sizeof status, f);
@@ -408,7 +409,7 @@ void ht_focus_face(ht_scene_t *s, const ht_character_face_t *f, uint8_t frame, u
     int mark_top = TITLE_BOTTOM + (below - TITLE_BOTTOM - MARK_SIZE) / 2;
 
     // The name on the top curve, the octopus's arc; a tap there opens the pane list.
-    ht_arc_title(s, ht_rgb(FOCUS_FG), f->recipient && *f->recipient ? f->recipient : "\xe2\x80\xa6");
+    ht_arc_title_face(s, ht_rgb(FOCUS_FG), f->recipient && *f->recipient ? f->recipient : "\xe2\x80\xa6", &ht_arc_roboto);
 
     // The engine's mark, where the octopus stands. An unknown engine leaves the place empty.
     int engine = ht_focus_engine_index(f->engine);

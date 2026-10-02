@@ -3,6 +3,7 @@
 #include "../main/ui/habitat/character.h"
 #include "../main/ui/habitat/pets.h"
 #include "../main/ui/habitat/focus.h"
+#include "../main/ui/habitat/roboto_fonts.h"
 #include <assert.h>
 #include <stdio.h>
 #include <string.h>
@@ -261,6 +262,14 @@ static int pet_frame(const ht_pet_t *pet, const uint16_t *px)
             if (pet->frames[pet->loops[s][k].frame].px == px) return pet->loops[s][k].frame;
     return -1;
 }
+// Focus draws no Geist face: every run of the scene is Roboto, Roboto Mono (the arc) or an icon face.
+static void no_geist(const ht_scene_t *scene)
+{
+    const ht_pfont_t *geist[] = {&ht_lv_geist_med_38, &ht_lv_geist_med_32, &ht_lv_geist_med_28,
+        &ht_lv_geist_reg_38, &ht_lv_geist_reg_25, &ht_lv_geist_reg_20};
+    for (int i = 0; i < scene->count; i++)
+        for (unsigned g = 0; g < sizeof geist / sizeof geist[0]; g++) assert(scene->runs[i].font != &geist[g]->base);
+}
 static void focus_face(void)
 {
     ht_character_t c = {0};
@@ -291,6 +300,7 @@ static void focus_face(void)
         ht_character_face(&scene, &c, &f, 0xffff, cases[i].recap);
         if (expected < 0) expected = scene.count;
         assert(scene.count == expected);   // property 1
+        no_geist(&scene);
         ht_raster(&scene, (ht_rect_t){0, 0, HT_WIDTH, HT_HEIGHT}, full);
         for (int y = 0; y < HT_HEIGHT; y++) for (int x = 0; x < HT_WIDTH; x++)
             if (full[y * HT_WIDTH + x])
@@ -314,9 +324,9 @@ static void focus_face(void)
         const ht_run_t *last = NULL;
         for (int i = 0; i < scene.count; i++) {
             const ht_run_t *r = &scene.runs[i];
-            if (r->arc == 1) { arc++; assert(r->font == &ht_mono_24); }
+            if (r->arc == 1) { arc++; assert(r->font == &ht_rmono_24); }
             if (r->sprite.width == 56 || r->sprite.width == pet_of("claude")->w) mark++;
-            if (r->font == &ht_lv_geist_med_28.base && r->text[0]) {
+            if (r->font == &ht_lv_roboto_med_28.base && r->text[0]) {
                 lines++; last = r;
                 assert(ht_measure(r->font, r->text) <= r->w && r->w <= 346);
             }
@@ -324,9 +334,36 @@ static void focus_face(void)
         assert(arc == 1 && mark == 1 && lines >= 3 && lines <= 4);
         size_t n = strlen(last->text);
         assert(n >= 3 && !strcmp(last->text + n - 3, "\xe2\x80\xa6"));
+        no_geist(&scene);
         // No tab pill and no name row: nothing in Montserrat or the 38 px name face is drawn.
         for (int i = 0; i < scene.count; i++)
-            assert(scene.runs[i].font != &ht_lv_montserrat_24.base && scene.runs[i].font != &ht_lv_geist_med_38.base);
+            assert(scene.runs[i].font != &ht_lv_montserrat_24.base && scene.runs[i].font != &ht_lv_roboto_med_38.base);
+    }
+
+    // The check and cross marks (U+2713 / U+2717) reach the glass: Roboto lacks them, the second --font
+    // of gen_roboto_fonts.py supplies them, and a missing glyph would be drawn as "?".
+    {
+        const char *marks = "Tests \xe2\x9c\x93 pushed \xe2\x9c\x97";
+        ht_character_face_t f = {.recipient = "pane", .tab = "", .engine = "claude", .activity = "",
+            .status = "", .hint = "", .detail = "", .mood = HT_CHARACTER_IDLE,
+            .foreground = 0xffff, .dim = 0x8410, .ink = 0xffff};
+        ht_scene_t scene; ht_scene_clear(&scene, 0);
+        ht_character_face(&scene, &c, &f, 0xffff, marks);
+        int found = 0;
+        for (int i = 0; i < scene.count; i++)
+            if (scene.runs[i].font == &ht_lv_roboto_med_28.base && strstr(scene.runs[i].text, "\xe2\x9c\x93")) found++;
+        assert(found == 1);
+        const ht_pfont_t *faces[] = {&ht_lv_roboto_med_38, &ht_lv_roboto_med_32, &ht_lv_roboto_med_28,
+            &ht_lv_roboto_med_24, &ht_lv_roboto_med_22, &ht_lv_roboto_reg_38, &ht_lv_roboto_reg_25,
+            &ht_lv_roboto_reg_20};
+        for (unsigned k = 0; k < sizeof faces / sizeof faces[0]; k++) {
+            int has[2] = {0, 0};   // the face itself holds both marks, not its "?" or a fallback
+            for (unsigned g = 0; g < faces[k]->count; g++) {
+                has[0] |= faces[k]->codes[g] == 0x2713;
+                has[1] |= faces[k]->codes[g] == 0x2717;
+            }
+            assert(has[0] && has[1]);
+        }
     }
 
     /*
@@ -383,7 +420,8 @@ static void focus_face(void)
             ht_scene_t scene; ht_scene_clear(&scene, 0);
             ht_character_face(&scene, &c, &f, 0xffff, recaps[k]);
             const ht_run_t *name = &scene.runs[0], *mark = &scene.runs[1], *card = &scene.runs[2];
-            assert(name->arc == 1 && !strcmp(name->text, "Payments refactor"));
+            assert(name->arc == 1 && !strcmp(name->text, "Payments refactor") && name->font == &ht_rmono_24);
+            no_geist(&scene);
             // The Claude pet, still (clock 0), centred in the 56 px mark's box: 60 x 45 at its step 0.
             const ht_pet_t *cp = pet_of("claude");
             assert(cp && cp->w == 60 && cp->h == 45);
@@ -404,7 +442,8 @@ static void focus_face(void)
         ht_scene_t scene; ht_scene_clear(&scene, 0);
         ht_character_face(&scene, &c, &f, 0xffff, "");
         assert(scene.runs[2].box.h <= 1);   // the invisible placeholder
-        assert(scene.runs[7].y == 233 - 43 / 2 && scene.runs[7].font == &ht_lv_geist_med_32.base &&
+        no_geist(&scene);
+        assert(scene.runs[7].y == 233 - 41 / 2 && scene.runs[7].font == &ht_lv_roboto_med_32.base &&
                !strcmp(scene.runs[7].text, "Simmering\xe2\x80\xa6 34s"));   // the gerund for 30..35 s
         {
             int top = scene.runs[1].y - (56 - pet_of("claude")->h) / 2;
@@ -426,6 +465,7 @@ static void focus_face(void)
                 ht_scene_clear(&scene, 0);
                 ht_character_face(&scene, &c, &f, 0xffff, "");
                 assert(scene.runs[2].box.h <= 1);
+                no_geist(&scene);
                 const ht_run_t *l1 = &scene.runs[8], *l2 = &scene.runs[9];
                 // Compared without spaces: a wrapped line keeps the space LVGL broke it at.
                 char said[64], want[64];
@@ -437,7 +477,7 @@ static void focus_face(void)
                     known |= !strcmp(said, want);
                 }
                 assert(known);
-                int h = (l2->text[0] ? 2 : 1) * 51;
+                int h = (l2->text[0] ? 2 : 1) * ht_lv_roboto_reg_38.base.height;
                 assert(l1->y == 233 - h / 2);
                 int top = scene.runs[1].y - (56 - pet_of("claude")->h) / 2;
                 int above = top - TITLE_BOTTOM, below = l1->y - (top + 56);
