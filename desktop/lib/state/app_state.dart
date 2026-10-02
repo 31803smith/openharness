@@ -26,6 +26,7 @@ import '../auth/auth_session.dart';
 import '../auth/peer_link_client.dart';
 import '../auth/phone_sign_in.dart';
 import '../auth/sign_in_client.dart';
+import '../auth/sign_in_provider.dart';
 import '../auth/cli_link.dart';
 import '../auth/cli_login.dart';
 import '../bootstrap/environment_provisioner.dart';
@@ -2124,6 +2125,11 @@ class AppNotifier extends ChangeNotifier {
   // over. It identifies the current sign-in link; [signingIn] tracks the whole
   // attempt, including CLI startup and workspace restoration.
   String? pendingAuthorizeUrl;
+
+  /// The account the sign-in under way went to — which of the login screen's two buttons is
+  /// working — and, once it has failed, the one [retryLogin] goes back to. Null for a sign-in
+  /// that named none: the phone's QR, or one started away from those buttons.
+  SignInProvider? signInProvider;
 
   /// Signing in by a phone (`auth/phone_sign_in.dart`): the QR to show while a phone approves it.
   String? pendingQrLink;
@@ -4529,7 +4535,9 @@ class AppNotifier extends ChangeNotifier {
     }
   }
 
-  Future<void> login() async {
+  /// Sign in through the browser, on [provider]'s own sign-in. Without one — a caller with no
+  /// button of its own to name it — the browser opens on the sign-in page's chooser.
+  Future<void> login([SignInProvider? provider]) async {
     if (_disposed || signingIn || signingOut || signOutError != null) return;
     final wasGuest = isGuest;
     final revision = _invalidateAuthWork();
@@ -4538,6 +4546,7 @@ class AppNotifier extends ChangeNotifier {
     _lastError = null;
     status = AppStatus.bootstrapping;
     signingIn = true;
+    signInProvider = provider;
     pendingAuthorizeUrl = null;
     notifyListeners();
     try {
@@ -4546,6 +4555,7 @@ class AppNotifier extends ChangeNotifier {
         if (!_authWorkCurrent(revision)) return;
       }
       await cliLogin.login(
+        provider: provider,
         onAuthorizeUrl: (url) {
           if (!_authWorkCurrent(revision)) return;
           if (pendingAuthorizeUrl == url) return;
@@ -4599,6 +4609,9 @@ class AppNotifier extends ChangeNotifier {
     if (_authWorkCurrent(revision)) notifyListeners();
   }
 
+  /// The failed sign-in again, to the account the person chose the first time.
+  Future<void> retryLogin() => login(signInProvider);
+
   /// Sign in by a QR a signed-in phone approves, then a yes here to the account it names.
   Future<void> loginWithPhone() async {
     final client = cliLogin;
@@ -4611,6 +4624,7 @@ class AppNotifier extends ChangeNotifier {
     _lastError = null;
     status = AppStatus.bootstrapping;
     signingIn = true;
+    signInProvider = null;
     pendingAuthorizeUrl = null;
     _clearPhoneSignIn();
     notifyListeners();

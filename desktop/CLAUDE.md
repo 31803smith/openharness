@@ -143,6 +143,17 @@ The native desktop target uses the CLI for cloud access and SSO tokens:
 
 - **Auth** lives in the CLI. `lib/auth/cli_login.dart` shells out to `harness auth status --json` and
   drives `harness login --json` (NDJSON event stream); `cli_link.dart` wraps `harness link create/import/list`.
+  The login screen's way in is two buttons, Continue with Google and Continue with Apple
+  (`widgets/sign_in_provider_button.dart`), on desktop and web alike: `AppNotifier.login(provider)`
+  hands a `SignInProvider` to the sign-in client — `--google`/`--apple` to the CLI, `provider` to the
+  backend's authorize routes in a viewer build — and auth-service opens that account's own sign-in.
+  A caller with no button of its own (`login()` with none) still gets the page's chooser.
+  Each surface signs in as its own auth-service client (backend `SSO_CLIENT_IDS`): the CLI as
+  `harness-cli`, or `harness-desktop` when this app runs it (`--entry-point=desktop`); a viewer
+  build as `auth/sso_client.dart` says (`harness-web` in the browser). ⚠️ A token belongs to the
+  client it was issued to, so the session keeps the client the backend's exchange REPORTS — never
+  the one it asked for, since an older backend exchanges as its configured client and names none
+  — and every refresh names it again (`AuthSession.ssoClientId`, the CLI's `session.json`).
   Sign-out owns its CLI process, checks its exit, and terminates it on timeout. `AppNotifier` joins
   repeated sign-out requests and blocks another sign-in until credential and connection cleanup
   finish; failure offers keyboard-focused Retry sign out. Development fixture disconnects never
