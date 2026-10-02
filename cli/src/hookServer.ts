@@ -13,6 +13,7 @@ import { hermesSessionSource, isHermesInteractiveSource } from './engines/hermes
 import { hermesDbPath, listHermesHomes } from './engines/hermes/home.js'
 import { isRecentlyDeleted } from './lib/deletedSessions.js'
 import { registry, type RegisterInput, type RegisteredSession } from './lib/registry.js'
+import type { GateVerdict } from './lib/actionPolicy.js'
 import { LOCAL_WEB_HTML } from './webui.js'
 import { sid } from './lib/log.js'
 import { VERSION } from './version.js'
@@ -115,7 +116,7 @@ export interface HookServerHandlers {
     toolUseId: string
     toolName: string
     input: unknown
-  }) => void
+  }) => void | GateVerdict | Promise<void | GateVerdict>
   /** GET /api/attention: every agent's attention state for the bar widget and other local readers. */
   onAttention?: () => unknown
   /** POST /api/stop-all: cancel every agent's turn except one (the panic stop). */
@@ -705,16 +706,24 @@ export function startHookServer(
           body = parsed
         } catch { json(400, { error: 'bad json' }); return }
         if (!await verifiedBoundMutation(body, handlers)) { json(403, { error: 'UNBOUND_HOOK' }); return }
+        let gate: GateVerdict | undefined
         if (body.sessionId && body.toolUseId && body.toolName) {
           console.log(`[hooks] ${sid(body.sessionId)} tool-start · tool=${body.toolName}`)
-          handlers.onToolStart?.({
-            sessionId: body.sessionId,
-            toolUseId: body.toolUseId,
-            toolName: body.toolName,
-            input: body.input,
-          })
+          try {
+            const verdict = await handlers.onToolStart?.({
+              sessionId: body.sessionId,
+              toolUseId: body.toolUseId,
+              toolName: body.toolName,
+              input: body.input,
+            })
+            if (verdict && verdict.decision !== 'allow') gate = verdict
+          } catch (e) {
+            console.error('[hooks] tool-start handler failed:', e instanceof Error ? e.message : e)
+          }
         }
-        json(200, { ok: true })
+        // The gate verdict rides back to the hook script, which turns it into the engine's own
+        // permission prompt. Allow is the absence of the field, so an older script sees `{ok:true}`.
+        json(200, gate ? { ok: true, gate } : { ok: true })
         return
       }
 

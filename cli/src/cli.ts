@@ -458,7 +458,12 @@ Machine:
   harness attention [--kanban] every agent's state: working, waiting on you, needs permission, failed, done
   harness stop-all [--except=<agentId>]
                                cancel every agent's turn on this computer (the panic stop)
-  harness logs export         zip the last 7 days of logs (app, CLI, dial, daemon) to the Desktop
+  harness gate init|install|uninstall|status|reload
+                               opt-in Claude guard: ask before git push, rm -rf, sudo …; refuse disk
+                               writes and ~/.ssh (policy: ~/.harness/cli/data/action-policy.json)
+  harness spend status|set --agent-usd=N --day-usd=N|on|off
+                               per-agent and per-day spend caps; a pane over its cap is held (off by default)
+  harness logs export        zip the last 7 days of logs (app, CLI, dial, daemon) to the Desktop
   harness tui                  all of Harness in this terminal: swarms, panes, every machine (⌥O ⌥P ⌥N)
   harness new [agent] [@machine] [folder|name] [-- task]
                                make a harness from a shell: \`harness new\` is claude here; see \`harness new -h\`
@@ -4206,7 +4211,11 @@ async function runForeground(session: AuthSession | null): Promise<void> {
     machineName: () => terminalHintMachineName(),
     sessions: () => registry.advertised().map(fleetSession),
     sendLocal: (frame) => backend.sendLocal(frame),
+    sendError: (agentId, dbSessionId, message) => backend.send({ type: 'error', agentId, dbSessionId, payload: { message } }),
     cancelAgent: (agentId, confirmed) => cancelAgent(agentId, confirmed),
+    tokenUsage: (s) => { const r = registry.resolve(s.agentId); return r ? agentTokenUsage.get(r) : null },
+    // A getter: the port is known once the hook server below has bound, and only `gate install` asks.
+    hookPort: () => hookPort,
   })
   fleetControlRef = fleetControl
 
@@ -4331,6 +4340,9 @@ async function runForeground(session: AuthSession | null): Promise<void> {
     },
     onToolStart: ({ sessionId, toolUseId, toolName, input: toolInput }) => {
       if (toolName === 'Task') onCursorTaskStart(sessionId, toolUseId, toolInput)
+      // The destructive-action gate: classify against the machine policy; the verdict rides back to the
+      // hook script, which turns ask/deny into the engine's own permission prompt.
+      return fleetControl.gate(sessionId, agentIdFor(sessionId), toolName, toolInput)
     },
     onTurnStop: ({ sessionId, status }) => {
       const session = registry.resolve(sessionId)
@@ -7142,6 +7154,11 @@ async function runForeground(session: AuthSession | null): Promise<void> {
       console.log(`[msg] ${sid(sessionId)} slash-command adapted for engine=${engine}`)
     }
     console.log(`[msg] ${sid(sessionId)} recv · engine=${engine} · bytes=${Buffer.byteLength(adapted, 'utf8')}`)
+    // The spend brake (off until `harness spend set`): a pane over its cap is held and the web is told why.
+    if (record && fleetControl.spendCheck(fleetSession(record)).action === 'pause') {
+      console.log(`[msg] ${sid(sessionId)} held by the spend brake`)
+      return
+    }
     input.submit(record?.agentId ?? sessionId, adapted, deliveryId, tabId)
   }
   backend.onMessage = (id, content, deliveryId, tabId) => submitAgent(id, content, deliveryId, tabId)
@@ -7972,11 +7989,20 @@ async function daemonCall(method: 'GET' | 'POST', path: string, body?: unknown):
 async function fleetCommand(cmd: string, args: string[], flags: string[]): Promise<void> {
   const json = flags.includes('--json')
   const flag = (name: string): string | undefined => flags.find((f) => f.startsWith(`--${name}=`))?.slice(name.length + 3)
+  const num = (name: string): number | null | undefined => { const v = flag(name); if (v === undefined) return undefined; if (v === 'off' || v === 'null') return null; const n = Number(v); return Number.isFinite(n) ? n : undefined }
   let action = cmd
   let body: Record<string, unknown> = {}
   switch (cmd) {
     case 'attention': break
     case 'stop-all': body = { except: flag('except') ?? args[0] ?? null }; break
+    case 'gate': action = `gate-${args[0] ?? 'status'}`; break
+    case 'spend': {
+      action = `spend-${args[0] ?? 'status'}`
+      if (action === 'spend-set') body = { perAgentUsd: num('agent-usd'), perAgentTokens: num('agent-tokens'), perDayUsd: num('day-usd'), perDayTokens: num('day-tokens'), warnAt: num('warn-at') ?? undefined, ...(flags.includes('--off') ? { enabled: false } : flags.includes('--on') ? { enabled: true } : {}) }
+      if (action === 'spend-off') { action = 'spend-set'; body = { enabled: false } }
+      if (action === 'spend-on') { action = 'spend-set'; body = { enabled: true } }
+      break
+    }
     default: action = args[0] ?? ''; body = {}; if (!action) { console.error('Usage: harness fleet <action> [--key=value ...]'); process.exit(1) }
       for (const f of flags) { const m = /^--([a-zA-Z-]+)=(.*)$/.exec(f); if (m) body[m[1]!] = m[2] }
   }
@@ -9229,7 +9255,7 @@ switch (cmd) {
   case 'reset':
     resetCommand().catch(onError)
     break
-  case 'attention': case 'stop-all': case 'fleet':
+  case 'attention': case 'stop-all': case 'gate': case 'spend': case 'fleet':
     fleetCommand(cmd, args, flags).catch(onError)
     break
   case 'status':
