@@ -93,6 +93,7 @@ import '../widgets/workspace_subscription_usage.dart';
 import '../store/store_mark.dart';
 import '../store/store_screen.dart';
 import '../devices/devices_screen.dart';
+import '../widgets/harness_conversation_placeholder.dart';
 import '../devices/devices_harness_controller.dart';
 import '../widgets/harness_start_page.dart';
 import '../state/toolbar_notices.dart';
@@ -3671,17 +3672,22 @@ class _SwarmScreenState extends State<SwarmScreen> {
         }
       });
     }
-    return ListenableBuilder(
-      listenable: _devicesHarness,
-      builder: (context, _) => DevicesTab(
-        key: ValueKey('devices-tab:${app.currentUser?.id}'),
-        notifier: app,
-        conversationOpening: _devicesHarness.opening,
-        conversationError: _devicesHarness.error,
-        onOpenConversation: _devicesHarness.open,
-      ),
+    return DevicesTab(
+      key: ValueKey('devices-tab:${app.currentUser?.id}'),
+      notifier: app,
     );
   }
+
+  Widget _devicesConversation(BuildContext context) => ListenableBuilder(
+    listenable: _devicesHarness,
+    builder: (context, _) => HarnessConversationPlaceholder(
+      key: const ValueKey('devices-conversation-setup'),
+      name: 'Devices',
+      opening: _devicesHarness.opening,
+      error: _devicesHarness.error,
+      onRetry: () => unawaited(_devicesHarness.open()),
+    ),
+  );
 
   void _openDevices() {
     if (!_routeIsCurrent ||
@@ -6865,6 +6871,10 @@ class _SwarmScreenState extends State<SwarmScreen> {
                                               devicesViewer: app.devicesEnabled
                                                   ? _devicesViewer
                                                   : null,
+                                              devicesConversation:
+                                                  app.devicesEnabled
+                                                  ? _devicesConversation
+                                                  : null,
                                               companionViewer:
                                                   _creatureEnabled &&
                                                       _zoo.loaded
@@ -7484,23 +7494,16 @@ class _SwarmScreenState extends State<SwarmScreen> {
       final tabBudget = math.max(
         0.0,
         constraints.maxWidth -
-            cell.width * 6 -
+            cell.width * 5 -
+            grid.AppDesktop.tabBarTrailingInset -
             actionsWidth -
             (_slotShown ? 44 : 0) -
             leadingWidth,
       );
-      _tabWidths = [
-        for (var i = 0; i < labels.length; i++)
-          math.min(
-            DesktopWorkspaceTab.widthOf(
-              context,
-              labels[i],
-              shortcutHint: _keymap.hint('swarm.select_${i + 1}'),
-              hasActivity: activities[i] != null,
-            ),
-            tabBudget,
-          ),
-      ];
+      _tabWidths = List.filled(
+        labels.length,
+        DesktopWorkspaceTab.widthForStrip(tabBudget, labels.length),
+      );
       final total = _tabWidths.fold(0.0, (sum, width) => sum + width);
       // Arrows come out of the tabs' own budget, so the bar never reflows.
       final arrows = chrome?.scrollsTabsByArrows == true && total > tabBudget;
@@ -7665,7 +7668,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
                 ),
               ],
               if (kIsWeb && _slotShown) _daemonTabButton(),
-              SizedBox(width: cell.width),
+              const SizedBox(width: grid.AppDesktop.tabBarTrailingInset),
             ],
           ),
         ),

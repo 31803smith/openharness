@@ -32,11 +32,59 @@ on 2026-09-30; the unmerged checkpoints below describe earlier review stages.
 | Native tabs / footer / menus | System-font curved tabs with names, hover close and Command-held hints; 10-point pane frames. Pane model control before an always-visible close icon. Remaining subscription usage at left and focused machine/project/branch/PR at right. Empty New Tabs hide the footer; modals isolate it, with a passive customization preview |
 | Linux / browser presentation | Shared light/dark, narrow and enlarged-text fixtures cover responsive behavior; physical Linux/browser platform validation is not claimed |
 
+Harness Monitor refinement (2026-10-02): the table now lists only open harnesses,
+including idle and starting sessions. Saved history and Open controls are removed.
+Every row has an always-visible 32-point × target, pinned to the right during
+horizontal scrolling. Closing reviews one session and retains history and files.
+Harness, Status, CPU, RAM, GPU and SSD lead the table, before agent and project
+metadata. Footer totals remain scoped to open owned harnesses and their shared
+servers. macOS GPU readings use process-owned IOAccelerator time counters;
+first samples and unavailable counters show —.
+
+Validation: 120 monitor tests, 25 daemon resource/telemetry tests and 16 Flutter
+footer/session tests pass, with TypeScript and changed-file Flutter analysis
+clean. An opt-in native Metal fixture on an Intel Mac verifies nonzero GPU use
+for its harness and zero for a separate idle harness. Apple Silicon counters
+have parser coverage, not hardware validation. The full CLI suite has 8,496
+passing tests, 46 skipped and four failures in unchanged tests: the doctor
+timeout and tmux buffer-size assertion reproduce on clean main; the two
+local-model cleanup failures pass in isolation on both branches.
+
+The synthetic browser preview was checked in [light appearance](images/harness-monitor-open-light.png)
+and [an 800×650 dark pane](images/harness-monitor-open-narrow.png), where every
+primary resource column and × fit. Closing updates counts/totals. Earlier review
+also checked idle filtering, empty search, frozen updates disabling closing,
+keyboard cancellation and horizontal scrolling at 640×620. This does not
+establish native app, VoiceOver or enlarged-text behavior; no real harness was
+stopped during review.
+
 Legacy/test-only paths (including the old NewAgentDialog entry when
 `newHarnessOpensInBox` is disabled) are excluded from the visible migration.
 The standalone MachinesManager, old machine-link dialog, and generic
 team-creation presenter have no production caller in this tree. They are not
 counted as completed user journeys. Shared controls still serve their tests.
+
+## Consistent tab widths and compact toolbar — 2026-10-02
+
+Flutter and AppKit tabs now share the available row width, capped at 256 points.
+They shrink together to 128 points, then scroll. Names, selection, activity and
+Command hints do not change a tab's width; clipped names retain their full-name
+tooltip. This uses the shared-width approach in
+[Chromium's tab layout](https://raw.githubusercontent.com/chromium/chromium/main/chrome/browser/ui/views/tabs/tab_strip_layout.cc)
+with limits chosen for this app's centered labels and hover close targets.
+
+Native Devices and Harness Store capsules are 28 points tall, with 6-point
+vertical gutters in the 40-point row. Their right inset is 12 points. Flutter
+keeps the same compact minimum and grows for platform text scaling, preserving
+the label's internal padding. Native search and New Tab retain 32-point targets.
+
+Inspected production AppKit renders show [equal-width dark tabs](images/workspace-tabs-equal-dark.png),
+[light tabs](images/workspace-tabs-equal-light.png), and the
+[compact toolbar controls](images/workspace-tab-tools-compact.png).
+Coverage includes hover/Command states, narrow toolbars at 360 and 640 points,
+and Flutter at normal and doubled text size. All 56 targeted Flutter tests and
+4,352 AppKit checks pass; changed-file static analysis is clean. Captures use
+synthetic data and real fonts. The installed app was not exercised.
 
 ## Pane header spacing and long names — 2026-10-02
 
@@ -518,8 +566,9 @@ unmerged.
   travel through that computer's authenticated daemon, with encrypted requests,
   results and device-status events. Duplicate USB ids on different computers
   stay separate. Shared harness access does not grant device control. Offline
-  computers and unsupported daemons keep last readings visible with controls
-  disabled; edits are never queued for later. Gestures remain local to the desk.
+  computers and unsupported daemons retain readings internally for reconnection;
+  their devices and connection errors are hidden from the dashboard. Edits are
+  never queued for later. Gestures remain local to the desk.
 - Original [product photography](https://www.autonomous.ai/harness-device), shared
   settings rows and light/dark surfaces frame the library, selected device,
   USB setup and empty-state Shop entry. Names and model labels are saved locally

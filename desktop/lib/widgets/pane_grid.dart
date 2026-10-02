@@ -58,6 +58,7 @@ class PaneGrid extends StatelessWidget {
     this.soloFocused = false,
     this.companionViewer,
     this.devicesViewer,
+    this.devicesConversation,
   });
 
   final AppNotifier notifier;
@@ -75,6 +76,7 @@ class PaneGrid extends StatelessWidget {
   /// The built-in companion DSH viewer; its agent uses the ordinary terminal.
   final WidgetBuilder? companionViewer;
   final WidgetBuilder? devicesViewer;
+  final WidgetBuilder? devicesConversation;
 
   @override
   Widget build(BuildContext context) {
@@ -92,6 +94,7 @@ class PaneGrid extends StatelessWidget {
             soloFocused: soloFocused,
             companionViewer: companionViewer,
             devicesViewer: devicesViewer,
+            devicesConversation: devicesConversation,
           );
         }
         final panes = notifier.panes;
@@ -110,6 +113,7 @@ class PaneGrid extends StatelessWidget {
           onSplitPane: onSplitPane,
           companionViewer: companionViewer,
           devicesViewer: devicesViewer,
+          devicesConversation: devicesConversation,
         );
         final cells = <Widget>[
           for (final pane in visible) cell(pane),
@@ -261,6 +265,7 @@ class _SwarmCanvas extends StatefulWidget {
     this.soloFocused = false,
     this.companionViewer,
     this.devicesViewer,
+    this.devicesConversation,
   });
   final AppNotifier notifier;
   final AgentDragRef? dragging;
@@ -271,6 +276,7 @@ class _SwarmCanvas extends StatefulWidget {
   final bool soloFocused;
   final WidgetBuilder? companionViewer;
   final WidgetBuilder? devicesViewer;
+  final WidgetBuilder? devicesConversation;
   @override
   State<_SwarmCanvas> createState() => _SwarmCanvasState();
 }
@@ -615,6 +621,8 @@ class _SwarmCanvasState extends State<_SwarmCanvas> {
                                     solo: widget.soloFocused,
                                     companionViewer: widget.companionViewer,
                                     devicesViewer: widget.devicesViewer,
+                                    devicesConversation:
+                                        widget.devicesConversation,
                                   ),
                                 ),
                               ),
@@ -1217,6 +1225,7 @@ class _PaneCell extends StatelessWidget {
     this.solo = false,
     this.companionViewer,
     this.devicesViewer,
+    this.devicesConversation,
   });
 
   final AppNotifier notifier;
@@ -1229,6 +1238,7 @@ class _PaneCell extends StatelessWidget {
   final void Function(int paneId, PaneResizeAxis axis)? onSplitPane;
   final WidgetBuilder? companionViewer;
   final WidgetBuilder? devicesViewer;
+  final WidgetBuilder? devicesConversation;
 
   /// Drawn alone under [PaneGrid.soloFocused]: it reads as the only view — no
   /// dimming or zoom, since it already fills the screen. The focused rim still
@@ -1368,6 +1378,13 @@ class _PaneCell extends StatelessWidget {
                           : pane.isCompanion
                           ? companionViewer?.call(context) ??
                                 const SizedBox.shrink()
+                          : pane.agentId == null &&
+                                devicesConversation != null &&
+                                notifier.swarms.any(
+                                  (tab) =>
+                                      tab.isDevices && tab.panes.contains(pane),
+                                )
+                          ? devicesConversation!(context)
                           : _PaneContent(
                               notifier: notifier,
                               pane: pane,
@@ -1551,26 +1568,25 @@ class _PaneContent extends StatelessWidget {
               agent?.terminalUnavailableReason ??
               'This harness is unavailable on ${machine.machine.displayName}. Retained output is read only.',
         );
+      } else if (agent.launchState == 'starting') {
+        notice = terminalNotice(
+          label: 'Starting',
+          icon: AppIcons.terminal,
+          detail: 'You can answer setup prompts in this terminal while the agent starts.',
+          banner: true,
+        );
       } else if (agent.launchState == 'failed') {
-        // A resume the daemon could not CONFIRM is not a start that failed: the
-        // engine is usually still running in this pane, which is why output
-        // keeps arriving while the keyboard is locked. Asking again is cheap —
-        // the daemon re-checks a resume it never confirmed rather than
-        // relaunching (`resumeStoppedAgent.ts`) — so that is the button, and
-        // Restart is kept for the failures where something really must be
-        // started again.
+        // Unconfirmed can mean the shell has not reached the engine at all.
+        // Keep input available for setup prompts, and re-check the existing
+        // resume rather than starting another conversation.
         final unconfirmed = agent.launchError == 'RESUME_UNCONFIRMED';
         notice = terminalNotice(
           label: unconfirmed ? 'Not confirmed' : 'Start failed',
           icon: unconfirmed ? AppIcons.circleHelp : AppIcons.circleAlert,
           detail: unconfirmed
-              ? 'The engine is still running here; the daemon has not confirmed '
-                    'which conversation it reopened.'
+              ? 'Answer setup prompts below, then check again.'
               : agent.launchDetail ??
                     'The engine failed to start. Terminal output is preserved.',
-          // The one notice that needs saying out loud rather than hovering:
-          // the pane keeps printing while its keyboard is locked, and nothing
-          // about a chip explains that.
           banner: true,
           actionLabel: unconfirmed ? 'Check again' : 'Restart',
           onAction: unconfirmed
@@ -1603,7 +1619,15 @@ class _PaneContent extends StatelessWidget {
           visible: visible,
           compactHeader: swarmMode,
           composerVisible: pane.composerVisible,
-          readOnly: notice != null,
+          // Launch progress/failure describes the engine, not permission to
+          // type into its terminal. Connection and control ownership still
+          // gate input independently in TerminalPanel/TerminalSession.
+          readOnly:
+              machine == null ||
+              needsLink ||
+              offline ||
+              agent == null ||
+              !agent.terminalAvailable,
           notice: notice,
           onToggleComposer: () => notifier.toggleComposer(pane.id),
           onClose: single && !swarmMode ? null : close,

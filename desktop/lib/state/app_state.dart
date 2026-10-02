@@ -1646,14 +1646,25 @@ class AppNotifier extends ChangeNotifier {
   }
 
   void _ensureDevicesViewer(Swarm tab) {
-    if (!devicesEnabled || tab.panes.any((pane) => pane.isDevices)) return;
-    final pane = TerminalPane(
-      id: _nextPaneId++,
-      machineId: '',
-      kind: PaneKind.devices,
+    if (!devicesEnabled) return;
+    if (!tab.panes.any((pane) => pane.isDevices)) {
+      final pane = TerminalPane(
+        id: _nextPaneId++,
+        machineId: '',
+        kind: PaneKind.devices,
+      );
+      tab.panes.insert(0, pane);
+      tab.focusedPaneId ??= pane.id;
+    }
+    // Reserve the conversation before any network or launch work. Setup and
+    // failures belong in this same right-hand pane, never above the dashboard.
+    if (!tab.panes.any((pane) => !pane.isViewer)) {
+      tab.panes.add(TerminalPane(id: _nextPaneId++, machineId: ''));
+    }
+    tab.paneSizes.putIfAbsent(
+      '2:manual',
+      () => PaneArrangement.viewerBesideTerminal,
     );
-    tab.panes.insert(0, pane);
-    tab.focusedPaneId ??= pane.id;
   }
 
   Future<void> showDevicesTerminal(String machineId, String agentId) async {
@@ -1669,7 +1680,10 @@ class AppNotifier extends ChangeNotifier {
       () => PaneArrangement.viewerBesideTerminal,
     );
     await assignAgentToPane(
-      null,
+      tab.panes
+          .where((pane) => !pane.isViewer && pane.agentId == null)
+          .firstOrNull
+          ?.id,
       machineId,
       agentId,
       swarmId: tab.id,
@@ -11054,8 +11068,8 @@ class AppNotifier extends ChangeNotifier {
     ];
   }
 
-  /// One switch intent owns its creation receipt. All views move together only
-  /// after the new agent is ready and the old conversation can be saved safely.
+  /// One switch intent owns its creation receipt. Save the old conversation,
+  /// then move all views as soon as the replacement terminal can be attached.
   Future<String?> changeAgent(String machineId, String agentId, String engine) {
     final source = stateOf(machineId)?.agents
         .where((a) => a.id == agentId)
@@ -11202,20 +11216,18 @@ class AppNotifier extends ChangeNotifier {
     if (nextId == null) {
       return 'The new agent has not confirmed its start yet. Choose it again to check.';
     }
-    Agent? next() => machine.agents.where((a) => a.id == nextId).firstOrNull;
-    for (var i = 0; i < 60 && next()?.launchState == 'starting'; i++) {
-      await Future<void>.delayed(const Duration(milliseconds: 250));
-      if (!_machineWorkCurrent(machine, change.revision)) {
-        return 'This switch is no longer active.';
-      }
+    if (!_machineWorkCurrent(machine, change.revision)) {
+      return 'This switch is no longer active.';
     }
-    final target = next();
-    if (target == null ||
-        target.launchState != 'ready' ||
-        !target.terminalAvailable) {
+    final target = machine.agents.where((a) => a.id == nextId).firstOrNull;
+    // A launch receipt identifies the replacement's terminal before its engine
+    // is ready. Attach now: shell, installer and onboarding prompts need input
+    // during startup. Waiting for readiness leaves a stopped source onscreen
+    // and can deadlock the very prompt the person must answer to become ready.
+    if (target == null || !target.terminalAvailable) {
       change.launchFailed = target?.launchState == 'failed';
       return target?.launchDetail ??
-          'The new agent is still starting. Choose it again to check.';
+          'The new terminal is not available yet. Choose the agent again to check.';
     }
     final terminals = allPanes
         .where((p) => p.machineId == machineId && p.agentId == source.id)
@@ -12246,6 +12258,10 @@ class AppNotifier extends ChangeNotifier {
               ? targetPanes.length
               : split.paneIds.indexOf(split.paneId) + 1
         : targetPanes.indexOf(replaced);
+    final pendingLayout =
+        replaced != null && !replaced.isViewer && replaced.agentId == null
+        ? target.manualLayout
+        : null;
     if (existing != null) target.remove(existing);
     if (replaced != null) target.remove(replaced);
     final pane =
@@ -12259,6 +12275,11 @@ class AppNotifier extends ChangeNotifier {
       pane.sharedOwnerName = machine.machine.ownerName;
     }
     targetPanes.insert(insertion.clamp(0, targetPanes.length), pane);
+    // Attaching a conversation to a reserved slot is not a layout removal.
+    if (pendingLayout != null &&
+        pendingLayout.tiles.length == targetPanes.length) {
+      target.savePaneSizes('${targetPanes.length}:manual', pendingLayout);
+    }
     if (autoTile && split == null) {
       // A new pane reflows the whole tab. Old manual splits and remembered
       // sizes for this count must not silently override automatic placement.
