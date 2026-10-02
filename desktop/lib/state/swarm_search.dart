@@ -287,6 +287,11 @@ class SwarmSearchController extends ChangeNotifier {
         operation?.failed == true) {
       return catalog.localStatusWord(local, controller: owner);
     }
+    // Use under way: running is not yet the harness on it. Until it moves, the row keeps saying so —
+    // a row that turned to Use there read as a second click to make.
+    if (usingModelId == row.modelId) {
+      return local.downloaded ? 'Starting' : 'Downloading';
+    }
     return modelRowAction(row) ??
         (local.running
             ? 'Running'
@@ -760,7 +765,10 @@ class SwarmSearchController extends ChangeNotifier {
           return null;
         }
         if (started?.running == true && operation?.active != true) {
-          await models!.manager.refresh(force: true);
+          // The grid's models only: the harness moves onto one of them, and this machine's own list
+          // already says the model runs. A full forced read held the move 16s past "running" [run],
+          // with the row saying Use — and a second Use looked needed.
+          await models!.manager.refresh(force: true, local: false);
           if (!current()) return null;
           final machineId = _modelSelectionMachineId;
           if (machineId != null) {

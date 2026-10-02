@@ -1365,6 +1365,39 @@ describe('models other apps downloaded, started in their own app', () => {
     expect(JSON.parse(await readFile(join(stateDir, 'app-engines.json'), 'utf8'))).toEqual([])
   })
 
+  it('answers from the last scan while a slow one runs, and the list after it has the new one', async () => {
+    let scans = 0, release!: () => void
+    const models = new LocalModels({ stateDir, processEnv: { GRID_HOME: home }, run, request: request as typeof fetch, inventory,
+      appEngines: ops as unknown as AppEngineOps,
+      appModels: async () => {
+        if (++scans === 1) return [ollama]
+        await new Promise<void>(resolve => { release = resolve })
+        return [ollama, studio]
+      } })
+    expect((await models.list('home')).models.filter(m => m.app && m.app !== 'Grid').map(m => m.id)).toEqual([ollama.id])
+    // A forced read starts a scan that hangs (a busy llama-server answering --version late): the list
+    // answers at once from the last scan rather than waiting on it.
+    expect((await models.list('home', true)).models.filter(m => m.app && m.app !== 'Grid').map(m => m.id)).toEqual([ollama.id])
+    expect(scans).toBe(2)
+    release()
+    await vi.waitFor(async () => expect((await models.list('home', true)).models.some(m => m.id === studio.id)).toBe(true))
+  })
+
+  it('answers from the scan it saved when it starts again, and a scan that never answers is given up', async () => {
+    await appService().list('home')
+    let scans = 0
+    const appIds = (snapshot: Awaited<ReturnType<LocalModels['list']>>) => snapshot.models.filter(m => m.app && m.app !== 'Grid').map(m => m.id)
+    // Started again, with every scan hanging: the saved one answers at once, nothing waits on a scan.
+    const restarted = new LocalModels({ stateDir, processEnv: { GRID_HOME: home }, run, request: request as typeof fetch, inventory,
+      appEngines: ops as unknown as AppEngineOps, appScanMs: 50,
+      appModels: () => { scans++; return new Promise<AppModel[]>(() => {}) } })
+    expect(appIds(await restarted.list('home'))).toEqual([ollama.id, studio.id])
+    // That scan is given up at its deadline, the saved answer kept, and the next read starts another.
+    await new Promise(resolve => setTimeout(resolve, 80))
+    expect(appIds(await restarted.list('home', true))).toEqual([ollama.id, studio.id])
+    expect(scans).toBe(2)
+  })
+
   it('takes it down again, and says so, when the app loaded it with less than 64K', async () => {
     window = 16384
     const models = appService()

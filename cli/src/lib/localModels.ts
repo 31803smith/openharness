@@ -58,6 +58,8 @@ function freePort(): Promise<number> {
 }
 
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
+/** The longest a scan of other apps' models is waited for (`fleet models` alone has a 60s deadline). */
+export const APP_SCAN_MS = 90_000
 /** What llama.cpp answers once its GPU backend has failed an allocation — every request after. */
 const OUT_OF_MEMORY = /compute error|out of memory|insufficient memory|failed to allocate/i
 
@@ -130,6 +132,8 @@ interface Options {
   /** Models other apps downloaded here ([scanAppModels]), and the engines that start them. Absent: none. */
   appModels?: () => Promise<AppModel[]>
   appEngines?: AppEngineOps
+  /** How long a scan is waited for ([APP_SCAN_MS]); a test shortens it. */
+  appScanMs?: number
 }
 
 /** One concrete, machine-fitted version per model. Non-chat and unprobed offline
@@ -556,15 +560,50 @@ export class LocalModels {
     await rename(temp, file)
   }
 
-  /** Models other apps downloaded here, read at most every 30s (a read walks their folders) unless [force]. */
+  /**
+   * Models other apps downloaded here, from the last scan: a scan walks their folders and asks every
+   * engine its version, which a llama-server busy serving answered in 11s [run], so nothing waits on
+   * one but the very first. Past 30s, or [force]d, a new scan starts and the list after it has it.
+   */
   private async apps(force = false): Promise<AppModel[]> {
-    const read = this.options.appModels
-    if (!read) return []
-    if (!force && this.appsRead && Date.now() - this.appsRead.at < 30_000) return this.appsRead.value
-    return this.appsPending ??= read().catch(() => [] as AppModel[]).then(value => {
-      this.appsRead = { at: Date.now(), value }
-      return value
-    }).finally(() => { this.appsPending = undefined })
+    if (!this.options.appModels) return []
+    // A daemon just started answers from the scan it saved last time: a first scan while a llama-server
+    // was busy kept the picker without these models, and held a Stop two minutes [run].
+    this.appsRead ??= await this.savedApps()
+    if (force || !this.appsRead || Date.now() - this.appsRead.at >= 30_000) void this.scanApps()
+    return this.appsRead?.value ?? this.scanApps()
+  }
+
+  /** One scan at a time, and never one without an end: a scan that does not answer in [APP_SCAN_MS] is
+   *  given up and the last answer kept, so the next read starts afresh rather than waiting on it forever. */
+  private scanApps(): Promise<AppModel[]> {
+    return this.appsPending ??= Promise.race([this.options.appModels!(),
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error('scan timed out')), this.options.appScanMs ?? APP_SCAN_MS).unref())])
+      .then(async value => {
+        this.appsRead = { at: Date.now(), value }
+        await this.saveApps(value).catch(() => {})
+        return value
+      }, () => this.appsRead?.value ?? [])
+      .finally(() => { this.appsPending = undefined })
+  }
+
+  private get appsFile(): string { return join(this.options.stateDir, 'app-models.json') }
+
+  /** The last scan, as saved: read as stale, so the next read scans again. */
+  private async savedApps(): Promise<{ at: number; value: AppModel[] } | undefined> {
+    try {
+      const value = rows(JSON.parse(await readFile(this.appsFile, 'utf8'))).filter(a =>
+        str(a.id).startsWith('app:') && str(a.name) && ['ollama', 'lm-studio', 'llama.cpp'].includes(a.app) &&
+        ['ollama', 'lm-studio', 'llama.cpp', 'grid'].includes(a.engine) && str(a.ref)) as AppModel[]
+      return { at: 0, value }
+    } catch { return undefined }
+  }
+
+  private async saveApps(value: AppModel[]): Promise<void> {
+    await mkdir(this.options.stateDir, { recursive: true, mode: 0o700 })
+    const temp = `${this.appsFile}.${randomUUID()}.tmp`
+    await writeFile(temp, JSON.stringify(value), { mode: 0o600 })
+    await rename(temp, this.appsFile)
   }
 
   /** An app's model that Grid's llama.cpp serves (its app is not installed here), as a candidate whose
@@ -734,7 +773,9 @@ export class LocalModels {
       // account's existing grids before resolving ownership or joining again.
       await must(['--remote', 'sync'], 'Models could not be checked. Try again.')
     }
-    const apps = operation.modelId.startsWith('app:') ? await this.apps(true) : []
+    // The last scan has every model a person could have clicked; a model it lacks waits for a new one.
+    let apps = operation.modelId.startsWith('app:') ? await this.apps() : []
+    if (operation.modelId.startsWith('app:') && !apps.some(a => a.id === operation.modelId)) apps = await this.scanApps()
     const app = apps.find(a => a.id === operation.modelId)
     const started = (await readAppRecords(this.appRecordsFile)).some(r => r.modelId === operation.modelId && r.grid === grid)
     if (operation.modelId.startsWith('app:') && (started || app?.engine !== 'grid')) {

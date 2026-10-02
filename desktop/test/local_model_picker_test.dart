@@ -96,6 +96,25 @@ class _LocalApp extends ModelManagerTestApp {
 
   /// Downloads and starts finish at once, as a fast machine's would; left false, they stay under way.
   bool completeDownloads = false, completeStarts = false;
+
+  /// A started model runs at once but the grid lists it only on [listHeld]: the gap between running
+  /// here and being a model a harness can move onto, which a busy machine took 16s to close.
+  bool holdListing = false;
+  String? _heldListing;
+
+  void listHeld() {
+    final name = _heldListing;
+    if (name == null) return;
+    inventory = GridModels(
+      gridName: 'home',
+      models: [
+        ...inventory.models,
+        GridModel(id: name, node: 'This Mac'),
+      ],
+    );
+    _heldListing = null;
+  }
+
   final selections = <({String agent, String model})>[];
 
   Map<String, dynamic> _with(
@@ -161,13 +180,17 @@ class _LocalApp extends ModelManagerTestApp {
         };
       }),
     );
-    inventory = GridModels(
-      gridName: 'home',
-      models: [
-        ...inventory.models,
-        GridModel(id: name, node: 'This Mac'),
-      ],
-    );
+    if (holdListing) {
+      _heldListing = name;
+    } else {
+      inventory = GridModels(
+        gridName: 'home',
+        models: [
+          ...inventory.models,
+          GridModel(id: name, node: 'This Mac'),
+        ],
+      );
+    }
     return {
       'operation': {
         ...answer['operation'] as Map<String, dynamic>,
@@ -505,6 +528,37 @@ void main() {
           (machine: 'm', model: 'app:ollama:llama3.2:3b', start: true),
         ]);
         expect(app.selections, [(agent: 'a69', model: 'llama3.2:3b')]);
+      } finally {
+        await tester.pumpWidget(const SizedBox());
+        app.dispose();
+      }
+    },
+  );
+
+  testWidgets(
+    'one Use: the row says Starting until the harness is on the model, then it moves',
+    (tester) async {
+      final app = (await _localFixture())
+        ..completeStarts = true
+        ..holdListing = true;
+      try {
+        final picker = await _open(tester, app);
+        final gemma = _row(picker, 'gemma-4-12B');
+        picker.move(picker.rows.indexOf(gemma) - picker.cursor);
+        await tester.pump();
+        await key(tester, LogicalKeyboardKey.enter);
+        await tester.pump(const Duration(seconds: 3));
+        // Running here, not yet a model the harness can move onto: never Use, which read as a second
+        // click to make.
+        expect(app.actions, [(machine: 'm', model: 'gemma', start: true)]);
+        expect(_status(tester, gemma), 'Starting');
+        expect(app.selections, isEmpty);
+        app.listHeld();
+        await tester.pump(const Duration(seconds: 3));
+        await tester.pumpAndSettle();
+        expect(app.selections, [(agent: 'a69', model: 'gemma-4-12B')]);
+        // The one start, and nothing a second time.
+        expect(app.actions, [(machine: 'm', model: 'gemma', start: true)]);
       } finally {
         await tester.pumpWidget(const SizedBox());
         app.dispose();
