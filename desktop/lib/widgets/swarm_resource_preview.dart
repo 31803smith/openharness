@@ -1425,10 +1425,12 @@ class _SwarmResourcePreviewState extends State<SwarmResourcePreview> {
     final search = widget.search;
     final selected = row;
     if (selected == null || search.modelRowInUse(selected)) return null;
-    // One local model runs at a time: a second one waits for the first to stop.
+    // One local model runs at a time: Use and Get stop the one running, then start this one.
     final other = search.otherRunningModel(selected)?.name;
     if (search.canGetModelForUse(selected)) {
-      return 'Get downloads it, starts it, and moves this harness onto it.';
+      return other == null
+          ? 'Get downloads it, starts it, and moves this harness onto it.'
+          : 'Get downloads it, stops $other, starts it, and moves this harness onto it.';
     }
     if (search.canGetModel(selected)) {
       return other == null
@@ -1440,7 +1442,7 @@ class _SwarmResourcePreviewState extends State<SwarmResourcePreview> {
           ? 'Use moves this harness onto it.'
           : other == null
           ? 'Use starts it and moves this harness onto it.'
-          : 'Stop $other first: one local model runs at a time.';
+          : 'Use stops $other, starts this one, and moves this harness onto it.';
     }
     return null;
   }

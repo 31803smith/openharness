@@ -935,6 +935,11 @@ export class LocalModels {
       if (record) { await takeDown(record); await without(record) }
     } else if (operation.action === 'start' && !record) {
       if (!app || !ops) throw new ModelError('This model could not be checked. Refresh and try again.')
+      // Asked now, not taken from the last list: Use stops the model running and starts this one at
+      // once, and the list read before that stop still named it.
+      await this.owned(grid)
+      const running = records.find(r => r.grid === grid && r.modelId !== app.id)
+      if (running) throw new ModelError(`Stop ${cleanName(running.name)} first to start another local model.`)
       if (this.blockers.has(grid)) throw new ModelError(this.blockers.get(grid)!)
       const device = obj(await this.json(['device-info', '--json']))
       const ctx = appContext(app, num(device.usable_bytes))

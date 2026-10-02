@@ -97,6 +97,9 @@ class _LocalApp extends ModelManagerTestApp {
   /// Downloads and starts finish at once, as a fast machine's would; left false, they stay under way.
   bool completeDownloads = false, completeStarts = false;
 
+  /// Stops finish at once: the model is down and off the grid, as a fast machine's would be.
+  bool completeStops = false;
+
   /// A started model runs at once but the grid lists it only on [listHeld]: the gap between running
   /// here and being a model a harness can move onto, which a busy machine took 16s to close.
   bool holdListing = false;
@@ -165,6 +168,35 @@ class _LocalApp extends ModelManagerTestApp {
       modelId,
       start: start,
     );
+    if (!start && completeStops) {
+      late String stopped;
+      setInventoryFor(
+        machineId,
+        _with(modelId, (model) {
+          stopped = model['name'] as String;
+          return {
+            ...model,
+            'state': 'downloaded',
+            'canStart': true,
+            'canStop': false,
+            'operation': null,
+          };
+        }),
+      );
+      inventory = GridModels(
+        gridName: 'home',
+        models: [
+          for (final model in inventory.models)
+            if (model.id != stopped) model,
+        ],
+      );
+      return {
+        'operation': {
+          ...answer['operation'] as Map<String, dynamic>,
+          'phase': 'done',
+        },
+      };
+    }
     if (!start || !completeStarts) return answer;
     late String name;
     setInventoryFor(
@@ -211,7 +243,11 @@ class _LocalApp extends ModelManagerTestApp {
   }
 }
 
-Future<_LocalApp> _localFixture({String? onModel, bool running = true}) async {
+Future<_LocalApp> _localFixture({
+  String? onModel,
+  bool running = true,
+  String? alsoOn,
+}) async {
   final app = _LocalApp()
     ..inventory = const GridModels(
       gridName: 'home',
@@ -237,6 +273,18 @@ Future<_LocalApp> _localFixture({String? onModel, bool running = true}) async {
       gridModel: onModel,
     ),
   );
+  // Another harness, on [alsoOn]: a stop of that model leaves it without one.
+  if (alsoOn != null) {
+    machine.agents.add(
+      Agent(
+        id: 'b70',
+        name: 'Review harness',
+        engine: 'claude',
+        terminalAvailable: true,
+        gridModel: alsoOn,
+      ),
+    );
+  }
   await app.modelManager.refresh(force: true);
   return app;
 }
@@ -377,11 +425,11 @@ void main() {
         expect(_inPreview('256K'), findsOneWidget);
         expect(_inPreview('9B'), findsOneWidget);
         expect(_inPreview('Q4_K_XL'), findsOneWidget);
-        // One local model runs at a time: with Qwen3.6 running, Get only downloads, and says why.
-        expect(picker.canGetModelForUse(download), isFalse);
+        // One local model runs at a time: with Qwen3.6 running, Get stops it to start this one.
+        expect(picker.canGetModelForUse(download), isTrue);
         expect(
           _inPreview(
-            'Get downloads it. Stop Qwen3.6-35B-A3B to run it: one local model runs at a time.',
+            'Get downloads it, stops Qwen3.6-35B-A3B, starts it, and moves this harness onto it.',
           ),
           findsOneWidget,
         );
@@ -398,7 +446,7 @@ void main() {
         expect(_inPreview('Download'), findsNothing);
         expect(
           _inPreview(
-            'Stop Qwen3.6-35B-A3B first: one local model runs at a time.',
+            'Use stops Qwen3.6-35B-A3B, starts this one, and moves this harness onto it.',
           ),
           findsOneWidget,
         );
@@ -494,12 +542,13 @@ void main() {
   testWidgets(
     'a model another app downloaded is one of yours, named with that app, and Use starts it there',
     (tester) async {
-      final app = (await _localFixture())..completeStarts = true;
+      // Nothing else running: this is about the one model, not a switch.
+      final app = (await _localFixture(running: false))..completeStarts = true;
       try {
         app.localInventory = {
-          ..._inventory(),
+          ..._inventory(running: false),
           'models': [
-            ...(_inventory()['models'] as List),
+            ...(_inventory(running: false)['models'] as List),
             {
               'id': 'app:ollama:llama3.2:3b',
               'name': 'llama3.2:3b',
@@ -538,7 +587,7 @@ void main() {
   testWidgets(
     'one Use: the row says Starting until the harness is on the model, then it moves',
     (tester) async {
-      final app = (await _localFixture())
+      final app = (await _localFixture(running: false))
         ..completeStarts = true
         ..holdListing = true;
       try {
@@ -559,6 +608,87 @@ void main() {
         expect(app.selections, [(agent: 'a69', model: 'gemma-4-12B')]);
         // The one start, and nothing a second time.
         expect(app.actions, [(machine: 'm', model: 'gemma', start: true)]);
+      } finally {
+        await tester.pumpWidget(const SizedBox());
+        app.dispose();
+      }
+    },
+  );
+
+  testWidgets(
+    'Use on another model stops the one running, starts this one and moves the harness, in one step',
+    (tester) async {
+      final app = (await _localFixture(onModel: 'Qwen3.6-35B-A3B'))
+        ..completeStarts = true
+        ..completeStops = true;
+      try {
+        final picker = await _open(tester, app);
+        final gemma = _row(picker, 'gemma-4-12B');
+        picker.move(picker.rows.indexOf(gemma) - picker.cursor);
+        await tester.pumpAndSettle();
+        expect(
+          _inPreview(
+            'Use stops Qwen3.6-35B-A3B, starts this one, and moves this harness onto it.',
+          ),
+          findsOneWidget,
+        );
+        await key(tester, LogicalKeyboardKey.enter);
+        await tester.pump(const Duration(seconds: 3));
+        await tester.pump(const Duration(seconds: 3));
+        await tester.pumpAndSettle();
+        // The harness on it was this one, so nobody is asked: stop, start, move.
+        expect(app.actions, [
+          (
+            machine: 'm',
+            model: 'local:Qwen3.6-35B-A3B-UD-Q5_K_XL.gguf',
+            start: false,
+          ),
+          (machine: 'm', model: 'gemma', start: true),
+        ]);
+        expect(app.selections, [(agent: 'a69', model: 'gemma-4-12B')]);
+      } finally {
+        await tester.pumpWidget(const SizedBox());
+        app.dispose();
+      }
+    },
+  );
+
+  testWidgets(
+    'another harness on the running model is asked about before it stops; Cancel leaves both',
+    (tester) async {
+      final app = (await _localFixture(alsoOn: 'Qwen3.6-35B-A3B'))
+        ..completeStarts = true
+        ..completeStops = true;
+      try {
+        final picker = await _open(tester, app);
+        final gemma = _row(picker, 'gemma-4-12B');
+        picker.move(picker.rows.indexOf(gemma) - picker.cursor);
+        await tester.pumpAndSettle();
+        await key(tester, LogicalKeyboardKey.enter);
+        await tester.pumpAndSettle();
+        expect(find.text('Stop Qwen3.6-35B-A3B?'), findsOneWidget);
+        expect(
+          find.textContaining(
+            'Review harness uses it, and will stop answering',
+          ),
+          findsOneWidget,
+        );
+        // Cancel holds the focus: a stray Return stops nothing.
+        await key(tester, LogicalKeyboardKey.enter);
+        await tester.pumpAndSettle();
+        expect(find.text('Stop Qwen3.6-35B-A3B?'), findsNothing);
+        expect(app.actions, isEmpty);
+        expect(app.selections, isEmpty);
+
+        // Focus is back on the picker: Enter asks again.
+        await key(tester, LogicalKeyboardKey.enter);
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('Stop and switch'));
+        await tester.pump(const Duration(seconds: 3));
+        await tester.pump(const Duration(seconds: 3));
+        await tester.pumpAndSettle();
+        expect(app.actions.map((action) => action.start), [false, true]);
+        expect(app.selections, [(agent: 'a69', model: 'gemma-4-12B')]);
       } finally {
         await tester.pumpWidget(const SizedBox());
         app.dispose();

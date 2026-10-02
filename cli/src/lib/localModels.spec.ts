@@ -1398,6 +1398,17 @@ describe('models other apps downloaded, started in their own app', () => {
     expect(scans).toBe(2)
   })
 
+  it('starts another right after a stop, without a list read between to clear the one that ran', async () => {
+    const models = appService()
+    await models.act('home', ollama.id, 'start'); await models.settled()
+    await models.list('home', true)
+    // A switch: stop, then start at once — the list read above still says llama3.2:3b runs.
+    await models.act('home', ollama.id, 'stop'); await models.settled()
+    await models.act('home', studio.id, 'start'); await models.settled()
+    expect(ops.start).toHaveBeenLastCalledWith(studio, 131072, join(stateDir, 'logs'))
+    expect((await models.list('home', true)).models.find(m => m.id === studio.id)).toMatchObject({ state: 'running', operation: { phase: 'done' } })
+  })
+
   it('takes it down again, and says so, when the app loaded it with less than 64K', async () => {
     window = 16384
     const models = appService()
