@@ -89,7 +89,7 @@ async function run() {
   try { await (await open(output!, 'wx', 0o600)).close() } catch { throw new MemoryError('evaluation_report_unavailable_or_exists') }
   const temporary = await mkdtemp(join(tmpdir(), 'memory-extraction-eval-'))
   const sourceFiles = ['learner.ts', 'context.ts', 'types.ts', 'admission.ts', 'store.ts', 'queue.ts', 'evaluation.ts',
-    'claudeInference.ts', 'inference.ts', 'inferenceProcess.ts']
+    'account.ts', 'claudeInference.ts', 'inference.ts', 'inferenceProcess.ts']
   const sourceHashes = Object.fromEntries(await Promise.all(sourceFiles.map(async name => [name, digest(await readFile(join(cli, 'src/memory', name), 'utf8'))])))
   const report: Record<string, any> = { schemaVersion: 1, suite: suite.suite, suiteSha256: digest(suiteText),
     promptVersion: EXTRACTION_PROMPT_VERSION, contextVersion: MEMORY_CONTEXT_VERSION,
@@ -99,6 +99,7 @@ async function run() {
     limits: { maxCalls: 6, timeoutPerCallMs: 90_000, retries: 0, corpus: 'synthetic_only', tools: 'restricted_native_adapter' },
     limitations: ['Development diagnostics, not held-out release evidence.',
       'Mechanical checks do not establish faithful meaning or downstream task usefulness.',
+      'Recall probe passes measure presence only; correct-memory recall requires a separately attributed semantic review.',
       'Semantic review remains pending until explicitly reviewed.',
       'A native init model label does not prove that the provider executed that model.',
       'Native-reported cost is diagnostic metadata, not a subscription invoice.',

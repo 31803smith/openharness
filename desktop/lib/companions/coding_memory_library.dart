@@ -98,6 +98,25 @@ class CodingMemoryLibrary extends ChangeNotifier {
   Future<Map<String, dynamic>> detail(String id) =>
       _request({'action': 'show', 'id': id});
 
+  Future<Map<String, dynamic>> activity({String? agentId}) => _request({
+    'action': 'activity',
+    'query': {'agentId': ?agentId},
+  });
+
+  Future<Map<String, dynamic>> notebooks({String? cursor}) => _request({
+    'action': 'notebooks',
+    'query': {'limit': 12, 'cursor': ?cursor},
+  });
+
+  Future<Map<String, dynamic>> notebook(String id) =>
+      _request({'action': 'notebook', 'id': id});
+
+  Future<Map<String, dynamic>> notebookMemories(String id, String cursor) =>
+      _request({
+        'action': 'list',
+        'query': {'topicId': id, 'cursor': cursor, 'limit': 20},
+      });
+
   Future<Map<String, dynamic>> projects({String search = '', int? before}) =>
       _request({
         'action': 'projects',
@@ -120,6 +139,9 @@ class CodingMemoryLibrary extends ChangeNotifier {
     }
     preview.used = true;
     await _request({'action': 'apply', 'capability': preview.capability});
+    // A session rating does not change memory content. Keep the open detail and
+    // its controls mounted while the caller refreshes the saved feedback.
+    if (memoryMap(preview.data['command'])['kind'] == 'feedback') return;
     // Drop old content before refreshing. A failed refresh must not resurrect it.
     items = [];
     nextCursor = null;

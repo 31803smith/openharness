@@ -1,3 +1,5 @@
+import '../widgets/engine_identity.dart';
+
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
@@ -893,7 +895,12 @@ class SwarmSearchController extends ChangeNotifier {
 
   /// The words sent to the session indexes: plain harness search only.
   String get _contentQuery =>
-      isCommandMode || isHelpMode || isGroupMode || isModelMode || isStoreMode
+      isCommandMode ||
+          isHelpMode ||
+          isGroupMode ||
+          isModelMode ||
+          isStoreMode ||
+          isAgentMode
       ? ''
       : matchQuery;
 
@@ -996,15 +1003,38 @@ class SwarmSearchController extends ChangeNotifier {
   String get helpQuery => query.trimLeft().replaceFirst(_helpPrefix, '');
   bool get isProjectMode =>
       allowsCommands && !commandsOnly && query.trimLeft().startsWith('#');
-  static final _quickAccessPrefix = RegExp(r'^[>@#?:*]');
+  static final _quickAccessPrefix = RegExp(r'^[>@#?:*&]');
   bool get isMachineMode =>
       allowsCommands && !commandsOnly && query.trimLeft().startsWith('@');
   bool get isModelMode =>
       allowsCommands && !commandsOnly && query.trimLeft().startsWith(':');
+  bool get isAgentMode =>
+      allowsCommands && !commandsOnly && query.trimLeft().startsWith('&');
+  String? agentSelectionMachineId, agentSelectionId;
+  Agent? get agentSelection => app
+      .stateOf(agentSelectionMachineId ?? '')
+      ?.agents
+      .where((a) => a.id == agentSelectionId)
+      .firstOrNull;
+  void setAgentSelection(String machineId, String agentId) {
+    agentSelectionMachineId = machineId;
+    agentSelectionId = agentId;
+    _filter();
+    notifyListeners();
+  }
+
+  bool canSelectAgent(String engine) =>
+      agentSelection != null &&
+      app.stateOf(agentSelectionMachineId!)?.machine.isShared == false &&
+      app
+          .agentSwitchEngines(agentSelectionMachineId!, agentSelection!)
+          .contains(engine);
   bool get isStoreMode =>
       allowsCommands && !commandsOnly && query.trimLeft().startsWith('*');
   bool get isGroupMode => isProjectMode || isMachineMode;
-  String get scopePrefix => isMachineMode
+  String get scopePrefix => isAgentMode
+      ? '&'
+      : isMachineMode
       ? '@'
       : isProjectMode
       ? '#'
@@ -1066,10 +1096,12 @@ class SwarmSearchController extends ChangeNotifier {
       ? commandQuery
       : isHelpMode
       ? helpQuery
-      : isGroupMode || isModelMode || isStoreMode
+      : isGroupMode || isModelMode || isStoreMode || isAgentMode
       ? query.trimLeft().substring(1).trimLeft()
       : query;
-  String get title => isCommandMode
+  String get title => isAgentMode
+      ? 'Agents'
+      : isCommandMode
       ? 'Commands'
       : isHelpMode
       ? 'Quick access'
@@ -1217,7 +1249,9 @@ class SwarmSearchController extends ChangeNotifier {
       sessionFilter == SessionFilter.all &&
       query.trim().isEmpty;
   bool get showsTypeHints => _emptyFinder && selected == null;
-  String get hint => isCommandMode
+  String get hint => isAgentMode
+      ? 'Search agents'
+      : isCommandMode
       ? 'Search commands'
       : isHelpMode
       ? 'Search help'
@@ -1316,7 +1350,9 @@ class SwarmSearchController extends ChangeNotifier {
         null => 'Open Harness',
       };
 
-  String actionLabel(SwarmDestination? row) => row?.isCreate == true
+  String actionLabel(SwarmDestination? row) => row?.isAgentChoice == true
+      ? 'Change agent'
+      : row?.isCreate == true
       ? isModelMode
             ? 'Add'
             : row!.title
@@ -1358,7 +1394,7 @@ class SwarmSearchController extends ChangeNotifier {
                       (agent) => agent.id == row.agentId && agent.isStopped,
                     ) ==
                 true
-      ? 'Resume & open'
+      ? 'Open'
       : sessionFilter == SessionFilter.needsInput && row?.agentId != null
       ? 'Answer'
       : placement != null && row != null && alreadyHere(row)
@@ -1392,6 +1428,11 @@ class SwarmSearchController extends ChangeNotifier {
       : 'No room for another harness.';
 
   void _refresh({bool force = false}) {
+    if (isAgentMode) {
+      _filter();
+      notifyListeners();
+      return;
+    }
     final storeChanged = isStoreMode && _refreshStore();
     final next = navigating
         ? _locations.read(app, projects?.projects ?? const [])
@@ -1548,6 +1589,46 @@ class SwarmSearchController extends ChangeNotifier {
 
   void _filter({bool keepOrder = false}) {
     final previous = rows;
+    if (isAgentMode) {
+      final engines = [...allEngines]
+        ..sort(
+          (a, b) => a.id == b.id
+              ? 0
+              : a.id == 'opencode'
+              ? -1
+              : b.id == 'opencode'
+              ? 1
+              : a.label.compareTo(b.label),
+        );
+      rows = [
+        for (final engine in engines)
+          if ('${engine.label} ${engine.id}'.toLowerCase().contains(
+            matchQuery.toLowerCase(),
+          ))
+            SwarmDestination(
+              id: 'engine:${engine.id}',
+              agentEngine: engine.id,
+              engine: engine.id,
+              title: engine.id == 'claude' ? 'Claude Code' : engine.label,
+              detail: agentSelection == null
+                  ? 'Focus a harness to change its agent'
+                  : !canSelectAgent(engine.id)
+                  ? 'Not supported by this harness'
+                  : agentSelection?.engine == engine.id
+                  ? 'Current agent'
+                  : engine.id == 'opencode'
+                  ? 'Muse Spark 1.3 · new conversation'
+                  : 'New conversation in the same project',
+              swarmId: null,
+              current: agentSelection?.engine == engine.id,
+            ),
+      ];
+      total = engines.length;
+      matchCount = rows.length;
+      cursor = rows.isEmpty ? 0 : cursor.clamp(0, rows.length - 1);
+      _selectedId = selected?.id;
+      return;
+    }
     if (isHelpMode) {
       // The modes keep the order they are taught in; what follows `?` only
       // narrows them, the way a quick-open's own `?` does.
@@ -2128,11 +2209,12 @@ class SwarmSearchController extends ChangeNotifier {
     return harnessSessionUnavailable(machine, agent);
   }
 
-  bool canSubmit(SwarmDestination? row) =>
-      row?.isNote == true ||
-          sessionUnavailable(row) != null ||
-          sessionFilter == SessionFilter.needsInput &&
-              _unavailableAttentionIds.contains(row?.id)
+  bool canSubmit(SwarmDestination? row) => row?.agentEngine != null
+      ? canSelectAgent(row!.agentEngine!)
+      : row?.isNote == true ||
+            sessionUnavailable(row) != null ||
+            sessionFilter == SessionFilter.needsInput &&
+                _unavailableAttentionIds.contains(row?.id)
       ? false
       : isModelDownloadsRow(row)
       ? true
@@ -2213,7 +2295,9 @@ class SwarmSearchController extends ChangeNotifier {
       ? SwarmSearchSelection(selected!, SwarmSearchAction.addHere)
       : null;
 
-  static String action(SwarmDestination row) => row.isCommand
+  static String action(SwarmDestination row) => row.isAgentChoice
+      ? 'Change agent'
+      : row.isCommand
       ? 'Run command'
       : row.isCreate
       ? row.title

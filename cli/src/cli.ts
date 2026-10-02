@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import './config/loadEnv.js'
 import { CompanionZoo, readCompanionIdentity, type CompanionIdentity } from './cable/companionIdentity.js'
 import { MODEL_MANAGER_ID, ensureBundledModelManager } from './dsh/builtins.js'
 import { createDeviceStore, deviceStoreAgents } from './lib/autonomous-device/storeRuntime.js'
@@ -25,7 +26,6 @@ import { AutonomousDeviceDirect } from './lib/autonomous-device/direct.js'
  * and the backend socket (events up / chat + RPCs down).
  */
 
-import 'dotenv/config'
 import { readFileSync, readdirSync, writeFileSync, mkdirSync, openSync, existsSync, rmSync, statSync, renameSync } from 'fs'
 import { dirname, join, resolve } from 'path'
 import { fileURLToPath } from 'url'
@@ -66,7 +66,7 @@ import { ensureTmuxOnPath } from './lib/tmuxOnPath.js'
 import { flashCommand } from './lib/flash.js'
 import { readOrMintComputerId } from './lib/computerIdentity.js'
 import { awaitLoginCallback, extractCallbackParams, LOGIN_TIMEOUT_MESSAGE } from './lib/loginCallback.js'
-import { AuthSessionError, AuthSessionManager, clearAuthSession, readAuthSession, writeAuthSession, type AuthSession } from './lib/authSession.js'
+import { AUTH_DIR, AuthSessionError, AuthSessionManager, clearAuthSession, readAuthSession, writeAuthSession, type AuthSession } from './lib/authSession.js'
 import { LocalPresence, PAIR_HARNESS_DSH, ZooTurnCounter, ZooTurnReporter } from './lib/zooTurns.js'
 import { ZooLessonReporter } from './lib/zooLessons.js'
 import { DAEMONS_OFF, DAEMONS_OFF_DETAIL, DaemonsSwitch, localKillSwitch, zooPassthrough, type ZooRead } from './lib/daemonsSwitch.js'
@@ -97,9 +97,12 @@ import { PairControl, StartedHarnesses } from './pair/control.js'
 import { PairToken } from './pair/token.js'
 import { pairCommand as pairControlCommand, pairRequest, pairVerb, type PairClientDeps } from './pair/client.js'
 import { serveMcp } from './pair/mcp.js'
+import { DEFAULT_HARNESS_PERMISSION, freshHarnessEnvironment } from './lib/harnessDefaults.js'
 import { PairHarness, type PairEngine } from './pair/pairHarness.js'
 import { CompanionIntelligence } from './pair/intelligence.js'
 import { CodingMemoryRuntime } from './memory/runtime.js'
+import { OpenCodeMemoryBinding } from './memory/opencodeBinding.js'
+import { MemoryExperimentSettings } from './memory/experiment.js'
 import { MemoryControl } from './memory/control.js'
 import { isOwnerProcess } from './memory/ownerProcess.js'
 import { hasMemoryForegroundActivity, MemorySessionRoster } from './memory/hostSessions.js'
@@ -126,7 +129,7 @@ import { ensureBuiltinPair } from './dsh/builtins.js'
 import { DEFAULT_AUTONOMY, isAutonomy, type Autonomy } from './pair/floor.js'
 import { createHash, randomUUID } from 'node:crypto'
 import { engineInstallRecipe } from './lib/engineInstall.js'
-import { buildEngineCommandArgv, buildEngineLaunchArgv, commandAvailableInInteractiveShell, dropPermissionFlagIfUnsupported, namedAgentArgs, permissionModeApproves, permissionModeFlags, refusePermissionFlagIfUnsupported, supportsFirstPrompt } from './lib/engineLaunch.js'
+import { buildEngineCommandArgv, buildEngineLaunchArgv, commandAvailableInInteractiveShell, dropPermissionFlagIfUnsupported, namedAgentArgs, permissionModeApproves, permissionModeFlags, refusePermissionFlagIfUnsupported, supportsFirstPrompt, supportsNamedAgent } from './lib/engineLaunch.js'
 import { workspaceMissing } from './lib/workspaceCheck.js'
 import { buildGridEngineLaunch, describeGridLaunch, gridConflictingEnvToClear, gridEnvVarNames, isApiLaunch, type GridLaunchMachine, type GridWebSearchStatus } from './lib/gridLaunch.js'
 import { HERMES_SYSTEM_MANAGED_DIR } from './lib/gridWebMcp.js'
@@ -143,6 +146,9 @@ import { createAndRegisterPane } from './lib/createAgentPane.js'
 import { forkName, planFork } from './lib/forkAgent.js'
 import { restoreAgents } from './lib/restoreAgents.js'
 import { createRetainExitedSession } from './lib/retainExitedSession.js'
+import { CloseAgentService, inspectCloseActivity } from './lib/closeAgentService.js'
+import { OpenTabProtection } from './lib/openTabProtection.js'
+import { sessionCheckpoints } from './lib/sessionCheckpoint.js'
 import { repairClaudeCwd } from './lib/cwdRepair.js'
 import { stoppedAgents } from './lib/stoppedAgents.js'
 import { SessionSearchIndex, folderWords, type SearchSource } from './lib/sessionSearch/indexer.js'
@@ -188,7 +194,7 @@ import {
 import { ALL_TERMINAL_BACKENDS } from './config/terminalConfig.js'
 import { TerminalBackendCoordinator } from './lib/terminalBackendCoordinator.js'
 import { TerminalStreamManager } from './lib/terminalStreamManager.js'
-import { terminalRouteKey, terminalRuntimeLabel } from './lib/terminalRuntime.js'
+import { processIdentityKey, terminalRouteKey, terminalRuntimeLabel } from './lib/terminalRuntime.js'
 import { TerminalAgentReconciler } from './lib/terminalAgentReconciler.js'
 import { processRows, type DiscoveredTerminalAgent } from './lib/terminalAgentDiscovery.js'
 import { remoteCommand } from './remoteCommand.js'
@@ -234,7 +240,8 @@ import {
 import type { CableAgent } from './cable/cableSession.js'
 import { routeVoiceTask, setVoiceRouterDeviceConnected, setVoiceRouterSessions, shutdownVoiceRouter, type RouterAgent } from './lib/voiceRouter.js'
 import { tailFile } from './lib/sessions.js'
-import { E2eeStore } from './lib/e2ee/store.js'
+import { E2eeStore, identitySpent, peekIdentityPub } from './lib/e2ee/store.js'
+import { confirmsRemoval, deviceRegistration, deviceStatusValue, formatDeviceDetail, formatDeviceList, logOrder, removeConfirmation } from './lib/e2ee/deviceDisplay.js'
 import { isLoopbackRequest, loopbackHosts } from './lib/loopbackRequest.js'
 import { b64e } from './lib/e2ee/core.js'
 import { MachinePeerStore } from './lib/e2ee/machinePeers.js'
@@ -255,6 +262,8 @@ import { startTuiUpdater } from './tui/update.js'
 import { ensureHnLauncher, ensureLauncher, ensureManagedGrid, ensureManagedRuntime, startGridPinRecheck } from './lib/runtimeInstall.js'
 import { readdir, stat } from 'fs/promises'
 import { CodexNormalizer, codexTaskError, lastCodexTurnText } from './engines/codex/normalizer.js'
+import { TurnActivity, type ActivityFrame } from './lib/turnActivity.js'
+import { CodexActivityReader, RuntimeActivityReader, activityRuntimeKey } from './lib/runtimeActivity.js'
 import { codexSubagentResolverFor } from './engines/codex/subagent.js'
 import { CursorNormalizer, lastCursorTurnText } from './engines/cursor/normalizer.js'
 import { CursorTranscriptDiscovery, findCursorTranscript } from './engines/cursor/discovery.js'
@@ -263,7 +272,8 @@ import { CursorSubagentManager } from './engines/cursor/subagent.js'
 import { CursorTaskHookQueue } from './engines/cursor/taskHookQueue.js'
 import { loadCursorPendingTasks, removeCursorPendingTasks } from './engines/cursor/pendingTasks.js'
 import { OpencodeReader, readOpencodeMessages } from './engines/opencode/reader.js'
-import { opencodeModelFromArgv, setOpencodeSessionModel } from './engines/opencode/sessionModel.js'
+import { applyOpencodeSessionModel, parseOpencodeModelId } from './engines/opencode/sessionModel.js'
+import { isOpencodeV2, opencodeMajorVersion } from './engines/opencode/version.js'
 import { lastOpencodeTurnText, opencodeMessagesToEvents } from './engines/opencode/normalizer.js'
 import { KiloReader, readKiloMessages } from './engines/kilo/reader.js'
 import { kiloMessagesToEvents, lastKiloTurnText } from './engines/kilo/normalizer.js'
@@ -497,7 +507,9 @@ every future connect, until you change or clear it:
   harness group remove <id>    drop a member (machine id, # or fingerprint) from every member
   harness devices list         the account's devices — signing in on one is what makes the others trust
                                it; a device you do not recognise is someone else signed in as you
-  harness devices remove <fp>  take a device (# or fingerprint) out of the account on every device
+  harness devices show <#|fp>  one device in full: its key code and how to check it on that device
+  harness devices remove <fp>  take a device out of the account on every device, by key code (or its
+                               first 4+ characters); a # or a shorter start asks first, --yes skips it
   harness devices rebaseline   the device list froze (the backend served one that does not match what
                                this machine verified): show what changed, --yes to trust it again
   (both \`remote-password set\` and \`link connect\` prompt for the password interactively, or read one
@@ -696,6 +708,19 @@ async function resolveComputerMachine(signal?: AbortSignal): Promise<AuthSession
   return next
 }
 
+/** The name this machine goes by in the account's device list — what the daemon registers itself as. */
+const thisDeviceLabel = (): string => hostname().slice(0, 60)
+
+/** This machine's device key code. Signing in is what puts the key into the account, so `create` makes
+ *  the identity when it is missing; the read-only commands (`status`, `auth status`) only look, and
+ *  show nothing rather than mint a key. Null whenever it cannot be had. */
+function thisDeviceFingerprint(create: boolean): string | null {
+  try {
+    const pub = create ? b64e(new E2eeStore().init().pub) : peekIdentityPub()
+    return pub ? e2eeCoreFingerprint(e2eeCoreDecode(pub)) : null
+  } catch { return null }
+}
+
 /** `harness auth status --json` — one JSON line, always exit 0; logged-out is a valid answer, not a
  *  process failure. Reuses AuthSessionManager.accessToken() (not a raw file read) so a session that's
  *  on-disk-but-about-to-expire gets refreshed here rather than reporting loggedIn:true and 401ing on
@@ -724,6 +749,7 @@ async function authStatusCommand(json: boolean): Promise<void> {
   }
   const latest = readAuthSession()
   const signedIn = loggedIn && latest !== null
+  const fingerprintNow = thisDeviceFingerprint(false)
   const payload = {
     loggedIn: signedIn,
     ...(signedIn && offline ? { offline: true } : {}),
@@ -732,6 +758,8 @@ async function authStatusCommand(json: boolean): Promise<void> {
     autonomousEnv: latest?.autonomousEnv,
     expiresAt: latest?.expiresAt,
     method: latest?.method ?? 'sso',
+    // Read-only: a machine that has not signed in yet has no key, and asking must not make one.
+    ...(fingerprintNow ? { fingerprint: fingerprintNow } : {}),
   }
   if (json) console.log(JSON.stringify(payload))
   else {
@@ -821,9 +849,17 @@ async function loginCommand(
   // browser — and never as a side effect of signing in to Harness.
   const succeed = async (alreadySignedIn: boolean, email?: string): Promise<SignInOutcome> => {
     if (opts.chained) return { signedIn: true, alreadySignedIn }
-    if (json) emit(alreadySignedIn ? { type: 'result', status: 'success', alreadySignedIn: true } : { type: 'result', status: 'success', ...(email ? { email } : {}) })
-    else if (alreadySignedIn) console.log('\n  ✓ Already signed in. Run `harness start` to connect this computer.\n')
-    else console.log(`\n  ✓ Signed in${email ? ` as ${email}` : ''}. Run \`harness start\` to connect this computer.\n`)
+    // The key code is what the person compares on their other devices, so it is said at the moment the
+    // machine joins them. Left out when it cannot be computed: the line is then exactly what it was.
+    const fp = thisDeviceFingerprint(true)
+    const device = fp ? ` · ${fp}` : ''
+    if (json) emit(alreadySignedIn ? { type: 'result', status: 'success', alreadySignedIn: true, ...(fp ? { fingerprint: fp } : {}) } : { type: 'result', status: 'success', ...(email ? { email } : {}), ...(fp ? { fingerprint: fp } : {}) })
+    else {
+      const hint = '    Run `harness start` to connect this computer.'
+      if (!fp) console.log(alreadySignedIn ? '\n  ✓ Already signed in. Run `harness start` to connect this computer.\n' : `\n  ✓ Signed in${email ? ` as ${email}` : ''}. Run \`harness start\` to connect this computer.\n`)
+      else if (alreadySignedIn) console.log(`\n  ✓ Already signed in — this machine is "${thisDeviceLabel()}"${device}\n${hint}\n`)
+      else console.log(`\n  ✓ Signed in${email ? ` as ${email}` : ''} — this machine joins your devices as "${thisDeviceLabel()}"${device}\n${hint}\n`)
+    }
     return { signedIn: true, alreadySignedIn }
   }
   // SSO in the browser, or a QR the phone scans. Asked only of a person at a terminal with no flag; a
@@ -1556,6 +1592,7 @@ function mergedLaunchEnv(
 }
 
 /** Set by runForeground once the DSH companions exist; a frame projected before that carries none. */
+let activityFrameContextRef: ((s: RegisteredSession) => ActivityFrame | null) | null = null
 let dshFrameContextRef: ((s: RegisteredSession) => AgentDshContext | null) | null = null
 
 function projectFrame(s: RegisteredSession, selectedModel: string | null): Promise<AgentFrame> {
@@ -1564,6 +1601,7 @@ function projectFrame(s: RegisteredSession, selectedModel: string | null): Promi
     selectedModel,
     terminalAvailable: registry.terminalAvailable(s.agentId),
     dsh: dshFrameContextRef?.(s) ?? null,
+    activity: () => activityFrameContextRef?.(s) ?? null,
   })
 }
 
@@ -1920,8 +1958,16 @@ async function runForeground(session: AuthSession | null): Promise<void> {
   let pairHarnessActivity: (agentId: string) => void = () => {}
   let companionPromptContext: (agentId: string) => string | null = () => null
   let companionProfileChanged: () => void = () => {}
-  // Development rollout only until the memory viewer, delivery receipts and migration are reviewed.
-  const codingMemoryPreview = process.env.HARNESS_CODING_MEMORY === '1'
+  let openCodeMemoryBinding: OpenCodeMemoryBinding | null = null
+  // Local account opt-in, exposed in Settings → Experimental. The old env flag is a migration default.
+  const memoryExperiment = new MemoryExperimentSettings(join(env.ADAPTER_DATA_DIR, 'coding-memory-settings'), process.env.HARNESS_CODING_MEMORY === '1')
+  const guestMemoryProfile = createHash('sha256').update(JSON.stringify(['harness-memory-guest-v1', computerId()])).digest('hex')
+  const memoryProfile = (): string | null => {
+    const current = readAuthSession()
+    return current ? current.memoryOwner?.key ?? null : guestMemoryProfile
+  }
+  const codingMemoryPreview = () => memoryExperiment.enabled(memoryProfile())
+  let applyCodingMemorySetting: () => Promise<void> = async () => {}
   let codingMemory: CodingMemoryRuntime | null = null
   let memoryPause = Promise.resolve()
   let refreshMemoryIdentity: () => Promise<void> = async () => {}
@@ -2166,6 +2212,7 @@ async function runForeground(session: AuthSession | null): Promise<void> {
     const identityFile = join(env.ADAPTER_DATA_DIR, 'e2e', 'identity.json')
     try { renameSync(identityFile, `${identityFile}.removed-${Date.now()}`) } catch { /* already gone */ }
   }
+  const autonomousEnv = session?.autonomousEnv ?? env.AUTONOMOUS_ENV
   const backend = new BackendSocket(session?.machineId ?? computerId(), auth, (connected) => {
     if (!connected) return
     const sessions = registry.advertised()
@@ -2174,7 +2221,7 @@ async function runForeground(session: AuthSession | null): Promise<void> {
       console.error('[runtime-profile] connect reconcile failed:', err instanceof Error ? err.message : err)
     })
     onBackendConnected()
-  }, computerId())
+  }, computerId(), autonomousEnv)
   backendRef = backend
   backend.viewerTargetProvider = (agentId) => dshViewers.forwardingUrl(agentId)
 
@@ -2246,6 +2293,11 @@ async function runForeground(session: AuthSession | null): Promise<void> {
   // machine's at once, so this computer's tiles are on screen whichever machine the wheel last landed on
   // and skipping the recap here would leave them permanently blank.
   /** Agents with a tile open in the desktop window right now. Empty when no window is attached. */
+  const cleanupTabs = new OpenTabProtection({
+    machineId: () => backend.machineId,
+    sessions: () => registry.list(),
+    readDesk: () => proxyBackend('GET', '/api/desk'),
+  })
   let openPaneAgents = new Set<string>()
   /** Whether the window those tiles belong to is actually in front. See onAppPanes. */
   let appWindowForeground = true
@@ -2364,7 +2416,7 @@ async function runForeground(session: AuthSession | null): Promise<void> {
   const devinReaders = new Map<string, DevinReader>()
   const commandcodeNormalizers = new Map<string, CommandCodeNormalizer>()
   /** Whether this session's engine state says a turn is open right now, whichever engine it is. */
-  const sessionTurnOpen = (sessionId: string): boolean =>
+  const sessionTurnState = (sessionId: string): boolean | undefined =>
     turnStates.get(sessionId)?.turnOpen
       ?? codexNormalizers.get(sessionId)?.turnOpen
       ?? cursorNormalizers.get(sessionId)?.turnOpen
@@ -2379,8 +2431,30 @@ async function runForeground(session: AuthSession | null): Promise<void> {
       ?? hermesReaders.get(sessionId)?.turnOpen
       ?? devinReaders.get(sessionId)?.turnOpen
       ?? commandcodeNormalizers.get(sessionId)?.turnOpen
-      ?? false
+  const sessionTurnOpen = (sessionId: string): boolean => sessionTurnState(sessionId) ?? false
   const watcher = new Watcher()
+  const codexActivity = new CodexActivityReader()
+  const runtimeActivity = new RuntimeActivityReader({
+    codex: session => codexActivity.read(session),
+    capture: async session => {
+      const screen = await terminals.capture(session, { mode: 'visible', ansi: true })
+      return screen.state === 'succeeded' ? screen.value : null
+    },
+  })
+  const turnActivity = new TurnActivity({
+    runtime: sessionId => {
+      const session = registry.bySession(sessionId)
+      return session?.active ? { key: activityRuntimeKey(session), turnOpen: sessionTurnOpen(sessionId) } : undefined
+    },
+    drain: sessionId => watcher.pollSession(sessionId),
+    probe: async sessionId => {
+      const session = registry.bySession(sessionId)
+      return session?.active ? runtimeActivity.read(session) : 'unknown'
+    },
+  })
+  activityFrameContextRef = session => isTerminalEngine(session.engine) ? null : turnActivity.snapshot(session.sessionId) ?? null
+  backend.activityFrameProvider = activityFrameContextRef
+
   const queuedSessionEvents: Array<{
     sessionId: string
     events: ReturnType<CursorNormalizer['ingest']>
@@ -2871,6 +2945,8 @@ async function runForeground(session: AuthSession | null): Promise<void> {
   let openToolsOf: (sessionId: string) => Array<{ name: string; input: unknown }> = () => []
   // What is still being asked, by session — handed to a window that connects later (openQuestions below).
   const openQuestions = new Map<string, Record<string, unknown>>()
+  backend.monitorActivityProvider = sessionId => openQuestions.has(sessionId)
+    ? 'needsInput' : sessionTurnOpen(sessionId) ? 'working' : 'idle'
   const agentNotifications = new AgentNotifications()
   const questionWatcher = new QuestionWatcher({
     getSession: (id) => registry.resolve(id),
@@ -2974,6 +3050,7 @@ async function runForeground(session: AuthSession | null): Promise<void> {
   const mirror = new CommanderMirror({
     notifications: agentNotifications,
     notifyWithoutDevice: true,
+    verifiedWorking: sessionId => turnActivity.snapshot(sessionId)?.state === 'working',
     send: (frame) => backend.sendCommander(frame),
     sendWeb: (frame) => backend.send(frame), // turn_summary_pending / turn_summary → web indicator
     hasDevice: () => deviceIsWatching(),        // device-gate the LLM recap (mirror node)
@@ -3146,51 +3223,34 @@ async function runForeground(session: AuthSession | null): Promise<void> {
     companionProfileChanged()
   }
 
-  // Turn heartbeat (5s): pushes `turn_heartbeat` to the web while the turn is open (keeps its 10s
-  // turn-watchdog armed through a quiet stretch — a long tool, thinking with no new JSONL line), AND fans a
-  // busy heartbeat to the device via mirror.heartbeat() so the device's busy tile stays fresh. Unlike the
-  // web send, the device fan-out spans the WHOLE busy window — the turn AND the trailing summarize (up to
-  // the 60s one-shot timeout) — because the device clears busy only on a live terminal and has a
-  // busy-timeout watchdog that would otherwise cut a long "Summarizing…". So the timer self-cancels only
-  // once BOTH the turn is closed and mirror.heartbeat() reports idle (turn done + summary done). Mirrors the
-  // the hosted runtime brain (TURN_HEARTBEAT_MS=5000), per-session, one timer per session.
+  // A timer is an opportunity to inspect work, not proof that work is happening.
+  // Keep polling unfinished transcripts even when their activity lease expires:
+  // a missed file notification or a later completion must still be discovered.
   const TURN_HEARTBEAT_MS = 5000
   const heartbeats = new Map<string, NodeJS.Timeout>()
-  const turnStartedAt = new Map<string, number>() // sessionId → turn_started wall clock, for [turn] duration
+  const turnStartedAt = new Map<string, number>()
   const stopHeartbeat = (sessionId: string): void => {
-    const t = heartbeats.get(sessionId)
-    if (t) { clearInterval(t); heartbeats.delete(sessionId) }
+    runtimeActivity.forget(sessionId)
+    const timer = heartbeats.get(sessionId)
+    if (timer) { clearInterval(timer); heartbeats.delete(sessionId) }
   }
   const startHeartbeat = (sessionId: string): void => {
-    stopHeartbeat(sessionId) // restart → guarantee a single timer per session
-    const timer = setInterval(() => {
-      if (!registry.has(sessionId)) { stopHeartbeat(sessionId); return }
-      const turnOpen = sessionTurnOpen(sessionId)
-      // A TURN THAT IS OPEN GETS ITS TRANSCRIPT RE-READ, every beat.
-      //
-      // The engines whose turn ends in a FILE — codex writes `task_complete`,
-      // and the other JSONL readers are the same shape — depend on chokidar
-      // delivering that last write. MEASURED twice, on two sessions an hour
-      // apart: it did not. Codex finished at 15:31:38 and the turn closed at
-      // 15:35:29, to the second, because the only thing that noticed was the
-      // five-minute reconciliation sweep. The web client never saw it because
-      // it renders the terminal stream; the device waits on `turn_ended` for
-      // its recap, so it sat spinning for 3m51s on a question answered in 18s.
-      //
-      // Reading to EOF here costs one stat and a short read of a file that is
-      // already open, and it bounds that failure at one heartbeat instead of
-      // at whatever is left of a five-minute window.
-      if (turnOpen) void watcher.pollSession(sessionId)
-      // Device: keep the busy tile alive through the turn AND the summarize window. Returns false when idle.
-      const deviceBusy = mirror.heartbeat(sessionId)
-      // Web: unchanged — heartbeat only while the turn itself is open (summarizing uses turn_summary_pending).
-      if (turnOpen) {
-        const agentId = agentIdFor(sessionId)
-        backend.send(turnHeartbeatFrame(sessionId, agentId))
+    stopHeartbeat(sessionId)
+    const beat = async () => {
+      if (!registry.bySession(sessionId)?.active) {
+        stopHeartbeat(sessionId); turnActivity.forget(sessionId); return
       }
-      // Self-cancel only once the turn is closed AND the summarize is done (no more device heartbeat needed).
-      if (!turnOpen && !deviceBusy) stopHeartbeat(sessionId)
-    }, TURN_HEARTBEAT_MS)
+      if (sessionTurnOpen(sessionId)) await turnActivity.check(sessionId)
+      if (!heartbeats.has(sessionId)) return
+      const activity = turnActivity.snapshot(sessionId)
+      if (activity) {
+        backend.send(correlateAgentEvent({ type: 'agent_activity', payload: { activity } }, sessionId, agentIdFor(sessionId)))
+        if (activity.state === 'working') backend.send(turnHeartbeatFrame(sessionId, agentIdFor(sessionId), activity))
+      }
+      const deviceBusy = mirror.heartbeat(sessionId)
+      if (!sessionTurnOpen(sessionId) && !deviceBusy) stopHeartbeat(sessionId)
+    }
+    const timer = setInterval(() => { void beat().catch(error => console.error('[activity] probe failed:', String(error))) }, TURN_HEARTBEAT_MS)
     heartbeats.set(sessionId, timer)
   }
 
@@ -3235,13 +3295,15 @@ async function runForeground(session: AuthSession | null): Promise<void> {
     if (usageSession?.engine === 'opencode') agentTokenUsage.changed(usageSession)
     for (const [eventIndex, event] of events.entries()) {
       const agentId = agentIdFor(sessionId)
-      const frame = correlateAgentEvent(event, sessionId, agentId)
+      const replay = !!(opts?.resumed || opts?.replay)
+      turnActivity.observe(sessionId, event.type, replay)
+      const frame = correlateAgentEvent({ ...event, payload: { ...event.payload, activity: turnActivity.snapshot(sessionId) } }, sessionId, agentId)
       // A `turn_started` that is not a turn starting NOW — a turn picked back up at attach, or a prompt
       // re-read from a transcript that was already on disk — says so in the clear, beside `agentId`
       // (the payload is E2EE; the backend can only read the envelope). The backend's daily turn count
       // skips these; every other consumer ignores an unknown field. Measured before this existed: one
       // agent credited with 42 turns in a single second, all re-reads.
-      if (event.type === 'turn_started' && (opts?.resumed || opts?.replay)) frame.replay = true
+      if (replay) { frame.replay = true; frame.payload.replay = true }
       // The end of a turn carries the two facts an app needs to decide whether it is NEWS, in the clear
       // beside `agentId` for the same reason `replay` is — the payload is E2EE and the apps read this
       // without opening it:
@@ -3311,7 +3373,7 @@ async function runForeground(session: AuthSession | null): Promise<void> {
     // pair chats, sub-agents and replay stay excluded. Tool-free background reviews
     // never register as agents, so they cannot feed their own results back in here.
     const learnFrom = registry.bySession(sessionId)
-    if (!codingMemoryPreview && learnFrom && pairSensor.enabled() && !isTerminalEngine(learnFrom.engine) && !isSubagentSession(sessionId) &&
+    if (!codingMemoryPreview() && learnFrom && pairSensor.enabled() && !isTerminalEngine(learnFrom.engine) && !isSubagentSession(sessionId) &&
       (!isPairHarnessSession(sessionId) || isCollectionAgent(learnFrom.agentId))) {
       lessonSignals.ingest({ agentId: learnFrom.agentId, sessionId, engine: learnFrom.engine, cwd: learnFrom.cwd ?? null }, events,
         { replay: !!(opts?.resumed || opts?.replay) })
@@ -3322,7 +3384,7 @@ async function runForeground(session: AuthSession | null): Promise<void> {
       lessonUsage.ingest({ cwd: learnFrom.cwd ?? null }, events, { replay: !!(opts?.resumed || opts?.replay) })
     }
     mirror.ingest(events, sessionId, { replay: !!(opts?.resumed || opts?.replay) })
-    if (codingMemoryPreview && daemons.on() && !opts?.resumed && !opts?.replay) void codingMemory?.tick()
+    if (codingMemoryPreview() && daemons.on() && !opts?.resumed && !opts?.replay) void codingMemory?.tick()
     // Subscribed devices only (lib/autonomous-device/stream.ts). A transcript re-read is history, not live.
     if (!opts?.replay) autonomousDeviceService?.stream(agentIdFor(sessionId), events)
   }
@@ -3921,7 +3983,7 @@ async function runForeground(session: AuthSession | null): Promise<void> {
     const json = await res.json().catch(() => ({})) as Record<string, unknown>
     const result = { status: res.status, body: json }
     if (latest?.accessToken === accessToken && latest.memoryOwner) memoryZooOwners.set(result, latest.memoryOwner.key)
-    if (codingMemoryPreview && daemons.on() && method === 'GET' && path === '/api/auth/me' && res.status === 200 && json?.success === true) {
+    if (method === 'GET' && path === '/api/auth/me' && res.status === 200 && json?.success === true) {
       const userId = (json.data as { user?: { id?: unknown } } | undefined)?.user?.id
       if (typeof userId === 'string') {
         const binding = auth.bindMemoryOwner(userId, accessToken, latest?.autonomousEnv ?? env.AUTONOMOUS_ENV).catch(() => null)
@@ -4021,13 +4083,13 @@ async function runForeground(session: AuthSession | null): Promise<void> {
     identity: sharingIdentity.getIdentity(),
     grants: new HarnessGrantStore(join(env.ADAPTER_DATA_DIR, 'harness-shares.json')),
     collaboration: new HarnessCollaborationStore(join(env.ADAPTER_DATA_DIR, 'harness-collaboration.json')),
-    autonomousEnv: env.AUTONOMOUS_ENV,
+    autonomousEnv,
     terminals, resolveAgent: (id) => registry.resolve(id),
     send: (id, type, payload) => backend.sendObserver(id, type, payload),
     publish: (method, path, body) => proxyBackend(method, path, body),
     watchViewer: (id, send) => sharedViewers.watch(id, send),
   })
-  const shareRelay = new HarnessShareRelay(auth, env.BACKEND_WS_URL, env.AUTONOMOUS_ENV, async () => {
+  const shareRelay = new HarnessShareRelay(auth, env.BACKEND_WS_URL, autonomousEnv, async () => {
     const result = await proxyBackend('GET', '/api/harness-shares')
     if (result.status !== 200) throw new Error('Shared harnesses are temporarily unavailable.')
     return ((result.body as { data?: { machines?: SharedMachineReference[] } }).data?.machines ?? [])
@@ -4121,6 +4183,13 @@ async function runForeground(session: AuthSession | null): Promise<void> {
         ...(recalled?.receipt ? { memoryReceiptId: recalled.receipt.id } : {}) }
     },
     onMemoryContextEmitted: async (agentId, receiptId) => await codingMemory?.promptRecallEmitted(agentId, receiptId) ?? false,
+    onOpenCodeMemoryRuntime: (agent, input) => {
+      if (!agent.processIdentity) return { observe: false }
+      const result = openCodeMemoryBinding?.receive({ agentId: agent.agentId, sessionId: agent.sessionId,
+        processKey: processIdentityKey('opencode', agent.processIdentity) }, input) ?? { observe: false }
+      if (result.observe) codingMemory?.activity()
+      return result
+    },
     onCommandBar: commandBarService,
     onAutonomousDeviceRequest: async (method, target, body) => {
       if (!autonomousDeviceService) return { status: 503, body: { error: { code: 'UNAVAILABLE', message: 'Autonomous device service is starting' } } }
@@ -4460,6 +4529,9 @@ async function runForeground(session: AuthSession | null): Promise<void> {
       // none could be opened; clients then stay on this port.
       localSocket: daemonBoot.localSocket?.path ?? null,
       backendUrl: env.BACKEND_WS_URL,
+      autonomousEnv,
+      dataDir: env.ADAPTER_DATA_DIR,
+      authDir: AUTH_DIR,
       webUrl: env.WEB_URL,
       connected: backend.isConnected(),
       deviceTransportConnected: backend.hasCommander(),
@@ -4488,7 +4560,7 @@ async function runForeground(session: AuthSession | null): Promise<void> {
           ...(tmuxBackend ? [{ backend: 'tmux', instance: 'default', state: 'configured' }] : []),
         ],
         dormantAgents: registry.list().filter((session) => !session.active).length,
-        ...(codingMemoryPreview ? { codingMemory: codingMemory?.status() ?? { state: 'off' } } : {}),
+        ...(codingMemoryPreview() ? { codingMemory: codingMemory?.status() ?? { state: 'off' } } : {}),
         dataDir: tildify(env.ADAPTER_DATA_DIR),
         port: daemonPort(),
       },
@@ -4605,7 +4677,7 @@ async function runForeground(session: AuthSession | null): Promise<void> {
   devLogSyncer = new DeviceLogSyncer({
     store: new DeviceLogStore(),
     identity: () => { const id = relayIdentityStore.getIdentity(); return { pub: b64e(id.pub), priv: id.priv } },
-    self: () => ({ machineId: readAuthSession()?.machineId ?? null, label: hostname().slice(0, 60) }),
+    self: () => ({ machineId: readAuthSession()?.machineId ?? null, label: thisDeviceLabel() }),
     fetch: async (since) => {
       const r = await proxyBackend('GET', `/api/device-keys?since=${since}`)
       const data = r.status === 200 ? r.body.data as Partial<DeviceLogFetched> | undefined : undefined
@@ -4777,7 +4849,12 @@ async function runForeground(session: AuthSession | null): Promise<void> {
     processes: () => processRows(),
     harnessPanePids: async () => { const inventory = await listTmuxPanes(); return inventory.ok ? inventory.panes.map((pane) => pane.rootPid) : null },
   })
-  const memoryControl = new MemoryControl({ runtime: () => codingMemory, verify: async connId => {
+  const memoryControl = new MemoryControl({ runtime: () => codingMemoryPreview() ? codingMemory : null,
+    experiment: { owner: memoryProfile, read: owner => memoryExperiment.read(owner), write: async (owner, enabled, expected) => {
+      const choice = memoryExperiment.write(owner, enabled, expected)
+      await applyCodingMemorySetting()
+      return choice
+    } }, verify: async connId => {
     const verdict = await verifyLessonCaller(connId)
     if (!verdict.ok) return verdict
     if (!await isOwnerProcess(verdict.pid)) return { ok: false, error: 'UNVERIFIED', detail: 'The memory library requires a verified process belonging to this computer’s owner.' }
@@ -4814,14 +4891,14 @@ async function runForeground(session: AuthSession | null): Promise<void> {
   })
   backend.pairControl = pairControl
   // THE PAIR HARNESS (pair/pairHarness.ts): the daemon as a conversation, started or resumed when you talk
-  // to it, paused when idle. Mode ask, the harnessd MCP server injected, a fresh token every launch.
+  // to it, stopped when idle. Automatic approvals, scoped harnessd MCP, a fresh token every launch.
   const pairHarness = new PairHarness({
     pairedDaemon: () => pairSensor.pairedDaemon(),
     pairedName: () => pairSensor.pairedName(),
     pairedUid: () => zooPair.known ? companionZoo.identity?.uid ?? null : guestCompanion?.uid ?? null,
     collectionUids: () => zooPair.known ? companionZoo.uids : guestCompanion ? [guestCompanion.uid] : [],
     engine: async (preferred) => {
-      if (!preferred) return null // A new collection chooses its engine in the viewer.
+      preferred ??= 'opencode' // New collections share the product default.
       const found = await probeEngines([preferred]).catch(() => [])
       return found.some(e => e.engine === preferred && e.installed) ? preferred : null
     },
@@ -4838,14 +4915,14 @@ async function runForeground(session: AuthSession | null): Promise<void> {
     find: () => {
       const live = registry.advertised()
       return [
-        ...live.filter((s) => s.dsh === PAIR_HARNESS_DSH).map((s) => ({ agentId: s.agentId, status: 'live' as const, engine: s.engine as PairEngine, hasConversation: !!s.sessionId })),
-        ...stoppedAgents.available(live).filter((s) => s.dsh === PAIR_HARNESS_DSH).map((s) => ({ agentId: s.agentId, status: 'stopped' as const, engine: s.engine as PairEngine, hasConversation: !!s.sessionId })),
+        ...live.filter((s) => s.dsh === PAIR_HARNESS_DSH).map((s) => ({ agentId: s.agentId, status: 'live' as const, engine: s.engine as PairEngine, cwd: s.cwd, hasConversation: !!s.sessionId })),
+        ...stoppedAgents.available(live).filter((s) => s.dsh === PAIR_HARNESS_DSH).map((s) => ({ agentId: s.agentId, status: 'stopped' as const, engine: s.engine as PairEngine, cwd: s.cwd, hasConversation: !!s.sessionId })),
       ]
     },
     create: async ({ engine, cwd, prompt, name }) => {
       if (!backend.onCreateAgent) return { ok: false, error: 'UNSUPPORTED' }
       const created = await backend.onCreateAgent({
-        engine, cwd, bypassPermission: false, permissionMode: 'ask', grid: null, codexHome: null,
+        engine, cwd, bypassPermission: true, permissionMode: DEFAULT_HARNESS_PERMISSION, grid: null, codexHome: null,
         dsh: PAIR_HARNESS_DSH, prompt, name, agent: null,
       })
       return created.ok ? { ok: true, agentId: created.session.agentId } : created
@@ -4855,7 +4932,14 @@ async function runForeground(session: AuthSession | null): Promise<void> {
       const resumed = await backend.onResumeAgent(agentId)
       return resumed.ok ? { ok: true } : resumed
     },
-    stop: async (agentId) => { await backend.onDeleteAgent?.(agentId) },
+    stop: async (agentId) => {
+      const current = registry.byAgent(agentId)
+      if (!current) return
+      if (!backend.closeAgentService) throw new Error('Safe close is unavailable.')
+      const result = await backend.closeAgentService.request({ agentId, sessionId: current.sessionId,
+        createdAt: new Date(current.registeredAt).toISOString(), mode: 'now' })
+      if (!result.closed) throw new Error(result.detail ?? 'Could not save and stop the companion.')
+    },
     send: (agentId, text) => backend.onMessage?.(agentId, text, randomUUID()),
     working: (agentId) => {
       const sessionId = registry.resolve(agentId)?.sessionId
@@ -4883,24 +4967,41 @@ async function runForeground(session: AuthSession | null): Promise<void> {
       const live = registry.advertised().find(s => s.agentId === agentId)
       const session = live ?? stoppedAgents.get(agentId)
       if (!session || session.dsh !== PAIR_HARNESS_DSH) return null
+      const nativeProcessKey = live?.processIdentity ? processIdentityKey(session.engine, live.processIdentity) : null
       return { agentId, sessionId: session.sessionId, engine: session.engine,
         profile: runtimeProfiles.selectedModel(session), stopped: !live,
         startup: live ? companionStartupProfile.selected(session) : null,
+        nativeProcessKey,
+        accountKey: session.engine === 'opencode' && nativeProcessKey ? openCodeMemoryBinding?.identity({
+          agentId, sessionId: session.sessionId, processKey: nativeProcessKey,
+        }) ?? null : undefined,
         codexHome: session.codexHome, customProvider: !!(session.grid || session.gridLaunch || session.gateway) }
     },
+    openCodeSnapshot: runtime => runtime.sessionId && runtime.nativeProcessKey ? openCodeMemoryBinding?.read({
+      agentId: runtime.agentId, sessionId: runtime.sessionId, processKey: runtime.nativeProcessKey,
+    }) ?? null : null,
     directory: join(env.ADAPTER_DATA_DIR, 'pair', 'reasoning'),
     stateFile: join(env.ADAPTER_DATA_DIR, 'pair', 'intelligence.json'),
   })
+  openCodeMemoryBinding = new OpenCodeMemoryBinding({ current: () => {
+    const ownerKey = codingMemory?.ownerKey(), status = codingMemory?.status()
+    if (!daemons.on() || !codingMemoryPreview() || !ownerKey || status?.state !== 'ready' || !status.preferences?.learn) return null
+    const session = registry.advertised().find(s => s.agentId === pairHarness.agentId())
+    if (!session || !session.active || session.dsh !== PAIR_HARNESS_DSH || session.engine !== 'opencode'
+      || !session.sessionId || !session.processIdentity) return null
+    return { ownerKey, agentId: session.agentId, sessionId: session.sessionId,
+      processKey: processIdentityKey('opencode', session.processIdentity),
+      model: parseRuntimeProfile(runtimeProfiles.selectedModel(session))?.model ?? null }
+  } })
   companionProfileChanged = () => { companionIntelligence.status(); pairBrain?.stateChanged() }
-  if (codingMemoryPreview) {
+  {
     const roster = new MemorySessionRoster(homedir())
-    const guestProfile = createHash('sha256').update(JSON.stringify(['harness-memory-guest-v1', computerId()])).digest('hex')
     codingMemory = new CodingMemoryRuntime({
       directory: join(env.ADAPTER_DATA_DIR, 'coding-memory'),
       context: () => {
         const current = readAuthSession()
-        const profileId = current ? current.memoryOwner?.key ?? null : guestProfile
-        return { experimental: daemons.on(), profileId,
+        const profileId = current ? current.memoryOwner?.key ?? null : guestMemoryProfile
+        return { experimental: daemons.on() && codingMemoryPreview(), profileId,
           watching: !!pairSensor.pairedDaemon() && (current
             ? !!profileId && zooMemoryOwner === profileId && zooPair.consent : guestConsent) }
       },
@@ -5051,6 +5152,17 @@ async function runForeground(session: AuthSession | null): Promise<void> {
   // paused if it was live (its conversation kept).
   let learnTick: ReturnType<typeof setInterval> | null = null
   let pairConfigTick: ReturnType<typeof setInterval> | null = null
+  applyCodingMemorySetting = async () => {
+    openCodeMemoryBinding?.clear()
+    pairLearner?.cancelReviews()
+    conversationReview.stop()
+    memoryPause = memoryPause.then(() => codingMemory?.pause()).catch(() => {})
+    await memoryPause
+    if (daemons.on() && codingMemoryPreview()) {
+      codingMemory?.start()
+      await refreshMemoryIdentity()
+    }
+  }
   onDaemonsChanged = (on) => {
     plates.setOn(on)
     if (on) {
@@ -5058,15 +5170,16 @@ async function runForeground(session: AuthSession | null): Promise<void> {
       // everything off within the tick (before the rest of the file is read), and any other change asks for
       // the person's yes soon.
       pairRulesConfig()
-      if (!codingMemoryPreview) {
-        learnTick ??= setInterval(() => { void pairLearner?.tick().catch((err) => console.warn(`[learn] tick failed: ${err instanceof Error ? err.message : err}`)) }, 60_000)
+      {
+        learnTick ??= setInterval(() => { if (!codingMemoryPreview()) void pairLearner?.tick().catch((err) => console.warn(`[learn] tick failed: ${err instanceof Error ? err.message : err}`)) }, 60_000)
         learnTick.unref?.()
       }
-      void memoryPause.then(() => { if (daemons.on()) codingMemory?.start() })
+      void memoryPause.then(() => { if (daemons.on() && codingMemoryPreview()) codingMemory?.start() })
       void refreshMemoryIdentity()
       pairConfigTick ??= setInterval(() => { daemons.recheck(); if (daemons.on()) { pairRulesConfig(); void refreshMemoryIdentity() } }, 30_000)
       pairConfigTick.unref?.()
     } else {
+      openCodeMemoryBinding?.clear()
       memoryPause = memoryPause.then(() => codingMemory?.pause()).catch(() => {})
       if (learnTick) { clearInterval(learnTick); learnTick = null }
       if (pairConfigTick) { clearInterval(pairConfigTick); pairConfigTick = null }
@@ -5168,6 +5281,7 @@ async function runForeground(session: AuthSession | null): Promise<void> {
       void cableRef?.syncSwarms()
       void cableRef?.syncAgents()
     },
+    onAppTabAgents: (connection, ids) => cleanupTabs.updateWindow(connection, ids),
     onAppPanes: (agentIds, foreground) => {
       // ORDER matters here, not just membership. The dial's carousel is built
       // around these — tiles first, in tile order — so the thumb walks the same
@@ -5522,11 +5636,9 @@ async function runForeground(session: AuthSession | null): Promise<void> {
       console.error(`[cli] line handler error (session ${evt.sessionId}):`, err instanceof Error ? err.message : err)
     }
   })
-  // Lines that were on disk before the tail began (watcher.ts `HistoryEvent`). They still stream — the
-  // clients render them the way they always have — but every `turn_started` among them is a prompt
-  // already answered, except the last one if the batch ends inside a turn: that turn is running now,
-  // and it is the one an `unseen` re-attach exists to catch (its first prompt landed before the path
-  // was known). Everything else is marked `replay` so the backend does not count it as a turn today.
+  // A transcript catch-up is history, including an unfinished last turn.
+  // Its content still streams, but only fresh events or live inspection can
+  // establish Working; replay cannot create a new completion notification.
   watcher.on('history', (batch: HistoryEvent) => {
     try {
       type Events = ReturnType<CursorNormalizer['ingest']>
@@ -5536,18 +5648,9 @@ async function runForeground(session: AuthSession | null): Promise<void> {
         if (events) all.push(...events)
       }
       if (!all.length) return
-      const liveTail = sessionTurnOpen(batch.sessionId)
-        ? all.map((e) => e.type).lastIndexOf('turn_started')
-        : -1
-      const starts = all.filter((e, i) => e.type === 'turn_started' && i !== liveTail).length
-      if (starts) console.log(`[watcher] ${sid(batch.sessionId)} re-read ${batch.lines.length} lines already on disk · ${starts} past turn_started marked replay${liveTail >= 0 ? ' · last turn still open, kept live' : ''}`)
-      // Order is preserved: the live tail (if any) is emitted in place, between what surrounds it.
-      if (liveTail < 0) { emitSessionEvents(batch.sessionId, all, { replay: true }); return }
-      const before = all.slice(0, liveTail)
-      const after = all.slice(liveTail + 1)
-      if (before.length) emitSessionEvents(batch.sessionId, before, { replay: true })
-      emitSessionEvents(batch.sessionId, [all[liveTail]])
-      if (after.length) emitSessionEvents(batch.sessionId, after, { replay: true })
+      // Every line in this batch was already on disk. An unclosed last turn
+      // is not a fresh prompt; live runtime inspection can establish activity.
+      emitSessionEvents(batch.sessionId, all, { replay: true })
     } catch (err) {
       console.error(`[cli] history handler error (session ${batch.sessionId}):`, err instanceof Error ? err.message : err)
     }
@@ -5567,8 +5670,14 @@ async function runForeground(session: AuthSession | null): Promise<void> {
    * machine: a `build()` that stats the filesystem answers differently on two of them, and its spec
    * would follow. What is DONE with the fact lives in the builder, so create, retarget and restore
    * cannot disagree about it.
+   *
+   * The other is which OpenCode is installed: v2's TUI exits 1 on v1's `-m` / `--agent`. Cached per
+   * installed file (`engines/opencode/version.ts`), so this costs a `stat` after the first read.
    */
-  const gridLaunchMachine = (): GridLaunchMachine => ({ hermesSystemManaged: existsSync(HERMES_SYSTEM_MANAGED_DIR) })
+  const gridLaunchMachine = (): GridLaunchMachine => ({
+    hermesSystemManaged: existsSync(HERMES_SYSTEM_MANAGED_DIR),
+    opencodeMajor: opencodeMajorVersion(),
+  })
 
   /**
    * What a relaunch of `session` must be given, beyond the engine's argv, to come back where it was —
@@ -6263,8 +6372,8 @@ async function runForeground(session: AuthSession | null): Promise<void> {
     const clearEnv = [...(gridLaunch ? gridConflictingEnvToClear(gridLaunch) : []), ...harnessEnvToClear(dshEnv)]
     // The named agent takes the same argv slot on every relaunch (`buildLaunchOverrides` appends it
     // from the row's `agent`, after the grid's and the DSH's argv, exactly as here). The engine was
-    // checked for a contract at the wire (AGENT_UNSUPPORTED), so this cannot throw.
-    const extraArgs = [...(gridLaunch?.args ?? []), ...dshArgs, ...(agent ? namedAgentArgs(engine, agent) : []), ...resumeArgs]
+    // checked for a contract at the wire (AGENT_UNSUPPORTED, opencode v2 included), so this cannot throw.
+    const extraArgs = [...(gridLaunch?.args ?? []), ...dshArgs, ...(agent ? namedAgentArgs(engine, agent, opencodeMajorVersion()) : []), ...resumeArgs]
     // The first prompt is a launch option only — never part of `extraArgs`, which the registry row
     // carries into a relaunch (engineLaunch.ts, `firstPrompt`).
     // Stopped mid-turn, the resumed conversation is told to carry on — by an engine that can open
@@ -6305,7 +6414,8 @@ async function runForeground(session: AuthSession | null): Promise<void> {
       cwd,
       sessionLabel: label,
       argv,
-      env: mergedLaunchEnv(gridLaunch?.env ?? (codexHome ? { CODEX_HOME: codexHome } : undefined), dshEnv),
+      env: freshHarnessEnvironment(engine, mergedLaunchEnv(gridLaunch?.env ?? (codexHome ? { CODEX_HOME: codexHome } : undefined), dshEnv), !!grid || !!resumeSessionId,
+        permissionMode ?? (bypassPermission ? DEFAULT_HARNESS_PERMISSION : 'ask')),
       grid: grid ? { baseUrl: grid.baseUrl, model: grid.model ?? null } : null,
       gridLaunchRecord: grid && gridLaunch ? { override: grid, webSearch: gridLaunch.webSearch } : null,
       codexHome,
@@ -6392,7 +6502,10 @@ async function runForeground(session: AuthSession | null): Promise<void> {
       dshLabel = installed.manifest.name
     }
     const installIfMissing = enginePathOverride(engine) ? undefined : engineInstallRecipe(engine)
-    const extraArgs = [...dshArgs, ...(source.agent ? namedAgentArgs(engine, source.agent) : [])]
+    // Same guard as a relaunch (`buildLaunchOverrides`): an opencode agent recorded on v1 forks on v2
+    // as a general session rather than handing the v2 TUI an `--agent` it exits on.
+    const forkMajor = opencodeMajorVersion()
+    const extraArgs = [...dshArgs, ...(source.agent && supportsNamedAgent(engine, forkMajor) ? namedAgentArgs(engine, source.agent, forkMajor) : [])]
     const firstPrompt = plan.level === 'native' ? (prompt ?? undefined) : plan.firstPrompt
     const launchOptions = {
       clearEnv: harnessEnvToClear(dshEnv),
@@ -6612,10 +6725,12 @@ async function runForeground(session: AuthSession | null): Promise<void> {
     // the failure this handler exists to refuse — so it is refused here, before the pane is touched.
     // Only when the launch will name a model: a grid launch always does; a move home does only when
     // the remembered model carries its provider (`subscriptionModel.ts`), and otherwise the engine
-    // decides, as it always did.
+    // decides, as it always did. v2 switches the model through OpenCode's own API instead and needs no
+    // sqlite3 (`applyOpencodeSessionModel`).
     const rewritesOpencodeSession = session.engine === 'opencode' && !!session.sessionId
       && (!!grid || !!remembered?.includes('/'))
-    if (rewritesOpencodeSession && !binaryOnPath('sqlite3')) {
+    const opencodeMajor = session.engine === 'opencode' ? opencodeMajorVersion() : null
+    if (rewritesOpencodeSession && !isOpencodeV2(opencodeMajor) && !binaryOnPath('sqlite3')) {
       return {
         ok: false,
         error: 'OPENCODE_SQLITE_MISSING',
@@ -6681,11 +6796,22 @@ async function runForeground(session: AuthSession | null): Promise<void> {
       // already on it, with nothing typed into the pane. Before the live process is touched, so a
       // write that fails refuses the move with that process still on its old target. A session with
       // no user message yet has nothing to restore from and takes `-m` on launch, so it is skipped.
+      //
+      // OpenCode 2.0 has no `-m` on its TUI, keeps sessions in tables the SQL above never reads (it
+      // used to answer SESSION_NOT_FOUND there, read as success, and then respawn with `-m` into
+      // `Unrecognized flag: -m` and a dead pane), and ships its own writer: the service's
+      // `session.switchModel`. `applyOpencodeSessionModel` picks per version, and on v2 every
+      // failure refuses the move — with the live process still untouched.
       if (rewritesOpencodeSession) {
-        const model = opencodeModelFromArgv(built.overrides.extraArgs)
+        const model = built.overrides.sessionModel ? parseOpencodeModelId(built.overrides.sessionModel) : null
         if (model) {
-          const written = await setOpencodeSessionModel(OPENCODE_DB, session.sessionId, model)
-          if (!written.ok && written.code !== 'OPENCODE_SESSION_NOT_FOUND') {
+          const written = await applyOpencodeSessionModel({
+            opencodeMajor, dbPath: OPENCODE_DB, sessionId: session.sessionId, model, cwd: session.cwd ?? undefined,
+            // (A model of opencode's own is looked for in its catalogue; a grid's provider lives in
+            // the pane's own config, which the service never reads.)
+            checkCatalog: !grid,
+          })
+          if (!written.ok) {
             console.warn(`[grid] retarget ${sid(session.agentId)} refused · ${written.code} · ${written.detail}`)
             return { ok: false, error: written.code, detail: written.detail }
           }
@@ -6750,10 +6876,39 @@ async function runForeground(session: AuthSession | null): Promise<void> {
    * SIGTERM/SIGKILL fallback. Engine conversation files, recaps and the Harness name remain on disk.
    */
   const stopJobs = new Map<string, Promise<void>>()
-  backend.onDeleteAgent = createStopAgentService({
+  const stopAgent = createStopAgentService({
     registry, stoppedAgents, restartJobs, stopJobs, tmuxBackend, agentReconciler,
     forgetSession, markDeleted, clearDeleted,
   })
+  backend.onDeleteAgent = stopAgent
+  backend.closeAgentService = new CloseAgentService({
+    registry,
+    openTabs: cleanupTabs,
+    activity: async s => {
+      if (s.sessionId) await watcher.pollSession(s.sessionId)
+      const screen = await captureTerminal(s.agentId, 80)
+      return inspectCloseActivity(s, screen, sessionTurnState(s.sessionId), openQuestions.has(s.sessionId))
+    },
+    checkpoint: async (s, phase) => sessionCheckpoints.save(s, {
+      screen: phase === 'before' ? await captureTerminal(s.agentId, 2000) : null,
+    }),
+    stop: stopAgent,
+    changed: announceSession,
+  })
+  backend.closeAgentService.start()
+  backend.cleanupPreview = async () => {
+    await cleanupTabs.refresh()
+    const sessions = registry.advertised()
+    const agents = []
+    for (const s of sessions) {
+      if (!cleanupTabs.isHidden(s)) continue
+      const target = { agentId: s.agentId, sessionId: s.sessionId, createdAt: new Date(s.registeredAt).toISOString() }
+      const inspected = await backend.closeAgentService!.request({ ...target, mode: 'inspect' })
+      if (inspected.error) continue // A changing session is never added to a reviewed batch.
+      agents.push({ ...target, name: projectDisplayName(s), engine: s.engine, activity: inspected.activity ?? 'unknown' })
+    }
+    return { version: 1, agents, kept: sessions.length - agents.length }
+  }
 
   backend.onResumeAgent = createResumeAgentService({
     registry, stoppedAgents, tmuxBackend, restartJobs, stopJobs, pinnedControls,
@@ -6973,6 +7128,7 @@ async function runForeground(session: AuthSession | null): Promise<void> {
     await localWsServer.close()
     hookServer.close()
     await localSocket?.close()
+    codexActivity.close()
     shutdownSummaryPool()
     shutdownVoiceRouter()
     // The new daemon starts its own viewers for the agents it restores; ours must not hold the ports.
@@ -7081,6 +7237,7 @@ async function runForeground(session: AuthSession | null): Promise<void> {
     await localWsServer.close()
     hookServer.close()
     await localSocket?.close()
+    codexActivity.close()
     shutdownSummaryPool()
     shutdownVoiceRouter()
     await dshViewers.stopAll()
@@ -7415,18 +7572,32 @@ async function runForeground(session: AuthSession | null): Promise<void> {
  * the one fact that tells a daemon on THIS sign-in from one left over from the previous account (see
  * startCommand). Null when the daemon does not say.
  */
-async function runningDaemonStatus(): Promise<{ version: string; sessions: number; machineId: string | null; connected: boolean } | null> {
+async function runningDaemonStatus(): Promise<{
+  version: string; sessions: number; machineId: string | null; connected: boolean
+  backendUrl: string | null; autonomousEnv: string | null; signedIn: boolean | null
+  dataDir: string | null; authDir: string | null
+} | null> {
   try {
     const body = await localDaemonStatus(env.ADAPTER_DATA_DIR, env.PORT)
       ?? await legacyDaemonStatus(daemonPort(), readPid(), computerId())
     if (!body) return null
-    const status = body as { version?: unknown; sessions?: unknown; machineId?: unknown; connected?: unknown } | null
+    const status = body as {
+      version?: unknown; sessions?: unknown; machineId?: unknown; connected?: unknown
+      backendUrl?: unknown; autonomousEnv?: unknown; signedIn?: unknown; dataDir?: unknown; authDir?: unknown
+    } | null
     const version = typeof status?.version === 'string' && status.version ? status.version : VERSION
     const sessions = Array.isArray(status?.sessions) ? status.sessions.length : 0
     const machineId = typeof status?.machineId === 'string' && status.machineId ? status.machineId : null
     // Missing on a daemon too old to report it — read as connected, as the desktop app does.
     const connected = status?.connected !== false
-    return { version, sessions, machineId, connected }
+    return {
+      version, sessions, machineId, connected,
+      backendUrl: typeof status?.backendUrl === 'string' ? status.backendUrl : null,
+      autonomousEnv: typeof status?.autonomousEnv === 'string' ? status.autonomousEnv : null,
+      signedIn: typeof status?.signedIn === 'boolean' ? status.signedIn : null,
+      dataDir: typeof status?.dataDir === 'string' ? status.dataDir : null,
+      authDir: typeof status?.authDir === 'string' ? status.authDir : null,
+    }
   } catch {
     return null
   }
@@ -7440,6 +7611,9 @@ async function runningDaemonVersion(): Promise<string> {
 // "● connected", never a one-shot never-updating "connecting…"); `status` prints running/stopped.
 function printInfoBlock(opts: {
   status: string; pid: number; machineId?: string; sessions: number; version: string
+  /** The `device` row's text (this machine's key code and whether the account holds it); only `status` shows it. */
+  device?: string
+  connection: { backendUrl: string | null; autonomousEnv: string | null; signedIn: boolean; dataDir: string | null; authDir: string | null }
 }): void {
   const row = (k: string, v: string): string => `   ${k.padEnd(10)} ${v}`
   const rule = '  ' + '─'.repeat(37)
@@ -7452,8 +7626,12 @@ function printInfoBlock(opts: {
     try { return readFileSync(MACHINE_NAME_FILE, 'utf-8').trim() } catch { return '' }
   })()
   if (machineName) console.log(row('machine', machineName))
+  if (opts.device) console.log(row('device', opts.device))
   console.log(row('version', `v${opts.version}`))
-  console.log(row('backend', readAuthSession() ? env.BACKEND_WS_URL : 'not signed in · harness login'))
+  console.log(row('backend', opts.connection.signedIn ? opts.connection.backendUrl ?? 'unknown · daemon not answering' : 'not signed in · harness login'))
+  console.log(row('account', opts.connection.autonomousEnv ?? 'unknown · older daemon'))
+  if (opts.connection.dataDir) console.log(row('state', tildify(opts.connection.dataDir)))
+  if (opts.connection.authDir) console.log(row('auth', tildify(opts.connection.authDir)))
   console.log(row('agents', `${opts.sessions} available`))
   console.log(row('pid', String(opts.pid)))
   console.log(row('logs', tildify(LOG_FILE)))
@@ -7578,6 +7756,13 @@ async function spawnDaemon(session: AuthSession | null, runtimeNode: string | nu
     machineId: session?.machineId,
     sessions: daemonStatus?.sessions ?? 0,
     version: daemonStatus?.version ?? VERSION,
+    connection: {
+      backendUrl: daemonStatus?.backendUrl ?? env.BACKEND_WS_URL,
+      autonomousEnv: daemonStatus?.autonomousEnv ?? session?.autonomousEnv ?? env.AUTONOMOUS_ENV,
+      signedIn: daemonStatus?.signedIn ?? session !== null,
+      dataDir: daemonStatus?.dataDir ?? env.ADAPTER_DATA_DIR,
+      authDir: daemonStatus?.authDir ?? AUTH_DIR,
+    },
   })
   if (!session) {
     console.log('  Agents, terminals and the cabled dial work here. `harness login` adds your other machines.')
@@ -8172,7 +8357,7 @@ async function groupCommand(sub: string | undefined, arg: string | undefined, js
   process.exit(1)
 }
 
-/** `harness devices list|remove|rebaseline` — the account's device key log, as this machine verified it. */
+/** `harness devices list|show|remove|rebaseline` — the account's device key log, as this machine verified it. */
 async function devicesCommand(sub: string | undefined, arg: string | undefined, flags: string[]): Promise<void> {
   const json = flags.includes('--json')
   const call = async (method: 'GET' | 'POST', path: string, body?: unknown): Promise<{ status: number; json: Record<string, unknown> }> => {
@@ -8184,7 +8369,7 @@ async function devicesCommand(sub: string | undefined, arg: string | undefined, 
       process.exit(1)
     }
   }
-  type Row = { pub: string; label: string; kind: string; machineId: string; addedAt: number; fingerprint: string; self: boolean }
+  type Row = { pub: string; label: string; kind: string; machineId: string; addedAt: number; fingerprint: string; self: boolean; seq?: number; firstSeen?: number }
   const listing = async (): Promise<{ members: Row[]; frozen: { reason: string } | null; frozenPeers: string[]; lastSeen?: Record<string, number> }> => {
     const { status, json: out } = await call('GET', '/api/devices')
     if (status !== 200) { console.error('\n  ✗ The device list is not available (is this machine signed in?).\n'); process.exit(1) }
@@ -8195,25 +8380,61 @@ async function devicesCommand(sub: string | undefined, arg: string | undefined, 
     if (json) { console.log(JSON.stringify(out)); process.exit(0) }
     if (out.frozen) console.log(`\n  ⚠ FROZEN (${out.frozen.reason}): the backend served a device list that does not match what this machine verified. No device is added until you review it: harness devices rebaseline`)
     if (out.frozenPeers.length) console.log(`\n  ⚠ Frozen on: ${out.frozenPeers.join(', ')}`)
-    console.log('\n  Devices on this account — each one trusts every other:\n')
-    out.members.forEach((m, i) => {
-      const what = m.kind === 'machine' ? `machine ${m.machineId.slice(0, 8)}` : 'app'
-      const seen = out.lastSeen?.[m.pub]
-      console.log(`   ${String(i + 1).padStart(2)}. ${m.label || '(no name)'}  ${what}  ${m.fingerprint}  added ${new Date(m.addedAt).toLocaleString()}`
-        + `${seen ? `  last seen ${new Date(seen).toLocaleDateString()}` : ''}${m.self ? '  (this machine)' : ''}`)
-    })
-    console.log('\n  Not yours? harness devices remove <#|fingerprint>\n')
+    // This machine's own code is shown even before the log holds it, from the key on disk (read-only).
+    const pub = peekIdentityPub()
+    const selfFp = pub ? thisDeviceFingerprint(false) : null
+    for (const line of formatDeviceList(out, Date.now(), selfFp ? { label: thisDeviceLabel(), fp: selfFp } : undefined)) console.log(line)
+    process.exit(0)
+  }
+  // A device by its number in the list (its place in the log, which `list` prints on each row and
+  // which only shifts when a device is removed) or by the start of its fingerprint; `show` and
+  // `remove` resolve it the same way. The number is NOT the display position: that moves with activity.
+  //
+  // An all-digit argument is a list number, never a key-code prefix, unless it has 4 or more digits and
+  // names no device in the list: then it is the start of a key code ("1111·2222" typed as 1111). A short
+  // number out of range is an error rather than a prefix match, because `remove` cannot be undone and
+  // `remove 4` must not take out whichever device's key code happens to start with 4.
+  // Decided on the selector as matched (spaces and separators dropped), so " 1" is #1 and not the
+  // key code starting with 1. `key` is what `remove` echoes when it is a number.
+  const resolve = (arg: string, members: Row[]): { row: Row; byNumber: boolean; key: string } => {
+    const norm = (v: string): string => v.toUpperCase().replace(/[·\s-]/g, '')
+    const key = norm(arg)
+    // Only spaces and separators: an empty prefix would match every device.
+    if (key === '') { console.error('Usage: harness devices show|remove <#|fingerprint>   (see: harness devices list)'); process.exit(1) }
+    const ordered = logOrder(members)
+    if (/^\d+$/.test(key)) {
+      const byIndex = ordered[Number(key) - 1]
+      if (byIndex) return { row: byIndex, byNumber: true, key }
+      if (key.length < 4) { console.error(`\n  ✗ No device #${key} (see: harness devices list)\n`); process.exit(1) }
+    }
+    const matches = ordered.filter((m) => norm(m.fingerprint).startsWith(key))
+    if (matches.length !== 1) { console.error(`\n  ✗ ${matches.length ? 'More than one device matches' : 'No device matches'} "${arg}".\n`); process.exit(1) }
+    return { row: matches[0], byNumber: false, key }
+  }
+  if (sub === 'show') {
+    if (!arg) { console.error('Usage: harness devices show|remove <#|fingerprint>   (see: harness devices list)'); process.exit(1) }
+    const { members, lastSeen } = await listing()
+    const { row: target } = resolve(arg, members)
+    if (json) { console.log(JSON.stringify({ ...target, lastSeen: lastSeen?.[target.pub] })); process.exit(0) }
+    for (const line of formatDeviceDetail(target, lastSeen?.[target.pub], Date.now())) console.log(line)
     process.exit(0)
   }
   if (sub === 'remove') {
-    if (!arg) { console.error('Usage: harness devices remove <#|fingerprint>   (see: harness devices list)'); process.exit(1) }
+    if (!arg) { console.error('Usage: harness devices show|remove <#|fingerprint>   (see: harness devices list)'); process.exit(1) }
     const { members } = await listing()
-    const norm = (v: string): string => v.toUpperCase().replace(/[·\s-]/g, '')
-    const byIndex = /^\d+$/.test(arg) ? members[Number(arg) - 1] : undefined
-    const matches = byIndex ? [byIndex] : members.filter((m) => norm(m.fingerprint).startsWith(norm(arg)))
-    if (matches.length !== 1) { console.error(`\n  ✗ ${matches.length ? 'More than one device matches' : 'No device matches'} "${arg}".\n`); process.exit(1) }
-    const target = matches[0]
+    const { row: target, byNumber, key } = resolve(arg, members)
     if (target.self) { console.error('\n  ✗ That is this machine. Sign out with: harness logout\n'); process.exit(1) }
+    // A number or a short (under 4) key-code start is echoed and confirmed first (see removeConfirmation);
+    // a longer start of the key code needs no echo.
+    const confirm = removeConfirmation({ byNumber, key }, { yes: flags.includes('--yes'), interactive: Boolean(process.stdin.isTTY && process.stdout.isTTY) })
+    if (confirm === 'refuse') {
+      console.error(`\n  ✗ Not removing "${arg}" without a terminal to confirm. Use the key code instead: harness devices remove ${target.fingerprint}\n`)
+      process.exit(1)
+    }
+    if (confirm === 'ask') {
+      const answer = await askLine(`\n  Remove "${target.label || '(no name)'}"  ${target.fingerprint}?  It is signed out and its key is spent. [y/N] `)
+      if (!confirmsRemoval(answer)) { console.log('\n  Cancelled — nothing removed.\n'); process.exit(0) }
+    }
     const { status, json: out } = await call('POST', '/api/devices/remove', { pub: target.pub })
     if (status !== 200) { console.error(`\n  ✗ Could not remove ${target.label}: ${String(out.error ?? status)}${out.detail ? ` (${String(out.detail)})` : ''}\n`); process.exit(1) }
     console.log(`\n  ✓ Removed ${target.label}. Every device stops trusting it; it is signed out.\n`)
@@ -8366,6 +8587,7 @@ async function status(): Promise<void> {
   const alive = pid != null && isAlive(pid)
   const session = readAuthSession()
   const daemonStatus = alive ? await runningDaemonStatus() : null
+  const signedIn = daemonStatus?.signedIn ?? session !== null
   if (!alive) registry.load()
   // A daemon whose start-up failed is alive and answering, but nothing on this machine works. Say so
   // in the one line a person reads, rather than leaving it looking like an ordinary slow start.
@@ -8379,7 +8601,7 @@ async function status(): Promise<void> {
       ? '○ stopped'
       : safeMode
         ? `◍ safe mode · start-up failed on v${safeMode.version} — waiting for a fixed build (${safeMode.error.split('\n')[0]})`
-      : !session
+      : !signedIn
         ? '● running · this computer only (not signed in)'
         : daemonStatus == null
           ? '● running · not answering yet'
@@ -8391,6 +8613,29 @@ async function status(): Promise<void> {
     sessions: daemonStatus?.sessions ?? 0,
     // A stopped daemon answers nothing, so this falls back to the local build — which is what will run.
     version: daemonStatus?.version ?? VERSION,
+    // Read from disk, not the daemon: it answers the same with the daemon stopped.
+    // Signed out, devlog.json is the last account's copy: claiming membership from it would be wrong.
+    // It is left on disk at logout on purpose: clearing it would drop the freeze and the rollback
+    // protection with it. The stale window is after signing in again, possibly to a different account:
+    // devlog.json still holds the previous account's log until the devlog syncer replaces it, so
+    // `status` can say "(in your account)" from it for a while; that window is accepted.
+    // A retired key with none in its place still says something, though: being removed from the
+    // account is itself what signs a machine out (the daemon clears the session as it spends the key).
+    device: deviceStatusValue(
+      thisDeviceFingerprint(false),
+      session
+        ? deviceRegistration(peekIdentityPub(), new DeviceLogStore().read(), identitySpent())
+        : !peekIdentityPub() && identitySpent() ? 'removed' : null,
+    ) ?? undefined,
+    // A status command can run with different shell settings from the daemon. Report the daemon's
+    // connection, not those of this short-lived caller; missing fields on older daemons stay unknown.
+    connection: {
+      backendUrl: alive ? daemonStatus?.backendUrl ?? null : env.BACKEND_WS_URL,
+      autonomousEnv: alive ? daemonStatus?.autonomousEnv ?? null : session?.autonomousEnv ?? env.AUTONOMOUS_ENV,
+      signedIn,
+      dataDir: alive ? daemonStatus?.dataDir ?? null : env.ADAPTER_DATA_DIR,
+      authDir: alive ? daemonStatus?.authDir ?? null : AUTH_DIR,
+    },
   })
   process.exit(0)
 }

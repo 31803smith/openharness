@@ -237,6 +237,7 @@ static EXT_RAM_BSS_ATTR struct {
     uint32_t coast_until;
     uint32_t character_activity;
     uint8_t status_phase;
+    uint32_t pet_next_ms;   // when the engine pet's drawn frame next changes (clock_ms), 0 = never
     int start_x, start_y, last_x, last_y;
     uint32_t touch_started;
 } s;
@@ -782,6 +783,8 @@ static void surface_tick(uint32_t now)
     if (home_caption_tick(now)) change();
     uint8_t phase = status_animated() ? ht_shimmer_phase(now * status_speed()) : 0;
     if (phase != s.status_phase) { s.status_phase = phase; change(); }
+    if (s.pet_next_ms && (s.view == HOME || s.view == AGENT) && !s.touch_down &&
+        (int32_t)(now - s.pet_next_ms) >= 0) { s.pet_next_ms = 0; change(); }
     bool main = s.view == HOME || s.view == AGENT;
     bool visible = !display_is_asleep() &&
         ((main && s.connected && !s.loading) || s.view == VOICE);
@@ -863,6 +866,7 @@ static void focus_bell(ht_scene_t *f, unsigned count)
 static void render_home(ht_scene_t *f)
 {
     s.caption_arc = (ht_rect_t){0};
+    s.pet_next_ms = 0;
     if (!s.connected || s.loading) { render_brand(f); return; }
     if (workspace.touching && workspace.moved && !workspace.cancelled) { render_workspace_preview(f); return; }
     agent_t *a = active();
@@ -905,6 +909,7 @@ static void render_home(ht_scene_t *f)
     // turn nobody is running any more.
     uint32_t since = a && a->busy && a->busy_ms && !is_question(a->id) ? (ms() - a->busy_ms) / 1000 : 0;
     int tab_index = workspace_index(s.selected_tab);
+    uint32_t clock = ms() | 1;
     ht_character_face_t f_ = {.recipient = caption, .status = bell ? "" : status,
         // The lower text seat belongs to notifications and useful status.
         // A companion's name lives in the desktop Zoo, not a permanent footer.
@@ -915,6 +920,8 @@ static void render_home(ht_scene_t *f)
         .elapsed = since > 65535 ? 65535 : (uint16_t)since,
         .detail = "",
         .mood = companion_celebrating ? HT_CHARACTER_DONE : character_mood(), .pose = character.motion.reaction.pose,
+        .asking = a && is_question(a->id),
+        .clock_ms = (s.quiet || display_is_asleep()) ? 0 : clock,   // the pet's loop
         .straight_title = s.straight_title,
         .footer_action = carry.active || carry.error[0] || visit.available,
         .ink = FG, .foreground = FG, .dim = DIM,
@@ -929,6 +936,7 @@ static void render_home(ht_scene_t *f)
     if (visit.available) f_.hint = "";
     bool focus_face = character.id == HT_CHARACTER_FOCUS;
     ht_character_face(f, &character, &f_, ACCENT, recap);
+    s.pet_next_ms = focus_face ? ht_focus_pet_next_ms(&f_, recap) : 0;
     if (bell) {
         if (focus_face) focus_bell(f, unread);   // y 400..432, under the recap
         else ht_notification_bell(f, unread, f_.ink);
@@ -950,17 +958,6 @@ static void render_home(ht_scene_t *f)
     } else if (visit.available) {
         footer_control(f, 113, 240, "[ return ]", A_RETURN, s.connected && !visit.pending);
     }
-    /*
-     * ON FOCUS THE ENGINE'S MARK IS THE MICROPHONE (owner, 2026-10-01). A creature skin talks when the
-     * creature is tapped; Focus has no creature, and its mark stands in the creature's place, so a tap
-     * on the mark talks to the agent. The target is the mark's square and 16 px around it, registered
-     * before A_PET so the face's hold-for-tabs does not swallow it. Artwork still owns no action.
-     */
-    if (focus_face && !carry.active && !carry.error[0] && !visit.available) {
-        ht_rect_t m = ht_focus_mark_target;
-        s.hits[s.hit_count++] = (hit_t){{(int16_t)(m.x - 16), (int16_t)(m.y - 16), (int16_t)(m.w + 32),
-            (int16_t)(m.h + 32)}, A_VOICE, 0, s.connected && !s.loading && a != NULL};
-    }
     if (!carry.active && !carry.error[0] && !visit.available) {
         // Both phases of the caption open the pane picker — on Focus too, whose name is on the same
         // curve. The tab list is a hold on the face (A_PET below), on every skin.
@@ -974,8 +971,10 @@ static void render_home(ht_scene_t *f)
     // The badge's own target follows it, at the bottom on every skin.
     if (bell) s.hits[s.hit_count++] = (hit_t){{83, 382, 300, 84}, A_INBOX, 0, unread > 0};
     // The bell and the creature never share a target, even when the bell is
-    // hidden or its count changes under a finger. Centre always starts voice (on Focus, the mark does).
-    s.hits[s.hit_count++] = (hit_t){{33, 66, 400, 316}, A_PET, 0, true};
+    // hidden or its count changes under a finger. Centre always starts voice. On Focus the whole face
+    // below the name does, down to the bottom edge; the bell's target, registered above, wins there.
+    s.hits[s.hit_count++] = focus_face ? (hit_t){{0, 66, HT_WIDTH, HT_HEIGHT - 66}, A_PET, 0, true}
+                                       : (hit_t){{33, 66, 400, 316}, A_PET, 0, true};
 }
 /*
  * FOCUS'S LISTS SPEAK THE AGENT SCREEN'S TYPE (owner, 2026-09-30): Geist and Montserrat from the
@@ -2712,6 +2711,23 @@ void habitat_touch(bool down, int x, int y, uint32_t now)
             if (result == HT_TOUCH_TAP || (on_target && now - s.touch_started < 1800))
                 dispatch(pressed_action);
             change();
+        } else if (surface && character.id == HT_CHARACTER_FOCUS && pressed_action.kind == A_PET &&
+                   !gesture.guarded && dx * dx + dy * dy < 24 * 24 && now - s.touch_started < 650) {
+            /*
+             * ON FOCUS A TOUCH ANYWHERE ON THE FACE TALKS (owner, 2026-10-01), and it is a THUMB's
+             * touch, not an idealised tap. ht_gesture_end() calls a contact a tap only inside 12 px
+             * (1.20 mm on this glass) and 350 ms; a real press drifts past both, which is the fault
+             * the old microphone button had (21 presses in 49). So the face answers what a button
+             * answers: a contact that did not scroll, came up within 24 px of where it went down,
+             * and let go before the 650 ms that opens the tabs.
+             */
+            ht_gesture_guard(&gesture, now);
+            if (s.connected && !s.loading && active()) {
+                ESP_LOGI("habitat", "focus touch: start voice");
+                // Built as the old microphone's was: make_action names the agent on the face, and
+                // main-surface voice without a recipient is dropped.
+                dispatch(make_action((hit_t){.action = A_VOICE}));
+            }
         } else if (result == HT_TOUCH_TAP && pressed_action.kind == A_PET &&
                    (surface || s.view == VOICE || s.view == SELECTION)) {
             ht_gesture_guard(&gesture, now);
@@ -2719,12 +2735,7 @@ void habitat_touch(bool down, int x, int y, uint32_t now)
                 ESP_LOGI("habitat", "gesture tap: finish voice");
                 dispatch((action_t){.kind = A_VOICE_STOP});
             } else if (character.id == HT_CHARACTER_FOCUS && s.view != SELECTION) {
-                /*
-                 * On Focus the engine's mark starts speech and nothing else does. A creature skin has
-                 * no button — the creature IS the affordance, so the middle of the glass has to be
-                 * one. On Focus the middle is the recap somebody is reading: a tap there opening the
-                 * mic surprised people, and the mark is its own target (A_VOICE).
-                 */
+                // Focus's face answers its touches in the branch above; nothing more here.
             } else if (s.connected && !s.loading && pressed_action.id[0]) {
                 ESP_LOGI("habitat", "gesture tap: start voice");
                 pressed_action.kind = A_VOICE;
@@ -2840,6 +2851,11 @@ uint32_t habitat_next_wake_ms(void)
         delay = home_caption.next_ms;
     if (status_animated()) {
         uint32_t due = status_wake_ms(now);
+        if (due < delay) delay = due;
+    }
+    if (s.pet_next_ms && (s.view == HOME || s.view == AGENT) && !s.touch_down) {
+        int32_t left = (int32_t)(s.pet_next_ms - now);
+        uint32_t due = left < 1 ? 1 : (uint32_t)left;
         if (due < delay) delay = due;
     }
     if ((s.view == HOME || s.view == AGENT) && pressed_action.kind == A_PET && s.touch_down && !s.touch_cancelled &&

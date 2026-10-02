@@ -52,11 +52,31 @@ it('captures, learns, recalls, and forgets through the bundled worker across res
   expect((await reopened.recall({ query: 'bug' }, { ...access, profileId: 'someone_else' })).status).toBe('denied')
   const page = await reopened.request('libraryPage', ['owner'])
   expect(page.items[0].id).toBe(packet.items[0].id)
+  const notebooks = await reopened.request('libraryNotebooks', ['owner', { limit: 12 }])
+  expect(notebooks.items).toHaveLength(1)
+  const notebookId = notebooks.items[0].id
+  await expect(reopened.request('libraryNotebook', ['foreign', notebookId])).rejects.toThrow('scope_denied')
+  await reopened.request('notebookPending', [])
+  const notebook = await reopened.request('notebookClaim', [target])
+  if (notebook.state !== 'claimed') throw new Error(notebook.state)
+  await reopened.request('notebookFinish', [notebook.lease, { statements: [{ text: event.text,
+    supports: [{ memoryId: packet.items[0].id, revision: packet.items[0].revision, paths: ['/claim'] }] }] }, target])
+  expect((await reopened.request('libraryNotebook', ['owner', notebookId]))?.explanation?.statements[0].supports[0])
+    .toMatchObject({ memoryId: packet.items[0].id, revision: 1 })
   await expect(reopened.request('libraryDetail', ['foreign', packet.items[0].id])).rejects.toThrow('scope_denied')
+  const prepared = await reopened.request('prepareRecall', [{ query: 'bug', conditions: { taskType: 'debugging' } },
+    { engine: 'codex', sessionId: 'receiving', projectId: 'project', route: 'prompt_hook' }, { ...access, includeProfile: true }])
+  const rating = await reopened.request('libraryPreview', ['owner', { kind: 'feedback', id: packet.items[0].id,
+    revision: 1, receiptId: prepared.receipt!.id, value: 'helpful', expected: 0 }])
+  await reopened.request('libraryApply', ['owner', rating.command, rating.version, true])
+  expect((await reopened.request('libraryDetail', ['owner', packet.items[0].id]))?.recalls[0].feedback.value).toBe('helpful')
+  expect((await reopened.recall({ query: 'bug', conditions: { taskType: 'debugging' } }, access)).items[0]).not.toHaveProperty('feedback')
   const preview = await reopened.request('libraryPreview', ['owner', { kind: 'forget', id: packet.items[0].id, revision: packet.items[0].revision }])
   expect((await reopened.request('libraryDetail', ['owner', packet.items[0].id]))?.record.id).toBe(packet.items[0].id)
   await reopened.request('libraryApply', ['owner', preview.command, preview.version, true])
   expect((await reopened.recall({ query: 'bug', conditions: { taskType: 'debugging' } }, access)).items).toEqual([])
+  expect(await reopened.request('libraryNotebook', ['owner', notebookId])).toBeNull()
+  expect((await reopened.request('libraryNotebooks', ['owner'])).items).toEqual([])
 })
 
 it('enforces a recall deadline while a worker is blocked, leaving the parent event loop responsive', async () => {
