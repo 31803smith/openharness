@@ -66,13 +66,13 @@ import { ensureTmuxOnPath } from './lib/tmuxOnPath.js'
 import { flashCommand } from './lib/flash.js'
 import { readOrMintComputerId } from './lib/computerIdentity.js'
 import { awaitLoginCallback, extractCallbackParams, LOGIN_TIMEOUT_MESSAGE } from './lib/loginCallback.js'
-import { AuthSessionError, AuthSessionManager, clearAuthSession, readAuthSession, writeAuthSession, type AuthSession } from './lib/authSession.js'
+import { AuthSessionError, AuthSessionManager, clearAuthSession, knownSsoClientId, readAuthSession, ssoClientIdFor, writeAuthSession, type AuthSession } from './lib/authSession.js'
 import { LocalPresence, PAIR_HARNESS_DSH, ZooTurnCounter, ZooTurnReporter } from './lib/zooTurns.js'
 import { ZooLessonReporter } from './lib/zooLessons.js'
 import { DAEMONS_OFF, DAEMONS_OFF_DETAIL, DaemonsSwitch, localKillSwitch, zooPassthrough, type ZooRead } from './lib/daemonsSwitch.js'
 import { handOffToGrid } from './lib/gridHandoff.js'
 import { qrSignIn } from './lib/qrSignIn.js'
-import { pickSignInMethod } from './lib/signInMethodPicker.js'
+import { pickSignInMethod, signInMethodFlag, signInProviderName, withSignInProvider, type SignInMethod, type SignInProvider } from './lib/signInMethodPicker.js'
 import { watchJsonDriver, type JsonDriver } from './lib/jsonDriver.js'
 import { terminalQr } from './lib/terminalQr.js'
 import { ensureGridInstalled } from './lib/gridInstall.js'
@@ -414,8 +414,9 @@ ${PROCESS_ENGINES.map((engine) => `  ${ENGINE_CLI_COMMANDS[engine]}`).join('\n')
 A launcher that hands the pane to one of these works the same — "ori claude" is a Claude Code agent.
 
 Machine:
-  harness login                sign in (asks: SSO in your browser, or scan a QR with your phone)
-  harness login --sso          sign in with SSO in your browser, without asking
+  harness login                sign in (asks: Google or Apple in your browser, or scan a QR with your phone)
+  harness login --google       sign in with Google in your browser, without asking
+  harness login --apple        sign in with Apple in your browser, without asking
   harness login --qr           sign in by scanning a QR with Harness on your phone, without asking
   harness login --force        stop the daemon and sign in with a different account
   harness login --json         emit machine-readable NDJSON instead of opening a browser (for GUI clients)
@@ -730,7 +731,7 @@ async function authStatusCommand(json: boolean): Promise<void> {
     console.log(`\n  ${payload.loggedIn ? '✓ Signed in' : '✗ Not signed in'}${payload.machineId ? ` (machine ${payload.machineId})` : ''}${payload.loggedIn && payload.method === 'qr' ? ' — by your phone' : ''}\n`)
     // A session a phone approved is Harness's own: the Autonomous services behind billing and grid
     // do not take it. Say so where the person looks, not only when one of them refuses.
-    if (payload.loggedIn && payload.method === 'qr') console.log('  Billing and grid need an SSO sign-in: harness login --force --sso\n')
+    if (payload.loggedIn && payload.method === 'qr') console.log('  Billing and grid need a Google or Apple sign-in: harness login --force\n')
   }
 }
 
@@ -798,7 +799,7 @@ async function loginCommand(
   foreground: boolean,
   force: boolean,
   json: boolean,
-  opts: { chained?: boolean; entryPoint?: string; method?: 'sso' | 'qr' | 'ask' } = {},
+  opts: { chained?: boolean; entryPoint?: string; method?: SignInMethod | 'ask' } = {},
 ): Promise<SignInOutcome> {
   if (foreground) throw new Error('`harness login` does not run the adapter. Use `harness start -f`.')
   // Which surface asked to sign in. A person in a terminal is `cli`; the desktop app runs this same
@@ -818,9 +819,10 @@ async function loginCommand(
     else console.log(`\n  ✓ Signed in${email ? ` as ${email}` : ''}. Run \`harness start\` to connect this computer.\n`)
     return { signedIn: true, alreadySignedIn }
   }
-  // SSO in the browser, or a QR the phone scans. Asked only of a person at a terminal with no flag; a
-  // client driving --json says `--qr` or gets the browser, as before.
-  let method: 'sso' | 'qr' = opts.method === 'qr' ? 'qr' : 'sso'
+  // Google or Apple in the browser, or a QR the phone scans. Asked only of a person at a terminal
+  // with no flag. Nothing named — a client driving --json that predates the flags, a pipe — is the
+  // browser still, on the sign-in page's own chooser.
+  let method: SignInMethod | undefined = opts.method === 'ask' ? undefined : opts.method
   // The app driving --json: its answers, and its going away. A sign-in it left behind (the app quit
   // or restarted) would otherwise wait on — minutes, holding the daemon spawn lock — and the app's
   // next sign-in would sit behind it with nothing on screen. So while it waits on a person it takes
@@ -859,7 +861,7 @@ async function loginCommand(
     try {
       return method === 'qr'
         ? await qrSignInCommand(json, emit, (email) => succeed(false, email), { driver, onStarted: (cancel) => { takeBack = cancel }, onCommitted: () => setWaiting(false) })
-        : await browserSignIn(json, emit, () => succeed(false), entryPoint, { onCommitted: () => setWaiting(false) })
+        : await browserSignIn(json, emit, () => succeed(false), { entryPoint, provider: method }, { onCommitted: () => setWaiting(false) })
     } finally {
       setWaiting(false)
     }
@@ -940,8 +942,8 @@ async function loginCommand(
   }
 }
 
-/** `harness login` at a terminal, with no flag: which way to sign in. Enter is SSO, as it always was. */
-async function askSignInMethod(): Promise<'sso' | 'qr' | null> {
+/** `harness login` at a terminal, with no flag: which way to sign in. Enter is Google, the first row. */
+async function askSignInMethod(): Promise<SignInMethod | null> {
   const method = await pickSignInMethod({ input: process.stdin, output: process.stdout })
   if (method) console.log(`  (next time: harness login --${method})`)
   return method
@@ -1028,13 +1030,15 @@ async function qrSignInCommand(
  * The browser half of a sign-in: a loopback callback server, the SSO page, the code exchange, and
  * the new session — machine id included — on disk. Under --json every failure is a result line and
  * an exit code (`emit`); on the human path it is thrown. `succeed` finishes the job once the
- * session is on disk.
+ * session is on disk. `provider` is the account the page opens on (Google, Apple); without one it
+ * is the page's own chooser. The sign-in is made as [entryPoint]'s own auth-service client
+ * (`ssoClientIdFor`), and the session keeps the client the backend says the tokens were issued to.
  */
 async function browserSignIn(
   json: boolean,
   emit: (line: Record<string, unknown>) => void,
   succeed: () => Promise<SignInOutcome>,
-  entryPoint: string,
+  { entryPoint, provider }: { entryPoint: string; provider?: SignInProvider },
   hooks: Pick<SignInHooks, 'onCommitted'> = {},
 ): Promise<SignInOutcome> {
   const callback = createServer()
@@ -1054,18 +1058,21 @@ async function browserSignIn(
         redirectUri,
         autonomousEnv: env.AUTONOMOUS_ENV,
         entryPoint,
+        clientId: ssoClientIdFor(entryPoint),
+        ...(provider ? { provider } : {}),
       })
       if (!start.authorizeUrl || !start.tx) throw new Error('Backend did not return an SSO authorize URL')
     } catch (err) {
       if (json) { emit({ type: 'result', status: 'error', code: 'BACKEND_ERROR', message: (err as Error).message }); process.exitCode = 1; return { signedIn: false } }
       throw err
     }
+    const authorizeUrl = withSignInProvider(start.authorizeUrl, provider)
     if (json) {
-      emit({ type: 'authorize_url', url: start.authorizeUrl })
+      emit({ type: 'authorize_url', url: authorizeUrl })
     } else {
-      console.log('\n  Sign in to Harness in your browser:\n')
-      console.log(`    ${start.authorizeUrl}\n`)
-      openInBrowser(start.authorizeUrl)
+      console.log(`\n  Sign in to Harness${provider ? ` with ${signInProviderName(provider)}` : ''} in your browser:\n`)
+      console.log(`    ${authorizeUrl}\n`)
+      openInBrowser(authorizeUrl)
     }
     // A browser on this SAME machine can reach the loopback server directly. Over SSH the user's
     // browser is on a DIFFERENT machine — its own 127.0.0.1 has nothing listening on that port, so the
@@ -1084,9 +1091,9 @@ async function browserSignIn(
     }
     // The browser came back: from here the exchange and the session write run to the end.
     hooks.onCommitted?.()
-    let exchanged: { token?: string; refreshToken?: string; expiresIn?: number; autonomousEnv?: 'prod' | 'stag' }
+    let exchanged: { token?: string; refreshToken?: string; expiresIn?: number; autonomousEnv?: 'prod' | 'stag'; clientId?: string }
     try {
-      exchanged = await postJson<{ token?: string; refreshToken?: string; expiresIn?: number; autonomousEnv?: 'prod' | 'stag' }>('/api/auth/exchange', {
+      exchanged = await postJson<typeof exchanged>('/api/auth/exchange', {
         ...callbackResult,
         tx: start.tx,
       })
@@ -1103,6 +1110,9 @@ async function browserSignIn(
       ...(exchanged.expiresIn ? { expiresAt: Date.now() + exchanged.expiresIn * 1000 } : {}),
       autonomousEnv: exchanged.autonomousEnv ?? env.AUTONOMOUS_ENV,
       computerId: id,
+      // What the backend says it exchanged as — never what was asked for: a backend from before
+      // the clients were split signs every sign-in in as its configured one, and names none.
+      ...(knownSsoClientId(exchanged.clientId) ? { clientId: knownSsoClientId(exchanged.clientId) } : {}),
       updatedAt: Date.now(),
     }
     writeAuthSession(session)
@@ -8535,7 +8545,7 @@ switch (cmd) {
     // account: the desktop app reads that line and does not wait for a restart it observes anyway.
     loginCommand(foreground, flags.includes('--force'), flags.includes('--json'), {
       entryPoint: entryPointFlag(),
-      method: flags.includes('--qr') ? 'qr' : flags.includes('--sso') || flags.includes('--json') || !process.stdin.isTTY ? 'sso' : 'ask',
+      method: signInMethodFlag(flags) ?? (flags.includes('--json') || !process.stdin.isTTY ? undefined : 'ask'),
     })
       .then((outcome) => outcome.signedIn ? restartDaemonForIdentity() : undefined)
       .catch(onError)
