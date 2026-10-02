@@ -2,6 +2,8 @@
 // lines up its size and speed, and ends with what Enter does — Use, Get — or what is happening to it.
 // The model the harness is on says In use. Get on a model the harness can run downloads it, starts
 // it and moves the harness onto it in one step; closing the picker stops only the switch.
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -100,6 +102,9 @@ class _LocalApp extends ModelManagerTestApp {
   /// Stops finish at once: the model is down and off the grid, as a fast machine's would be.
   bool completeStops = false;
 
+  /// Holds each stop until completed: the seconds a real machine takes to bring a model down.
+  Completer<void>? stopGate;
+
   /// A started model runs at once but the grid lists it only on [listHeld]: the gap between running
   /// here and being a model a harness can move onto, which a busy machine took 16s to close.
   bool holdListing = false;
@@ -163,6 +168,7 @@ class _LocalApp extends ModelManagerTestApp {
     String modelId, {
     required bool start,
   }) async {
+    if (!start) await stopGate?.future;
     final answer = await super.controlLocalModel(
       machineId,
       modelId,
@@ -620,7 +626,8 @@ void main() {
     (tester) async {
       final app = (await _localFixture(onModel: 'Qwen3.6-35B-A3B'))
         ..completeStarts = true
-        ..completeStops = true;
+        ..completeStops = true
+        ..stopGate = Completer<void>();
       try {
         final picker = await _open(tester, app);
         final gemma = _row(picker, 'gemma-4-12B');
@@ -633,6 +640,13 @@ void main() {
           findsOneWidget,
         );
         await key(tester, LogicalKeyboardKey.enter);
+        // The host is busy with that stop, which the hint names: no "Host busy" warns about it.
+        expect(
+          find.textContaining('Stopping Qwen3.6-35B-A3B…'),
+          findsOneWidget,
+        );
+        expect(_inPreview('Host busy'), findsNothing);
+        app.stopGate!.complete();
         await tester.pump(const Duration(seconds: 3));
         await tester.pump(const Duration(seconds: 3));
         await tester.pumpAndSettle();

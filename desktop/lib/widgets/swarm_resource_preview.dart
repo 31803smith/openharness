@@ -1391,8 +1391,10 @@ class _SwarmResourcePreviewState extends State<SwarmResourcePreview> {
           ],
           labelValue('Source', entry.source),
         ],
+        // While Use stops the model running there, the host is busy with that stop: the hint says so.
         if (widget.search.modelUseReason(row) case final reason?
-            when reason != 'No active harness' &&
+            when widget.search.usingModelId != row?.modelId &&
+                reason != 'No active harness' &&
                 reason != entry.status &&
                 reason != 'Tools only' &&
                 reason != 'Download first')
