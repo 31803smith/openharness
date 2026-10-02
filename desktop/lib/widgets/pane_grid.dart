@@ -517,6 +517,15 @@ class _SwarmCanvasState extends State<_SwarmCanvas> {
     );
   }
 
+  /// How [count] panes of the active tab are laid out in [viewport].
+  _SwarmGeometry _geometry(int count, Size viewport) => _SwarmGeometry(
+    count: count,
+    viewport: viewport,
+    preset: widget.notifier.presetFor(count),
+    minimum: _MinTile.of(),
+    sizes: widget.notifier.activeSwarm.paneSizes,
+  );
+
   @override
   Widget build(BuildContext context) {
     TerminalFontScope.watch(context);
@@ -533,20 +542,21 @@ class _SwarmCanvasState extends State<_SwarmCanvas> {
           for (final pane in app.panes)
             if (_shownZoom == null || pane.id == _shownZoom) pane,
         ];
-        final layout = _SwarmGeometry(
-          count: visible.length,
-          viewport: constraints.biggest,
-          preset: app.presetFor(visible.length),
-          minimum: _MinTile.of(),
-          sizes: app.activeSwarm.paneSizes,
-        );
-        if (_shownZoom == null) {
-          app.activeSwarm.arranged = layout.arrangement;
-          app.activeSwarm.arrangedKey = layout.key;
+        final layout = _geometry(visible.length, constraints.biggest);
+        // Solo draws one pane of a desk that is still there: the desk is what
+        // gets recorded, so a split made on a phone has something to divide.
+        final desk = _shownZoom == null
+            ? layout
+            : widget.soloFocused && app.zoomedPaneId == null
+            ? _geometry(app.panes.length, constraints.biggest)
+            : null;
+        if (desk != null) {
+          app.activeSwarm.arranged = desk.arrangement;
+          app.activeSwarm.arrangedKey = desk.key;
           final minimum = _MinTile.of();
           app.activeSwarm.arrangedMinimum = Size(
-            (minimum.width + kPaneGap) / (layout.width + kPaneGap),
-            (minimum.height + kPaneGap) / (layout.height + kPaneGap),
+            (minimum.width + kPaneGap) / (desk.width + kPaneGap),
+            (minimum.height + kPaneGap) / (desk.height + kPaneGap),
           );
         }
         if (layout.columns != null) app.gridColumns = layout.columns;
