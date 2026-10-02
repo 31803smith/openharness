@@ -11,9 +11,11 @@
  *   spend       submit → pause when caps are hit; ledger persisted per day, `harness spend`
  *   caps        GPU, load, power, heat, lid, toolchains; whether this machine should take a job
  *   subs        every AI plan's weekly use against an even pace, `harness subs`, `GET /api/subscriptions`
+ *   dispatch    a bounded job to a linked machine over the daemon's own E2EE relay, `harness dispatch`
+ *   clip        clipboard or a file to a linked machine, sealed end to end, `harness clip push`
  *   commands    the `harness <command>` local API behind `POST /api/fleet`
  */
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, promises as fsp, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { env } from '../config/env.js'
 import { AttentionTracker, summarizeAttention, type AttentionRow } from '../lib/attention.js'
@@ -23,6 +25,7 @@ import { gateHookInstalled, installGateHook, uninstallGateHook } from '../lib/ho
 import { decidePlacement, describeCapabilities, readMachineCapabilities, type MachineCapabilities, type PlacementRequest } from '../lib/machineCapabilities.js'
 import { describeSubscriptions, SubscriptionsService, type ProviderId } from './subscriptions/index.js'
 import { nodeSubscriptionsDeps } from './subscriptions/nodeDeps.js'
+import { DISPATCH_RESULT_TYPE, createRemoteAgentBackend, jobPrompt, type DispatchResult, type JobSpec, type MachineLink, type WireFrame } from './remoteOrchestratorBackend.js'
 
 export interface FleetSessionLike {
   agentId: string
@@ -49,6 +52,65 @@ export interface FleetControlDeps {
   tokenUsage: (s: FleetSessionLike) => { totalTokens: number | null } | null
   hookPort: () => number
   now?: () => number
+  /** Write to this machine's clipboard (default: wl-copy, xclip or pbcopy, whichever is present). */
+  clipWrite?: (text: string) => Promise<void>
+  /** Where pushed files land (default ~/Downloads/harness-drop or HARNESS_DROP_DIR). */
+  dropDir?: string
+}
+
+/** A live, E2EE-terminated link to one linked machine, as the daemon's relay pool hands it out. */
+export interface RelayLink {
+  send(frame: WireFrame): Promise<void>
+  onFrame(cb: (frame: WireFrame) => void): () => void
+  close(): void
+}
+
+export interface DispatchRecord {
+  id: string
+  machineId: string
+  job: JobSpec
+  startedAt: number
+  finishedAt: number | null
+  agentId: string | null
+  result: DispatchResult | null
+  error: string | null
+}
+
+const DISPATCH_RESULT_RE = /DISPATCH_RESULT:\s*(\{[\s\S]*\})/
+
+/**
+ * Turn a relay link into the MachineLink the dispatcher library expects, and synthesize the
+ * `dispatch_result` frame from the worker's own text: the remote agent prints one
+ * `DISPATCH_RESULT: {json}` line, which arrives here as text_delta events; at turn_ended for that
+ * agent the line is parsed and re-emitted as if the worker had sent a result frame. No new wire type,
+ * no worker-side change, and the relay never sees the plaintext.
+ */
+export function machineLinkFromRelay(machineId: string, link: RelayLink): MachineLink & { close(): void } {
+  const text = new Map<string, string>()
+  const listeners = new Set<(f: WireFrame) => void>()
+  const emit = (f: WireFrame): void => { for (const cb of listeners) cb(f) }
+  const off = link.onFrame((frame) => {
+    const p = frame.payload ?? {}
+    const agentId = typeof p.agentId === 'string' ? p.agentId : ''
+    if (frame.type === 'text_delta' && agentId && typeof p.content === 'string') {
+      text.set(agentId, ((text.get(agentId) ?? '') + p.content).slice(-20_000))
+    } else if (frame.type === 'turn_ended' && agentId) {
+      const m = DISPATCH_RESULT_RE.exec(text.get(agentId) ?? '')
+      text.delete(agentId)
+      if (m) {
+        let parsed: Record<string, unknown> = {}
+        try { parsed = JSON.parse(m[1]!) as Record<string, unknown> } catch { parsed = { summary: 'DISPATCH_RESULT line was not valid JSON', ok: false } }
+        emit({ type: DISPATCH_RESULT_TYPE, payload: { agentId, ...parsed } })
+      }
+    }
+    emit(frame)
+  })
+  return {
+    machineId,
+    send: (frame) => { void link.send(frame) },
+    onFrame: (cb) => { listeners.add(cb); return () => { listeners.delete(cb) } },
+    close: () => { off(); link.close() },
+  }
 }
 
 function readJson<T>(file: string): T | null {
@@ -72,6 +134,11 @@ export class FleetControl {
   /** Subscription meters (ported from Burn Bar): weekly used, banked, reset, next plan to use. */
   readonly subs: SubscriptionsService
   private subsTimer: NodeJS.Timeout | null = null
+  private relayLink: ((machineId: string) => Promise<RelayLink>) | null = null
+  private readonly dispatches = new Map<string, DispatchRecord>()
+
+  /** Installed by the daemon once its relay pool exists (it is built after this object). */
+  setRelayLink(fn: (machineId: string) => Promise<RelayLink>): void { this.relayLink = fn }
 
   constructor(protected readonly deps: FleetControlDeps) {
     this.now = deps.now ?? Date.now
@@ -211,6 +278,100 @@ export class FleetControl {
     return this.capabilities().then((caps) => ({ ...decidePlacement(caps, req), caps: describeCapabilities(caps) }))
   }
 
+  // ── clipboard and file drop between paired machines ────────────────────────────────────────────
+
+  private async clipWrite(text: string): Promise<void> {
+    if (this.deps.clipWrite) return this.deps.clipWrite(text)
+    const { spawn } = await import('node:child_process')
+    const candidates: Array<[string, string[]]> = process.platform === 'darwin' ? [['pbcopy', []]] : [['wl-copy', []], ['xclip', ['-selection', 'clipboard']]]
+    for (const [cmd, args] of candidates) {
+      const ok = await new Promise<boolean>((resolve) => {
+        const child = spawn(cmd, args, { stdio: ['pipe', 'ignore', 'ignore'] })
+        child.on('error', () => resolve(false))
+        child.on('exit', (code) => resolve(code === 0))
+        child.stdin.end(text)
+      })
+      if (ok) return
+    }
+    throw new Error('no clipboard tool (wl-copy, xclip or pbcopy) worked')
+  }
+
+  /** A paired machine pushed text or a file here. Text goes to the clipboard; a file lands in the drop folder. */
+  async clipReceive(push: { text?: string; file?: { name: string; base64: string }; from: string }): Promise<{ ok: true; detail: string } | { ok: false; error: string }> {
+    try {
+      if (push.file) {
+        const dir = this.deps.dropDir ?? process.env.HARNESS_DROP_DIR ?? join(process.env.HOME ?? '/tmp', 'Downloads', 'harness-drop')
+        await fsp.mkdir(dir, { recursive: true })
+        // Basename only, then a conservative character set, then no leading dots: a name can never
+        // climb out of the drop folder or hide as a dotfile.
+        const base = push.file.name.split(/[\\/]/).filter(Boolean).pop() ?? 'file'
+        const safe = base.replace(/[^\w.@ -]+/g, '_').replace(/^\.+/, '').slice(0, 120) || 'file'
+        let target = join(dir, safe)
+        for (let i = 1; existsSync(target); i += 1) target = join(dir, safe.replace(/(\.[^.]*)?$/, `-${i}$1`))
+        await fsp.writeFile(target, Buffer.from(push.file.base64, 'base64'))
+        console.log(`[clip] file from ${push.from} -> ${target}`)
+        return { ok: true, detail: target }
+      }
+      if (push.text !== undefined) {
+        await this.clipWrite(push.text)
+        console.log(`[clip] text from ${push.from}: ${push.text.length} chars`)
+        return { ok: true, detail: `${push.text.length} chars on the clipboard` }
+      }
+      return { ok: false, error: 'CLIP_EMPTY' }
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) }
+    }
+  }
+
+  /** Push text or a file to a linked machine over the relay link; waits for its reply. */
+  async clipPush(machineId: string, push: { text?: string; file?: { name: string; base64: string } }, timeoutMs = 15_000): Promise<Record<string, unknown>> {
+    if (!this.relayLink) throw new Error('clip push is not available: no relay link')
+    const link = await this.relayLink(machineId)
+    const requestId = `clip-${this.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`
+    try {
+      const reply = new Promise<Record<string, unknown>>((resolve, reject) => {
+        const timer = setTimeout(() => { off(); reject(new Error(`no reply from ${machineId} in ${timeoutMs} ms`)) }, timeoutMs)
+        const off = link.onFrame((f) => {
+          if (f.type === 'clip_push_result' && f.payload.requestId === requestId) { clearTimeout(timer); off(); resolve(f.payload) }
+        })
+      })
+      await link.send({ type: 'clip_push', payload: { requestId, ...push, from: this.deps.machineName() } })
+      const out = await reply
+      console.log(`[clip] push to ${machineId}: ${push.file ? push.file.name : `${push.text?.length ?? 0} chars`} -> ${String(out.error ?? out.detail ?? 'ok')}`)
+      return out
+    } finally { link.close() }
+  }
+
+  // ── fleet dispatcher ───────────────────────────────────────────────────────────────────────────
+
+  /** Hand a bounded job to a linked machine; returns at once with a record that fills in as it runs. */
+  async dispatch(machineId: string, job: JobSpec): Promise<DispatchRecord> {
+    if (!this.relayLink) throw new Error('dispatch is not available: no relay link')
+    const id = `d-${this.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`
+    job = { ...job, machineId }
+    const record: DispatchRecord = { id, machineId, job, startedAt: this.now(), finishedAt: null, agentId: null, result: null, error: null }
+    this.dispatches.set(id, record)
+    console.log(`[dispatch] ${id} -> ${machineId}: ${job.brief.slice(0, 120)}`)
+    void (async () => {
+      let link: (MachineLink & { close(): void }) | null = null
+      try {
+        link = machineLinkFromRelay(machineId, await this.relayLink!(machineId))
+        const backend = createRemoteAgentBackend(link, { now: this.now })
+        const created = await backend.create({ engine: job.engine, cwd: job.repo, prompt: jobPrompt(job), branchName: job.branchName, ...(job.dsh ? { dsh: job.dsh } : {}) })
+        record.agentId = created.agentId
+        record.result = await backend.awaitResult(created.agentId, { timeoutMs: job.timeoutMs ?? 60 * 60 * 1000 })
+      } catch (err) {
+        record.error = err instanceof Error ? err.message : String(err)
+      } finally {
+        record.finishedAt = this.now()
+        link?.close()
+        console.log(`[dispatch] ${id} done: ${(record.error ?? record.result?.summary ?? '').slice(0, 300)}`)
+        void fsp.appendFile(this.file('dispatches.jsonl'), JSON.stringify(record) + '\n').catch(() => {})
+      }
+    })()
+    return record
+  }
+
   // ── panic stop ─────────────────────────────────────────────────────────────────────────────────
 
   async stopAll(exceptAgentId: string | null): Promise<{ cancelled: string[] }> {
@@ -249,6 +410,18 @@ export class FleetControl {
       case 'capabilities': return { ...(await this.capabilities(0)), line: describeCapabilities(await this.capabilities()) }
       case 'placement': return this.placement(args as PlacementRequest)
       case 'subs': { const r = await this.subs.collect(args.force === true || args.force === 'true'); return { ...r, lines: describeSubscriptions(r) } }
+      case 'dispatch': {
+        const job: JobSpec = { machineId: str('machine'), brief: str('brief'), repo: str('repo'), engine: str('engine') || 'claude', branchName: str('branch') || `dispatch/${this.now().toString(36)}`, ...(str('dsh') ? { dsh: str('dsh') } : {}) }
+        if (!job.brief || !job.repo || !str('machine')) throw new Error('dispatch needs machine, repo and brief')
+        return this.dispatch(str('machine'), job)
+      }
+      case 'dispatches': return { dispatches: [...this.dispatches.values()].sort((a, b) => b.startedAt - a.startedAt) }
+      case 'clip-push': {
+        const file = args.file && typeof args.file === 'object' ? args.file as { name: string; base64: string } : undefined
+        const text = typeof args.text === 'string' ? args.text : undefined
+        if (!str('machine') || (!file && text === undefined)) throw new Error('clip-push needs machine and text or file')
+        return this.clipPush(str('machine'), { ...(text !== undefined ? { text } : {}), ...(file ? { file } : {}) })
+      }
       case 'subs-set': {
         const on = args.enabled === true || args.enabled === 'on' || args.enabled === 'true'
         await this.subs.setEnabled(str('id') as ProviderId, on)

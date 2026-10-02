@@ -468,7 +468,11 @@ Machine:
                                whether this computer should take a job like that
   harness subs [--force] | subs set <claude|codex|grok|kimi> <on|off>
                                each AI plan's weekly use, banked against an even pace, and which to use next
-  harness logs export       zip the last 7 days of logs (app, CLI, dial, daemon) to the Desktop
+  harness dispatch --machine=<id> --repo=<path there> [--engine=claude] [--branch=x] "brief"
+                               hand a bounded job to a linked machine; \`harness dispatches\` lists them
+  harness clip push --machine=<id> [--file=<path>] [text]
+                               clipboard or a file (25 MB) to a linked machine, sealed end to end
+  harness logs export      zip the last 7 days of logs (app, CLI, dial, daemon) to the Desktop
   harness tui                  all of Harness in this terminal: swarms, panes, every machine (⌥O ⌥P ⌥N)
   harness new [agent] [@machine] [folder|name] [-- task]
                                make a harness from a shell: \`harness new\` is claude here; see \`harness new -h\`
@@ -3237,6 +3241,7 @@ async function runForeground(session: AuthSession | null): Promise<void> {
   backend.runtimeProfileProvider = (session) => runtimeProfiles.selectedModel(session)
   backend.dshFrameProvider = dshFrameContext
   backend.onDshRemove = (id) => removeDsh(id)
+  backend.onClipPush = (push) => fleetControlRef ? fleetControlRef.clipReceive(push) : Promise.resolve({ ok: false as const, error: 'STARTING' })
   // `harness remote` names the tile it was typed in by its tmux pane; the registry knows whose it is.
   backend.onTerminalHandoff = (tmuxPane) => registry.advertised()
     .find((session) => session.tmuxPane === tmuxPane
@@ -4720,6 +4725,27 @@ async function runForeground(session: AuthSession | null): Promise<void> {
       },
     },
   )
+  // The fleet dispatcher and clip push ride the same pool the window uses to reach a linked machine:
+  // one E2EE-terminated session per machine, frames fanned out to whoever attached.
+  fleetControl.setRelayLink(async (machineId) => {
+    const listeners = new Set<(frame: { type: string; payload: Record<string, unknown> }) => void>()
+    const sink = {
+      sendFrame: (frame: Record<string, unknown>) => {
+        const payload = (frame.payload && typeof frame.payload === 'object' ? frame.payload : {}) as Record<string, unknown>
+        // The event correlator puts agentId on the frame and in the payload; keep it reachable either way.
+        const shaped = { type: String(frame.type ?? ''), payload: typeof frame.agentId === 'string' && !payload.agentId ? { ...payload, agentId: frame.agentId } : payload }
+        for (const cb of listeners) cb(shaped)
+        return true
+      },
+      sendBinary: () => true,
+    }
+    const session = await relayPool.acquire(machineId, env.AUTONOMOUS_ENV, { type: 'machine_select', payload: { machineId } }, sink, () => { listeners.clear() })
+    return {
+      send: (frame) => session.send(frame as unknown as Record<string, unknown>),
+      onFrame: (cb) => { listeners.add(cb); return () => { listeners.delete(cb) } },
+      close: () => session.detach(),
+    }
+  })
   // Every machine and phone linked to this one, directly or through another member, trusts every other:
   // rosters are swapped over any session that opens, and pushed on whenever they change.
   groupSyncer = new GroupSyncer({
@@ -8009,6 +8035,35 @@ async function fleetCommand(cmd: string, args: string[], flags: string[]): Promi
       if (action === 'spend-on') { action = 'spend-set'; body = { enabled: true } }
       break
     }
+    case 'dispatch': {
+      const brief = args.join(' ')
+      if (!brief || !flag('machine') || !flag('repo')) { console.error('Usage: harness dispatch --machine=<machineId> --repo=</path/on/that/machine> [--engine=claude] [--branch=name] [--dsh=id] "brief"'); process.exit(1) }
+      body = { machine: flag('machine'), repo: flag('repo'), engine: flag('engine') ?? 'claude', branch: flag('branch') ?? '', dsh: flag('dsh') ?? '', brief }
+      break
+    }
+    case 'dispatches': break
+    case 'clip': {
+      // harness clip push --machine=<id> [--file=path] [text]; with neither text nor file, the local clipboard is sent.
+      if (args[0] !== 'push' || !flag('machine')) { console.error('Usage: harness clip push --machine=<machineId> [--file=<path>] [text]'); process.exit(1) }
+      action = 'clip-push'
+      const filePath = flag('file')
+      if (filePath) {
+        const { readFileSync: rf, statSync: st } = await import('node:fs')
+        if (st(filePath).size > 25 * 1024 * 1024) { console.error('✗ file is over 25 MB'); process.exit(1) }
+        body = { machine: flag('machine'), file: { name: filePath.split('/').pop() ?? 'file', base64: rf(filePath).toString('base64') } }
+      } else {
+        let text = args.slice(1).join(' ')
+        if (!text) {
+          const { execFileSync } = await import('node:child_process')
+          for (const [tool, a] of [['wl-paste', ['--no-newline']], ['xclip', ['-selection', 'clipboard', '-o']], ['pbpaste', []]] as Array<[string, string[]]>) {
+            try { text = execFileSync(tool, a, { encoding: 'utf8', timeout: 3000 }); break } catch { /* next tool */ }
+          }
+        }
+        if (!text) { console.error('✗ nothing to push: give text, --file, or put something on the clipboard'); process.exit(1) }
+        body = { machine: flag('machine'), text }
+      }
+      break
+    }
     case 'capabilities': break
     case 'placement': body = { needsGpu: flags.includes('--gpu'), interactive: flags.includes('--interactive'), minFreeVramMb: num('min-vram') ?? undefined }; break
     case 'subs': {
@@ -9275,7 +9330,8 @@ switch (cmd) {
   case 'reset':
     resetCommand().catch(onError)
     break
-  case 'attention': case 'stop-all': case 'gate': case 'spend': case 'capabilities': case 'placement': case 'subs': case 'fleet':
+  case 'attention': case 'stop-all': case 'gate': case 'spend': case 'capabilities': case 'placement': case 'subs':
+  case 'dispatch': case 'dispatches': case 'clip': case 'fleet':
     fleetCommand(cmd, args, flags).catch(onError)
     break
   case 'status':

@@ -88,6 +88,64 @@ describe('FleetControl', () => {
     expect(fleet.attention.get('a')?.state).toBe('idle')
   })
 
+  it('dispatches a job over a relay link and reads the result off the worker text', async () => {
+    type F = { type: string; payload: Record<string, unknown> }
+    const sentFrames: F[] = []
+    const link: { push: ((f: F) => void) | null } = { push: null }
+    fleet.setRelayLink(async () => ({
+      send: async (f) => {
+        sentFrames.push(f)
+        if (f.type === 'agent_create') setTimeout(() => link.push?.({ type: 'agent_create_result', payload: { requestId: f.payload.requestId, creationId: f.payload.creationId, agentId: 'remote-1' } }), 5)
+      },
+      onFrame: (cb) => { link.push = cb; return () => { link.push = null } },
+      close: () => {},
+    }))
+    const rec = await fleet.dispatch('m-2', { machineId: 'm-2', brief: 'add a README badge', repo: '/srv/proj', engine: 'claude', branchName: 'badge' })
+    expect(rec.finishedAt).toBeNull()
+    await new Promise((r) => setTimeout(r, 40))
+    expect(sentFrames[0]?.type).toBe('agent_create')
+    expect(String(sentFrames[0]?.payload.prompt)).toContain('DISPATCH_RESULT:')
+    link.push?.({ type: 'text_delta', payload: { agentId: 'remote-1', content: 'Done. DISPATCH_RESULT: {"branch":"badge","diffStat":"1 file changed","summary":"README badge added","ok":true}\n' } })
+    link.push?.({ type: 'turn_ended', payload: { agentId: 'remote-1' } })
+    await new Promise((r) => setTimeout(r, 40))
+    const listed = (await fleet.command('dispatches', {}) as { dispatches: Array<typeof rec> }).dispatches
+    expect(listed[0]?.agentId).toBe('remote-1')
+    expect(listed[0]?.result).toMatchObject({ ok: true, branch: 'badge', summary: 'README badge added' })
+    expect(listed[0]?.finishedAt).not.toBeNull()
+  })
+
+  it('receives a clip push: text to the clipboard, a file into the drop folder without overwriting', async () => {
+    const clip: string[] = []
+    const other = new FleetControl({ ...deps(), clipWrite: async (t) => { clip.push(t) }, dropDir: join(dir, 'drop') })
+    expect(await other.clipReceive({ text: 'hello from vic', from: 'vic' })).toEqual({ ok: true, detail: '14 chars on the clipboard' })
+    expect(clip).toEqual(['hello from vic'])
+    const b64 = Buffer.from('payload').toString('base64')
+    const first = await other.clipReceive({ file: { name: '../evil name.txt', base64: b64 }, from: 'vic' })
+    const second = await other.clipReceive({ file: { name: '../evil name.txt', base64: b64 }, from: 'vic' })
+    expect(first).toMatchObject({ ok: true, detail: join(dir, 'drop', 'evil name.txt') })
+    expect(second).toMatchObject({ ok: true, detail: join(dir, 'drop', 'evil name-1.txt') })
+    expect(readFileSync(join(dir, 'drop', 'evil name.txt'), 'utf8')).toBe('payload')
+    expect(await other.clipReceive({ from: 'vic' })).toEqual({ ok: false, error: 'CLIP_EMPTY' })
+  })
+
+  it('pushes text to a linked machine and returns its reply', async () => {
+    const link: { push: ((f: { type: string; payload: Record<string, unknown> }) => void) | null } = { push: null }
+    const sentFrames: Array<{ type: string; payload: Record<string, unknown> }> = []
+    fleet.setRelayLink(async () => ({
+      send: async (f) => { sentFrames.push(f); setTimeout(() => link.push?.({ type: 'clip_push_result', payload: { requestId: f.payload.requestId, ok: true, detail: '5 chars on the clipboard' } }), 5) },
+      onFrame: (cb) => { link.push = cb; return () => { link.push = null } },
+      close: () => {},
+    }))
+    const out = await fleet.clipPush('m-2', { text: 'hello' })
+    expect(out).toMatchObject({ ok: true, detail: '5 chars on the clipboard' })
+    expect(sentFrames[0]).toMatchObject({ type: 'clip_push', payload: { text: 'hello', from: 'gus' } })
+  })
+
+  it('refuses dispatch and clip push before the relay pool exists', async () => {
+    await expect(fleet.dispatch('m-2', { machineId: 'm-2', brief: 'x', repo: '/r', engine: 'claude', branchName: 'b' })).rejects.toThrow(/no relay link/)
+    await expect(fleet.command('clip-push', { machine: 'm-2' })).rejects.toThrow(/needs machine and text or file/)
+  })
+
   it('exposes the local command surface', async () => {
     await expect(fleet.command('nope', {})).rejects.toThrow(/unknown fleet action/)
     const att = await fleet.command('attention', {}) as { agents: unknown[] }
