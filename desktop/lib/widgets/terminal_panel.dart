@@ -2122,10 +2122,12 @@ class _TerminalPanelState extends State<TerminalPanel>
     // underneath them all would stack with theirs.
     final paneOpacity = PaneOpacity.of(context);
     final chromeFill = PaneOpacity.fill(context, grid.AppPalette.windowBg);
-    // The pane frame follows what its agent needs from a person (the daemon's attention frame).
+    // The pane frame follows what its agent needs from a person (the daemon's attention frame);
+    // the focused pane keeps only its own focus border.
     return AttentionGlow(
       attention: widget.notifier.attention,
       agentId: session.agentId,
+      focused: widget.focused,
       child: KeymapRegion(
       contextKind: KeymapContext.terminal,
       composing: () =>

@@ -20,19 +20,25 @@ enum AttentionMotion { sweep, breathe, alarm, fill, none }
 /// - permission / failed: a red pulse with a bright scan band that travels down the two side
 ///   edges. The band lives in the border, never over the terminal's text (design/attention-motion.md). Failed opens
 ///   with the device's double flash.
-/// - done: the border draws itself once around the pane in green, then holds still.
+/// - done: the border draws itself once around the pane in green, then holds still. It keeps
+///   holding after the pane has been looked at (`idle`, reviewed) until the agent's next turn, so a
+///   finished pane reads green whenever it is not the one in front of you.
 /// - Colour changes between states cross-fade over 280 ms instead of snapping.
+/// - The focused pane draws no frame at all: its blue focus border is the only one on it.
 ///
 /// Loops stop while the window is unfocused or reduced motion is on (then every state is a steady
 /// border). The painter sits in its own layer, so the terminal repainting never repaints the frame
 /// and a frame tick never repaints the terminal. [AttentionState] rows are value-equal, so the
 /// once-a-second frame that changes nothing rebuilds nothing here.
 class AttentionGlow extends StatefulWidget {
-  const AttentionGlow({super.key, required this.attention, required this.agentId, required this.child, this.reducedMotion = false});
+  const AttentionGlow({super.key, required this.attention, required this.agentId, required this.child, this.reducedMotion = false, this.focused = false});
 
   final AttentionState attention;
   final String agentId;
   final Widget child;
+
+  /// The pane holds focus: its own focus border shows, so the attention frame steps aside.
+  final bool focused;
 
   /// Forces reduced motion on; the platform setting and HARNESS_REDUCED_MOTION also turn it on.
   final bool reducedMotion;
@@ -65,13 +71,23 @@ class _AttentionGlowState extends State<AttentionGlow> with TickerProviderStateM
   late final Listenable _tick = Listenable.merge([_loop, _once, _fade]);
 
   AttentionRow? _row;
+  // The state the frame draws, which is not always the daemon's: nothing on the focused pane, and a
+  // finished turn that has been looked at (idle, reviewed) still reads as done.
+  AgentAttention? _shown;
   Color _from = Colors.transparent, _to = Colors.transparent;
   bool _reduced = false;
+
+  AgentAttention? _shownFor(AttentionRow? r) {
+    if (r == null || widget.focused) return null;
+    if (r.state == AgentAttention.idle && r.detail == 'reviewed') return AgentAttention.done;
+    return r.state;
+  }
 
   @override
   void initState() {
     super.initState();
     _row = widget.attention.of(widget.agentId);
+    _shown = _shownFor(_row);
     widget.attention.addListener(_onFrame);
     WindowFocus.instance.addListener(_syncLoop);
     // Once a fade out of the last state ends, drop the painter layer altogether.
@@ -84,7 +100,7 @@ class _AttentionGlowState extends State<AttentionGlow> with TickerProviderStateM
   void didChangeDependencies() {
     super.didChangeDependencies();
     _reduced = widget.reducedMotion || Motion.reducedOf(context);
-    _to = _colorOf(_row);
+    _to = _colorOf(_shown);
     if (_fade.value == 1) _from = _to;
     _syncLoop();
   }
@@ -97,41 +113,52 @@ class _AttentionGlowState extends State<AttentionGlow> with TickerProviderStateM
       widget.attention.addListener(_onFrame);
     }
     _reduced = widget.reducedMotion || Motion.reducedOf(context);
-    if (old.agentId != widget.agentId || !identical(old.attention, widget.attention)) _onFrame();
+    if (old.agentId != widget.agentId || !identical(old.attention, widget.attention)) {
+      _onFrame();
+    } else if (old.focused != widget.focused) {
+      // Focus moved: show or hide the frame without replaying the done draw or the failed flash.
+      _show(_shownFor(_row), animateOnce: false);
+      if (mounted) setState(() {});
+    }
     _syncLoop();
   }
 
-  Color _colorOf(AttentionRow? r) =>
-      r == null || AttentionGlow.motionFor(r.state) == AttentionMotion.none ? Colors.transparent : Neon.current().of(r.state);
+  Color _colorOf(AgentAttention? s) =>
+      s == null || AttentionGlow.motionFor(s) == AttentionMotion.none ? Colors.transparent : Neon.current().of(s);
 
   void _onFrame() {
     final next = widget.attention.of(widget.agentId);
     if (next == _row) return; // value-equal: nothing changed, nothing repaints
-    final prev = _row?.state;
+    final realChange = next?.state != _row?.state;
     _row = next;
-    if (next?.state != prev) {
-      // Cross-fade from whatever colour is on screen now.
-      _from = Color.lerp(_from, _to, _fade.value) ?? _to;
-      _to = _colorOf(next);
-      if (_reduced) {
-        _fade.value = 1;
-      } else {
-        _fade.forward(from: 0);
-      }
-      final s = next?.state;
-      if (!_reduced && (s == AgentAttention.done || s == AgentAttention.failed)) {
-        _once.duration = Duration(milliseconds: s == AgentAttention.done ? 900 : 520);
-        _once.forward(from: 0);
-      } else {
-        _once.value = 1;
-      }
-    }
+    // The one-shot (done draw, failed flash) plays for a turn that just ended, not for a pane that
+    // was looked at and is now showing its result again.
+    _show(_shownFor(next), animateOnce: realChange);
     _syncLoop();
     if (mounted) setState(() {});
   }
 
+  void _show(AgentAttention? next, {required bool animateOnce}) {
+    if (next == _shown) return;
+    _shown = next;
+    // Cross-fade from whatever colour is on screen now.
+    _from = Color.lerp(_from, _to, _fade.value) ?? _to;
+    _to = _colorOf(next);
+    if (_reduced) {
+      _fade.value = 1;
+    } else {
+      _fade.forward(from: 0);
+    }
+    if (animateOnce && !_reduced && (next == AgentAttention.done || next == AgentAttention.failed)) {
+      _once.duration = Duration(milliseconds: next == AgentAttention.done ? 900 : 520);
+      _once.forward(from: 0);
+    } else {
+      _once.value = 1;
+    }
+  }
+
   void _syncLoop() {
-    final motion = _row == null ? AttentionMotion.none : AttentionGlow.motionFor(_row!.state);
+    final motion = _shown == null ? AttentionMotion.none : AttentionGlow.motionFor(_shown!);
     final loops = motion == AttentionMotion.sweep || motion == AttentionMotion.breathe || motion == AttentionMotion.alarm;
     final run = loops && !_reduced && WindowFocus.instance.value;
     if (run && !_loop.isAnimating) {
@@ -154,23 +181,25 @@ class _AttentionGlowState extends State<AttentionGlow> with TickerProviderStateM
 
   @override
   Widget build(BuildContext context) {
-    final row = _row;
-    final motion = row == null ? AttentionMotion.none : AttentionGlow.motionFor(row.state);
-    final child = RepaintBoundary(child: widget.child);
-    if (motion == AttentionMotion.none && _fade.value == 1) return child;
+    final shown = _shown;
+    final motion = shown == null ? AttentionMotion.none : AttentionGlow.motionFor(shown);
+    // One tree shape whether a frame is drawn or not: switching shapes would rebuild the terminal
+    // underneath from scratch every time the frame came or went (each focus change, each state).
     return RepaintBoundary(
       child: AnimatedBuilder(
         animation: _tick,
-        child: child,
+        child: RepaintBoundary(child: widget.child),
         builder: (context, child) => CustomPaint(
-          foregroundPainter: AttentionBorderPainter(
-            motion: motion,
-            color: Color.lerp(_from, _to, Curves.easeOut.transform(_fade.value)) ?? _to,
-            phase: _loop.value,
-            progress: _once.value,
-            failed: row?.state == AgentAttention.failed,
-            reduced: _reduced,
-          ),
+          foregroundPainter: motion == AttentionMotion.none && _fade.value == 1
+              ? null
+              : AttentionBorderPainter(
+                  motion: motion,
+                  color: Color.lerp(_from, _to, Curves.easeOut.transform(_fade.value)) ?? _to,
+                  phase: _loop.value,
+                  progress: _once.value,
+                  failed: shown == AgentAttention.failed,
+                  reduced: _reduced,
+                ),
           child: child,
         ),
       ),
