@@ -467,4 +467,48 @@ void main() {
     expect(gigabytesLabel(9.96 * _gib), '10 GB');
     expect(gigabytesLabel(27159116064), '25 GB');
   });
+
+  testWidgets(
+    'a model another app downloaded is one of yours, named with that app, and Use starts it there',
+    (tester) async {
+      final app = (await _localFixture())..completeStarts = true;
+      try {
+        app.localInventory = {
+          ..._inventory(),
+          'models': [
+            ...(_inventory()['models'] as List),
+            {
+              'id': 'app:ollama:llama3.2:3b',
+              'name': 'llama3.2:3b',
+              'state': 'downloaded',
+              'sizeBytes': 2 * _gib,
+              'canStart': true,
+              'app': 'Ollama',
+            },
+          ],
+        };
+        await app.modelManager.refresh(force: true);
+        final picker = await _open(tester, app);
+        final ollama = _row(picker, 'llama3.2:3b');
+        expect(picker.modelSection(ollama), ModelSearchSection.local);
+        expect(_status(tester, ollama), 'Use');
+        // No speed is known before it runs: the app it came from takes that column.
+        expect(_facts(tester, ollama), '2.0 GB · Ollama');
+        picker.move(picker.rows.indexOf(ollama) - picker.cursor);
+        await tester.pumpAndSettle();
+        expect(_inPreview('Runs in'), findsOneWidget);
+        expect(_inPreview('Ollama'), findsOneWidget);
+        // Use is the same act as for Grid's own: the daemon starts it (in Ollama), and the harness moves on.
+        await key(tester, LogicalKeyboardKey.enter);
+        await tester.pumpAndSettle();
+        expect(app.actions, [
+          (machine: 'm', model: 'app:ollama:llama3.2:3b', start: true),
+        ]);
+        expect(app.selections, [(agent: 'a69', model: 'llama3.2:3b')]);
+      } finally {
+        await tester.pumpWidget(const SizedBox());
+        app.dispose();
+      }
+    },
+  );
 }

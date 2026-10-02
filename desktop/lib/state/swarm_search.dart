@@ -354,7 +354,8 @@ class SwarmSearchController extends ChangeNotifier {
 
   /// What sets one model of yours apart from the next, in two aligned columns ahead of the row's
   /// word: its size, and its speed — measured while it runs, else the catalog's estimate for this
-  /// machine (`~`). Null for any other row. Widths are fixed so every row's columns line up.
+  /// machine (`~`), else the app it came from (`Ollama`). Null for any other row. Widths are fixed
+  /// so every row's columns line up.
   String? modelRowFacts(SwarmDestination row) {
     final local = models?.entries[row.modelId]?.local;
     if (local == null) return null;
@@ -366,7 +367,7 @@ class SwarmSearchController extends ChangeNotifier {
         ? '${measured.round()} tok/s'
         : local.estTokS != null
         ? '~${local.estTokS!.round()} tok/s'
-        : '';
+        : local.app ?? '';
     return '${size.padLeft(6)}  ${speed.padLeft(9)}';
   }
 

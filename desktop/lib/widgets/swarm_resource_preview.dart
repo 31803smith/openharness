@@ -1306,6 +1306,8 @@ class _SwarmResourcePreviewState extends State<SwarmResourcePreview> {
           errorLine(widget.search.modelUseError!),
         SizedBox(height: cell.height),
         if (local != null) ...[
+          // A model another app downloaded starts in that app, joined to the grid from there.
+          if (local.app case final app?) labelValue('Runs in', app),
           // What decides between models: what it costs to get, whether it fits, how fast it answers.
           if (local.sizeBytes case final size?)
             labelValue(

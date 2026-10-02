@@ -266,6 +266,13 @@ test('a model starts with the app whose folder holds it, and moves to Grid\'s en
   // llama.cpp's cache: the person's own llama-server, which downloaded it; Grid's when they have none.
   assert.deepEqual(startWith(model('llama.cpp'), mac(yours)), { engine: 'llama.cpp', label: 'your llama.cpp', path: '/opt/homebrew/bin/llama-server' });
   assert.equal(startWith(model('llama.cpp'), mac()).label, "Grid's llama.cpp");
+  // Busy serving, it answered `--version` past the deadline: still theirs, not Grid's.
+  assert.equal(startWith(model('llama.cpp'), mac({ ...yours, version: null, note: 'on PATH but did not answer --version' })).label, 'your llama.cpp');
+  // Newer llama.cpp saves `-hf` downloads in the Hugging Face cache: a GGUF there is the person's llama.cpp's
+  // to start when they have one, Grid's otherwise. Other formats there keep their own engines.
+  assert.equal(startWith(model('huggingface'), mac(yours)).label, 'your llama.cpp');
+  assert.equal(startWith(model('huggingface'), mac()).label, "Grid's llama.cpp");
+  assert.equal(startWith(model('huggingface', 'mlx'), mac(yours, { kind: 'mlx-lm', path: '/x', version: '0.31' })).engine, 'mlx-lm');
   // ~/.grid/models stays Grid's, whatever else is installed.
   assert.equal(startWith(model('grid'), mac(ollama, studio, yours)).label, "Grid's llama.cpp");
   // No app of its own: by format. Safetensors go to vLLM or SGLang where they run, and to nothing on a Mac.

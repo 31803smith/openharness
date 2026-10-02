@@ -443,13 +443,15 @@ async function accelerators(llamaServer, os) {
 }
 
 const firstLine = text => text.split('\n').map(line => line.trim()).find(Boolean) ?? null;
+// llama.cpp builds since 11000 log `srv llama_server: initializing ...` before `version: …` [run].
+const versionLine = text => text.split('\n').map(line => line.trim()).find(line => /^version\b/i.test(line)) ?? firstLine(text);
 
 /** Engines installed here (on PATH or in their standard install place), with the version each reports. */
 async function installedEngines(llamaServer, home) {
   const engines = [];
   const add = (kind, path, version, note) => engines.push({ kind, path, version: version || null, ...(note ? { note } : {}) });
   const grid = await probe(llamaServer, ['--version']);
-  if (grid.ok) add('llama.cpp', llamaServer, firstLine(grid.out), "Grid's own engine");
+  if (grid.ok) add('llama.cpp', llamaServer, versionLine(grid.out), "Grid's own engine");
   // PATH first, then ~/.grid/envs/<engine>/bin, where the engine skills install Python engines.
   const envs = join(home, '.grid', 'envs');
   const windows = platform() === 'win32';
@@ -462,11 +464,16 @@ async function installedEngines(llamaServer, home) {
     return (await stat(file).catch(() => null)) ? file : null;
   };
   const exists = async file => ((await stat(file).catch(() => null)) ? file : null);
-  const which = async (name, env) => (await onPath(name)) || inEnv(name, env);
+  // An app opened from Finder or the Dock gets launchd's PATH (/usr/bin:/bin:/usr/sbin:/sbin), so the
+  // folders Homebrew and the person's own installs use are looked in too: a Homebrew llama-server read as
+  // "not installed" moved its models to Grid's engine.
+  const standard = windows ? [] : [join(home, '.local', 'bin'), '/opt/homebrew/bin', '/usr/local/bin', '/home/linuxbrew/.linuxbrew/bin'];
+  const inStandard = async name => { for (const dir of standard) if (await exists(join(dir, name))) return join(dir, name); return null; };
+  const which = async (name, env) => (await onPath(name)) || (await inEnv(name, env)) || inStandard(name);
   const own = await which('llama-server');
   if (own && own !== llamaServer) {
     const answer = await probe(own, ['--version']);
-    add('llama.cpp', own, answer.ok ? firstLine(answer.out) : null, answer.ok ? null : 'on PATH but did not answer --version');
+    add('llama.cpp', own, answer.ok ? versionLine(answer.out) : null, answer.ok ? null : 'on PATH but did not answer --version');
   }
   const ollama = (await which('ollama'))
     || ((await exists('/Applications/Ollama.app')) ? '/Applications/Ollama.app/Contents/Resources/ollama' : null)
@@ -550,7 +557,9 @@ export function modelFamily(name) {
  */
 export function startWith(model, machine, answering = []) {
   const installed = kind => machine.engines.some(e => e.kind === kind);
-  const yourLlama = machine.engines.find(e => e.kind === 'llama.cpp' && e.note !== "Grid's own engine" && e.version);
+  // Installed is enough: `--version` took 10.8s while a llama-server was serving [run], past the probe's
+  // deadline, and a slow answer must not turn the person's own llama.cpp into Grid's.
+  const yourLlama = machine.engines.find(e => e.kind === 'llama.cpp' && e.note !== "Grid's own engine");
   const up = kind => answering.some(e => e.kind === kind);
   const grid = { engine: 'llama.cpp', label: "Grid's llama.cpp" };
   const byFormat = () => {
@@ -566,7 +575,11 @@ export function startWith(model, machine, answering = []) {
   };
   if (model.source === 'ollama' && installed('ollama')) return { engine: 'ollama', label: 'ollama', running: up('ollama') };
   if (model.source === 'lm-studio' && installed('lm-studio')) return { engine: 'lm-studio', label: 'lm-studio', running: up('lm-studio') };
-  if (model.source === 'llama.cpp' && yourLlama) return { engine: 'llama.cpp', label: 'your llama.cpp', path: yourLlama.path };
+  // llama.cpp's `-hf` downloads: its own cache folder in older builds, the Hugging Face cache since (build
+  // 11146 put Qwen3-4B there [run]). Nothing else downloads GGUF files into that cache to run them.
+  if (yourLlama && (model.source === 'llama.cpp' || (model.source === 'huggingface' && model.format === 'gguf'))) {
+    return { engine: 'llama.cpp', label: 'your llama.cpp', path: yourLlama.path };
+  }
   return byFormat();
 }
 
