@@ -32,6 +32,32 @@ on 2026-09-30; the unmerged checkpoints below describe earlier review stages.
 | Native tabs / footer / menus | System-font curved tabs with names, hover close and Command-held hints; 10-point pane frames. Pane model control before an always-visible close icon. Remaining subscription usage at left and focused machine/project/branch/PR at right. Empty New Tabs hide the footer; modals isolate it, with a passive customization preview |
 | Linux / browser presentation | Shared light/dark, narrow and enlarged-text fixtures cover responsive behavior; physical Linux/browser platform validation is not claimed |
 
+Harness Monitor refinement (2026-10-02): the table now lists only open harnesses,
+including idle and starting sessions. Saved history and Open controls are removed.
+Every row has an always-visible 32-point × target, pinned to the right during
+horizontal scrolling. Closing reviews one session and retains history and files.
+Harness, Status, CPU, RAM, GPU and SSD lead the table, before agent and project
+metadata. Footer totals remain scoped to open owned harnesses and their shared
+servers. macOS GPU readings use process-owned IOAccelerator time counters;
+first samples and unavailable counters show —.
+
+Validation: 120 monitor tests, 25 daemon resource/telemetry tests and 16 Flutter
+footer/session tests pass, with TypeScript and changed-file Flutter analysis
+clean. An opt-in native Metal fixture on an Intel Mac verifies nonzero GPU use
+for its harness and zero for a separate idle harness. Apple Silicon counters
+have parser coverage, not hardware validation. The full CLI suite has 8,496
+passing tests, 46 skipped and four failures in unchanged tests: the doctor
+timeout and tmux buffer-size assertion reproduce on clean main; the two
+local-model cleanup failures pass in isolation on both branches.
+
+The synthetic browser preview was checked in [light appearance](images/harness-monitor-open-light.png)
+and [an 800×650 dark pane](images/harness-monitor-open-narrow.png), where every
+primary resource column and × fit. Closing updates counts/totals. Earlier review
+also checked idle filtering, empty search, frozen updates disabling closing,
+keyboard cancellation and horizontal scrolling at 640×620. This does not
+establish native app, VoiceOver or enlarged-text behavior; no real harness was
+stopped during review.
+
 Legacy/test-only paths (including the old NewAgentDialog entry when
 `newHarnessOpensInBox` is disabled) are excluded from the visible migration.
 The standalone MachinesManager, old machine-link dialog, and generic
