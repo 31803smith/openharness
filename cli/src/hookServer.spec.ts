@@ -833,3 +833,13 @@ describe('fleet controls: /api/attention, /api/stop-all, /api/fleet', () => {
     expect((await fetch(`${base}/api/fleet`, { method: 'POST', headers: local, body: JSON.stringify({}) })).status).toBe(400)
   })
 })
+
+describe('fleet controls: /api/subscriptions', () => {
+  it('serves the plans when wired, and says unavailable otherwise', async () => {
+    const { base } = await start({ onSubscriptions: async () => ({ subs: [{ id: 'claude', used: 0.4 }] }) })
+    expect(await (await fetch(`${base}/api/subscriptions?force=0`)).json()).toEqual({ subs: [{ id: 'claude', used: 0.4 }] })
+    server?.close()
+    const bare = await start()
+    expect((await fetch(`${bare.base}/api/subscriptions`)).status).toBe(503)
+  })
+})

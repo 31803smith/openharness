@@ -9,6 +9,8 @@
  *   stop-all    cancel every agent turn on this machine (`POST /api/stop-all`, `harness stop-all`)
  *   gate        tool-start → policy verdict (Claude PreToolUse permissionDecision), `harness gate`
  *   spend       submit → pause when caps are hit; ledger persisted per day, `harness spend`
+ *   caps        GPU, load, power, heat, lid, toolchains; whether this machine should take a job
+ *   subs        every AI plan's weekly use against an even pace, `harness subs`, `GET /api/subscriptions`
  *   commands    the `harness <command>` local API behind `POST /api/fleet`
  */
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
@@ -18,6 +20,9 @@ import { AttentionTracker, summarizeAttention, type AttentionRow } from '../lib/
 import { DEFAULT_POLICY, evaluateToolCall, parsePolicy, type ActionPolicy, type GateVerdict } from '../lib/actionPolicy.js'
 import { DEFAULT_CAPS, decideSpend, emptyLedger, parseCaps, recordUsage, type BrakeVerdict, type SpendCaps, type SpendLedger } from '../lib/spendBrake.js'
 import { gateHookInstalled, installGateHook, uninstallGateHook } from '../lib/hooks.js'
+import { decidePlacement, describeCapabilities, readMachineCapabilities, type MachineCapabilities, type PlacementRequest } from '../lib/machineCapabilities.js'
+import { describeSubscriptions, SubscriptionsService, type ProviderId } from './subscriptions/index.js'
+import { nodeSubscriptionsDeps } from './subscriptions/nodeDeps.js'
 
 export interface FleetSessionLike {
   agentId: string
@@ -63,6 +68,10 @@ export class FleetControl {
   private policy: ActionPolicy
   private caps: SpendCaps
   private ledger: SpendLedger
+  private capsCache: { at: number; value: MachineCapabilities } | null = null
+  /** Subscription meters (ported from Burn Bar): weekly used, banked, reset, next plan to use. */
+  readonly subs: SubscriptionsService
+  private subsTimer: NodeJS.Timeout | null = null
 
   constructor(protected readonly deps: FleetControlDeps) {
     this.now = deps.now ?? Date.now
@@ -73,6 +82,24 @@ export class FleetControl {
     this.caps = this.loadCaps()
     this.ledger = readJson<SpendLedger>(this.file('spend-ledger.json')) ?? emptyLedger(this.now())
     this.attention.onChange(() => this.pushAttention())
+    // Subscription meters: one pass a minute (each network provider is asked at most every 4 min), so
+    // the attention payload's compact block stays fresh for the bar; HARNESS_SUBS_WATCH=0 turns it off.
+    this.subs = new SubscriptionsService(nodeSubscriptionsDeps(this.dataDir))
+    if (process.env.HARNESS_SUBS_WATCH !== '0' && !process.env.VITEST) {
+      this.subsTimer = setInterval(() => { void this.pollSubscriptions() }, Number(process.env.HARNESS_SUBS_MS) || 60_000)
+      this.subsTimer.unref()
+      setTimeout(() => { void this.pollSubscriptions() }, 2_000).unref()
+    }
+  }
+
+  /** Collect every enabled subscription. Never throws. */
+  async pollSubscriptions(force = false): Promise<unknown> {
+    try {
+      return await this.subs.collect(force)
+    } catch (e) {
+      console.log(`[subs] collect failed: ${e instanceof Error ? e.message : String(e)}`)
+      return null
+    }
   }
 
   protected file(name: string): string { return join(this.dataDir, name) }
@@ -93,7 +120,7 @@ export class FleetControl {
       const spend = spent ? { usd: Number(spent.usd.toFixed(2)), tokens: spent.input + spent.output, fraction: cap ? Math.min(1.5, spent.usd / cap) : null } : null
       return { ...row, lane: lanes.find((l) => { try { return new RegExp(l.agent, 'i').test(row.name) } catch { return false } })?.name ?? null, spend }
     })
-    return { machineId: this.deps.machineId(), hostname: this.deps.machineName(), at: this.now(), summary: summarizeAttention(agents), agents }
+    return { machineId: this.deps.machineId(), hostname: this.deps.machineName(), at: this.now(), summary: summarizeAttention(agents), agents, subscriptions: this.subs?.compact() ?? null }
   }
 
   /** Every local window hears each real transition; the bar widget polls `GET /api/attention` instead. */
@@ -171,6 +198,19 @@ export class FleetControl {
     return this.caps
   }
 
+  // ── machine capabilities ───────────────────────────────────────────────────────────────────────
+
+  async capabilities(maxAgeMs = 30_000): Promise<MachineCapabilities> {
+    if (this.capsCache && this.now() - this.capsCache.at < maxAgeMs) return this.capsCache.value
+    const value = await readMachineCapabilities()
+    this.capsCache = { at: this.now(), value }
+    return value
+  }
+
+  placement(req: PlacementRequest): Promise<{ ok: boolean; reasons: string[]; caps: string }> {
+    return this.capabilities().then((caps) => ({ ...decidePlacement(caps, req), caps: describeCapabilities(caps) }))
+  }
+
   // ── panic stop ─────────────────────────────────────────────────────────────────────────────────
 
   async stopAll(exceptAgentId: string | null): Promise<{ cancelled: string[] }> {
@@ -205,6 +245,15 @@ export class FleetControl {
         }
         if (typeof args.enabled === 'boolean') patch.enabled = args.enabled
         return { caps: this.spendSet(patch) }
+      }
+      case 'capabilities': return { ...(await this.capabilities(0)), line: describeCapabilities(await this.capabilities()) }
+      case 'placement': return this.placement(args as PlacementRequest)
+      case 'subs': { const r = await this.subs.collect(args.force === true || args.force === 'true'); return { ...r, lines: describeSubscriptions(r) } }
+      case 'subs-set': {
+        const on = args.enabled === true || args.enabled === 'on' || args.enabled === 'true'
+        await this.subs.setEnabled(str('id') as ProviderId, on)
+        const r = await this.subs.collect(true)
+        return { ...r, lines: describeSubscriptions(r) }
       }
       default: throw new Error(`unknown fleet action: ${action}`)
     }

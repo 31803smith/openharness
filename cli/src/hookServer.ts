@@ -119,6 +119,8 @@ export interface HookServerHandlers {
   }) => void | GateVerdict | Promise<void | GateVerdict>
   /** GET /api/attention: every agent's attention state for the bar widget and other local readers. */
   onAttention?: () => unknown
+  /** GET /api/subscriptions: every plan's weekly used, banked, reset and the next-plan verdict. */
+  onSubscriptions?: () => Promise<unknown>
   /** POST /api/stop-all: cancel every agent's turn except one (the panic stop). */
   onStopAll?: (exceptAgentId: string | null) => Promise<{ cancelled: string[] }>
   /** POST /api/fleet {action, ...args}: the local command surface behind the fleet `harness` commands. */
@@ -511,6 +513,11 @@ export function startHookServer(
       // secrets (names, engines, states). Same trust as /api/status.
       if (req.method === 'GET' && url === '/api/attention') {
         json(200, handlers.onAttention ? handlers.onAttention() : { agents: [] }); return
+      }
+      if (req.method === 'GET' && (url === '/api/subscriptions' || url.startsWith('/api/subscriptions?'))) {
+        if (!handlers.onSubscriptions) { json(503, { error: 'UNAVAILABLE' }); return }
+        try { json(200, await handlers.onSubscriptions()) } catch (e) { json(500, { error: e instanceof Error ? e.message : 'INTERNAL' }) }
+        return
       }
       // Panic stop: every agent's turn is cancelled except the one named. Mutating, so the same
       // same-origin guard as the other local mutations.

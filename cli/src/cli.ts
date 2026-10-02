@@ -463,7 +463,12 @@ Machine:
                                writes and ~/.ssh (policy: ~/.harness/cli/data/action-policy.json)
   harness spend status|set --agent-usd=N --day-usd=N|on|off
                                per-agent and per-day spend caps; a pane over its cap is held (off by default)
-  harness logs export        zip the last 7 days of logs (app, CLI, dial, daemon) to the Desktop
+  harness capabilities         this computer's GPU, load, power, heat, lid and toolchains
+  harness placement [--gpu] [--min-vram=MB] [--interactive]
+                               whether this computer should take a job like that
+  harness subs [--force] | subs set <claude|codex|grok|kimi> <on|off>
+                               each AI plan's weekly use, banked against an even pace, and which to use next
+  harness logs export       zip the last 7 days of logs (app, CLI, dial, daemon) to the Desktop
   harness tui                  all of Harness in this terminal: swarms, panes, every machine (⌥O ⌥P ⌥N)
   harness new [agent] [@machine] [folder|name] [-- task]
                                make a harness from a shell: \`harness new\` is claude here; see \`harness new -h\`
@@ -4241,6 +4246,7 @@ async function runForeground(session: AuthSession | null): Promise<void> {
     },
     onCommandBar: commandBarService,
     onAttention: () => fleetControl.attentionPayload(),
+    onSubscriptions: () => fleetControl.subs.collect(),
     onStopAll: (except) => fleetControl.stopAll(except),
     onFleet: (action, args) => fleetControl.command(action, args),
     onAutonomousDeviceRequest: async (method, target, body) => {
@@ -8003,6 +8009,16 @@ async function fleetCommand(cmd: string, args: string[], flags: string[]): Promi
       if (action === 'spend-on') { action = 'spend-set'; body = { enabled: true } }
       break
     }
+    case 'capabilities': break
+    case 'placement': body = { needsGpu: flags.includes('--gpu'), interactive: flags.includes('--interactive'), minFreeVramMb: num('min-vram') ?? undefined }; break
+    case 'subs': {
+      // harness subs [--json] [--force]  |  harness subs set <claude|codex|grok|kimi> <on|off>
+      if (args[0] === 'set') {
+        if (!args[1] || !['on', 'off'].includes(args[2] ?? '')) { console.error('Usage: harness subs set <claude|codex|grok|kimi> <on|off>'); process.exit(1) }
+        action = 'subs-set'; body = { id: args[1], enabled: args[2] }
+      } else body = { force: flags.includes('--force') }
+      break
+    }
     default: action = args[0] ?? ''; body = {}; if (!action) { console.error('Usage: harness fleet <action> [--key=value ...]'); process.exit(1) }
       for (const f of flags) { const m = /^--([a-zA-Z-]+)=(.*)$/.exec(f); if (m) body[m[1]!] = m[2] }
   }
@@ -8025,6 +8041,10 @@ async function fleetCommand(cmd: string, args: string[], flags: string[]): Promi
     }
     console.log(`${r.hostname}: ${r.summary.count} ${r.summary.state}`)
     for (const a of r.agents) console.log(`  ${a.glyph} ${a.name.padEnd(28)} ${a.engine.padEnd(10)} ${a.label}${a.detail ? `  ${a.detail}` : ''}`)
+    return
+  }
+  if ((action === 'subs' || action === 'subs-set') && result && typeof result === 'object' && Array.isArray((result as { lines?: unknown }).lines)) {
+    for (const line of (result as { lines: string[] }).lines) console.log(line)
     return
   }
   console.log(typeof result === 'string' ? result : JSON.stringify(result, null, 2))
@@ -9255,7 +9275,7 @@ switch (cmd) {
   case 'reset':
     resetCommand().catch(onError)
     break
-  case 'attention': case 'stop-all': case 'gate': case 'spend': case 'fleet':
+  case 'attention': case 'stop-all': case 'gate': case 'spend': case 'capabilities': case 'placement': case 'subs': case 'fleet':
     fleetCommand(cmd, args, flags).catch(onError)
     break
   case 'status':
