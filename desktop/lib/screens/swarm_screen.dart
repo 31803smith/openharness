@@ -1792,6 +1792,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
         'family': barStyle.fontFamily,
         'fallback': barStyle.fontFamilyFallback,
         'size': workspaceBarFontSize,
+        'valueGapCells': workspaceBarValueGapCells,
         'groupGapCells': workspaceBarGroupGapCells,
         'foreground': terminalTheme.foreground.toARGB32(),
         'selection': terminalTheme.selection.toARGB32(),
@@ -7243,7 +7244,11 @@ class _SwarmScreenState extends State<SwarmScreen> {
             resourceGap * 2,
       );
       final monitorWidth = math.min(
-        workspaceBarTextSizeOf(context, _harnessMonitor.label).width +
+        workspaceBarTextSizeOf(
+              context,
+              _harnessMonitor.label,
+              grouped: true,
+            ).width +
             cell.width * 2,
         resourceBudget * .4,
       );
@@ -7251,6 +7256,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
       final usageWidth = constraints.maxWidth < 1050
           ? 0.0
           : resourceBudget * .22;
+      final hasFooterDaemon = !kIsWeb && _slotShown;
       final paneContext = Row(
         mainAxisAlignment: MainAxisAlignment.end,
         children: [
@@ -7314,8 +7320,11 @@ class _SwarmScreenState extends State<SwarmScreen> {
                           height: workspaceBarControlHeight(context),
                           child: Center(
                             widthFactor: 1,
-                            child: Text(
-                              _harnessMonitor.label,
+                            child: Text.rich(
+                              workspaceBarGroupTextSpan(
+                                _harnessMonitor.label,
+                                cellWidth: cell.width,
+                              ),
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                               style: workspaceBarTextStyle(
@@ -7334,6 +7343,10 @@ class _SwarmScreenState extends State<SwarmScreen> {
                   child: WorkspaceHarnessResources(
                     key: const ValueKey('workspace-machine-resources'),
                     monitor: _harnessMonitor,
+                    // The fixed companion slot supplies its own optical gutter.
+                    trailingPadding: hasFooterDaemon && usageWidth == 0
+                        ? 0
+                        : null,
                     onPressed: _shortcutsEnabled
                         ? _toggleHarnessControls
                         : null,
@@ -7353,7 +7366,10 @@ class _SwarmScreenState extends State<SwarmScreen> {
                             )
                           : null,
                       builder: (context, emphasized) => Padding(
-                        padding: EdgeInsets.symmetric(horizontal: cell.width),
+                        padding: EdgeInsets.only(
+                          left: cell.width,
+                          right: hasFooterDaemon ? 0 : cell.width,
+                        ),
                         child: SizedBox(
                           height: workspaceBarControlHeight(context),
                           child: Center(
@@ -7384,8 +7400,11 @@ class _SwarmScreenState extends State<SwarmScreen> {
                     ),
                   ),
                 ],
-                SizedBox(width: cell.width * 2),
-                if (!kIsWeb && _slotShown) _daemonTabButton(),
+                if (hasFooterDaemon) ...[
+                  SizedBox(width: resourceGap),
+                  _daemonTabButton(),
+                ] else
+                  SizedBox(width: cell.width * 2),
                 if (download) ...[
                   SizedBox(width: cell.width),
                   ConstrainedBox(
