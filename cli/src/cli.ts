@@ -304,6 +304,7 @@ import {
 import { probeGatewayRuntime } from './lib/gatewayRuntime.js'
 import { probeGridAssignment, sameGridAssignment } from './lib/gridAssignment.js'
 import { agentFrame, lastActivityAt, type AgentFrame } from './lib/agentFrame.js'
+import { FleetControl, type FleetSessionLike } from './fleet/control.js'
 import { agentTokenUsage } from './lib/agentTokenUsage.js'
 import { SessionInputController } from './lib/sessionInput.js'
 import { DeviceResultJournal } from './lib/autonomous-device/resultJournal.js'
@@ -454,7 +455,10 @@ Machine:
   harness stop                 stop the background adapter (keeps the SSO session)
   harness reset                stop the adapter and clear local CLI state
   harness status               show whether it's running (+ version)
-  harness logs export          zip the last 7 days of logs (app, CLI, dial, daemon) to the Desktop
+  harness attention [--kanban] every agent's state: working, waiting on you, needs permission, failed, done
+  harness stop-all [--except=<agentId>]
+                               cancel every agent's turn on this computer (the panic stop)
+  harness logs export         zip the last 7 days of logs (app, CLI, dial, daemon) to the Desktop
   harness tui                  all of Harness in this terminal: swarms, panes, every machine (⌥O ⌥P ⌥N)
   harness new [agent] [@machine] [folder|name] [-- task]
                                make a harness from a shell: \`harness new\` is claude here; see \`harness new -h\`
@@ -2477,6 +2481,10 @@ async function runForeground(session: AuthSession | null): Promise<void> {
   ): void => {
     if (events.length) queuedSessionEvents.push({ sessionId, events, opts })
   }
+  // The fleet controls (attention, stop-all, local commands; cli/src/fleet/control.ts). Built next to the
+  // hook server below; the taps before that point reach it through this slot, so an event that lands
+  // during start-up is dropped instead of reaching an object that does not exist yet.
+  let fleetControlRef: FleetControl | null = null
   /**
    * A turn died inside the engine instead of finishing. Neither devin nor commandcode has a StopFailure
    * hook, so nothing else would tell the clients: the web would sit on the typing indicator and the
@@ -2490,6 +2498,7 @@ async function runForeground(session: AuthSession | null): Promise<void> {
     deviceMessage = message,
   ): void => {
     console.log(`[turn] ${sid(sessionId)} aborted by ${engine} error · ${preview(message)}`)
+    fleetControlRef?.attention.failed(agentIdFor(sessionId), message)
     backend.send({ type: 'error', agentId: agentIdFor(sessionId), dbSessionId: sessionId, payload: { message } })
     backend.sendCommander({
       type: 'commander_event',
@@ -2944,7 +2953,7 @@ async function runForeground(session: AuthSession | null): Promise<void> {
     // Hold the working state across the gap too: the CLI needs a moment to move to the next question, and
     // that gap is exactly where the stale recap used to flash back.
     const target = payload.sessionId || payload.agentId
-    if (typeof target === 'string' && target) showAwaitingAnswer(target)
+    if (typeof target === 'string' && target) { showAwaitingAnswer(target); fleetControlRef?.attention.answered(agentIdFor(target)) }
     // Returned so the client that answered hears a refusal — STALE_QUESTION when the dialog changed
     // before its answer arrived — as `question_response_result`.
     return questions.answer(payload)
@@ -2963,6 +2972,7 @@ async function runForeground(session: AuthSession | null): Promise<void> {
     isDriving: (sessionId) => questions.isDriving(sessionId),
     onQuestion: (sessionId, requestId, shaped, detail) => {
       deviceInput.setUserAction(agentIdFor(sessionId), true)
+      fleetControlRef?.attention.question(agentIdFor(sessionId), detail?.permission === true, shaped[0]?.q ?? '')
       questions.remember(requestId, sessionId)
       showAwaitingAnswer(sessionId)
       const asked = {
@@ -3323,6 +3333,7 @@ async function runForeground(session: AuthSession | null): Promise<void> {
       // The phone notifies on neither. Absent = false, so a client that predates these reads every end as
       // it always did.
       if (event.type === 'turn_ended') {
+        if (!opts?.resumed && !opts?.replay) fleetControlRef?.attention.turnEnded(agentId, { aborted: event.payload.aborted === true })
         if (opts?.resumed || opts?.replay) frame.replay = true
         // The pair harness is the daemon talking to you, not work finishing: no app notifies on it.
         if (isSubagentSession(sessionId) || isPairHarnessSession(sessionId)) frame.subagent = true
@@ -3338,6 +3349,7 @@ async function runForeground(session: AuthSession | null): Promise<void> {
       }
       if (event.type === 'turn_started') {
         if (daemons.on()) zooTurnCounter.started(sessionId, { replay: !!(opts?.resumed || opts?.replay) })
+        if (!opts?.resumed && !opts?.replay) fleetControlRef?.attention.turnStarted(agentId, event.payload.userMessage)
         turnStartedAt.set(sessionId, Date.now())
         console.log(`[turn] ${sid(sessionId)} started · engine=${registry.bySession(sessionId)?.engine ?? 'claude'} · bytes=${Buffer.byteLength(event.payload.userMessage, 'utf8')}`)
         input.onTurnStarted(agentIdFor(sessionId), event.payload.userMessage)
@@ -4184,6 +4196,19 @@ async function runForeground(session: AuthSession | null): Promise<void> {
     return { status: 200, body: withStaleMarker(cached.body, cached.fetchedAt) }
   }
 
+  // Built here so the hook server below can hand it tool calls, and everything after can tap it.
+  const fleetSession = (s: RegisteredSession): FleetSessionLike => ({
+    agentId: s.agentId, sessionId: s.sessionId, engine: s.engine, active: s.active, tmuxPane: s.tmuxPane,
+    cwd: s.cwd ?? undefined, transcriptPath: s.transcriptPath ?? undefined, model: (s as { model?: string | null }).model ?? null, name: projectDisplayName(s),
+  })
+  const fleetControl = new FleetControl({
+    machineId: () => backend.machineId,
+    machineName: () => terminalHintMachineName(),
+    sessions: () => registry.advertised().map(fleetSession),
+    sendLocal: (frame) => backend.sendLocal(frame),
+    cancelAgent: (agentId, confirmed) => cancelAgent(agentId, confirmed),
+  })
+  fleetControlRef = fleetControl
 
   const { server: hookServer, port: hookPort, localSocket } = await startHookServer(daemonPort(), {
     onPromptContext: async (agentId, prompt) => {
@@ -4206,6 +4231,9 @@ async function runForeground(session: AuthSession | null): Promise<void> {
       return result
     },
     onCommandBar: commandBarService,
+    onAttention: () => fleetControl.attentionPayload(),
+    onStopAll: (except) => fleetControl.stopAll(except),
+    onFleet: (action, args) => fleetControl.command(action, args),
     onAutonomousDeviceRequest: async (method, target, body) => {
       if (!autonomousDeviceService) return { status: 503, body: { error: { code: 'UNAVAILABLE', message: 'Autonomous device service is starting' } } }
       return autonomousDeviceLocalRequest({
@@ -4307,6 +4335,7 @@ async function runForeground(session: AuthSession | null): Promise<void> {
     onTurnStop: ({ sessionId, status }) => {
       const session = registry.resolve(sessionId)
       if (!session) return
+      if (status === 'error') fleetControl.attention.failed(session.agentId, 'engine ended the turn with an error')
       if (session.engine === 'cursor') {
         void (async () => {
           await cursorTaskHooks.wait(sessionId)
@@ -5318,7 +5347,7 @@ async function runForeground(session: AuthSession | null): Promise<void> {
     // The window looked at a harness, so the dial's drawer row for it is stale.
     // The dial's own tap already reaches the window (`agent.open`); this is the
     // return leg, and the pair is what keeps the badge and the pill equal.
-    onAgentSeen: (agentId, readToken) => { void cableRef?.agentSeen(agentId, readToken) },
+    onAgentSeen: (agentId, readToken) => { fleetControlRef?.attention.seen(agentId); void cableRef?.agentSeen(agentId, readToken) },
     // Agents the window has a tile for. A finished turn on one of these is
     // already in front of the person, so the dial updates its tile in silence
     // rather than beeping about something being looked at.
@@ -6059,6 +6088,7 @@ async function runForeground(session: AuthSession | null): Promise<void> {
     const sessionId = record?.sessionId ?? id
     const st = turnStates.get(sessionId)
     if (st) st.turnOpen = false
+    fleetControlRef?.attention.cancelled(record?.agentId ?? sessionId)
     codexNormalizers.get(sessionId)?.closeTurn()
     cursorNormalizers.get(sessionId)?.closeTurn()
     opencodeReaders.get(sessionId)?.closeTurn()
@@ -7934,6 +7964,46 @@ async function daemonCall(method: 'GET' | 'POST', path: string, body?: unknown):
   return { res, json }
 }
 
+/**
+ * The fleet commands (cli/src/fleet/control.ts; first written by Fred Nix in the nixfred fork): every one
+ * is a POST to the daemon's local /api/fleet with an action name, so the CLI never needs the registry or
+ * the E2EE state. `--json` prints the raw reply.
+ */
+async function fleetCommand(cmd: string, args: string[], flags: string[]): Promise<void> {
+  const json = flags.includes('--json')
+  const flag = (name: string): string | undefined => flags.find((f) => f.startsWith(`--${name}=`))?.slice(name.length + 3)
+  let action = cmd
+  let body: Record<string, unknown> = {}
+  switch (cmd) {
+    case 'attention': break
+    case 'stop-all': body = { except: flag('except') ?? args[0] ?? null }; break
+    default: action = args[0] ?? ''; body = {}; if (!action) { console.error('Usage: harness fleet <action> [--key=value ...]'); process.exit(1) }
+      for (const f of flags) { const m = /^--([a-zA-Z-]+)=(.*)$/.exec(f); if (m) body[m[1]!] = m[2] }
+  }
+  const { res, json: reply } = await daemonCall('POST', '/api/fleet', { action, ...body })
+  if (json) { console.log(JSON.stringify(reply, null, 2)); process.exit(res.ok ? 0 : 1) }
+  if (!res.ok || reply.ok === false) { console.error(`✗ ${String(reply.error ?? res.statusText)}`); process.exit(1) }
+  const result = reply.result as unknown
+  if (action === 'attention' && result && typeof result === 'object') {
+    const r = result as { hostname: string; summary: { state: string; count: number }; agents: Array<{ glyph: string; name: string; engine: string; state: string; label: string; detail: string }> }
+    if (flags.includes('--kanban')) {
+      // Columns in the order a person works them: what needs me, what broke, what finished, what runs.
+      const columns: Array<[string, string[]]> = [['NEEDS YOU', ['permission', 'waiting']], ['FAILED', ['failed']], ['DONE, UNREVIEWED', ['done']], ['WORKING', ['working']], ['IDLE', ['idle', 'offline']]]
+      for (const [title, states] of columns) {
+        const rows = r.agents.filter((a) => states.includes(a.state))
+        if (!rows.length) continue
+        console.log(`${title} (${rows.length})`)
+        for (const a of rows) console.log(`  ${a.glyph} ${a.name.padEnd(28)} ${a.engine.padEnd(10)}${a.detail ? `  ${a.detail}` : ''}`)
+      }
+      return
+    }
+    console.log(`${r.hostname}: ${r.summary.count} ${r.summary.state}`)
+    for (const a of r.agents) console.log(`  ${a.glyph} ${a.name.padEnd(28)} ${a.engine.padEnd(10)} ${a.label}${a.detail ? `  ${a.detail}` : ''}`)
+    return
+  }
+  console.log(typeof result === 'string' ? result : JSON.stringify(result, null, 2))
+}
+
 /** `harness pair <code>` — send a browser/device pairing code to the running daemon (localhost). */
 async function pairCommand(code: string | undefined): Promise<void> {
   if (!code) {
@@ -9158,6 +9228,9 @@ switch (cmd) {
     break
   case 'reset':
     resetCommand().catch(onError)
+    break
+  case 'attention': case 'stop-all': case 'fleet':
+    fleetCommand(cmd, args, flags).catch(onError)
     break
   case 'status':
     status().catch(onError)
