@@ -37,7 +37,8 @@ set -euo pipefail
 set +x
 
 APP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"   # repository root
-APP_BUNDLE="$APP_DIR/build/macos/Build/Products/Release/Harness.app"
+APP_BUNDLE="${APP_BUNDLE:-$APP_DIR/build/macos/Build/Products/Release/Harness.app}"
+OUTPUT_DIR="${OUTPUT_DIR:-$APP_DIR/build}"
 
 # --- GCS config (all overridable via env) ---
 GCS_BUCKET="${GCS_BUCKET:-s3-autonomous-upgrade-3}"
@@ -132,11 +133,12 @@ gcloud storage --help >/dev/null 2>&1 || {
   exit 1
 }
 
-# gcs_cp <src> <dst> [cache-control] [content-type] — either side may be gs:// or a local path or `-`.
+# gcs_cp <src> <dst> [cache-control] [content-type] [generation-match].
 gcs_cp() {
-  local src="$1" dst="$2" cc="${3:-}" ct="${4:-}" args=(storage cp)
+  local src="$1" dst="$2" cc="${3:-}" ct="${4:-}" generation="${5:-}" args=(storage cp)
   if [ -n "$cc" ]; then args+=("--cache-control=$cc"); fi
   if [ -n "$ct" ]; then args+=("--content-type=$ct"); fi
+  if [ -n "$generation" ]; then args+=("--if-generation-match=$generation"); fi
   gcloud "${args[@]}" "$src" "$dst"
 }
 
@@ -193,6 +195,8 @@ echo ">> releasing version: $VER (build $BUILD_NUM)"
 
 # --- Step 2: build ---
 if [ "$DO_BUILD" -eq 1 ]; then
+  [ "$APP_BUNDLE" = "$APP_DIR/build/macos/Build/Products/Release/Harness.app" ] \
+    || { echo "error: APP_BUNDLE requires --no-build" >&2; exit 1; }
   echo ">> building release $VER"
   # Xcode's incremental build sometimes decides the Info.plist processing step is already
   # up to date and skips re-stamping MARKETING_VERSION/CURRENT_PROJECT_VERSION into it, silently
@@ -214,7 +218,8 @@ STAMPED="$(plutil -extract CFBundleShortVersionString raw "$APP_BUNDLE/Contents/
 [ "$STAMPED" = "$VER" ] || { echo "error: bundle CFBundleShortVersionString is '$STAMPED', expected '$VER'" >&2; exit 1; }
 
 # --- Step 3: package ---
-ZIP="$APP_DIR/build/Harness-macos-$VER.zip"
+mkdir -p "$OUTPUT_DIR"
+ZIP="$OUTPUT_DIR/Harness-macos-$VER.zip"
 rm -f "$ZIP"
 echo ">> packaging $ZIP"
 ( cd "$(dirname "$APP_BUNDLE")" && ditto -c -k --sequesterRsrc --keepParent "$(basename "$APP_BUNDLE")" "$ZIP" )
@@ -262,7 +267,7 @@ fi
 # `hdiutil` rather than `create-dmg`: the latter is a dependency the release machine would have to
 # install, and all it buys here is window chrome. The `/Applications` symlink is what actually makes
 # the drag-to-install gesture obvious, and that is one line.
-DMG="$APP_DIR/build/Harness-macos-$VER.dmg"
+DMG="$OUTPUT_DIR/Harness-macos-$VER.dmg"
 DMG_STAGE="$(mktemp -d)"   # removed by cleanup() on EXIT
 echo ">> packaging $DMG"
 rm -f "$DMG"
@@ -318,10 +323,10 @@ echo ">> uploading release $VER"
 # max-age here is what actually lets the CDN cache these instead of hitting GCS on every install/update.
 echo "   zip: gs://${GCS_BUCKET}/${GCS_PATH}  ($SIZE bytes, sha256=$SHA)"
 gcs_refuse_republish "gs://${GCS_BUCKET}/${GCS_PATH}"
-gcs_cp "$ZIP" "gs://${GCS_BUCKET}/${GCS_PATH}" "public, max-age=31536000, immutable"
+gcs_cp "$ZIP" "gs://${GCS_BUCKET}/${GCS_PATH}" "public, max-age=31536000, immutable" "" 0
 echo "   dmg: gs://${GCS_BUCKET}/${DMG_GCS_PATH}  ($DMG_SIZE bytes, sha256=$DMG_SHA)"
 gcs_refuse_republish "gs://${GCS_BUCKET}/${DMG_GCS_PATH}"
-gcs_cp "$DMG" "gs://${GCS_BUCKET}/${DMG_GCS_PATH}" "public, max-age=31536000, immutable"
+gcs_cp "$DMG" "gs://${GCS_BUCKET}/${DMG_GCS_PATH}" "public, max-age=31536000, immutable" "" 0
 
 echo ">> merging manifest: gs://${GCS_BUCKET}/${METADATA_PATH}  (${OTA_KEY}, ${DMG_KEY})"
 SRC="$(mktemp)"; DST="$(mktemp)"   # removed by cleanup() on EXIT

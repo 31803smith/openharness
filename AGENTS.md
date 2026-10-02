@@ -11,7 +11,9 @@ validation and shipping, use [docs/validation-and-release.md](docs/validation-an
   equivalent CI has passed just because it is time to merge or release.
 - Reuse evidence only for the source and environment it covers. A squash with the same
   tree does not invalidate it; conflict resolutions, dependencies, or relevant code
-  changes do. See the validation guide for recording that evidence.
+  changes do. For deterministic checks, declare complete input/toolchain scopes in
+  the validation plan and pass the prior receipt with `--reuse`; inspect the diff
+  for new interactions. See the validation guide for recording that evidence.
 - Time-bound tests and baseline diagnosis. An unchanged, already documented failure
   does not need another full baseline run for every release. New failures and failures
   in changed behavior still need investigation. Never describe an incomplete or failed
@@ -20,3 +22,12 @@ validation and shipping, use [docs/validation-and-release.md](docs/validation-an
   validation cycle. Verify published versions and checksums, then report completion.
   Desktop's `--wait` follows the exact tag/SHA through the workflow's six-artifact
   verification; reuse that receipt instead of repeating the downloads manually.
+- Prepare the PR and review while checks run. Collect completed CI evidence with
+  `scripts/record-ci-validation.py RUN_ID --scope SCOPE --pr PR_NUMBER`; retain routine
+  results in its ignored receipt and the PR body instead of another documentation
+  commit. Resolve any source differences explicitly before reusing that evidence.
+- For an authorized Desktop release, start `make release-desktop ARGS="--prepare"`
+  from the final pushed PR branch alongside validation and review. It prepares
+  verified packages without publishing; merge and release only after checks pass.
+  Avoid starting candidates while implementation is still changing. The release
+  automatically reuses a matching source tree/version and otherwise builds normally.

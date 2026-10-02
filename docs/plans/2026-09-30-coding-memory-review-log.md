@@ -799,3 +799,113 @@ cover an empty queue, Recall-only mode, identity changes, watching/experimental-
 This is lifecycle validation with synthetic state. The live stopped conversation and its backlog
 were left untouched; a fresh model connection and real-user extraction-quality validation remain
 necessary before claiming end-to-end completion.
+
+### Claude 2.1.287 compatibility — October 2
+
+The installed Claude release had advanced to 2.1.287 while the extraction and prompt-recall
+allowlists still stopped at earlier native observations. The actual production extraction adapter
+initially refused it as `claude_version_uncertified`, with zero provider requests. This prevented
+learning through that selected companion runtime; it was not evidence of a model-quality failure.
+
+The [native recording](../research/2026-10-02-memory-claude-2.1.287.json) now covers this exact release.
+A disposable launcher redirects only native home/config/provider environment, forwards the actual
+version and unchanged production arguments, and uses fake credentials against localhost. The real
+adapter accepted the synthetic completed response with an empty tool catalogue, omitted the
+workspace-instruction canary, and rejected a provider-sent Bash attempt before any fixture hook,
+MCP command, or shell sentinel was written. The selected mock model and effort remain explicit.
+The separate native lifecycle probe observed fresh context on the next prompt after resume,
+manual compaction, and a model change.
+
+Only 2.1.287 is added to the existing tested versions. Unknown releases still decline automatic
+extraction and prompt delivery; explicit scoped recall remains available. Host-bound receipt tests
+and shared correction/forgetting checks cover the new Claude version alongside Codex and OpenCode.
+No real account, model selection, conversation, installed application, or release was changed.
+Print-mode transport is the measured boundary: production account/profile changes, interactive TUI
+paths, semantic quality, and coding-task usefulness are not established by these mock observations.
+
+### Stop repeating a provider's non-retryable refusal — October 2
+
+A synthetic READY request through the saved OpenCode Muse free model received HTTP 403 with the
+provider's `FreeTierError`: this route was restricted to use within OpenCode. No extraction case
+completed. This is a provider refusal, not a memory-quality score. A similar custom-agent restriction
+is [reported upstream](https://github.com/anomalyco/opencode/issues/50627); that report does not prove
+the cause of this particular request. No private conversations or personal credentials were supplied.
+
+The production adapter previously turned this error into a generic model outage. Its selected
+connection remained ready, allowing another background call after the queue's one-minute defer.
+The adapter now recognizes the exact recorded, non-retryable refusal. Companion intelligence retains
+only an opaque connection fingerprint in memory, stops further background calls on that connection,
+and clears the refusal when the observed model, account, owner or native process changes. A routine
+refresh of the same snapshot does not reset it; a late error cannot block a replacement connection.
+Ordinary outages and quota failures retain their existing handling. No credential or refusal is added
+to the saved companion profile, and no alternative model is selected automatically.
+
+Learning keeps its sources queued under the existing retention and capacity limits, preserves the
+refusal during the deferred interval, and keeps notebook work pending as well. Memories explains
+that the selected provider declined background learning and points to the companion's existing model
+control. Reviewing that explanation does not change Learn or Recall. The foreground terminal remains
+available; saved memories remain subject to the existing Recall setting.
+
+The [recording](../research/2026-10-02-memory-provider-refusal.json) includes the real OpenCode 1.18.34
+binary receiving the same refusal from a localhost mock: exactly one request, no tools, no forbidden
+action, and disposable native storage removed. Synthetic integration checks exercise the production
+intelligence, learner and queue over more than an hour, then resume on a new connection without
+dropping source evidence. These checks establish refusal handling, not semantic extraction quality,
+live user learning, or improved coding outcomes. The selected external route was not retried or
+bypassed, and real-session quality evaluation remains incomplete.
+
+### Clarify extraction fields after actual local model failures — October 2
+
+Offline reference models exposed ambiguity that the mocked transport checks could
+not: evidence paths pointed into source text instead of the proposed memory,
+required topic identifiers were null, and verification and validity dates were
+invented. The extraction prompt now gives one explicit field contract, including
+the difference between required scope/topic IDs and host-owned record identity.
+It preserves episode boundaries, source roles, bounded-context restrictions,
+scope, exact quotations, contradiction handling and unknowns. Storage, admission,
+recall and inference selection are unchanged.
+
+The [local comparison](../research/2026-10-02-memory-local-extraction.md) records
+both gains and failures. On the six frozen cases, the same cached 27B model went
+from three completed negative cases and no stored memories to six completed
+cases, with two of three memories judged supported/useful and correctly recalled.
+All seven negative recall probes passed. The third memory still invented an
+implementation-only condition for an unconditional preference. A separate frozen
+batch check retained both personal preferences correctly, but another batch failed
+the unchanged field-coverage guard. Its unrun probes remain unmeasured.
+
+These are attributed agent judgments over synthetic model outputs, not independent
+human review, selected-companion certification, real-user learning or coding-task
+benefit. The programmer perspectives continue to mean source-grounded design
+reviews. No private transcript, live memory, account setting, app or firmware was
+changed. The experimental implementation has clearer instructions; the full
+memory-quality gates remain unmet.
+
+### Resolve exact evidence in the host, then review meaning — October 2
+
+An actual offline extraction rejected a useful proposal after the model normalized
+whitespace in its quotation. The host now supplies bounded source-excerpt references
+and resolves selected references into exact original text, source identity and
+captured verification. Existing storage, scope, authorship, coverage, size and
+durable queue checks remain in force. Unknown references and metadata overrides
+fail; legacy quotations still need exact matching. Original source text and episode
+boundaries remain available in full. The prompt is versioned `coding-memory-v6`.
+
+The [measured comparison](../research/2026-10-02-memory-source-references.md) covers
+unchanged single and multi-episode diagnostic suites with the same local model.
+All eight cases completed, retaining six memories judged supported and useful by
+the implementing agent; six positive and twelve negative recall probes passed
+semantic review. This is development evidence, not an independent or held-out score.
+
+Five consented private excerpts were also processed entirely offline with external
+networking blocked on both the driver and model worker. The whitespace failure was
+resolved, but semantic review rejected two of six memories for overgeneralization
+and treating tentative options as settled. Their private evidence remains local.
+All structural presence checks passed, demonstrating why presence alone is an
+insufficient quality measure. Faithful real-user extraction, selected-companion
+learning, automatic contextual recall and coding-task benefit remain open.
+
+Review against Parnas's module boundaries, Liskov/Wing's behavioral contracts,
+Dijkstra's distinction between checks and broader claims, and Knuth's readable
+explanations is recorded with the evidence. These remain our applications of
+published principles, not reviews or endorsements by those authors.
