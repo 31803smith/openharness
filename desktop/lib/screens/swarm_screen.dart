@@ -1898,7 +1898,6 @@ class _SwarmScreenState extends State<SwarmScreen> {
           ],
         },
       'footerCovered':
-          !_showWorkspaceFooter ||
           (!_routeIsCurrent && !_footerPreviewCurrent) ||
           (_newHarnessOverlay != null && !_newHarnessHidden) ||
           _searchOverlay != null,
@@ -7111,15 +7110,14 @@ class _SwarmScreenState extends State<SwarmScreen> {
                         ],
                       ),
                     ),
-                    if (_showWorkspaceFooter)
-                      MediaQuery.withNoTextScaling(
-                        child: _native
-                            ? SizedBox(
-                                key: const ValueKey('workspace-status-bar'),
-                                height: _statusBarHeight,
-                              )
-                            : _statusBar(),
-                      ),
+                    MediaQuery.withNoTextScaling(
+                      child: _native
+                          ? SizedBox(
+                              key: const ValueKey('workspace-status-bar'),
+                              height: _statusBarHeight,
+                            )
+                          : _statusBar(),
+                    ),
                   ],
                 ),
               ),
@@ -7229,18 +7227,9 @@ class _SwarmScreenState extends State<SwarmScreen> {
 
   // Include the pane's former bottom gutter in this row, so its controls sit
   // halfway between the pane edge and window bottom. Pane height is unchanged.
-  bool get _showWorkspaceFooter =>
-      !newHarnessOpensInBox ||
-      _harnessMonitor.live.isNotEmpty ||
-      app.panes.isNotEmpty ||
-      app.activeSwarm.isStore ||
-      app.activeSwarm.isDevices ||
-      app.activeSwarm.isOrchestrator ||
-      _footerPreviewCurrent;
-
-  double get _statusBarHeight => _showWorkspaceFooter
-      ? workspaceBarControlHeight(context) + kWorkspaceInset
-      : 0;
+  // Keep inventory controls discoverable on the first, empty welcome screen.
+  double get _statusBarHeight =>
+      workspaceBarControlHeight(context) + kWorkspaceInset;
 
   Widget _statusBar() {
     final compactFooter = widget.chrome?.compactFooter;
