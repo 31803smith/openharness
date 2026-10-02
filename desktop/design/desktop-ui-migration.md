@@ -20,7 +20,7 @@ on 2026-09-30; the unmerged checkpoints below describe earlier review stages.
 | Sharing | Access/people/options, comments, observer sidebar, and viewer access/error states use desktop surfaces; existing sharing and authentication rules retained |
 | Add Phone | Desktop QR/device layout implemented; pairing lifecycle tests and light/dark enlarged-text renders pass |
 | Machine recovery/linking | Desktop linking/password layouts implemented; bounded selectable errors, fixed actions, and 32-point reveal controls tested/rendered |
-| Notifications | Native name/message rows share the tab/pane activity marks and colors. Working starts expanded; compact headers and clear icon replace repeated labels. Synthetic light/dark, collapsed, empty, long, selected and unavailable states inspected; live menu interaction still needs review |
+| Notifications | Native name/message rows share the tab/pane activity marks, with colors adapted to menu contrast. Ready and Working use compact headers; all working sessions stay visible. Synthetic light/dark, all-working, empty, long, selected and unavailable states inspected; live menu interaction still needs review |
 | Branches / pull requests | Desktop lists and shared modal veil implemented; colored icons, readable status words, honest load failures, Page Up/Down tested and rendered |
 | Settings / customization | Desktop status customization, natural-height controls, error contrast, keyboard focus and passive native footer preview implemented; actual status previews preserve the selected renderer |
 | Store | Existing graphical discovery/detail/launch routes retained; ordinary labels, search and counts use system typography; desktop and narrow/enlarged previews inspected |
@@ -38,34 +38,82 @@ The standalone MachinesManager, old machine-link dialog, and generic
 team-creation presenter have no production caller in this tree. They are not
 counted as completed user journeys. Shared controls still serve their tests.
 
+## Pane header spacing and long names — 2026-10-02
+
+The refinement builds on main's shared plain-text agent and model controls.
+They use 8-point horizontal padding, matching the close glyph's inset, without
+an extra gap before close. A short agent leaves its unused width for the model;
+the model can use that space beyond the former 220-point text cap. Longer agent
+names stay bounded so the model remains visible. Both names truncate on one line
+and expose their full text on hover; the close target remains fixed at 28 points.
+
+Real-font widget renders were inspected in four- and nine-pane layouts in both
+appearances, including long session, agent and model labels. Header crops show
+the [four-pane dark layout](images/pane-header-long-names-dark.png) and
+[nine-pane light layout](images/pane-header-long-names-narrow-light.png).
+Validation passed on the rebased source: 110 targeted Flutter tests and static
+analysis of the changed Dart files. Checks cover plain-text controls, narrow
+headers, existing picker actions, tooltips, stable standalone context, close
+geometry, and text-scale isolation. Four additional temporary fixture cases
+supplied the long-name renders. These are synthetic widget captures; the running
+desktop app was not exercised.
+
+## Footer spacing refinement — 2026-10-02
+
+Resource totals now show their available number without a ≥ prefix; partial
+coverage remains explained in the tooltip. Flutter and AppKit share 0.75-cell
+spaces within components and two-cell gaps between components. The companion's
+existing artwork gutter replaces the preceding control's trailing padding,
+removing the extra visible gap while retaining its fixed 44-point click target.
+
+Production AppKit controls were rendered with synthetic values in
+[dark](images/workspace-footer-compact-dark.png) and
+[light](images/workspace-footer-compact-light.png) appearances at 1280 points,
+plus a 520-point window and 26-point status text. The captures use 2× backing
+resolution; text baselines, visible gaps and narrow truncation were inspected.
+Validation passed: 50 targeted Flutter tests, 4,344 native titlebar checks, and
+static analysis of the four changed Dart files. The native checks exercise
+stable daemon geometry, hover, focus and existing actions. These are isolated
+production-view renders; the installed app and physical VoiceOver were not
+exercised for this refinement.
+
 ## Notification overview refinement — 2026-10-01
 
 The earlier overview repeated a status caption and tab/machine context under
 nearly every title. It now pairs the harness name directly with the message,
 uses the existing tab/pane activity marks and colors, and keeps full context
-in tooltips and accessibility. Working starts expanded as 28-point rows; the
-section disappears when empty. Clear is a quiet icon with a 32-point target.
+in tooltips and accessibility. The first section is Ready, which includes both
+completed replies and questions awaiting input. Working always shows all of its
+28-point rows, without a disclosure arrow or overflow submenu; the section
+disappears when empty. Clear is a quiet icon with a 32-point target.
 The menu keeps native actions, keyboard navigation and receipt validation.
+Status hues adapt to the menu's light or dark appearance independently of the
+terminal theme, so a bright yellow question mark remains legible on a light
+translucent menu. Monochrome status preferences remain monochrome.
 [Apple notification research](macos-design-research.md#notification-menu-refinement--2026-10-01)
 informed the hierarchy, not a claim of system Notification Center equivalence.
 
 Native captures use synthetic sessions and the production AppKit views:
 [light](images/notification-overview-light.png),
 [dark](images/notification-overview-dark.png), and
-[collapsed Working](images/notification-overview-collapsed.png). The six-session
-expanded sample is 360×465 points, down from 360×597. Empty is 360×184; long
+[all seven working sessions](images/notification-overview-all-working.png).
+The six-session sample is 360×465 points, down from 360×597. The all-working
+sample is 360×423. Empty is 360×184; long
 names preserve the 360-point menu width. These are view renders on neutral
 surfaces; they do not simulate window-server blur. The fixture also covers
 long/truncated, highlighted and offline rows. Reproduce with
 `tool/check_swarm_titlebar.sh <flutter-sdk> --status-menu-preview`.
 
-Validation: 15 targeted Flutter tests, 50 native menu checks, and 4,405 native
-tab/layout checks; changed-file static analysis and the icon audit pass. A
-signed Intel Skia debug build is ready for local review. Menu and tab bridge payloads match for glyph, label and
-color. Tests cover receipt-bound previews, stale clicks, snapshot clearing,
-tab moves, existing-pane navigation, expanded defaults, disclosure keys,
-shortcut hints, sign-out and the animation lifecycle. The native glyph drawing
-is shared without changing tab geometry. Physical pointer/keyboard tracking
+Validation for this refinement: 39 targeted Flutter tests and 48 native menu
+checks; changed-file static analysis and the icon audit pass. Menu and tab bridge
+payloads match for glyph, label and source color. Tests cover receipt-bound
+previews, stale clicks, snapshot clearing, tab moves, existing-pane navigation,
+all working rows, shortcut hints, sign-out, menu contrast and the animation
+lifecycle. Activity from stopped or replaced conversations is rejected, and a
+working row expires when its heartbeats stop. This does not suppress a machine
+that continues to send heartbeats for its current conversation; that upstream
+case still requires investigation. The native glyph drawing is shared without
+changing tab geometry. Physical pointer/keyboard tracking
 and VoiceOver in the user's running app remain manual review items; these
 fixtures are not that evidence.
 
@@ -227,11 +275,12 @@ The experimental branch remains unmerged for the user's visual review.
   The model opens the shared Models picker for that exact harness. Narrow panes
   retain the close target; stale or unavailable targets cannot switch an agent.
   Tab-strip close still appears on hover and yields to Command-held hints.
-- The footer's left side shows remaining subscription usage, such as
-  “Claude 0% · Codex 50%”, from the same deduplicated accounts and limiting
-  windows as Models. Unknown readings show “—”; distinct accounts remain
-  distinct. Hover explains the reading; click opens Subscriptions. The right
-  side retains the focused machine/project/branch/PR and their actions.
+- The footer originally showed remaining subscription usage. The current
+  [status-bar contract](workspace-status-bar.md) uses global harness count,
+  local host CPU/RAM/GPU and neutral allowance-used percentages, separated by
+  whitespace. Deduplicated accounts, limiting windows and Subscriptions actions
+  stay shared with Models. Unknown readings show `-`. The right side retains
+  the focused machine/project/branch/PR and their actions.
 - Final suite: **4,702 passed, 16 skipped**. New Harness has **3,948/3,948**
   covered executable lines and the resource picker **1,271/1,271** (both 100%).
   App, test and integration source analysis is clean. A whole-directory analysis
@@ -425,3 +474,119 @@ unmerged.
   was replaced or launched. Native viewer interaction, physical IME and VoiceOver
   remain unverified. Human-readable project names, scope changes, per-session
   privacy controls and a delivery/usefulness view remain outstanding.
+
+### Global session close, 2026-10-01
+
+- Explicit Close saves and ends the session across the global workspace. Other
+  viewers do not require confirmation, and other tabs showing the closed session
+  are removed. Confirmed idle sessions close silently; unfinished or uncertain
+  work still requires a decision. Save failures retain the pane.
+- The confirmation has no title: “Still working. Close anyway?” with Cancel and
+  Close. Waiting for input, unsent text and uncertain activity use the same short
+  pattern. Cancel retains initial keyboard focus; the session name remains in
+  accessibility semantics. Previously queued deferred closes remain compatible
+  in the daemon, but the dialog no longer offers that action.
+- 51 desktop tests and 273 CLI tests pass, including another live viewer,
+  unfinished work, failed saves, hidden-tab cleanup, desk sync and history.
+  Scoped Flutter analysis, the CLI type check and CLI bundle pass. The normal
+  macOS debug build and signature verification pass; no installed app was
+  replaced or launched.
+- Real-font synthetic renders were inspected in both appearances at normal and
+  200% text: [dark](../../docs/research/2026-10-01-session-close/dark-1.0x.png),
+  [light](../../docs/research/2026-10-01-session-close/light-1.0x.png),
+  [narrow dark](../../docs/research/2026-10-01-session-close/dark-2.0x.png),
+  [narrow light](../../docs/research/2026-10-01-session-close/light-2.0x.png).
+  Live native interaction and VoiceOver are not claimed by these widget renders.
+
+### Experimental Devices DSH, 2026-10-01
+
+- Devices is an account-scoped experiment, off by default. After the server
+  acknowledges opt-in, navigation reads Search → Devices → Harness Store in
+  AppKit and Flutter. Clicking Devices opens the bundled `autonomous/devices`
+  DSH: the native dashboard on the left and an ordinary agent terminal on the
+  right, using the shared pane layout, resizing, focus and terminal controllers.
+  Restoring the tab recovers that conversation after the experimental gate loads.
+  Turning the experiment off closes its workspace and removes history entries.
+  Older servers leave Devices unavailable without breaking existing experiments.
+- The DSH is bundled in the CLI and unlisted in the Store and picker. It chooses
+  an installed Codex, Claude Code or OpenCode engine, preserves creation receipts
+  after a lost response, waits for existing agent discovery before creating, and
+  reuses/resumes its conversation. Opening it does not submit an unsolicited
+  prompt. Its `harness hardware list/set` tools use the same device RPCs as the
+  dashboard; the existing `harness devices` account-key commands remain intact.
+- The list spans owned, linked computers. Each card names its host. Settings
+  travel through that computer's authenticated daemon, with encrypted requests,
+  results and device-status events. Duplicate USB ids on different computers
+  stay separate. Shared harness access does not grant device control. Offline
+  computers and unsupported daemons keep last readings visible with controls
+  disabled; edits are never queued for later. Gestures remain local to the desk.
+- Original [product photography](https://www.autonomous.ai/harness-device), shared
+  settings rows and light/dark surfaces frame the library, selected device,
+  USB setup and empty-state Shop entry. Names and model labels are saved locally
+  per account. Firmware does not identify a retail SKU; Harness/Pro is explicitly
+  chosen during setup, never inferred from display dimensions. The library adds
+  no wireless pairing, battery reading or invented Pro capability.
+- Settings follow production firmware on `origin/main`: brightness, sound,
+  reverse scrolling and voice language, with one Focus face and room for future
+  faces. Sparse writes name both host and device. The UI and agent tools wait for
+  reported settings; acceptance alone is not firmware confirmation. Disconnects,
+  firmware updates, stale responses, account changes and errors cannot complete
+  an unrelated save.
+- Combined the useful behavior from `ab-mac-3` in the read-only `brave-spruce`
+  worktree: platform/server gating, account-transition cleanup, retained offline
+  readings, fresh-settings requirements after reconnect, firmware-update handling,
+  native icon tint and the disposable interactive review controls. Product photos
+  and this worktree's dashboard design remain the shared presentation.
+- Validation: **168 unique desktop tests** across the regression and focused
+  follow-up runs; **76 CLI tests** (device service, DSH tools/package, ownership,
+  cable fleet and local/remote WebSocket routing); **7 backend settings tests**.
+  Scoped Dart analysis, CLI/backend type checking, development and release CLI
+  builds, and the icon audit pass. Repeated selections are not added to these
+  counts. The final native macOS integration test passes on Apple Silicon's
+  Impeller renderer, using five sample devices across three computers.
+- Native captures: [light DSH](../../docs/research/2026-10-01-devices/light-devices-dsh.png),
+  [dark DSH](../../docs/research/2026-10-01-devices/dark-devices-dsh.png), and
+  [offline host](../../docs/research/2026-10-01-devices/offline-devices-dsh.png).
+  Real-font widget coverage also includes the [empty state](../../docs/research/2026-10-01-devices/light-empty.png)
+  and [narrow settings at 200% text](../../docs/research/2026-10-01-devices/narrow-enlarged.png).
+  All hardware, accounts and conversation content in the review are fixtures.
+  The native test injects the titlebar method-channel action; it does not prove
+  physical AppKit keyboard/IME interaction, real USB hardware, live multi-machine
+  operation or VoiceOver. Those remain unverified.
+- `scripts/build-devices-review.sh` produces a separate `Devices Review.app`
+  with sample-data controls, then rebuilds `lib/main.dart` for the regular app.
+  Both builds and their signature verification passed; the combined review app
+  and the light/dark DSH captures were opened for review.
+  The review entrypoint requires both `HARNESS_TEST=true` and
+  `DEVICES_REVIEW=true` in a debug build. No installed CLI, daemon or production
+  service is changed by the review.
+- After integrating current main for the PR, **212 desktop regression tests**,
+  **4,352 native titlebar checks**, backend settings tests, scoped Dart analysis,
+  TypeScript checks, the regular signed macOS build, release CLI bundle, package
+  conformance and Store catalog validation pass. The native checks exercise the
+  hidden default, opted-in ordering and action, modal blocking and disabling.
+  Added the package README and refreshed the protocol checksum with explicit
+  encrypted-device request/event coverage after the full CLI suite found them.
+
+### Harness Monitor and resource footer, 2026-10-01
+
+- The process table starts with active sessions, with machine/status filters, saved sortable and
+  resizable columns, resource/AI presets, an inspector and a reviewed Stop action. Open/resume and
+  assistant/cleanup controls are absent from the table. Stopping keeps history and files and checks
+  conversation identity on the owning daemon.
+- The footer now totals the counted harnesses across connected owned machines. CPU/GPU are whole
+  percentages; RAM/SSD are whole MB/GB. Shared servers and canonical workspace folders count once;
+  partial totals use ≥ and missing metrics use —. Every metric opens the same reusable monitor tab.
+  Foreground sampling runs every fifteen seconds and stops while hidden.
+- Synthetic browser review covered machine/status filters, selection, inspection, a confirmed stop,
+  paused/offline action availability, keyboard resizing, and light/dark layouts at 880×560. A 440×560
+  check found and fixed the Columns menu overflowing the left edge. No real harness was stopped.
+- Validation: 117 monitor tests, 214 focused daemon tests, 43 desktop tests and 4,221 native titlebar
+  checks passed. TypeScript checking, changed-file Flutter analysis and the macOS debug build passed.
+  The full CLI suite had 8,292 passing and 39 skipped tests; five unchanged installed-OpenCode flag
+  checks failed because the local binary did not advertise --auto/--agent. An isolated real macOS
+  process/folder smoke check measured CPU, RAM and disk and kept unsupported GPU readings unknown.
+- Linux NVIDIA utilization/allocation and procfs I/O parsing have fixtures; actual NVIDIA hardware
+  remains unverified. macOS per-process GPU and restricted driver counters display —. Token totals
+  and breakdowns currently come from Claude, Codex and OpenCode ledgers; other engines show missing
+  metrics explicitly. See the Harness Monitor README for definitions and research references.

@@ -7,7 +7,6 @@ import 'dart:convert';
 import 'dart:math' as math;
 
 import 'package:harness/shared/theme/app_icons.dart';
-import 'package:harness/shared/theme/app_pane_icon.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
@@ -44,6 +43,7 @@ import '../shared/theme/app_theme.dart' as grid;
 import '../shared/theme/workspace_bar_style.dart';
 import '../theme/app_theme.dart';
 import 'engine_identity.dart';
+import 'harness_agent_control.dart';
 import 'harness_activity_mark.dart';
 import 'grid_model_picker.dart';
 import 'pane_header_actions.dart';
@@ -2731,14 +2731,12 @@ class _TerminalHeader extends StatelessWidget {
     // Reserve space for the pane-local model selector.
     // Engines without a picker keep their existing header width.
     final showModelPicker = modelPickerSupports(session.engineId);
-    // The picker: a model id up to 220px and its padding.
-    final pickerWidth = showModelPicker ? 250.0 : 0.0;
-    final showSplit = compact || onSplitDown != null || onSplitRight != null;
-    final showZoom = compact || onToggleZoom != null;
-    final controlsWidth =
-        ((showSplit ? 2 : 0) + (showZoom ? 1 : 0) + (onClose != null ? 1 : 0)) *
-        PaneHeaderButton.width;
-    final actionsWidth = pickerWidth + controlsWidth;
+    // Both text selectors keep their natural width until the title has yielded.
+    final pickerWidth =
+        (showModelPicker ? 232.0 : 0.0) + (agent != null ? 140.0 : 0.0);
+    // A domain harness has a different identity from its coding agent. The
+    // latter is already named by the selector on the right.
+    final showIdentityMark = agent == null || agent.dsh != null;
     // A fork says so first: "forked from X" is the one fact about this pane
     // that the folder and the branch — shared with its source — cannot tell.
     final forkedFrom = agent?.forkedFrom;
@@ -2753,6 +2751,10 @@ class _TerminalHeader extends StatelessWidget {
           builder: (context, constraints) {
             final scale = grid.appTextScaleOf(context);
             final narrow = constraints.maxWidth < 560 * math.max(1, scale);
+            final controlsWidth = onClose != null
+                ? PaneHeaderButton.width
+                : 0.0;
+            final actionsWidth = pickerWidth + controlsWidth;
             // At the smallest widths, connection state takes the leading
             // mark's place so the pane name survives beside the fixed tools.
             final leadingStatus =
@@ -2802,14 +2804,17 @@ class _TerminalHeader extends StatelessWidget {
                     )
                   : 16.0;
               return math.min(
-                17 + 10 + width + 8 + statusRoom + 8,
+                (showIdentityMark ? 27 : 0) + width + 8 + statusRoom + 8,
                 constraints.maxWidth * .45,
               );
             }
 
             final desiredRightWidth = narrow
                 ? math.max(
-                    controlsWidth + (showModelPicker ? 96.0 : 0.0) + badgeWidth,
+                    controlsWidth +
+                        (showModelPicker ? 96.0 : 0.0) +
+                        (agent != null ? 90.0 : 0.0) +
+                        badgeWidth,
                     constraints.maxWidth * .36,
                   )
                 : math.max(
@@ -2820,30 +2825,19 @@ class _TerminalHeader extends StatelessWidget {
                   );
             // The name/status retain space while model and project text yield.
             final rightWidth = math.min(
-              compact
-                  ? controlsWidth +
-                        math.min(
-                          pickerWidth,
-                          math.max(
-                            56.0,
-                            (constraints.maxWidth - controlsWidth) * .38,
-                          ),
-                        )
-                  : desiredRightWidth,
-              math.max(0.0, constraints.maxWidth - 99),
+              compact ? actionsWidth : desiredRightWidth,
+              math.max(0.0, constraints.maxWidth - (compact ? 56 : 99)),
             );
             return Row(
               children: [
                 if (leadingStatus)
                   statusButton()
-                else if (agent != null)
+                else if (agent != null && showIdentityMark)
                   EngineMark.forAgent(agent, size: 17)
-                else
+                else if (showIdentityMark)
                   EngineMark(engine: session.engineId, size: 17),
-                // Icon and name, the same as every other pane (owner,
-                // 2026-09-15): a harness agent is its harness here, and the
-                // engine it runs on is the dialog's and the tooltip's to say.
-                SizedBox(width: leadingStatus ? 6 : 10),
+                if (leadingStatus || showIdentityMark)
+                  SizedBox(width: leadingStatus ? 6 : 10),
                 Expanded(
                   child: Row(
                     children: [
@@ -3006,6 +3000,16 @@ class _TerminalHeader extends StatelessWidget {
                     maxWidth: math.max(0, rightWidth - controlsWidth),
                   ),
                   child: PaneHeaderActions(
+                    agentPicker: agent == null
+                        ? null
+                        : HarnessAgentControl(
+                            app: notifier,
+                            machineId: session.machineId,
+                            agent: agent,
+                            enabled:
+                                machine?.machine.isShared == false &&
+                                machine?.nodeOnline != false,
+                          ),
                     trailing: showPr
                         ? ConstrainedBox(
                             constraints: BoxConstraints(maxWidth: badgeWidth),
@@ -3096,30 +3100,6 @@ class _TerminalHeader extends StatelessWidget {
                           ),
                   ),
                 ),
-                if (showSplit) ...[
-                  PaneHeaderButton(
-                    key: const ValueKey('pane-split-down'),
-                    label: 'New Pane Below',
-                    command: 'pane.split_down',
-                    icon: AppPaneSymbol.splitDown,
-                    onPressed: onSplitDown,
-                  ),
-                  PaneHeaderButton(
-                    key: const ValueKey('pane-split-right'),
-                    label: 'New Pane to the Right',
-                    command: 'pane.split_right',
-                    icon: AppPaneSymbol.splitRight,
-                    onPressed: onSplitRight,
-                  ),
-                ],
-                if (showZoom)
-                  PaneHeaderButton(
-                    key: const ValueKey('pane-zoom'),
-                    label: zoomed ? 'Restore Pane' : 'Zoom Pane',
-                    command: 'pane.zoom',
-                    icon: zoomed ? AppPaneSymbol.restore : AppPaneSymbol.zoom,
-                    onPressed: onToggleZoom,
-                  ),
                 if (onClose != null) PaneCloseButton(onPressed: onClose!),
               ],
             );

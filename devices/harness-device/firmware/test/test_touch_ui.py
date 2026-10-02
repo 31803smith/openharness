@@ -30,6 +30,7 @@ code = r'''
 #include "octopus.h"
 #include "character.h"
 #include "focus.h"
+#include "pets.h"
 #include "workspace.h"
 #include "command_face.h"
 #include "arc_geometry.inc"
@@ -59,6 +60,7 @@ static struct {
     uint32_t touch_started, coast_until, character_activity, pet_until, last_celebration;
     uint32_t notice_sequence, voice_retry_until;
     uint8_t status_phase;
+    uint32_t pet_next_ms;
     cable_swarm_t tabs[SWARMS_MAX];
     struct { char id[64], name[96], state[16]; bool local; } machines[2];
     char selected_tab[ID_MAX], pending_focus[ID_MAX], opening_notice[ID_MAX], title[80], message[256];
@@ -141,7 +143,8 @@ static unsigned preview_brightness = 100;
 #define SEL color(HT_THEME_SELECTION)
 #define ESP_LOGI(...) ((void)0)
 #define EXT_RAM_BSS_ATTR
-static void change(void) {}
+static unsigned changes;
+static void change(void) { changes++; }
 static void display_lock(void) {}
 static void display_unlock(void) {}
 static void display_wake(void) {}
@@ -1744,21 +1747,56 @@ int main(int argc, char **argv) {
     // The Focus SKIN's home face, footer and all — the "focus" portrait above is the legacy
     // focus-face option on the default character, which draws no microphone.
     reset(); ht_character_select(&character, HT_CHARACTER_FOCUS); scene_take(); portrait(dir, "focus-skin");
-    // THE TWO DOORS on Focus: the tab pill opens the tab list, the agent's name the pane list —
-    // pressed and released like the microphone, so a thumb that drifts or lingers still opens them.
+    /*
+     * THE DOORS on Focus (owner, 2026-10-01), laid out like the octopus: a tap on the curved name opens
+     * the pane list, a hold on the face the tab list, and a tap anywhere else talks. There is no tab
+     * pill and no microphone any more.
+     */
+    workspace_setup(); ht_character_select(&character, HT_CHARACTER_FOCUS); strcpy(s.agents[0].engine, "claude");
+    ui_project_emit(s.agents[0].id, "sess", "summary", "Flashed 0.0.91 to both dials and verified the image on each. All 44 host checks pass.",
+                    "Flashed 0.0.91 to both dials and verified the image on each. All 44 host checks pass.");
+    scene_take(); portrait(dir, "focus-recap");
+    assert(!action_enabled(A_TAB_LIST));
+    for (int i = 0; i < scene.count; i++) assert(scene.runs[i].sprite.pixels != ht_icon_mic.px);
+    tap(1000, 233, 30); assert(s.view == AGENTS && !starts);
+    // The hold: on the recap, past 650 ms, and the tab list is open before the finger lifts.
+    workspace_setup(); ht_character_select(&character, HT_CHARACTER_FOCUS); strcpy(s.agents[0].engine, "claude");
+    ui_project_emit(s.agents[0].id, "sess", "summary", "Retry queue shipped.", "Retry queue shipped.");
+    scene_take();
+    habitat_touch(true, 233, 300, 2000); habitat_touch(true, 233, 300, 2700);
+    assert(s.view == TABS && !starts);
+    habitat_touch(false, 233, 300, 2800); assert(s.view == TABS && !starts);
+    // A tap ANYWHERE on the face below the name talks (owner, 2026-10-01): the recap, the mark, the
+    // empty glass around them, and the bottom edge where the microphone used to be.
+    {
+        const int at[][2] = {{233, 110}, {233, 260}, {120, 300}, {346, 200}, {233, 360}, {233, 410}, {233, 440}};
+        for (unsigned k = 0; k < sizeof at / sizeof at[0]; k++) {
+            workspace_setup(); ht_character_select(&character, HT_CHARACTER_FOCUS); strcpy(s.agents[0].engine, "claude");
+            ui_project_emit(s.agents[0].id, "sess", "summary", "Retry queue shipped.", "Retry queue shipped.");
+            scene_take(); tap(1000, at[k][0], at[k][1]); assert(starts == 1 && s.view == VOICE);
+            assert(!strcmp(target, s.agents[0].id));   // to the agent on the face: none is dropped on glass
+        }
+    }
+    // And on a face with nothing yet to say.
     workspace_setup(); ht_character_select(&character, HT_CHARACTER_FOCUS); scene_take();
-    tap(1000, 233, 80); assert(s.view == TABS);
+    tap(1000, 233, 233); assert(starts == 1);
+    /*
+     * A THUMB, not an idealised tap: it drifts 10 px and stays down up to 600 ms, which
+     * ht_gesture_end() calls no tap at all. On the Focus face it still talks. A contact that travels
+     * 20 px up or down has scrolled the terminal, and belongs to the scroll.
+     */
+    for (int drift = 0; drift <= 10; drift += 5) for (int held = 120; held <= 600; held += 240) {
+        workspace_setup(); ht_character_select(&character, HT_CHARACTER_FOCUS); strcpy(s.agents[0].engine, "claude");
+        ui_project_emit(s.agents[0].id, "sess", "summary", "Retry queue shipped.", "Retry queue shipped.");
+        scene_take();
+        habitat_touch(true, 233, 260, 1000);
+        habitat_touch(true, 233 + drift / 2, 260 + drift, 1000 + held / 2);
+        habitat_touch(false, 233 + drift / 2, 260 + drift, 1000 + held);
+        assert(starts == 1 && s.view == VOICE && !strcmp(target, s.agents[0].id));
+    }
     workspace_setup(); ht_character_select(&character, HT_CHARACTER_FOCUS); scene_take();
-    tap(1000, 233, 142); assert(s.view == AGENTS && !starts);
-    workspace_setup(); ht_character_select(&character, HT_CHARACTER_FOCUS); scene_take();
-    habitat_touch(true, 233, 80, 1000); habitat_touch(true, 247, 90, 1400); habitat_touch(false, 247, 90, 1900);
-    assert(s.view == TABS);
-    workspace_setup(); ht_character_select(&character, HT_CHARACTER_FOCUS); scene_take();
-    habitat_touch(true, 233, 142, 1000); habitat_touch(true, 247, 152, 1400); habitat_touch(false, 247, 152, 1900);
-    assert(s.view == AGENTS);
-    // No pane arrows beside the microphone (the owner took them out): a tap there is nothing.
-    workspace_setup(); ht_character_select(&character, HT_CHARACTER_FOCUS); scene_take();
-    tap(1000, 98, 388); tap(1200, 368, 388); assert(!switches && !starts);
+    habitat_touch(true, 233, 260, 1000); habitat_touch(true, 233, 300, 1100); habitat_touch(false, 233, 300, 1200);
+    assert(!starts);   // 40 px is a drag, not a touch
     /*
      * THE BELL DOES NOT COUNT THE AGENT ON THE FACE. Standing on "a", its question arrives: it shows in
      * the recap's place and the bell stays dark — a +1 there read as another agent asking. Move to
@@ -1778,6 +1816,32 @@ int main(int argc, char **argv) {
         assert(bell && one);
         s.active=0; scene_take(); assert(!action_enabled(A_INBOX));
     }
+    // THE PETS (claude, codex): the face publishes when the pet next changes (s.pet_next_ms);
+    // surface_tick asks for a redraw then and not before. Other things may ask on their own clocks,
+    // so the same ticks are replayed for a Cursor agent (no pet) and the pet's requests are the difference.
+    for (unsigned pe = 0; pe < ht_pet_count; pe++) {
+        const char *pet_engine = ht_pets[pe].engine;
+        unsigned seen[2][2]; uint32_t due = 0;
+        for (int pass = 0; pass < 2; pass++) {
+            reset(); ht_character_select(&character, HT_CHARACTER_FOCUS);
+            strcpy(s.agents[0].engine, pass ? pet_engine : "cursor");
+            fake_ms = 1200; scene_take();
+            if (!pass) assert(!s.pet_next_ms);
+            else { due = s.pet_next_ms; assert(due > 1200); }
+            if (pass) { for (int k = 0; k < 2; k++) {
+                s.pet_next_ms = due; changes = 0; surface_tick(k ? due : due - 1); seen[1][k] = changes; } }
+        }
+        reset(); ht_character_select(&character, HT_CHARACTER_FOCUS); strcpy(s.agents[0].engine, "cursor");
+        fake_ms = 1200; scene_take();
+        for (int k = 0; k < 2; k++) { changes = 0; surface_tick(k ? due : due - 1); seen[0][k] = changes; }
+        assert(seen[1][0] == seen[0][0] && seen[1][1] == seen[0][1] + 1);
+        // A finger down pauses it, and so does the VOICE view.
+        reset(); ht_character_select(&character, HT_CHARACTER_FOCUS); strcpy(s.agents[0].engine, pet_engine);
+        fake_ms = 1200; scene_take(); assert(s.pet_next_ms == due);
+        s.touch_down = true; changes = 0; surface_tick(due); assert(s.pet_next_ms == due);
+        s.touch_down = false;
+        s.view = VOICE; surface_tick(due); assert(s.pet_next_ms == due); s.view = HOME;   // not consumed
+    }
     // THE FOCUS INBOX: the close pill, then a column of cards — machine, mark or dot + agent, message.
     reset(); ht_character_select(&character, HT_CHARACTER_FOCUS); strcpy(s.agents[0].engine, "claude");
     {
@@ -1794,71 +1858,26 @@ int main(int argc, char **argv) {
     // An open question on Focus: shown on the home face, in the recap's place, and nowhere else.
     reset(); ht_character_select(&character, HT_CHARACTER_FOCUS); strcpy(s.agents[0].engine, "claude");
     {
-        // The question on the face, and another agent's news so the bell is up: the tab pill sits
-        // under the blue bell, as on glass, and the two must not touch.
+        // The question on the face, and another agent's news so the bell is up — at the bottom, under
+        // the question, where the microphone was.
         cable_notif_t asked[2]={{.question=true,.summary="Which database should the retry queue use?"},
                                 {.agent_id="b",.name="Website",.summary="The site is deployed."}};
         COPY(asked[0].agent_id, s.agents[0].id); COPY(asked[0].name, s.agents[0].name);
         s.tab_count=1; COPY(s.tabs[0].id,"tab-0"); COPY(s.tabs[0].name,"Daily life"); COPY(s.selected_tab,"tab-0");
         ui_notif_replace(asked,2); scene_take(); portrait(dir, "focus-question");
         assert(s.view == HOME && action_enabled(A_INBOX));
-        uint16_t gap[HT_WIDTH];
-        for (int y = 55; y < 68; y++) {   // the bell pill ends at 54, the tab pill starts at 68
-            ht_raster(&scene, (ht_rect_t){0, y, HT_WIDTH, 1}, gap);
-            for (int x = 0; x < HT_WIDTH; x++) assert(gap[x] == 0);
+        int last_text = 0, bell_top = HT_HEIGHT;
+        for (int i = 0; i < scene.count; i++) {
+            const ht_run_t *r = &scene.runs[i];
+            if (r->font == &ht_lv_geist_med_28.base && r->text[0]) last_text = r->y + r->font->height;
+            if (r->box.h && r->box.fill == color(0x006fff) && r->y < bell_top) bell_top = r->y;
         }
+        assert(last_text && bell_top < HT_HEIGHT && last_text <= bell_top);
+        tap(3000, 233, 416); assert(s.view == INBOX);
+        ui_notif_replace(asked,2); s.view = HOME; scene_take();
         bool shown = false;
         for (int i = 0; i < scene.count; i++) if (strstr(scene.runs[i].text, "retry queue")) shown = true;
         assert(shown);
-    }
-    for (int y = 386; y < HT_HEIGHT; y += 4) {
-        // Inside the round glass only: a target row whose centre is off the panel is not a row.
-        if ((y - 233) * (y - 233) >= 230 * 230) continue;
-        reset(); ht_character_select(&character, HT_CHARACTER_FOCUS); scene_take();
-        tap(1000, 233, y);
-        assert(starts == 1);
-    }
-    /*
-     * AND THE ROLL DOWNWARD, which is how this button was actually failing.
-     *
-     * The drift case below moves down by half its drift from y 410 and so never leaves the old
-     * 389..439 rect. A thumb pressing the LOWER half of the mark on a circle held in the hand rolls
-     * further than that, and the old rect ended one pixel above the mark's own last row — so the
-     * contact left the target with nothing below it to land on. It is the press that matters, not
-     * just the release: pressed_action is read from the first sample, so a DOWN one row low turned
-     * the whole contact into a terminal scroll.
-     */
-    for (int y = 424; y <= 448; y += 8) for (int roll = 0; roll <= 16; roll += 8) {
-        reset(); ht_character_select(&character, HT_CHARACTER_FOCUS); scene_take();
-        habitat_touch(true, 233, y, 1000);
-        habitat_touch(true, 233, y + roll, 1400);
-        habitat_touch(false, 233, y + roll, 1800);
-        assert(starts == 1);
-    }
-    /*
-     * A THUMB, not an idealised tap. 12 px is 1.20 mm and 350 ms is quick; a real press on a circle
-     * held in the hand drifts past both. A footer button answers a press that comes back up inside
-     * its own rect — and still refuses one dragged off it.
-     */
-    for (int drift = 0; drift <= 24; drift += 8) for (int ms = 120; ms <= 1500; ms += 460) {
-        reset(); ht_character_select(&character, HT_CHARACTER_FOCUS); scene_take();
-        habitat_touch(true, 233, 410, 1000);
-        habitat_touch(true, 233 + drift, 410 + drift / 2, 1000 + ms / 2);
-        habitat_touch(false, 233 + drift, 410 + drift / 2, 1000 + ms);
-        assert(starts == 1);
-    }
-    reset(); ht_character_select(&character, HT_CHARACTER_FOCUS); scene_take();
-    habitat_touch(true, 233, 410, 1000);
-    habitat_touch(true, 233, 300, 1100);
-    habitat_touch(false, 233, 300, 1200);
-    assert(!starts);   // dragged off the button; a press that leaves is not a press
-
-    // And NOT the middle of the glass. The creature skins start speech from anywhere on the creature;
-    // Focus has a button for it, and the middle is the recap being read.
-    for (int y = 120; y <= 340; y += 40) {   // the microphone's 80 px button starts at 353
-        reset(); ht_character_select(&character, HT_CHARACTER_FOCUS); scene_take();
-        tap(1000, 233, y);
-        assert(!starts);
     }
     reset(); s.straight_title=true; scene_take(); portrait(dir,"straight-title");
     reset(); s.nap=true; scene_take(); portrait(dir,"asleep");
@@ -2078,7 +2097,7 @@ with tempfile.TemporaryDirectory(prefix='harness-touch-ui-') as d:
     subprocess.run(['cc','-std=c11','-Wall','-Wextra','-Werror','-O1','-g',
                     '-fsanitize='+os.environ.get('SANITIZERS','undefined,bounds'),
                     *extra_includes, '-I',str(native),str(out/'touch_ui.c'), *extra_sources, str(native/'gestures.c'),
-                    str(native/'form.c'),str(native/'visit.c'),str(native/'draft.c'), str(native/'scroll.c'),str(native/'selection.c'),str(native/'carry.c'),str(native/'tim.c'),str(native/'character_motion.c'),str(native/'character_layout.c'),str(native/'character.c'),str(native/'illustrated.c'),str(native/'tux.c'),str(native/'focus.c'),str(native/'lvgl_fonts.c'),str(native/'lvgl_icons.c'),str(native/'terminal.c'),
+                    str(native/'form.c'),str(native/'visit.c'),str(native/'draft.c'), str(native/'scroll.c'),str(native/'selection.c'),str(native/'carry.c'),str(native/'tim.c'),str(native/'character_motion.c'),str(native/'character_layout.c'),str(native/'character.c'),str(native/'illustrated.c'),str(native/'tux.c'),str(native/'focus.c'),str(native/'lvgl_fonts.c'),str(native/'lvgl_icons.c'),str(native/'focus_marks.c'),str(native/'pets.c'),str(native/'terminal.c'),
                     str(native/'fonts.c'),str(native/'octopus.c'),str(native/'ascii_clip.c'),str(native/'octopus_font.c'),str(native/'workspace.c'),str(native/'command_face.c'),'-o',str(out/'touch_ui')],check=True)
     args=[str(out/'touch_ui')]
     if os.environ.get('HABITAT_PREVIEW_DIR'):

@@ -2,6 +2,7 @@
 //! uses: every harness on every machine (relay + P2P live in the daemon), in tabs and panes that
 //! are the account's desk, driven with tmux's keys.
 
+mod activity;
 mod app;
 mod capture;
 mod tree;
@@ -32,6 +33,7 @@ mod fzf;
 mod terminal_themes;
 mod input;
 mod layout;
+mod desk_layout;
 mod local;
 mod modal;
 mod new_harness;
@@ -424,6 +426,9 @@ async fn run(config: config::Config) -> io::Result<()> {
     app.apply_look(config.look.as_ref());
     for (chord, command) in &config.keys {
         match command { Some(c) => app.keymap.bind(keys::Table::Root, *chord, c.clone(), false), None => app.keymap.unbind(keys::Table::Root, chord) }
+    }
+    for (chord, command) in &config.prefix_keys {
+        match command { Some(c) => app.keymap.bind(keys::Table::Prefix, *chord, c.clone(), false), None => app.keymap.unbind(keys::Table::Prefix, chord) }
     }
     // The server's options, keys, buffers and environment: this client's if it is the first
     // (tmux reads its configuration once, when its server starts).

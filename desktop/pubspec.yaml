@@ -150,6 +150,7 @@ flutter:
     # The marks on the login screen's two buttons (`widgets/sign_in_provider_button.dart`).
     - assets/sign-in/
     - assets/harness_device_studio.jpg
+    - assets/devices/
     - assets/harness_store_card.jpg
     - assets/swarm-wallpapers/
 

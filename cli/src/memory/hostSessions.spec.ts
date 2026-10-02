@@ -20,9 +20,10 @@ it('admits coding processes and bundled coding DSHs while excluding other domain
 it('retains a recently exited process long enough to capture its final native reply, without archive discovery', () => {
   let now = 1_000
   const roster = new MemorySessionRoster('/home/person', () => now)
-  roster.refresh([session], () => true, no)
+  expect(roster.refresh([{ ...session, title: 'Parser fixes' }], () => true, no))
+    .toMatchObject([{ present: true, name: 'Parser fixes' }])
   now += 10_000
-  expect(roster.refresh([], no, no)).toMatchObject([{ sessionId: 'native', busy: false }])
+  expect(roster.refresh([], no, no)).toMatchObject([{ sessionId: 'native', busy: false, present: false }])
   now += 120_001
   expect(roster.refresh([], no, no)).toEqual([])
 })
@@ -40,6 +41,19 @@ it('uses personal scope only for the current verified collection conversation, n
   expect(roster.refresh([companion], no, no)).toEqual([])
   expect(roster.refresh([companion], no, no, 'agent')).toMatchObject([{ scope: 'profile' }])
   expect(roster.refresh([], no, no, 'another_agent')).toEqual([])
+})
+
+it('binds OpenCode to the host database and includes only the verified collection conversation in personal scope', () => {
+  const roster = new MemorySessionRoster('/home/person', Date.now, { opencode: '/native/opencode.db' })
+  const companion = { ...session, engine: 'opencode', transcriptPath: null, dsh: 'autonomous/pair' }
+  expect(roster.refresh([companion], no, no)).toEqual([])
+  expect(roster.refresh([companion], no, no, 'agent')).toMatchObject([
+    { engine: 'opencode', scope: 'profile', transcriptPath: '/native/opencode.db', sessionId: 'native' },
+  ])
+  expect(roster.refresh([{ ...companion, transcriptPath: '/model/supplied/path' }], no, no, 'agent')[0].transcriptPath)
+    .toBe('/native/opencode.db')
+  expect(roster.refresh([companion], no, () => true, 'agent')).toEqual([])
+  expect(new MemorySessionRoster('/home/person').refresh([companion], no, no, 'agent')).toEqual([])
 })
 
 it('recognizes fresh requests in both native event formats without treating their streamed replies as new activity', () => {

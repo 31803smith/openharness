@@ -1,4 +1,6 @@
+import type { ActivityFrame } from './lib/turnActivity.js'
 import { readSessionGitPullRequest } from './lib/sessionGitPullRequest.js'
+import { MonitorCompletions, type MonitorActivity } from './lib/harnessMonitor.js'
 import type { HarnessShareOwner } from './sharing/owner.js'
 import { SHARE_REQUEST_TYPES } from './sharing/protocol.js'
 import { AutonomousDeviceRelay } from './lib/autonomous-device/relay.js'
@@ -30,13 +32,15 @@ import { AuthSessionManager, AuthSessionError } from './lib/authSession.js'
 import { VERSION } from './version.js'
 import { registry, projectDisplayName, type RegisteredSession } from './lib/registry.js'
 import { AgentStopError } from './lib/stopAgentService.js'
-import { isHiddenBuiltin } from './dsh/builtins.js'
+import type { CloseAgentService, CloseMode } from './lib/closeAgentService.js'
+import { MODEL_MANAGER_ID, isHiddenBuiltin } from './dsh/builtins.js'
 import { ENGINES, PROCESS_ENGINES, isTerminalEngine, type AgentEngine, type ProcessEngine } from './engines/types.js'
 import { listDir } from './lib/fsBrowse.js'
 import { linkCodexProfile, listCodexProfiles } from './lib/codexProfiles.js'
 import { gridCliPresence } from './lib/gridExec.js'
 import { GridFleetRpc, GRID_FLEET_PROTOCOL, GRID_FLEET_MAX_TIMEOUT_MS, parseGridFleetRequest } from './lib/gridFleetRpc.js'
 import { LocalModels } from './lib/localModels.js'
+import { appEngineOps, scanAppModels } from './lib/appModels.js'
 import { ApiConnectionError, ApiConnections, apiConnectionsRequest } from './lib/apiConnections.js'
 import { apiModelsRequest, rememberSavedApis, resolveApiTarget } from './lib/apiModels.js'
 import { gridCapableEngines, isApiLaunch, parseGridLaunchOverride, type GridLaunchOverride } from './lib/gridLaunch.js'
@@ -48,9 +52,13 @@ import type { GridAttachResult } from './lib/gridAttach.js'
 import { parseNewAgentModel, resolveNewAgentModel } from './lib/newAgentModel.js'
 import { deriveHarnessGridName } from './lib/gridDerive.js'
 import { AGENT_NAME_RE, FirstPromptUnsupportedError, MAX_FIRST_PROMPT_CHARS, NamedAgentUnsupportedError, permissionModeApproves, permissionModeFlags, supportsFirstPrompt, supportsNamedAgent } from './lib/engineLaunch.js'
+import { opencodeMajorVersion } from './engines/opencode/version.js'
 import { readAccountUsage, type AccountUsageReading } from './lib/accountUsage.js'
 import { probeEngines } from './lib/engineProbe.js'
 import { readMachineResources } from './lib/machineResources.js'
+import { harnessDevicesRequest, type HarnessDevicesService } from './lib/harnessDevices.js'
+import { createHarnessResourcesReader } from './lib/harnessResources.js'
+import { createHarnessStorageReader } from './lib/harnessTelemetry.js'
 import { AgentCreationReceipts, AgentCreationReceiptError, creationFingerprint, validCreationId, type AgentCreationStatus } from './lib/agentCreationReceipt.js'
 import { engineInstallRecipe } from './lib/engineInstall.js'
 import { parseProjectFolder, prepareProjectFolder, projectsRoot, ProjectFolderError } from './lib/projectFolder.js'
@@ -429,6 +437,7 @@ function gridModelsPayload(gridName: string | null, sections: GridSection[], row
 }
 
 export class BackendSocket {
+  harnessDevices: HarnessDevicesService | null = null
   private readonly gridFleet = new GridFleetRpc()
   // The Model Manager reads the grid it runs on through the same credential-less reader as every picker
   // (never `grid engines`, which carries the grid credential and so wakes a sleeping grid on every tick),
@@ -438,6 +447,10 @@ export class BackendSocket {
     machineName: () => this.machineDisplayName,
     inventory: gridInventory,
     onChanged: () => { forgetGridModels(); void this.pushGridModels() },
+    // Models Ollama, LM Studio and llama.cpp downloaded here, found by the Model Manager's own scan (the
+    // bundled harness), so the picker and that harness agree on what is here and what starts it.
+    appModels: () => scanAppModels({ node: process.execPath, packageDir: installedDsh(MODEL_MANAGER_ID)?.realDir ?? null, env: process.env }),
+    appEngines: appEngineOps(process.env),
   })
   /** This machine's name as Harness shows it (Machines), from the backend's `machine_meta`. Null
    *  until the first one arrives. */
@@ -496,6 +509,8 @@ export class BackendSocket {
   /** Called when the web deletes an agent (`agent_delete`) — cli.ts signals only the validated engine
    *  process and forgets the session. Keeps recap + agent name. */
   onDeleteAgent: ((sessionId: string) => void | Promise<void>) | null = null
+  closeAgentService: CloseAgentService | null = null
+  cleanupPreview: (() => Promise<Record<string, unknown>>) | null = null
   /** Called on `agent_create` — cli.ts spawns a fresh tmux session running the requested engine in the
    *  requested folder and returns its process-agent. Session metadata may bind later through hooks. */
   onCreateAgent: ((input: {
@@ -545,6 +560,7 @@ export class BackendSocket {
   harnessSharing: HarnessShareOwner | null = null
   /** Answers the trust group's roster exchange (`group_sync`); null until the daemon wires it. */
   groupSync: { handle: (peerPub: string, payload: Record<string, unknown>) => Record<string, unknown> } | null = null
+  activityFrameProvider: ((session: RegisteredSession) => ActivityFrame | null) | null = null
   dshFrameProvider: ((session: RegisteredSession) => AgentDshContext | null) | null = null
   viewerTargetProvider: ((agentId: string) => string | null) | null = null
   readonly interactiveViewers = new InteractiveViewers(agentId => this.viewerTargetProvider?.(agentId) ?? null)
@@ -715,7 +731,7 @@ export class BackendSocket {
     >) | null = null
   /** Resume stopped work directly, or attach if it is already running. Never replaces a live
    * process and never falls back to a fresh conversation. */
-  onResumeAgent: BackendSocket['onRestartAgent'] = null
+  onResumeAgent: ((agentId: string, permissionMode?: string) => ReturnType<NonNullable<BackendSocket['onRestartAgent']>>) | null = null
   /** Called on `agent_fork` — cli.ts opens a NEW agent that starts with `agentId`'s whole history
    *  (lib/forkAgent.ts) and returns its process-agent, exactly as `agent_create` does. `level` says
    *  what the new agent actually got: the engine's own fork, or a handoff message. */
@@ -745,6 +761,8 @@ export class BackendSocket {
   recentProvider: RecentProvider | null = null
   /** The person's own last questions for an agent, newest first. See the `agent_recent` case. */
   recentAsksProvider: ((agentId: string, n: number) => string[]) | null = null
+  monitorActivityProvider: ((sessionId: string) => MonitorActivity) | null = null
+  private readonly monitorCompletions = new MonitorCompletions()
   /** Answers `session_search` from this machine's transcript index (lib/sessionSearch/). Null when
    *  this Node has no `node:sqlite`. */
   sessionSearchProvider: ((query: string, options: { limit?: number; from?: number; to?: number }) => SessionSearchResult) | null = null
@@ -755,6 +773,8 @@ export class BackendSocket {
   /** Answers `usage_read` — this machine's own agent-account usage (lib/accountUsage.ts). A field
    *  rather than a direct call so a spec answers it without a real home, Keychain or network. */
   accountUsageReader: () => Promise<AccountUsageReading[]> = readAccountUsage
+  harnessResourcesReader = createHarnessResourcesReader(() => registry.advertised())
+  harnessStorageReader = createHarnessStorageReader()
   /** The grid listing currently out, shared by every `grid_models_list` for the same own grid
    *  that lands meanwhile. */
   private gridModelsInFlight: { gridName: string | null; grids: ReturnType<typeof listAllGridModels> } | null = null
@@ -785,7 +805,8 @@ export class BackendSocket {
   private readonly devlogAppends = new Map<string, (payload: Record<string, unknown> | null) => void>()
   /**
    * Whether daemons run at all (lib/daemonsSwitch.ts). Off, the loopback `pair` request (`harness pair`, the
-   * MCP server) is answered DAEMONS_OFF before any verb runs. Null: always on, as before the switch.
+   * MCP server) is answered DAEMONS_OFF before any verb runs, except the verified owner's local coding
+   * memory opt-in setting. That setting does not read memory or start a companion. Null: always on.
    */
   daemonsOn: (() => boolean) | null = null
   /**
@@ -1200,6 +1221,7 @@ export class BackendSocket {
 
   async stop(): Promise<void> {
     this.closed = true
+    this.closeAgentService?.dispose()
     this.stopGridModelsPush()
     this.orchestratorService?.stop()
     this.teamService?.stop()
@@ -1219,6 +1241,7 @@ export class BackendSocket {
   /** Send an up-frame (event or RPC reply) to the WEB audience. Queued while disconnected.
    *  User-content events are group-encrypted (E2EE) here; system frames pass through as plaintext. */
   send(frame: Frame): void {
+    this.monitorCompletions.observe(frame)
     // Only an already-open orchestration service observes events; ordinary sessions
     // do not create project state or incur disk work. Project payloads stay local.
     this.orchestratorService?.ingest(frame)
@@ -1684,9 +1707,14 @@ export class BackendSocket {
     }
     if (type === 'pair') {
       if (!local) { reply(type, requestId, { error: 'LOCAL_ONLY', detail: 'Ask the pair brain on this computer.' }); return }
-      if (this.daemonsOn && !this.daemonsOn()) { reply(type, requestId, { error: 'DAEMONS_OFF', detail: 'Daemons are off for this account or on this computer.' }); return }
       const verb = typeof payload.verb === 'string' ? payload.verb : ''
       const control = this.pairControl
+      // The owner must be able to clear the saved opt-in without turning companions on. Only these
+      // two settings actions reach MemoryControl, which checks their full schema and verifies the OS
+      // caller. Ordinary library, recall and agent tools remain inert while the master switch is off.
+      const memorySetting = control?.verbs.has('memory') && verb === 'memory' &&
+        (payload.action === 'experiment' || payload.action === 'configure_experiment')
+      if (this.daemonsOn && !this.daemonsOn() && !memorySetting) { reply(type, requestId, { error: 'DAEMONS_OFF', detail: 'Daemons are off for this account or on this computer.' }); return }
       if (control && control.verbs.has(verb)) { detached(control.local(payload, connId)); return }
       if (!service) { reply(type, requestId, { error: 'UNSUPPORTED' }); return }
       detached(service.local(payload))
@@ -2070,7 +2098,13 @@ export class BackendSocket {
       switch (type) {
         case 'machine_resources':
           // Sampling CPU must not hold up typing or other machine requests.
-          void readMachineResources()
+          void (payload.harnesses === true
+            ? this.harnessResourcesReader().then(async harnesses => {
+              if (payload.storage !== true) return { harnesses }
+              const storage = await this.harnessStorageReader(registry.advertised())
+              return { harnesses: { ...harnesses, agents: harnesses.agents.map(row => ({ ...row, ...storage.get(row.agentId) })) } }
+            })
+            : readMachineResources())
             .then(resources => reply(type, requestId, { ...resources }))
             .catch(() => reply(type, requestId, { error: 'UNAVAILABLE' }))
           return
@@ -2113,8 +2147,9 @@ export class BackendSocket {
           // ⚠️ Run against grid AS IT STANDS — never set up first. A Grid harness session issues these
           // on its own the moment its viewer comes up (every open one, on every daemon start), so
           // setting grid up here signed a machine in to grid right after a Harness-only sign-in,
-          // with nobody asking. A person sets grid up through the picker's Set up or by opening the
-          // Model Manager; until then grid answers these in its own words.
+          // with nobody asking. Grid is set up by the picker's Set up, by making or opening a Model
+          // Manager, and by that harness's own `harness grid setup`; until then grid answers these in
+          // its own words.
           void this.gridFleet.run(connId, requestId, request)
             .then(result => reply(type, requestId, { ...result }))
             .catch(() => reply(type, requestId, { ok: false, code: 1, error: 'Grid command failed unexpectedly.' }))
@@ -2144,7 +2179,8 @@ export class BackendSocket {
           return
 
         case 'agents_list': {
-          const projects = await Promise.all(registry.advertised().map((s) => this.toProject(s)))
+          const sessions = registry.advertised()
+          const projects = await Promise.all(sessions.map((s) => this.toProject(s)))
           // Older clients/devices keep their live-only contract. The desktop picker
           // explicitly asks for stopped work and receives no stale terminal routes.
           if (payload.includeStopped === true && this.e2ee.sessionRole(connId) !== 'device') {
@@ -2161,7 +2197,37 @@ export class BackendSocket {
             reply(type, requestId, { agents: projects.filter(deviceAgentRow).slice(0, DEVICE_AGENT_LIST_LIMIT).map(deviceAgentListItem) })
             return
           }
-          reply(type, requestId, { agents: projects })
+          if (payload.monitor === true) {
+            // Optional telemetry must never hold the ordered terminal-input queue.
+            void (async () => {
+              const [snapshot, storage] = await Promise.all([
+                this.harnessResourcesReader().catch(() => ({ agents: [], sampledAt: null, shared: [] })),
+                this.harnessStorageReader(sessions).catch(() => new Map()),
+              ])
+              const resources = new Map(snapshot.agents.map(row => [row.agentId, row]))
+              const byId = new Map(sessions.map(s => [s.agentId, s]))
+              reply(type, requestId, { agents: projects.map(agent => {
+                const session = byId.get(agent.id)
+                const activity = session ? this.monitorActivityProvider?.(session.sessionId) : null
+                const reading = resources.get(agent.id)
+                return { ...agent, monitor: {
+                  activity: activity && activity !== 'idle' ? activity : session ? this.monitorCompletions.state(session) : 'idle',
+                  activityKnown: this.monitorActivityProvider !== null,
+                  rssBytes: agent.status === 'stopped' ? 0 : reading?.memoryBytes ?? null,
+                  cpu: agent.status === 'stopped' ? 0 : reading?.cpuPercent ?? null,
+                  pid: reading?.processCount != null ? session?.processIdentity?.pid ?? null : null,
+                  sampledAt: snapshot.sampledAt,
+                  processCount: reading?.processCount ?? null,
+                  gpuMemoryBytes: reading?.gpuMemoryBytes ?? null,
+                  gpuPercent: reading?.gpuPercent ?? null,
+                  diskReadBytesPerSecond: reading?.diskReadBytesPerSecond ?? null,
+                  diskWriteBytesPerSecond: reading?.diskWriteBytesPerSecond ?? null,
+                  processes: reading?.processes ?? [],
+                  ...(storage.get(agent.id) ?? {}),
+                } }
+              }), sharedResources: snapshot.shared ?? [], sampledAt: snapshot.sampledAt })
+            })().catch(() => reply(type, requestId, { error: 'UNAVAILABLE' }))
+          } else reply(type, requestId, { agents: projects })
           return
         }
 
@@ -2657,6 +2723,7 @@ export class BackendSocket {
           // clock was set back) never throttles: the next open corrects it.
           let opened = false
           if (hasOpened) {
+            this.closeAgentService?.cancel(s.agentId)
             const since = Date.now() - (s.lastOpenedAt ?? 0)
             if (!s.lastOpenedAt || since < 0 || since >= AGENT_OPENED_THROTTLE_MS) {
               s = registry.markOpened(s.agentId) ?? s
@@ -2786,7 +2853,8 @@ export class BackendSocket {
             if (typeof payload.agent !== 'string' || !AGENT_NAME_RE.test(payload.agent)) {
               reply(type, requestId, { error: 'INVALID_AGENT', detail: 'agent must be 1-64 letters, digits, `-` or `_`' }); return
             }
-            if (!supportsNamedAgent(engine)) {
+            // OpenCode v2 counts as no way: its TUI exits 1 on `--agent` (engineLaunch.ts).
+            if (!supportsNamedAgent(engine, engine === 'opencode' ? opencodeMajorVersion() : null)) {
               reply(type, requestId, { error: 'AGENT_UNSUPPORTED', detail: new NamedAgentUnsupportedError(engine).message }); return
             }
             agent = payload.agent
@@ -3008,10 +3076,37 @@ export class BackendSocket {
         // Delete an agent: signal its validated engine process and drop it from the list. Idempotent — an already
         // gone target still acks + re-emits agent_deleted so the web/device converge. E2EE-gated (the
         // frame arrived decrypted). Keeps the persisted recap + agent name for a later resume.
+        case 'agents_cleanup_preview': {
+          if (!this.cleanupPreview) { reply(type, requestId, { error: 'UNSUPPORTED' }); return }
+          void this.cleanupPreview().then(result => reply(type, requestId, result), error => reply(type, requestId, {
+            error: error?.code ?? 'TABS_UNAVAILABLE', detail: error instanceof Error ? error.message : 'Could not check open tabs.',
+          }))
+          return
+        }
+        case 'agent_close': {
+          if (!this.closeAgentService) { reply(type, requestId, { error: 'UNSUPPORTED' }); return }
+          const { agentId, sessionId, createdAt, mode } = payload
+          if (typeof agentId !== 'string' || typeof sessionId !== 'string' || typeof createdAt !== 'string'
+            || typeof mode !== 'string' || !['inspect', 'idle', 'now', 'after_task', 'cancel'].includes(mode)) {
+            reply(type, requestId, { error: 'INVALID_CLOSE_REQUEST' }); return
+          }
+          // Saving/exit may take seconds; terminal input and unrelated agents keep flowing.
+          void this.closeAgentService.request({ agentId, sessionId, createdAt, mode: mode as CloseMode,
+            ...(payload.onlyIfHidden === true ? { onlyIfHidden: true } : {}) })
+            .then(result => reply(type, requestId, result), () => reply(type, requestId, { error: 'CLOSE_FAILED' }))
+          return
+        }
         case 'agent_delete': {
           const target = (payload.agentId as string | undefined) || (payload.sessionId as string | undefined)
           if (!target) { reply(type, requestId, { error: 'MISSING_AGENT_ID' }); return }
           if (!this.onDeleteAgent) { reply(type, requestId, { error: 'UNSUPPORTED' }); return }
+          if (Object.hasOwn(payload, 'expectedSessionId')) {
+            const current = registry.byAgent(target)
+            if (!current || (current.sessionId || null) !== payload.expectedSessionId) {
+              reply(type, requestId, { error: 'SESSION_CHANGED', detail: 'This conversation changed. Refresh and review it before stopping.' })
+              return
+            }
+          }
           try { await this.onDeleteAgent(target) }
           catch (error) {
             if (!(error instanceof AgentStopError)) throw error
@@ -3031,12 +3126,19 @@ export class BackendSocket {
           const operation = type === 'agent_resume' ? 'resume' : 'restart'
           const restart = operation === 'resume' ? this.onResumeAgent : this.onRestartAgent
           if (!restart) { reply(type, requestId, { error: 'UNSUPPORTED_ON_REMOTE' }); return }
+          const permissionMode = payload.permissionMode
+          if (permissionMode !== undefined && (operation !== 'resume' || typeof permissionMode !== 'string'
+            || !['ask', 'auto', 'plan', 'full'].includes(permissionMode))) {
+            reply(type, requestId, { error: 'INVALID_PERMISSION_MODE' }); return
+          }
+          const invoke = () => permissionMode === undefined ? restart(target) : this.onResumeAgent!(target, permissionMode)
           const creationId = payload.creationId
           if (creationId !== undefined) {
             if (!validCreationId(creationId)) { reply(type, requestId, { error: 'INVALID_CREATION_ID' }); return }
             try {
-              void this.agentCreations.run(creationId, creationFingerprint({ operation, agentId: target }), async () => {
-                const result = await restart(target)
+              void this.agentCreations.run(creationId, creationFingerprint({ operation, agentId: target,
+                ...(permissionMode === undefined ? {} : { permissionMode }) }), async () => {
+                const result = await invoke()
                 if (result.ok) return { state: 'created', agentId: result.session.agentId, resumed: result.resumed }
                 // RESTART_FAILED can follow an unobserved relaunch. Never silently
                 // replace that process again when a caller checks this intent.
@@ -3050,7 +3152,7 @@ export class BackendSocket {
             }
             return
           }
-          const result = await restart(target)
+          const result = await invoke()
           if (!result.ok) {
             reply(type, requestId, result.detail ? { error: result.error, detail: result.detail } : { error: result.error })
             return
@@ -3303,6 +3405,17 @@ export class BackendSocket {
           return
         }
 
+        // Physical devices belong to this machine; only its owner or loopback tools may manage them.
+        case 'harness_devices_list':
+        case 'harness_device_settings': {
+          if (!local && this.e2ee.sessionRole(connId) !== 'web') {
+            reply(type, requestId, { error: 'OWNER_REQUIRED' })
+            return
+          }
+          reply(type, requestId, await harnessDevicesRequest(this.harnessDevices, type, payload))
+          return
+        }
+
         // The colours the desktop paints its panes with, so tmux answers a TUI's OSC 10/11 with
         // them instead of with whatever terminal happened to attach first (lib/hostTheme.ts).
         case 'theme_set': {
@@ -3366,6 +3479,7 @@ export class BackendSocket {
       selectedModel: this.runtimeProfileProvider?.(s) ?? null,
       terminalAvailable: registry.terminalAvailable(s.agentId),
       dsh: this.dshFrameProvider?.(s) ?? null,
+      activity: () => this.activityFrameProvider?.(s) ?? null,
     })
   }
 }
