@@ -13,7 +13,7 @@
 #include "perf_bench.h"
 #include "command_face.h"
 #include "theme.h"
-#include "roboto_fonts.h"
+#include "focus_faces.h"
 #ifdef DEVICE_CREATURE_GALLERY
 #include "creature_gallery.h"
 static ht_gallery_t gallery;
@@ -846,13 +846,13 @@ static void render_workspace_preview(ht_scene_t *f)
 /*
  * THE BLUE BELL — the Focus skin's notification pill, as the LVGL firmware drew it: #006fff, fully
  * round, padded 13 px, always 32 px tall: the bell in montserrat_14 and, 6 px on, the count in
- * roboto_med_22, each centred vertically in it. Three runs: box, bell, count. It sits at the bottom edge, where the
+ * montserrat_22, each centred vertically in it. Three runs: box, bell, count. It sits at the bottom edge, where the
  * microphone was: the top belongs to the curved name.
  */
 static void focus_bell(ht_scene_t *f, unsigned count)
 {
     enum { BELL_Y = 400, BELL_H = 32, BELL_PAD_H = 13, BELL_GAP = 6 };
-    const ht_font_t *bf = &ht_lv_montserrat_14.base, *cf = &ht_lv_roboto_med_22.base;
+    const ht_font_t *bf = &ht_lv_montserrat_14.base, *cf = &ht_lv_montserrat_22.base;
     char text[16];
     snprintf(text, sizeof text, "%u", count);
     int bw = ht_measure(bf, HT_LV_BELL), cw = ht_measure(cf, text);
@@ -978,9 +978,9 @@ static void render_home(ht_scene_t *f)
                                        : (hit_t){{33, 66, 400, 316}, A_PET, 0, true};
 }
 /*
- * FOCUS'S LISTS SPEAK THE AGENT SCREEN'S TYPE (owner, 2026-09-30): Roboto from the
- * LVGL build, not the terminal skin's mono. The title is a grey Roboto Regular 20 straight across the
- * top, a list row Roboto Medium, and the one button the tab pill's own shape and face.
+ * FOCUS'S LISTS SPEAK THE AGENT SCREEN'S TYPE (owner, 2026-09-30): Geist from the
+ * LVGL build, not the terminal skin's mono. The title is a grey Geist Regular 20 straight across the
+ * top, a list row Geist Medium, and the one button the tab pill's own shape and face.
  */
 static void focus_centred(ht_scene_t *f, int y, int room, const ht_font_t *font, uint16_t ink,
                           uint16_t bg, const char *text)
@@ -1039,12 +1039,12 @@ static void focus_clipped(ht_scene_t *f, int x, int y, const ht_font_t *font, ui
 }
 /*
  * The top of Focus's two lists, as the LVGL TABS picker drew it: the 60 x 32 close pill at y 16 —
- * the way back, in place of a ← — and the list's name in grey Roboto 20, letter-spaced 2, at y 62.
+ * the way back, in place of a ← — and the list's name in grey Geist 20, letter-spaced 2, at y 62.
  */
 static void focus_header(ht_scene_t *f, const char *title)
 {
     enum { CLOSE_X = 203, CLOSE_Y = 16, CLOSE_W = 60, CLOSE_H = 32, TITLE_Y = 62 };
-    const ht_font_t *small = &ht_lv_roboto_reg_20.base, *cross = &ht_lv_roboto_med_22.base;
+    const ht_font_t *small = &ht_lv_geist_reg_20.base, *cross = &ht_lv_montserrat_22.base;
     uint16_t fg = color(0xeaeaf0), close = color(0x171718);
     // make_close_pill: COL_FG at 10 % over black, the cross centred in it.
     int cw = ht_measure(cross, HT_LV_CROSS);
@@ -1066,7 +1066,7 @@ static void focus_header(ht_scene_t *f, const char *title)
 /*
  * FOCUS'S PANE LIST, in the LVGL firmware's TABS picker (swarm_picker_build / _rebuild at
  * e96fc50c^), one line to a row (owner, 2026-10-01): black, the 60 x 32 close pill at the top, a
- * grey spaced "PANES" at y 62, then a column of cards 8 apart — Roboto Medium 28 centred, padded
+ * grey spaced "PANES" at y 62, then a column of cards 8 apart — Geist Medium 28 centred, padded
  * 16 x 10, radius 16, #16161c at 60 % — the pane on the face at full fill with a 1 px Focus-green rim.
  * The column is centred 10 px below the middle. Four rows is what a 360 px card keeps inside the
  * round glass; past four the list scrolls a row at a time. Each card is its own tap; the cross, back.
@@ -1074,7 +1074,7 @@ static void focus_header(ht_scene_t *f, const char *title)
 static void render_focus_panes(ht_scene_t *f)
 {
     enum { CARD_X = 53, CARD_W = 360, CARD_H = 58, CARD_GAP = 8, CARD_R = 16 };
-    const ht_font_t *font = &ht_lv_roboto_med_28.base;
+    const ht_font_t *font = &ht_lv_geist_med_28.base;
     // The cards wear the recap/inbox card's 0x23252f so they stand off the black (owner, 2026-10-02);
     // the chosen one adds the green rim, a press lightens one step.
     uint16_t fg = color(0xeaeaf0), card = color(0x23252f), rest = color(0x23252f),
@@ -1083,7 +1083,7 @@ static void render_focus_panes(ht_scene_t *f)
     if (!s.count) {
         focus_centred(f, 180, 348, font, FG, BG, s.loading ? "Loading..." : "No panes in this tab.");
         // "Choose a tab", in the tab pill's shape and face: the door to the tab list looks like one.
-        const ht_font_t *pf = &ht_lv_roboto_med_24.base;
+        const ht_font_t *pf = &ht_lv_montserrat_24.base;
         int n = s.hit_count++, w = ht_measure(pf, "Choose a tab"), box = w + 2 * 12 + 2;
         int x = (HT_WIDTH - box) / 2, y = 250;
         s.hits[n] = (hit_t){{x - 20, y - 12, box + 40, 41 + 24}, A_TABS, 0, s.connected};
@@ -1330,17 +1330,17 @@ static void tab_name(ht_scene_t *f, const char *name, int center_x, uint16_t ink
     }
 }
 /*
- * FOCUS'S TABS: the close pill and "TABS" on top (focus_header), then the same carousel, in Roboto Medium 32 — the name on at most two lines of 204 px, as
+ * FOCUS'S TABS: the close pill and "TABS" on top (focus_header), then the same carousel, in Geist Medium 32 — the name on at most two lines of 204 px, as
  * the mono version wrapped at twelve cells, ending in "..." past that; neighbours peek in at the
  * edges, cut to whole letters inside x 42..424. The tab you are in is green.
  */
 static void render_focus_tabs(ht_scene_t *f)
 {
     focus_header(f, "TABS");
-    const ht_font_t *font = &ht_lv_roboto_med_32.base;
+    const ht_font_t *font = &ht_lv_geist_med_32.base;
     enum { SPAN = 204 };
     int current = ht_tab_carousel_index(&tab_carousel);
-    if (current < 0) focus_centred(f, 214, 348, &ht_lv_roboto_med_28.base, DIM, BG, "No tabs yet.");
+    if (current < 0) focus_centred(f, 214, 348, &ht_lv_geist_med_28.base, DIM, BG, "No tabs yet.");
     else {
         for (int i = current - 1; i <= current + 1; i++) {
             if (i < 0 || i >= s.tab_count) continue;
@@ -1449,8 +1449,8 @@ static void render_focus_inbox(ht_scene_t *f)
            CLOSE_X = 203, CLOSE_Y = 16, CLOSE_W = 60, CLOSE_H = 32 };
     if (s.offset >= s.notice_count) s.offset = s.notice_count - 1;
     if (s.offset < 0) s.offset = 0;
-    const ht_font_t *small = &ht_lv_roboto_reg_20.base, *body = &ht_lv_roboto_reg_25.base,
-                    *cross = &ht_lv_roboto_med_22.base;
+    const ht_font_t *small = &ht_lv_geist_reg_20.base, *body = &ht_lv_geist_reg_25.base,
+                    *cross = &ht_lv_montserrat_22.base;
     uint16_t fg = color(0xeaeaf0);
     // make_close_pill: COL_FG at 10 % over black, the cross centred in it.
     uint16_t close = color(0x171718);

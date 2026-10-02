@@ -30,7 +30,7 @@ code = r'''
 #include "octopus.h"
 #include "character.h"
 #include "focus.h"
-#include "roboto_fonts.h"
+#include "focus_faces.h"
 #include "pets.h"
 #include "workspace.h"
 #include "command_face.h"
@@ -348,14 +348,15 @@ static bool title_is(const char *text) {
         if((scene.runs[i].arc==1 || (s.straight_title && scene.runs[i].y==41)) && !strcmp(scene.runs[i].text,text)) return true;
     return false;
 }
-// A Focus scene draws no Geist face, and a curved run is Roboto Mono; then the portrait.
+// A Focus scene draws in Geist: no Roboto face, and a curved run is GeistMono; then the portrait.
 static void portrait(const char *dir, const char *name);
 static void portrait_focus(const char *dir, const char *name) {
-    const ht_pfont_t *geist[] = {&ht_lv_geist_med_38, &ht_lv_geist_med_32, &ht_lv_geist_med_28,
-        &ht_lv_geist_reg_38, &ht_lv_geist_reg_25, &ht_lv_geist_reg_20};
+    const ht_pfont_t *roboto[] = {&ht_lv_roboto_med_38, &ht_lv_roboto_med_32, &ht_lv_roboto_med_30,
+        &ht_lv_roboto_med_28, &ht_lv_roboto_med_24, &ht_lv_roboto_med_22, &ht_lv_roboto_reg_38,
+        &ht_lv_roboto_reg_25, &ht_lv_roboto_reg_20};
     for (int i = 0; i < scene.count; i++) {
-        for (unsigned g = 0; g < sizeof geist / sizeof geist[0]; g++) assert(scene.runs[i].font != &geist[g]->base);
-        if (scene.runs[i].arc == 1) assert(scene.runs[i].font == &ht_rmono_24);
+        for (unsigned g = 0; g < sizeof roboto / sizeof roboto[0]; g++) assert(scene.runs[i].font != &roboto[g]->base);
+        if (scene.runs[i].arc == 1) assert(scene.runs[i].font == &ht_mono_24);
     }
     portrait(dir, name);
 }
@@ -1823,7 +1824,7 @@ int main(int argc, char **argv) {
         bool bell = false, one = false;   // the blue pill: the bell, and its count beside it
         for (int i = 0; i < scene.count; i++) {
             if (scene.runs[i].font == &ht_lv_montserrat_14.base && !strcmp(scene.runs[i].text, HT_LV_BELL)) bell = true;
-            if (scene.runs[i].font == &ht_lv_roboto_med_22.base && !strcmp(scene.runs[i].text, "1")) one = true;
+            if (scene.runs[i].font == &ht_lv_montserrat_22.base && !strcmp(scene.runs[i].text, "1")) one = true;
         }
         assert(bell && one);
         s.active=0; scene_take(); assert(!action_enabled(A_INBOX));
@@ -1881,7 +1882,7 @@ int main(int argc, char **argv) {
         int last_text = 0, bell_top = HT_HEIGHT;
         for (int i = 0; i < scene.count; i++) {
             const ht_run_t *r = &scene.runs[i];
-            if (r->font == &ht_lv_roboto_med_28.base && r->text[0]) last_text = r->y + r->font->height;
+            if (r->font == &ht_lv_geist_med_30.base && r->text[0]) last_text = r->y + r->font->height;
             if (r->box.h && r->box.fill == color(0x006fff) && r->y < bell_top) bell_top = r->y;
         }
         assert(last_text && bell_top < HT_HEIGHT && last_text <= bell_top);
@@ -2034,7 +2035,7 @@ int main(int argc, char **argv) {
             }
             for(int k=0;k<3;k++) if(!strcmp(scene.runs[i].text,names[k])) {
                 rows++;
-                assert(scene.runs[i].font == &ht_lv_roboto_med_28.base && scene.runs[i].fg == color(0xeaeaf0));
+                assert(scene.runs[i].font == &ht_lv_geist_med_28.base && scene.runs[i].fg == color(0xeaeaf0));
             }
         }
         assert(rows==3 && rims==1);
@@ -2067,7 +2068,7 @@ int main(int argc, char **argv) {
     {
         bool green=false;
         for(int i=0;i<scene.count;i++) if(strstr(scene.runs[i].text,"Harness") && scene.runs[i].fg==color(HT_THEME_VOICE) &&
-                                          scene.runs[i].font==&ht_lv_roboto_med_32.base) green=true;
+                                          scene.runs[i].font==&ht_lv_geist_med_32.base) green=true;
         assert(green);
         bool title=false, arrow=false;   // the close pill and "TABS" on top; no ← at the bottom
         for(int i=0;i<scene.count;i++) { title |= !strcmp(scene.runs[i].text,"T") && scene.runs[i].y==62;
@@ -2109,7 +2110,7 @@ with tempfile.TemporaryDirectory(prefix='harness-touch-ui-') as d:
     subprocess.run(['cc','-std=c11','-Wall','-Wextra','-Werror','-O1','-g',
                     '-fsanitize='+os.environ.get('SANITIZERS','undefined,bounds'),
                     *extra_includes, '-I',str(native),str(out/'touch_ui.c'), *extra_sources, str(native/'gestures.c'),
-                    str(native/'form.c'),str(native/'visit.c'),str(native/'draft.c'), str(native/'scroll.c'),str(native/'selection.c'),str(native/'carry.c'),str(native/'tim.c'),str(native/'character_motion.c'),str(native/'character_layout.c'),str(native/'character.c'),str(native/'illustrated.c'),str(native/'tux.c'),str(native/'focus.c'),str(native/'lvgl_fonts.c'),str(native/'lvgl_icons.c'),str(native/'focus_marks.c'),str(native/'roboto_fonts.c'),str(native/'pets.c'),str(native/'terminal.c'),
+                    str(native/'form.c'),str(native/'visit.c'),str(native/'draft.c'), str(native/'scroll.c'),str(native/'selection.c'),str(native/'carry.c'),str(native/'tim.c'),str(native/'character_motion.c'),str(native/'character_layout.c'),str(native/'character.c'),str(native/'illustrated.c'),str(native/'tux.c'),str(native/'focus.c'),str(native/'lvgl_fonts.c'),str(native/'lvgl_icons.c'),str(native/'focus_marks.c'),str(native/'focus_faces.c'),str(native/'pets.c'),str(native/'terminal.c'),
                     str(native/'fonts.c'),str(native/'octopus.c'),str(native/'ascii_clip.c'),str(native/'octopus_font.c'),str(native/'workspace.c'),str(native/'command_face.c'),'-o',str(out/'touch_ui')],check=True)
     args=[str(out/'touch_ui')]
     if os.environ.get('HABITAT_PREVIEW_DIR'):
