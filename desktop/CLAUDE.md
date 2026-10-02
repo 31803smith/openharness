@@ -114,9 +114,17 @@ which runs the same `_commands` table keys use, gives the picker a clickable Bac
 `KeyHints` — `widgets/key_hints.dart`, absent means hints shown). Below
 `WorkspaceChrome.compactBelow` (web: 720px, a phone) the workspace goes compact: a tab
 switcher replaces the tab row, `WorkspaceChrome.compactFooter` replaces the status bar with one
-dropdown plus Share (hidden while the on-screen keyboard is up), and `PaneGrid.soloFocused` draws only the focused harness —
-without touching zoom or the synced layout, so the same desk keeps its grid on a computer. Do not change desktop behavior for the
+dropdown, Download app, and Share when it is on (hidden while the on-screen keyboard is up), and `PaneGrid.soloFocused` draws only the focused harness —
+without touching zoom or the synced layout, so the same desk keeps its grid on a computer. Solo still records the desk's
+arrangement (`Swarm.arranged`), because that is what a split divides: without it the menu's Split pane could never run on a phone. Do not change desktop behavior for the
 web, and do not copy shared screens into `lib/web/` — add a seam instead.
+
+A browser on a phone or tablet (iOS, Android by `defaultTargetPlatform`, whatever the window's width) gets a bar over
+every screen, sign-in and shared harnesses included, sending it to the Harness app in its store
+(`web/shell/web_store_banner.dart`). It is the app's frame — `startHarness(frame:)`, which `main.dart` takes from the
+same conditional import as the workspace; native builds pass the app through. Closing it is remembered on that
+origin, and the on-screen keyboard hides it. It sits above the Navigator, so nothing in it may need an Overlay (no
+tooltips), and it keeps one tree shape shown or not so the app below is never remounted.
 
 `kViewerMode` is true on the web:
 the browser owns its OAuth session, peer links, and end-to-end relay encryption.
@@ -308,6 +316,24 @@ Creation and draft precedence are documented in `design/new-harness-entry-rules.
 by its listed tests. Cmd-T/Cmd-O retarget the same draft/search; Store requests own their explicit
 product and machine. `test/benchmarks/swarm_benchmark.dart` measures large synthetic inventories;
 its headless debug timings do not establish native display or network latency.
+
+A New Harness box takes files three ways, all into the same `HarnessAttachments`: 📎, a drop, and a
+paste (`widgets/new_harness_paste.dart`). ⌘V/Ctrl-V in the task asks the clipboard three things, in
+this order. Files copied in a file manager come first (`NativeClipboard.readFilePaths` — the runner's
+`readFilePaths` on `harness/clipboard_image`, NSPasteboard file URLs on macOS and GTK's
+`text/uri-list` on Linux — read off disk by `clipboard/copied_files.dart`, which names a file over
+the limit without ever reading it): Finder leaves each file's NAME as text and its ICON as a picture
+beside them, and neither is what was copied. Then text, which pastes into the task and wins whenever
+it is there — except a lone web address, which is what Safari's Copy Image puts beside the picture
+(`pastedTextWins`). Then a picture — a screenshot, Copy Image — attached as `pasted-image.png` through
+the same `NativeClipboard` the terminal reads. In a browser the page's `paste` event carries the files
+instead (`clipboard/pasted_files.dart`, a no-op natively), because Flutter leaves ⌘V to the browser
+there and `PasteTextIntent` never fires. Pasted files are numbered, never swapped for one of the same name — every
+clipboard picture is called alike. The field's own paste is the fallback and must be captured inside
+`Action.invoke`: `callingAction` is gone by the time a clipboard read returns. A chip
+(`widgets/new_harness_attachment_chip.dart`) shows a picture as itself and any other file by the mark
+of its kind — `fileTypeIcon` in `shared/theme/file_type_icon.dart`, one table from extension to icon;
+add a kind there, not at the call site.
 
 ### Terminals
 
