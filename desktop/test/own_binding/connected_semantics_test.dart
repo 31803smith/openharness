@@ -105,7 +105,9 @@ void axTest(String name, WidgetTesterCallback body) => testWidgets(
 );
 
 void main() {
-  final binding = _Binding();
+  final binding = _Binding()
+    // The suite's two-minute cap (test/flutter_test_config.dart), which this directory opts out of.
+    ..defaultTestTimeout = const Timeout(Duration(minutes: 2));
   setUp(() {
     binding.guarded = true;
     binding.batches.clear();
