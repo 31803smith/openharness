@@ -119,6 +119,13 @@ without touching zoom or the synced layout, so the same desk keeps its grid on a
 arrangement (`Swarm.arranged`), because that is what a split divides: without it the menu's Split pane could never run on a phone. Do not change desktop behavior for the
 web, and do not copy shared screens into `lib/web/` — add a seam instead.
 
+A browser on a phone or tablet (iOS, Android by `defaultTargetPlatform`, whatever the window's width) gets a bar over
+every screen, sign-in and shared harnesses included, sending it to the Harness app in its store
+(`web/shell/web_store_banner.dart`). It is the app's frame — `startHarness(frame:)`, which `main.dart` takes from the
+same conditional import as the workspace; native builds pass the app through. Closing it is remembered on that
+origin, and the on-screen keyboard hides it. It sits above the Navigator, so nothing in it may need an Overlay (no
+tooltips), and it keeps one tree shape shown or not so the app below is never remounted.
+
 `kViewerMode` is true on the web:
 the browser owns its OAuth session, peer links, and end-to-end relay encryption.
 `viewer/browser_login.dart` validates the same-tab callback against the backend's

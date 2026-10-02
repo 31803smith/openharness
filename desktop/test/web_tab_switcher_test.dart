@@ -10,6 +10,7 @@ import 'package:harness/core/models.dart';
 import 'package:harness/screens/swarm_screen.dart';
 import 'package:harness/shared/theme/app_theme.dart' as grid;
 import 'package:harness/state/app_state.dart';
+import 'package:harness/state/harness_activity.dart';
 import 'package:harness/state/terminal_pane.dart';
 import 'package:harness/web/shell/web_chrome.dart';
 import 'package:harness/widgets/web_download_button.dart';
@@ -146,6 +147,9 @@ void main() {
     await capture(tester, 'web-phone-solo-pane');
 
     await openSwitcher(tester);
+    // Resting harnesses say nothing: a column of "Idle" is only noise.
+    expect(harnessActivity(app, 'm', 'a0'), HarnessActivity.idle);
+    expect(find.text(HarnessActivity.idle.label), findsNothing);
     await capture(tester, 'web-phone-harness-menu');
     await tester.tap(find.byKey(const ValueKey('web-pane:101')));
     await tester.pump(const Duration(milliseconds: 300));
