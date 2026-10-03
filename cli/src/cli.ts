@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 import './config/loadEnv.js'
 import { CompanionZoo, readCompanionIdentity, type CompanionIdentity } from './cable/companionIdentity.js'
-import { MODEL_MANAGER_ID, ensureBundledModelManager } from './dsh/builtins.js'
+import { MODEL_MANAGER_ID, ensureBundledCoreHarnesses } from './dsh/builtins.js'
+import { runDevicesCommand } from './devices/client.js'
 import { createDeviceStore, deviceStoreAgents } from './lib/autonomous-device/storeRuntime.js'
 import { mutateDsh } from './dsh/service.js'
 import { HarnessShareOwner } from './sharing/owner.js'
@@ -66,13 +67,13 @@ import { ensureTmuxOnPath } from './lib/tmuxOnPath.js'
 import { flashCommand } from './lib/flash.js'
 import { readOrMintComputerId } from './lib/computerIdentity.js'
 import { awaitLoginCallback, extractCallbackParams, LOGIN_TIMEOUT_MESSAGE } from './lib/loginCallback.js'
-import { AUTH_DIR, AuthSessionError, AuthSessionManager, clearAuthSession, readAuthSession, writeAuthSession, type AuthSession } from './lib/authSession.js'
+import { AUTH_DIR, AuthSessionError, AuthSessionManager, clearAuthSession, ensureSignInEpoch, knownSsoClientId, newSignInEpoch, readAuthSession, signInOf, ssoClientIdFor, writeAuthSession, type AuthSession } from './lib/authSession.js'
 import { LocalPresence, PAIR_HARNESS_DSH, ZooTurnCounter, ZooTurnReporter } from './lib/zooTurns.js'
 import { ZooLessonReporter } from './lib/zooLessons.js'
 import { DAEMONS_OFF, DAEMONS_OFF_DETAIL, DaemonsSwitch, localKillSwitch, zooPassthrough, type ZooRead } from './lib/daemonsSwitch.js'
 import { handOffToGrid } from './lib/gridHandoff.js'
 import { qrSignIn } from './lib/qrSignIn.js'
-import { pickSignInMethod } from './lib/signInMethodPicker.js'
+import { pickSignInMethod, signInMethodFlag, signInProviderName, withSignInProvider, type SignInMethod, type SignInProvider } from './lib/signInMethodPicker.js'
 import { watchJsonDriver, type JsonDriver } from './lib/jsonDriver.js'
 import { terminalQr } from './lib/terminalQr.js'
 import { ensureGridInstalled } from './lib/gridInstall.js'
@@ -146,8 +147,10 @@ import { createAndRegisterPane } from './lib/createAgentPane.js'
 import { forkName, planFork } from './lib/forkAgent.js'
 import { restoreAgents } from './lib/restoreAgents.js'
 import { createRetainExitedSession } from './lib/retainExitedSession.js'
+import { createSessionSync } from './lib/sessionSync.js'
 import { CloseAgentService, inspectCloseActivity } from './lib/closeAgentService.js'
 import { OpenTabProtection } from './lib/openTabProtection.js'
+import { PurgeAgentService } from './lib/purgeAgentService.js'
 import { sessionCheckpoints } from './lib/sessionCheckpoint.js'
 import { repairClaudeCwd } from './lib/cwdRepair.js'
 import { stoppedAgents } from './lib/stoppedAgents.js'
@@ -241,7 +244,7 @@ import type { CableAgent } from './cable/cableSession.js'
 import { routeVoiceTask, setVoiceRouterDeviceConnected, setVoiceRouterSessions, shutdownVoiceRouter, type RouterAgent } from './lib/voiceRouter.js'
 import { tailFile } from './lib/sessions.js'
 import { E2eeStore, identitySpent, peekIdentityPub } from './lib/e2ee/store.js'
-import { confirmsRemoval, deviceRegistration, deviceStatusValue, formatDeviceDetail, formatDeviceList, logOrder, removeConfirmation } from './lib/e2ee/deviceDisplay.js'
+import { confirmsRemoval, deviceRegistration, deviceStatusValue, formatDeviceDetail, formatDeviceHistory, formatDeviceList, logOrder, removeConfirmation } from './lib/e2ee/deviceDisplay.js'
 import { isLoopbackRequest, loopbackHosts } from './lib/loopbackRequest.js'
 import { b64e } from './lib/e2ee/core.js'
 import { MachinePeerStore } from './lib/e2ee/machinePeers.js'
@@ -261,7 +264,8 @@ import { updateManagedTui } from './tui/manage.js'
 import { startTuiUpdater } from './tui/update.js'
 import { ensureHnLauncher, ensureLauncher, ensureManagedGrid, ensureManagedRuntime, startGridPinRecheck } from './lib/runtimeInstall.js'
 import { readdir, stat } from 'fs/promises'
-import { CodexNormalizer, codexTaskError, lastCodexTurnText } from './engines/codex/normalizer.js'
+import { CodexNormalizer, codexTaskError } from './engines/codex/normalizer.js'
+import { readLastCodexTurnText } from './engines/codex/lastTurn.js'
 import { TurnActivity, type ActivityFrame } from './lib/turnActivity.js'
 import { CodexActivityReader, RuntimeActivityReader, activityRuntimeKey } from './lib/runtimeActivity.js'
 import { codexSubagentResolverFor } from './engines/codex/subagent.js'
@@ -430,8 +434,9 @@ ${PROCESS_ENGINES.map((engine) => `  ${ENGINE_CLI_COMMANDS[engine]}`).join('\n')
 A launcher that hands the pane to one of these works the same — "ori claude" is a Claude Code agent.
 
 Machine:
-  harness login                sign in (asks: SSO in your browser, or scan a QR with your phone)
-  harness login --sso          sign in with SSO in your browser, without asking
+  harness login                sign in (asks: Google or Apple in your browser, or scan a QR with your phone)
+  harness login --google       sign in with Google in your browser, without asking
+  harness login --apple        sign in with Apple in your browser, without asking
   harness login --qr           sign in by scanning a QR with Harness on your phone, without asking
   harness login --force        stop the daemon and sign in with a different account
   harness login --json         emit machine-readable NDJSON instead of opening a browser (for GUI clients)
@@ -510,6 +515,9 @@ every future connect, until you change or clear it:
   harness devices show <#|fp>  one device in full: its key code and how to check it on that device
   harness devices remove <fp>  take a device out of the account on every device, by key code (or its
                                first 4+ characters); a # or a shorter start asks first, --yes skips it
+  harness devices history      every device added to or removed from the account, newest first, as this
+                               machine verified it (--json for the rows)
+  harness devices dismiss [<#|fp>]  mark every new device as seen, or just that one
   harness devices rebaseline   the device list froze (the backend served one that does not match what
                                this machine verified): show what changed, --yes to trust it again
   (both \`remote-password set\` and \`link connect\` prompt for the password interactively, or read one
@@ -766,7 +774,7 @@ async function authStatusCommand(json: boolean): Promise<void> {
     console.log(`\n  ${payload.loggedIn ? '✓ Signed in' : '✗ Not signed in'}${payload.machineId ? ` (machine ${payload.machineId})` : ''}${payload.loggedIn && payload.method === 'qr' ? ' — by your phone' : ''}\n`)
     // A session a phone approved is Harness's own: the Autonomous services behind billing and grid
     // do not take it. Say so where the person looks, not only when one of them refuses.
-    if (payload.loggedIn && payload.method === 'qr') console.log('  Billing and grid need an SSO sign-in: harness login --force --sso\n')
+    if (payload.loggedIn && payload.method === 'qr') console.log('  Billing and grid need a Google or Apple sign-in: harness login --force\n')
   }
 }
 
@@ -834,7 +842,7 @@ async function loginCommand(
   foreground: boolean,
   force: boolean,
   json: boolean,
-  opts: { chained?: boolean; entryPoint?: string; method?: 'sso' | 'qr' | 'ask' } = {},
+  opts: { chained?: boolean; entryPoint?: string; method?: SignInMethod | 'ask' } = {},
 ): Promise<SignInOutcome> {
   if (foreground) throw new Error('`harness login` does not run the adapter. Use `harness start -f`.')
   // Which surface asked to sign in. A person in a terminal is `cli`; the desktop app runs this same
@@ -862,9 +870,10 @@ async function loginCommand(
     }
     return { signedIn: true, alreadySignedIn }
   }
-  // SSO in the browser, or a QR the phone scans. Asked only of a person at a terminal with no flag; a
-  // client driving --json says `--qr` or gets the browser, as before.
-  let method: 'sso' | 'qr' = opts.method === 'qr' ? 'qr' : 'sso'
+  // Google or Apple in the browser, or a QR the phone scans. Asked only of a person at a terminal
+  // with no flag. Nothing named — a client driving --json that predates the flags, a pipe — is the
+  // browser still, on the sign-in page's own chooser.
+  let method: SignInMethod | undefined = opts.method === 'ask' ? undefined : opts.method
   // The app driving --json: its answers, and its going away. A sign-in it left behind (the app quit
   // or restarted) would otherwise wait on — minutes, holding the daemon spawn lock — and the app's
   // next sign-in would sit behind it with nothing on screen. So while it waits on a person it takes
@@ -903,7 +912,7 @@ async function loginCommand(
     try {
       return method === 'qr'
         ? await qrSignInCommand(json, emit, (email) => succeed(false, email), { driver, onStarted: (cancel) => { takeBack = cancel }, onCommitted: () => setWaiting(false) })
-        : await browserSignIn(json, emit, () => succeed(false), entryPoint, { onCommitted: () => setWaiting(false) })
+        : await browserSignIn(json, emit, () => succeed(false), { entryPoint, provider: method }, { onCommitted: () => setWaiting(false) })
     } finally {
       setWaiting(false)
     }
@@ -984,8 +993,8 @@ async function loginCommand(
   }
 }
 
-/** `harness login` at a terminal, with no flag: which way to sign in. Enter is SSO, as it always was. */
-async function askSignInMethod(): Promise<'sso' | 'qr' | null> {
+/** `harness login` at a terminal, with no flag: which way to sign in. Enter is Google, the first row. */
+async function askSignInMethod(): Promise<SignInMethod | null> {
   const method = await pickSignInMethod({ input: process.stdin, output: process.stdout })
   if (method) console.log(`  (next time: harness login --${method})`)
   return method
@@ -1059,6 +1068,7 @@ async function qrSignInCommand(
     computerId: computerId(),
     method: 'qr',
     updatedAt: Date.now(),
+    signInEpoch: newSignInEpoch(),
   })
   try {
     await resolveComputerMachine()
@@ -1072,13 +1082,15 @@ async function qrSignInCommand(
  * The browser half of a sign-in: a loopback callback server, the SSO page, the code exchange, and
  * the new session — machine id included — on disk. Under --json every failure is a result line and
  * an exit code (`emit`); on the human path it is thrown. `succeed` finishes the job once the
- * session is on disk.
+ * session is on disk. `provider` is the account the page opens on (Google, Apple); without one it
+ * is the page's own chooser. The sign-in is made as [entryPoint]'s own auth-service client
+ * (`ssoClientIdFor`), and the session keeps the client the backend says the tokens were issued to.
  */
 async function browserSignIn(
   json: boolean,
   emit: (line: Record<string, unknown>) => void,
   succeed: () => Promise<SignInOutcome>,
-  entryPoint: string,
+  { entryPoint, provider }: { entryPoint: string; provider?: SignInProvider },
   hooks: Pick<SignInHooks, 'onCommitted'> = {},
 ): Promise<SignInOutcome> {
   const callback = createServer()
@@ -1098,18 +1110,21 @@ async function browserSignIn(
         redirectUri,
         autonomousEnv: env.AUTONOMOUS_ENV,
         entryPoint,
+        clientId: ssoClientIdFor(entryPoint),
+        ...(provider ? { provider } : {}),
       })
       if (!start.authorizeUrl || !start.tx) throw new Error('Backend did not return an SSO authorize URL')
     } catch (err) {
       if (json) { emit({ type: 'result', status: 'error', code: 'BACKEND_ERROR', message: (err as Error).message }); process.exitCode = 1; return { signedIn: false } }
       throw err
     }
+    const authorizeUrl = withSignInProvider(start.authorizeUrl, provider)
     if (json) {
-      emit({ type: 'authorize_url', url: start.authorizeUrl })
+      emit({ type: 'authorize_url', url: authorizeUrl })
     } else {
-      console.log('\n  Sign in to Harness in your browser:\n')
-      console.log(`    ${start.authorizeUrl}\n`)
-      openInBrowser(start.authorizeUrl)
+      console.log(`\n  Sign in to Harness${provider ? ` with ${signInProviderName(provider)}` : ''} in your browser:\n`)
+      console.log(`    ${authorizeUrl}\n`)
+      openInBrowser(authorizeUrl)
     }
     // A browser on this SAME machine can reach the loopback server directly. Over SSH the user's
     // browser is on a DIFFERENT machine — its own 127.0.0.1 has nothing listening on that port, so the
@@ -1128,9 +1143,9 @@ async function browserSignIn(
     }
     // The browser came back: from here the exchange and the session write run to the end.
     hooks.onCommitted?.()
-    let exchanged: { token?: string; refreshToken?: string; expiresIn?: number; autonomousEnv?: 'prod' | 'stag' }
+    let exchanged: { token?: string; refreshToken?: string; expiresIn?: number; autonomousEnv?: 'prod' | 'stag'; clientId?: string }
     try {
-      exchanged = await postJson<{ token?: string; refreshToken?: string; expiresIn?: number; autonomousEnv?: 'prod' | 'stag' }>('/api/auth/exchange', {
+      exchanged = await postJson<typeof exchanged>('/api/auth/exchange', {
         ...callbackResult,
         tx: start.tx,
       })
@@ -1147,7 +1162,11 @@ async function browserSignIn(
       ...(exchanged.expiresIn ? { expiresAt: Date.now() + exchanged.expiresIn * 1000 } : {}),
       autonomousEnv: exchanged.autonomousEnv ?? env.AUTONOMOUS_ENV,
       computerId: id,
+      // What the backend says it exchanged as — never what was asked for: a backend from before
+      // the clients were split signs every sign-in in as its configured one, and names none.
+      ...(knownSsoClientId(exchanged.clientId) ? { clientId: knownSsoClientId(exchanged.clientId) } : {}),
       updatedAt: Date.now(),
+      signInEpoch: newSignInEpoch(),
     }
     writeAuthSession(session)
     try {
@@ -2014,27 +2033,18 @@ async function runForeground(session: AuthSession | null): Promise<void> {
     if (!daemons.on()) return null
     try { return runtimeLessons(lessonStore, workspace) } catch { return null }
   }
-  const syncSession = (s: RegisteredSession, opts: { device?: boolean } = {}): void => {
-    // A terminal is not the dial's business (see `deviceAgentRow`): it is never upserted there, and
-    // the one time it must be REMOVED from there — the engine it adopted has exited — the caller
-    // sends that `agent_deleted` itself, because this row is still very much alive for the app.
-    if (isTerminalEngine(s.engine)) opts = { ...opts, device: false }
-    if (!registry.terminalAvailable(s.agentId)) {
-      pairSensor.removed(s.agentId)
-      lessonSignals.forget(s.agentId)
-      backendRef?.send({ type: 'agent_deleted', payload: { agentId: s.agentId } })
-      if (opts.device !== false) backendRef?.sendCommander({ type: 'agent_deleted', payload: { agentId: s.agentId } })
-      return
-    }
-    if (s.launch?.state === 'failed') pairSensor.failed(s.agentId, s.launch.detail ?? s.launch.error)
-    void projectFrame(s, runtimeProfiles.selectedModel(s))
-      .then((project) => {
-        const frame = { type: 'agent_synced', payload: { agent: project } }
-        backendRef?.send(frame)
-        if (opts.device !== false) backendRef?.sendCommander(frame)
-      })
-      .catch((err) => console.error('[cli] announceSession failed:', err instanceof Error ? err.message : err))
-  }
+  const syncSession = createSessionSync({
+    terminalAvailable: (agentId) => registry.terminalAvailable(agentId),
+    project: (s) => projectFrame(s, runtimeProfiles.selectedModel(s)),
+    send: (frame) => backendRef?.send(frame),
+    sendCommander: (frame) => backendRef?.sendCommander(frame),
+    onUnavailable: (agentId) => {
+      pairSensor.removed(agentId)
+      lessonSignals.forget(agentId)
+    },
+    onFailed: (agentId, detail) => pairSensor.failed(agentId, detail),
+    warn: (err) => console.error('[cli] announceSession failed:', err instanceof Error ? err.message : err),
+  })
   const announceRename = (s: RegisteredSession, opts: { device?: boolean } = {}): void => {
     if (isTerminalEngine(s.engine)) opts = { ...opts, device: false }
     const name = projectDisplayName(s)
@@ -2225,8 +2235,7 @@ async function runForeground(session: AuthSession | null): Promise<void> {
   backendRef = backend
   backend.viewerTargetProvider = (agentId) => dshViewers.forwardingUrl(agentId)
 
-  try { ensureBundledModelManager() }
-  catch (error) { console.warn('[model-manager] Could not prepare the bundled harness:', error instanceof Error ? error.message : String(error)) }
+  ensureBundledCoreHarnesses()
 
   // Grid is an add-on (`lib/gridAttach.ts`): nothing on this path installs `grid`, signs this machine in
   // to it or creates a grid. The first grid feature a person uses — the models picker's Set up, a local
@@ -3083,8 +3092,8 @@ async function runForeground(session: AuthSession | null): Promise<void> {
       if (s.engine === 'hermes') return lastHermesTurnText(await readHermesMessages(await hermesDbForSession(s), sessionId))
       if (s.engine === 'devin') return lastDevinTurnText(await readDevinMessages(DEVIN_DB, sessionId))
       if (!s.transcriptPath) return null
+      if (s.engine === 'codex') return readLastCodexTurnText(s.transcriptPath)
       const lines = await tailFile(s.transcriptPath, Infinity)
-      if (s.engine === 'codex') return lastCodexTurnText(lines)
       if (s.engine === 'cursor') return lastCursorTurnText(lines)
       if (s.engine === 'muse') return lastMuseTurnText(lines)
       if (s.engine === 'amp') return lastAmpTurnText(lines)
@@ -3149,7 +3158,7 @@ async function runForeground(session: AuthSession | null): Promise<void> {
               engine: s.engine,
               transcriptPath: s.transcriptPath || null,
               header: [projectDisplayName(s), s.title, folderWords(s.cwd)].filter(Boolean).join(' · '),
-              // Conversation stamps only: the row's `touchedAt` moves on every discovery pass.
+              // Conversation stamps only: the row's `touchedAt` includes discovery bookkeeping.
               changedAt: Math.max(s.lastTranscriptAt || 0, s.lastHookAt || 0) || s.boundAt || s.registeredAt || 0,
               readHistory,
             }]
@@ -4012,6 +4021,7 @@ async function runForeground(session: AuthSession | null): Promise<void> {
   let guestCompanion: CompanionIdentity | null = null
   let guestAutonomy: Autonomy | null = null
   let guestConsent = false
+  let refreshPairPackage: () => void = () => {}
   // The autonomy dial rides with the pair: the account's zoo, or a guest window's own (daemon_presence).
   // Nothing is watched until the person said yes on the first-day consent screen (zoo `consent.watching`,
   // or a guest window's `consent`): until then the sensor stays off and the dial stays at watch.
@@ -4024,6 +4034,7 @@ async function runForeground(session: AuthSession | null): Promise<void> {
     pairGate.setRequested(pairing.autonomy, { keepConfirmed: !pairing.consented, epoch: pairing.epoch })
     // A guest window names only a species; the account's zoo names the individual too.
     pairSensor.setPair(pairing.pair, zooPair.known && pairing.pair === zooPair.pair ? zooPair.name : null)
+    refreshPairPackage()
     // Pairing on or off already refreshed the brain (onPairToggled); another daemon paired, or the dial moved,
     // reaches the windows attached here now. The brain sends only what they were not already sent.
     pairBrain?.refresh()
@@ -4183,6 +4194,11 @@ async function runForeground(session: AuthSession | null): Promise<void> {
         ...(recalled?.receipt ? { memoryReceiptId: recalled.receipt.id } : {}) }
     },
     onMemoryContextEmitted: async (agentId, receiptId) => await codingMemory?.promptRecallEmitted(agentId, receiptId) ?? false,
+    onMemoryContext: async (agentId, prompt, adapter) => {
+      const recalled = await codingMemory?.preparePromptRecall(agentId, { query: prompt }, adapter)
+      return recalled?.packet.text ? { additionalContext: recalled.packet.text,
+        ...(recalled.receipt ? { memoryReceiptId: recalled.receipt.id } : {}) } : null
+    },
     onOpenCodeMemoryRuntime: (agent, input) => {
       if (!agent.processIdentity) return { observe: false }
       const result = openCodeMemoryBinding?.receive({ agentId: agent.agentId, sessionId: agent.sessionId,
@@ -4502,9 +4518,19 @@ async function runForeground(session: AuthSession | null): Promise<void> {
       const status = r.error === 'NOT_IN_LOG' ? 404 : r.error === 'UNAVAILABLE' ? 503 : 409
       return { status, body: { error: r.error, ...(r.detail ? { detail: r.detail } : {}) } }
     },
-    onDevicesRebaseline: async (confirm) => {
+    onDevicesHistory: async () => {
       if (!devLogSyncer) return { status: 503, body: { error: 'UNAVAILABLE' } }
-      const r = await devLogSyncer.rebaseline(confirm)
+      return { status: 200, body: { ...(await devLogSyncer.history()) } }
+    },
+    onDevicesDismiss: (body) => {
+      if (!devLogSyncer) return { status: 503, body: { error: 'UNAVAILABLE' } }
+      devLogSyncer.dismiss(body)
+      return { status: 200, body: { ok: true } }
+    },
+    onDevicesRebaseline: async (confirm, head) => {
+      if (!devLogSyncer) return { status: 503, body: { error: 'UNAVAILABLE' } }
+      const r = await devLogSyncer.rebaseline(confirm, head)
+      if (r && 'error' in r) return { status: 409, body: { error: r.error } }
       return r ? { status: 200, body: { ...r, applied: confirm } } : { status: 502, body: { error: 'LOG_UNAVAILABLE' } }
     },
     // Local dashboard (GET /api/status): adapter health + computer fingerprint + local pairings. It
@@ -4642,7 +4668,7 @@ async function runForeground(session: AuthSession | null): Promise<void> {
       // reads the log: keep its pin through a few denials, and nudge it (and us) to read.
       expectsTrust: (machineId, pub) => {
         const m = devLogSyncer?.list().members.find((x) => x.pub === pub)
-        const expected = !!m && m.kind === 'machine' && m.machineId === machineId
+        const expected = !!m && m.kind === 'machine' && m.machineId === machineId && !devLogSyncer?.suspendedKeys().includes(pub)
         if (expected) void devLogSyncer?.refresh()
         return expected
       },
@@ -4659,6 +4685,7 @@ async function runForeground(session: AuthSession | null): Promise<void> {
     paired: () => backend.pairedPeers(),
     request: relayRequester(relayPool, () => readAuthSession()?.autonomousEnv ?? env.AUTONOMOUS_ENV),
     dropSessions: (machineId) => { relayPool.invalidate(machineId); relayPool.invalidateIsolated(machineId) },
+    suspended: () => new Set(devLogSyncer?.suspendedKeys() ?? []),
     reachable: () => {
       // Only a list the backend answered says who is offline; otherwise try every member.
       const { machines, source } = machineListCache.list()
@@ -4678,11 +4705,15 @@ async function runForeground(session: AuthSession | null): Promise<void> {
     store: new DeviceLogStore(),
     identity: () => { const id = relayIdentityStore.getIdentity(); return { pub: b64e(id.pub), priv: id.priv } },
     self: () => ({ machineId: readAuthSession()?.machineId ?? null, label: thisDeviceLabel() }),
+    // Which sign-in by hand this machine is under (minted by `harness login`, never a backend answer —
+    // the machine id is one): the device log can start over only when THIS changes.
+    signIn: () => signInOf(readAuthSession()?.signInEpoch),
     fetch: async (since) => {
       const r = await proxyBackend('GET', `/api/device-keys?since=${since}`)
       const data = r.status === 200 ? r.body.data as Partial<DeviceLogFetched> | undefined : undefined
       const head = data?.head as { seq?: unknown; hash?: unknown } | undefined
-      if (!data || typeof data.acct !== 'string' || !Array.isArray(data.entries) || typeof head?.seq !== 'number' || typeof head.hash !== 'string') return null
+      if (!data || typeof data.acct !== 'string' || !Array.isArray(data.entries) || typeof head?.seq !== 'number'
+        || !Number.isSafeInteger(head.seq) || head.seq < 0 || typeof head.hash !== 'string') return null
       return { acct: data.acct, head: { seq: head.seq, hash: head.hash }, entries: data.entries }
     },
     append: async (entry) => {
@@ -4695,8 +4726,12 @@ async function runForeground(session: AuthSession | null): Promise<void> {
     },
     adopt: (members) => groupSyncer?.adoptFromLog(members),
     drop: (pub) => { groupSyncer?.remove(pub) },
-    knownBefore: (pub) => backend.pairedPeers().some((p) => p.identityPub === pub)
-      || relayPeers.list().some((p) => p.pub === pub) || !!groupSyncer?.isMember(pub),
+    // Snapshotted once, when this machine joins the log: what it already trusts then is never news.
+    trustedNow: () => [...new Set([
+      ...backend.pairedPeers().map((p) => p.identityPub),
+      ...relayPeers.list().map((p) => p.pub),
+      ...(groupSyncer?.roster().members.map((m) => m.pub) ?? []),
+    ])],
     tombstoned: (pub) => !!groupSyncer?.tombstoned(pub),
     blocked: (pub) => !!groupSyncer?.isBlocked(pub),
     announce: (m) => {
@@ -4704,6 +4739,17 @@ async function runForeground(session: AuthSession | null): Promise<void> {
       console.log(`[devlog] NEW DEVICE on this account: ${m.label || '(no name)'} (${m.kind}) ${fp} — not yours? harness devices remove ${fp}`)
       backend.sendLocal({ type: 'device_key_added', payload: { pub: m.pub, label: m.label, kind: m.kind, machineId: m.machineId, at: m.addedAt, fingerprint: fp } })
     },
+    removed: (n) => {
+      if (n.selfRemoved) console.log(`[devlog] ${n.label || '(no name)'} signed out of this account (${n.fingerprint})`)
+      else if (n.signerPending) console.log(`[devlog] ⚠ ${n.label || '(no name)'} (${n.fingerprint}) was removed by a NEW device you have not looked at: ${n.signerLabel || 'another device'} (${n.signerFingerprint}) — not yours? harness devices remove ${n.signerFingerprint}`)
+      else console.log(`[devlog] ${n.label || '(no name)'} (${n.fingerprint}) was removed from this account by ${n.signerLabel || 'another device'}`)
+      backend.sendLocal({ type: 'device_key_removed', payload: { ...n } })
+    },
+    conflict: (c) => {
+      backend.sendLocal({ type: 'device_conflict', payload: { pub: c.pub, label: c.label, fingerprint: c.fingerprint, addedAt: c.addedAt, afterJoin: c.afterJoin } })
+    },
+    suspend: (pubs) => groupSyncer?.suspend(pubs),
+    resume: () => groupSyncer?.resume(),
     signedOut: () => {
       // This machine's key was removed from the account: it is signed out, and comes back — after a
       // new `harness login` — with a NEW key, which every other device announces as a new device.
@@ -4721,6 +4767,9 @@ async function runForeground(session: AuthSession | null): Promise<void> {
   backend.onDeviceRemoved = (pub) => {
     if (pub === b64e(relayIdentityStore.getIdentity().pub)) spendIdentity()
   }
+  // A removal of another key under this machine id — the earlier install a reinstall waits behind — is
+  // not this machine signed out: the log re-read that follows registers this key (deviceLogSyncer).
+  backend.isOwnDeviceKey = (pub) => pub === b64e(relayIdentityStore.getIdentity().pub)
   // A removal the trust group carried in — typically `harness group remove` on a machine that predates
   // the log — goes into the log as well, signed by this machine, so a device that only reads the log
   // stops trusting that key too. A key the log no longer has is left alone.
@@ -4732,8 +4781,9 @@ async function runForeground(session: AuthSession | null): Promise<void> {
     // Every time the link comes up: a sign-in from before the log existed joins it with no one doing
     // anything, and one that joined already only reads what it missed while offline.
     backend.onLinkUp = () => { void devLogSyncer?.register() }
-    // The link may have come up before this line; a second register in flight is harmless.
-    void devLogSyncer.register()
+    // The link may have come up before this line; a second register in flight is harmless. A session
+    // from before sign-in epochs gets one first: adopted, so it never starts the device log over.
+    void ensureSignInEpoch().catch(() => null).then(() => devLogSyncer?.register())
     setInterval(() => { void devLogSyncer?.refresh() }, 10 * 60_000).unref()
   }
   // THE PAIR BRAIN (pair/brain.ts, daemons/BRAIN.md): thinks only while a window or `hn` is attached to
@@ -4891,7 +4941,8 @@ async function runForeground(session: AuthSession | null): Promise<void> {
   })
   backend.pairControl = pairControl
   // THE PAIR HARNESS (pair/pairHarness.ts): the daemon as a conversation, started or resumed when you talk
-  // to it, stopped when idle. Automatic approvals, scoped harnessd MCP, a fresh token every launch.
+  // to it, stopped when idle unless coding memory still uses it. Automatic approvals, scoped harnessd
+  // MCP, a fresh token every launch.
   const pairHarness = new PairHarness({
     pairedDaemon: () => pairSensor.pairedDaemon(),
     pairedName: () => pairSensor.pairedName(),
@@ -4945,9 +4996,15 @@ async function runForeground(session: AuthSession | null): Promise<void> {
       const sessionId = registry.resolve(agentId)?.sessionId
       return !!sessionId && mirror.isBusy(sessionId)
     },
+    backgroundInUse: (agentId): boolean => agentId === pairHarness.agentId() && !!codingMemory?.needsCompanion(),
     now: Date.now,
   })
   pairTalk = (text, uid) => pairHarness.talk(text, uid)
+  refreshPairPackage = () => {
+    try { pairHarness.refreshPackage() }
+    catch (error) { console.warn('[core-harnesses] Could not refresh Companions:', error instanceof Error ? error.message : String(error)) }
+  }
+  refreshPairPackage()
   isCollectionAgent = (agentId) => agentId === pairHarness.agentId()
   companionPromptContext = (agentId) => daemons.on() ? pairHarness.context(agentId) : null
   pairHarnessActivity = (agentId) => { if (daemons.on()) pairHarness.activity(agentId) }
@@ -4995,7 +5052,7 @@ async function runForeground(session: AuthSession | null): Promise<void> {
   } })
   companionProfileChanged = () => { companionIntelligence.status(); pairBrain?.stateChanged() }
   {
-    const roster = new MemorySessionRoster(homedir())
+    const roster = new MemorySessionRoster(homedir(), Date.now, { opencode: OPENCODE_DB })
     codingMemory = new CodingMemoryRuntime({
       directory: join(env.ADAPTER_DATA_DIR, 'coding-memory'),
       context: () => {
@@ -6228,6 +6285,7 @@ async function runForeground(session: AuthSession | null): Promise<void> {
       ownerBusy = adopted.busy
       resumeArgs = adopted.launchArgs
     }
+    if (backend.purgeAgentService?.blocksFolder(cwd)) return { ok: false, error: 'WORKTREE_BUSY' }
     try {
       if (!statSync(cwd).isDirectory()) return { ok: false, error: 'CWD_NOT_FOUND' }
     } catch {
@@ -6668,6 +6726,7 @@ async function runForeground(session: AuthSession | null): Promise<void> {
    * indistinguishable from a working one until the bill arrives.
    */
   backend.onRetargetAgent = async ({ agentId, grid }) => {
+    if (backend.purgeAgentService?.busy(agentId)) return { ok: false, error: 'AGENT_BUSY' }
     if (!tmuxBackend) return { ok: false, error: 'TMUX_UNAVAILABLE' }
     const session = registry.resolve(agentId)
     if (!session) return { ok: false, error: 'AGENT_NOT_FOUND' }
@@ -6881,6 +6940,16 @@ async function runForeground(session: AuthSession | null): Promise<void> {
     forgetSession, markDeleted, clearDeleted,
   })
   backend.onDeleteAgent = stopAgent
+  backend.purgeAgentService = new PurgeAgentService({
+    live: id => registry.byAgent(id), sessions: () => [...registry.list(), ...stoppedAgents.list()],
+    stopped: stoppedAgents, checkpoints: sessionCheckpoints, stop: stopAgent,
+    restarting: id => restartJobs.busy(id) || stopJobs.has(id),
+    deleted: s => {
+      if (s.sessionId) { mirror.deleteHistory(s.sessionId); sessionSearch?.deleteHistory(s.sessionId) }
+      registry.deleteSavedNames([s.agentId, s.sessionId].filter(Boolean))
+      backend.send({ type: 'agent_deleted', payload: { agentId: s.agentId, retained: false } })
+    },
+  })
   backend.closeAgentService = new CloseAgentService({
     registry,
     openTabs: cleanupTabs,
@@ -6910,11 +6979,13 @@ async function runForeground(session: AuthSession | null): Promise<void> {
     return { version: 1, agents, kept: sessions.length - agents.length }
   }
 
-  backend.onResumeAgent = createResumeAgentService({
+  const resumeAgent = createResumeAgentService({
     registry, stoppedAgents, tmuxBackend, restartJobs, stopJobs, pinnedControls,
     retainExitedSession, announceSession, relaunchOverrides, prepareSessionResume,
     refreshGridWebSearch, clearDeleted, attachDsh,
   })
+  backend.onResumeAgent = (id, permissionMode) => backend.purgeAgentService?.busy(id) || backend.purgeAgentService?.blocksFolder(stoppedAgents.get(id)?.cwd)
+    ? Promise.resolve({ ok: false, error: 'AGENT_BUSY' }) : resumeAgent(id, permissionMode)
 
   /**
    * Web or device restarted an agent (`agent_restart`): exit the live engine process and relaunch it in
@@ -6936,7 +7007,7 @@ async function runForeground(session: AuthSession | null): Promise<void> {
    * from inside the engine's own terminal since launch).
    */
   backend.onRestartAgent = (agentId) => restartJobs.run(registry.resolve(agentId)?.agentId ?? agentId, async (operationCurrent) => {
-    if (stopJobs.has(agentId) || pinnedControls.has(agentId)) return { ok: false, error: 'AGENT_BUSY' }
+    if (backend.purgeAgentService?.busy(agentId) || stopJobs.has(agentId) || pinnedControls.has(agentId)) return { ok: false, error: 'AGENT_BUSY' }
     const session = registry.resolve(agentId)
     if (!session) return { ok: false, error: 'AGENT_NOT_FOUND' }
     if (!session.tmuxPane || !tmuxBackend) return { ok: false, error: 'RESTART_UNSUPPORTED_BACKEND' }
@@ -7338,6 +7409,7 @@ async function runForeground(session: AuthSession | null): Promise<void> {
     log: (line) => console.log(`[device] ${line}`),
   })
 
+  let devicesStatusRevision = 0
   const cableHost = new DaemonCableHost({
     // Zoo selection is visual identity; it does not require consent to watch terminal activity.
     // Guest identity is only a fallback while signed out, never another account's cached choice.
@@ -7399,8 +7471,13 @@ async function runForeground(session: AuthSession | null): Promise<void> {
     // The dial's swarm pick. Local-only like the two above: a tab is a thing THIS window has.
     swarmSelected: (swarmId) => backend.sendLocal({ type: 'dial_swarm', payload: { swarmId } }),
     scrolled: (phase, dy, velocity) => backend.sendLocal({ type: 'dial_scroll', payload: { phase, dy, velocity } }),
-    // Local-only like the three above: which desk has a dial on it is a fact about THIS computer.
-    dialStatus: (status) => backend.sendLocal({ type: 'dial_status', payload: status }),
+    // Gestures remain local. Device inventory/settings also reach the owner's
+    // other machines through the encrypted device-management event.
+    dialStatus: (status) => {
+      devicesStatusRevision++
+      backend.sendLocal({ type: 'dial_status', payload: status })
+      backend.send({ type: 'harness_devices_changed', payload: { status, revision: devicesStatusRevision } })
+    },
     // Words spoken on the overview belong to whichever agent the window's palette picks.
     routeInWindow: (text, cmd) => windowRouter.ask(text, cmd),
     selectPassage: command => windowSelection.command(command),
@@ -7412,6 +7489,13 @@ async function runForeground(session: AuthSession | null): Promise<void> {
     log: (line) => console.log(`[cable] ${line}`),
   }, fleet)
   cableHostRef = cableHost
+  backend.harnessDevices = {
+    status: () => cableHost.currentDialStatus(),
+    revision: () => devicesStatusRevision,
+    set: async (id, patch) => cableRef
+      ? cableRef.setSettings(id, patch)
+      : { ok: false, error: 'Device service unavailable' },
+  }
   // Anything the window said while this was still being built.
   cableHost.setDesk(appPaneAgents)
   cableHost.setSwarms(appSwarmsLatest)
@@ -8357,7 +8441,7 @@ async function groupCommand(sub: string | undefined, arg: string | undefined, js
   process.exit(1)
 }
 
-/** `harness devices list|show|remove|rebaseline` — the account's device key log, as this machine verified it. */
+/** `harness devices list|show|remove|history|dismiss|rebaseline` — the account's device key log, as this machine verified it. */
 async function devicesCommand(sub: string | undefined, arg: string | undefined, flags: string[]): Promise<void> {
   const json = flags.includes('--json')
   const call = async (method: 'GET' | 'POST', path: string, body?: unknown): Promise<{ status: number; json: Record<string, unknown> }> => {
@@ -8369,8 +8453,18 @@ async function devicesCommand(sub: string | undefined, arg: string | undefined, 
       process.exit(1)
     }
   }
-  type Row = { pub: string; label: string; kind: string; machineId: string; addedAt: number; fingerprint: string; self: boolean; seq?: number; firstSeen?: number }
-  const listing = async (): Promise<{ members: Row[]; frozen: { reason: string } | null; frozenPeers: string[]; lastSeen?: Record<string, number> }> => {
+  /** A route an older running daemon does not have answers 404: it needs restarting onto this version. */
+  const needsNewerDaemon = (status: number): void => {
+    if (status !== 404) return
+    console.error('\n  ✗ This needs a newer Harness running here. Restart it: harness stop && harness start\n')
+    process.exit(1)
+  }
+  type Row = { pub: string; label: string; kind: string; machineId: string; addedAt: number; fingerprint: string; self: boolean; seq?: number; firstSeen?: number; pending?: boolean; suspended?: boolean }
+  const listing = async (): Promise<{
+    members: Row[]; frozen: { reason: string } | null; frozenPeers: string[]; lastSeen?: Record<string, number>
+    pending?: string[]; suspended?: string[]; conflict?: { pub: string; label: string; fingerprint: string; addedAt: number; afterJoin: boolean } | null
+    departed?: Array<{ pub: string; label: string; fingerprint: string; removedBy: string; removedByLabel: string; selfRemoved: boolean }>
+  }> => {
     const { status, json: out } = await call('GET', '/api/devices')
     if (status !== 200) { console.error('\n  ✗ The device list is not available (is this machine signed in?).\n'); process.exit(1) }
     return out as never
@@ -8386,6 +8480,8 @@ async function devicesCommand(sub: string | undefined, arg: string | undefined, 
     for (const line of formatDeviceList(out, Date.now(), selfFp ? { label: thisDeviceLabel(), fp: selfFp } : undefined)) console.log(line)
     process.exit(0)
   }
+  /** A key code or selector as matched: upper case, spaces and separators dropped. */
+  const norm = (v: string): string => v.toUpperCase().replace(/[·\s-]/g, '')
   // A device by its number in the list (its place in the log, which `list` prints on each row and
   // which only shifts when a device is removed) or by the start of its fingerprint; `show` and
   // `remove` resolve it the same way. The number is NOT the display position: that moves with activity.
@@ -8397,7 +8493,6 @@ async function devicesCommand(sub: string | undefined, arg: string | undefined, 
   // Decided on the selector as matched (spaces and separators dropped), so " 1" is #1 and not the
   // key code starting with 1. `key` is what `remove` echoes when it is a number.
   const resolve = (arg: string, members: Row[]): { row: Row; byNumber: boolean; key: string } => {
-    const norm = (v: string): string => v.toUpperCase().replace(/[·\s-]/g, '')
     const key = norm(arg)
     // Only spaces and separators: an empty prefix would match every device.
     if (key === '') { console.error('Usage: harness devices show|remove <#|fingerprint>   (see: harness devices list)'); process.exit(1) }
@@ -8440,17 +8535,60 @@ async function devicesCommand(sub: string | undefined, arg: string | undefined, 
     console.log(`\n  ✓ Removed ${target.label}. Every device stops trusting it; it is signed out.\n`)
     process.exit(0)
   }
+  if (sub === 'history') {
+    const { status, json: out } = await call('GET', '/api/devices/history')
+    needsNewerDaemon(status)
+    if (status !== 200) { console.error('\n  ✗ The device history is not available (is this machine signed in?).\n'); process.exit(1) }
+    if (json) { console.log(JSON.stringify(out)); process.exit(0) }
+    for (const line of formatDeviceHistory(out as never)) console.log(line)
+    process.exit(0)
+  }
+  if (sub === 'dismiss') {
+    let target: { pub: string; label: string } | null = null
+    if (arg) {
+      const out = await listing()
+      // A key that joined and left before anyone looked is no longer in the list: named by its key code.
+      const key = norm(arg)
+      const gone = key.length >= 4 ? (out.departed ?? []).filter((d) => norm(d.fingerprint).startsWith(key)) : []
+      const listed = out.members.some((m) => norm(m.fingerprint).startsWith(key))
+      target = gone.length === 1 && !listed ? gone[0] : resolve(arg, out.members).row
+    }
+    const { status } = await call('POST', '/api/devices/dismiss', target ? { pub: target.pub } : {})
+    needsNewerDaemon(status)
+    if (status !== 200) { console.error(`\n  ✗ Could not mark ${target ? 'it' : 'them'} as seen (is this machine signed in?).\n`); process.exit(1) }
+    console.log(target ? `\n  ✓ Marked ${target.label || '(no name)'} as seen.\n` : '\n  ✓ Marked every device as seen.\n')
+    process.exit(0)
+  }
   if (sub === 'rebaseline') {
     const confirm = flags.includes('--yes')
-    const { status, json: out } = await call('POST', '/api/devices/rebaseline', { confirm })
+    // Always preview first: --yes confirms with the head that was shown, so what gets trusted is what
+    // was listed (a backend that swaps the list in between is refused).
+    // The backend serves another account's list under this sign-in: a review does not switch accounts.
+    const otherAccount = (s: number, body: unknown): boolean => s === 409 && (body as { error?: unknown } | null)?.error === 'OTHER_ACCOUNT'
+    const OTHER_ACCOUNT = '\n  ✗ The device list now belongs to a different account than the one you signed in with. Sign in again (harness login) to switch accounts.\n'
+    const { status, json: out } = await call('POST', '/api/devices/rebaseline', { confirm: false })
+    if (otherAccount(status, out)) { console.error(OTHER_ACCOUNT); process.exit(1) }
     if (status !== 200) { console.error('\n  ✗ Could not read a valid device list from the backend.\n'); process.exit(1) }
-    const r = out as { added: Row[]; removed: Row[] }
-    if (json) { console.log(JSON.stringify(out)); process.exit(0) }
-    console.log('\n  Trusting the backend\'s device list again would:')
-    for (const m of r.added) console.log(`    + add     ${m.label || '(no name)'}  ${m.kind}`)
-    for (const m of r.removed) console.log(`    − remove  ${m.label || '(no name)'}  ${m.kind}`)
-    if (!r.added.length && !r.removed.length) console.log('    (change no device)')
-    console.log(confirm ? '\n  ✓ Done.\n' : '\n  Only if every device listed is yours: harness devices rebaseline --yes\n')
+    const r = out as { head?: { seq: number; hash: string }; added: Row[]; removed: Row[] }
+    if (!confirm) {
+      if (json) { console.log(JSON.stringify(out)); process.exit(0) }
+      console.log('\n  Trusting the backend\'s device list again would:')
+      for (const m of r.added) console.log(`    + add     ${m.label || '(no name)'}  ${m.kind}`)
+      for (const m of r.removed) console.log(`    − remove  ${m.label || '(no name)'}  ${m.kind}`)
+      if (!r.added.length && !r.removed.length) console.log('    (change no device)')
+      console.log('\n  Only if every device listed is yours: harness devices rebaseline --yes\n')
+      process.exit(0)
+    }
+    const done = await call('POST', '/api/devices/rebaseline', { confirm: true, ...(r.head ? { head: r.head } : {}) })
+    if (otherAccount(done.status, done.json)) { console.error(OTHER_ACCOUNT); process.exit(1) }
+    if (done.status === 409) { console.error('\n  ✗ The device list changed while you were reviewing it. Run it again.\n'); process.exit(1) }
+    if (done.status !== 200) { console.error('\n  ✗ Could not read a valid device list from the backend.\n'); process.exit(1) }
+    if (json) { console.log(JSON.stringify(done.json)); process.exit(0) }
+    console.log('\n  Trusting the backend\'s device list again:')
+    for (const m of r.added) console.log(`    + added    ${m.label || '(no name)'}  ${m.kind}`)
+    for (const m of r.removed) console.log(`    − removed  ${m.label || '(no name)'}  ${m.kind}`)
+    if (!r.added.length && !r.removed.length) console.log('    (no device changed)')
+    console.log('\n  ✓ Done.\n')
     process.exit(0)
   }
   console.error(`Unknown command: devices ${sub}`)
@@ -8621,12 +8759,16 @@ async function status(): Promise<void> {
     // `status` can say "(in your account)" from it for a while; that window is accepted.
     // A retired key with none in its place still says something, though: being removed from the
     // account is itself what signs a machine out (the daemon clears the session as it spends the key).
-    device: deviceStatusValue(
-      thisDeviceFingerprint(false),
-      session
-        ? deviceRegistration(peekIdentityPub(), new DeviceLogStore().read(), identitySpent())
-        : !peekIdentityPub() && identitySpent() ? 'removed' : null,
-    ) ?? undefined,
+    device: (() => {
+      const devlog = new DeviceLogStore().read()
+      return deviceStatusValue(
+        thisDeviceFingerprint(false),
+        session
+          ? deviceRegistration(peekIdentityPub(), devlog, identitySpent())
+          : !peekIdentityPub() && identitySpent() ? 'removed' : null,
+        devlog.conflict?.fingerprint,
+      ) ?? undefined
+    })(),
     // A status command can run with different shell settings from the daemon. Report the daemon's
     // connection, not those of this short-lived caller; missing fields on older daemons stay unknown.
     connection: {
@@ -8795,7 +8937,7 @@ switch (cmd) {
     // account: the desktop app reads that line and does not wait for a restart it observes anyway.
     loginCommand(foreground, flags.includes('--force'), flags.includes('--json'), {
       entryPoint: entryPointFlag(),
-      method: flags.includes('--qr') ? 'qr' : flags.includes('--sso') || flags.includes('--json') || !process.stdin.isTTY ? 'sso' : 'ask',
+      method: signInMethodFlag(flags) ?? (flags.includes('--json') || !process.stdin.isTTY ? undefined : 'ask'),
     })
       .then((outcome) => outcome.signedIn ? restartDaemonForIdentity() : undefined)
       .catch(onError)
@@ -8824,6 +8966,13 @@ switch (cmd) {
     break
   case 'autonomous-device':
     runAutonomousDeviceCommand(rest, env.ADAPTER_DATA_DIR, daemonPort()).then(code => { process.exitCode = code }).catch(onError)
+    break
+  case 'hardware':
+    runDevicesCommand(rest, {
+      port: daemonPort(),
+      machineId: async () => (await runningDaemonStatus())?.machineId ?? null,
+      connect: (url) => new NewCommandSocket(url),
+    }).then(code => { process.exitCode = code }).catch(onError)
     break
   case 'pair': {
     // `harness pair <code>` pairs a browser; `harness pair <verb>` is the daemon's control interface

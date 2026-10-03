@@ -8,6 +8,7 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:ui' as ui;
 
+import 'package:harness/auth/sign_in_provider.dart';
 import 'package:harness/shared/theme/app_icons.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
@@ -41,6 +42,10 @@ class _Api extends ApiClient {
   @override
   Future<Map<String, dynamic>?> me() async => null;
 
+  // A retry also re-reads the daemon's pending devices: a daemon that predates them.
+  @override
+  Future<Map<String, dynamic>?> daemonDevices() async => null;
+
   @override
   Future<List<Machine>> machines() {
     final result = Completer<List<Machine>>();
@@ -54,7 +59,10 @@ class _Cli extends CliLogin {
   Future<CliAuthStatus> checkStatus() async =>
       const CliAuthStatus(loggedIn: true);
   @override
-  Future<void> login({void Function(String url)? onAuthorizeUrl}) async {}
+  Future<void> login({
+    void Function(String url)? onAuthorizeUrl,
+    SignInProvider? provider,
+  }) async {}
   @override
   Future<void> logout() async {}
 }

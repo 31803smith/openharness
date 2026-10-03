@@ -74,7 +74,8 @@ bundle and writes the `~/.local/bin/harness` command, and `hn`: Harness in a ter
 your local daemon the first time you run it. Local use requires no login.)
 
 ```bash
-harness login         # opens browser SSO and saves this computer's session
+harness login         # asks how to sign in (Google, Apple, or a QR your phone scans) and saves this computer's session
+harness login --google # or --apple: straight to that account in the browser, without asking
 harness login --force # stop the daemon and sign in as a different SSO account
 harness start         # starts the local adapter; uses a saved SSO session if present
 harness start -f      # foreground mode for a supervisor; logs to stdout
@@ -85,7 +86,7 @@ harness tui        # all of Harness in this terminal — tabs, panes, every mach
 harness logout     # stop the adapter and clear this computer's SSO session
 ```
 
-`login` uses the browser's native loopback SSO flow. Its access token, refresh token, expiry and
+`login` uses the browser's native loopback SSO flow, as the auth-service client of whoever asked — `harness-cli` from a terminal, `harness-desktop` when the desktop app runs it — and the session remembers that client, because a refresh has to name it again. Its access token, refresh token, expiry and
 backend-resolved machine id are stored atomically with owner-only permissions in
 `~/.harness/auth/session.json`; the immutable computer id lives separately at
 `~/.harness/computer-id`. Later `harness start` invocations reuse and refresh that session as needed.
@@ -240,6 +241,11 @@ umask 022
 npm ci
 npm run test:tmux-real
 ```
+
+The tmux suite creates and cleans up its own private server, including when run from inside a
+Harness pane. No outer `tmux kill-server` cleanup is needed. Setting `TMUX_TMPDIR` alone does not
+isolate tmux: an inherited `TMUX` still selects the parent server. Any separate fixture must clear
+`TMUX`/`TMUX_PANE` and name its private socket explicitly with `tmux -S` for cleanup.
 
 The suite uses isolated, test-owned lifecycle fixtures. Its engine matrix explicitly skips commands that are not installed; authentication or
 first-run onboarding that prevents a proprietary CLI from running is unavailable evidence and must be

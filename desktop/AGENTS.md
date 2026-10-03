@@ -2,6 +2,11 @@
 
 Use [CLAUDE.md](CLAUDE.md) for architecture, build commands, and testing.
 
+For every DSH dashboard, follow the [DSH workspace contract](design/dsh-workspace.md):
+70% viewer on the left, 30% real agent chat on the right, including loading,
+missing dependencies, failures, retries, and restoration. Reserve the chat slot
+before startup; never let an unavailable conversation become a full-width viewer.
+
 For all UI outside terminal panes, follow the
 [desktop design system](design/desktop-design-system.md). The user's current
 Mac-friendly direction supersedes earlier BIOS, fixed-cell, bracket-button,
@@ -19,4 +24,5 @@ and [new-harness-entry-rules.md](design/new-harness-entry-rules.md).
 
 The full visual migration is tracked in
 [desktop-ui-migration.md](design/desktop-ui-migration.md). Preserve core UX,
-controller reuse, keyboard/IME behavior, drafts, pending receipts, and scope.
+controller reuse, keyboard/IME behavior, pending receipts, and scope. Ordinary
+Cmd-N forms start fresh after dismissal; see the entry rules above.

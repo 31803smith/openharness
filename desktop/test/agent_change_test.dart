@@ -1,18 +1,24 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:harness/api/api_client.dart';
 import 'package:harness/auth/auth_session.dart';
 import 'package:harness/core/config.dart';
+import 'package:harness/state/agent_switch_handoff.dart';
 import 'package:harness/state/desk_sync.dart';
 import 'package:harness/core/dsh_catalog.dart';
 import 'package:harness/core/models.dart';
+import 'package:harness/devices/devices_harness_controller.dart';
+import 'package:harness/settings/experimental_features.dart';
 import 'package:harness/state/app_state.dart';
 import 'package:harness/state/swarm_search.dart';
+import 'package:harness/terminal/terminal_binary.dart';
 import 'package:harness/widgets/engine_identity.dart';
 
 import 'support/harness_monitor.dart';
+import 'experimental_features_test.dart' show AccountSettings;
 import 'swarm_screen_test.dart' show mount, terminal;
 import 'swarm_state_test.dart' show createApp;
 
@@ -21,6 +27,9 @@ class SwitchConnection extends MonitorConnection {
   final events = <String>[];
   String? closeError;
   Completer<void>? holdClose;
+  Map<String, dynamic> recent = {'asks': <String>[], 'events': <Object>[]};
+  int recentReads = 0;
+  Map<String, dynamic>? launch;
 
   @override
   Future<Map<String, dynamic>> request(
@@ -28,6 +37,10 @@ class SwitchConnection extends MonitorConnection {
     Map<String, dynamic> payload = const {},
     Duration timeout = const Duration(seconds: 20),
   }) async {
+    if (type == 'agent_recent') {
+      if (payload['n'] == 5) recentReads++;
+      return recent;
+    }
     if (type == 'agent_close') {
       events.add('save/stop');
       expect(payload['mode'], 'now');
@@ -55,8 +68,10 @@ class SwitchConnection extends MonitorConnection {
         'agent': {
           ...agent,
           'engine': creations.last['engine'],
+          if (launch != null) 'launch': launch,
           'project': {'name': 'work', 'cwd': '/projects/work'},
-          if (creations.last['dsh'] != null)
+          if (creations.last['dsh'] != null &&
+              creations.last['dsh'] != devicesHarnessId)
             'viewerUrl': 'http://127.0.0.1:4179/',
         },
       };
@@ -69,24 +84,28 @@ AppNotifier fixture(
   SwitchConnection connection, {
   bool viewer = false,
   bool companion = false,
+  String? harnessId,
+  String sourceEngine = 'codex',
 }) {
   final app = createApp(connectionForTest: (_) => connection, connected: true);
   connection.app = app;
   final source = Agent(
     id: 'a0',
     name: 'Work',
-    engine: 'codex',
+    engine: sourceEngine,
     sessionId: 'saved-conversation',
     createdAt: DateTime.utc(2026, 10, 1),
     closeSupported: true,
     terminalAvailable: true,
     permissionMode: 'ask',
     project: const AgentProject(name: 'work', cwd: '/projects/work'),
-    dsh: companion
-        ? 'autonomous/pair'
-        : viewer
-        ? 'test/viewer'
-        : null,
+    dsh:
+        harnessId ??
+        (companion
+            ? 'autonomous/pair'
+            : viewer
+            ? 'test/viewer'
+            : null),
     viewerUrl: viewer ? 'http://127.0.0.1:4179/' : null,
   );
   app.stateOf('m')!.agents = [source, app.stateOf('m')!.agents[1]];
@@ -127,6 +146,248 @@ class SwitchDeskApi extends ApiClient {
 }
 
 void main() {
+  test('Devices offers every agent while absent from the public catalog', () {
+    final connection = SwitchConnection();
+    final app = fixture(connection, harnessId: devicesHarnessId);
+    addTearDown(app.dispose);
+    app.stateOf('m')!.dsh.replace(const []);
+    final search = SwarmSearchController(app, []);
+    addTearDown(search.dispose);
+    search.setQuery('&');
+    search.setAgentSelection('m', 'a0');
+    expect(app.stateOf('m')!.dsh[devicesHarnessId], isNull);
+    expect(search.rows, hasLength(allEngines.length));
+    for (final engine in allEngines) {
+      search.move(
+        search.rows.indexWhere((row) => row.agentEngine == engine.id) -
+            search.cursor,
+      );
+      expect(search.canSelectAgent(engine.id), isTrue, reason: engine.id);
+      expect(search.selected!.detail, isNot('Not supported by this harness'));
+      expect(search.submit()?.destination.agentEngine, engine.id);
+    }
+    expect(search.canSelectAgent('terminal'), isFalse);
+    expect(
+      connection.events,
+      isEmpty,
+      reason: 'Browsing does not switch agents.',
+    );
+  });
+
+  test(
+    'Devices still respects explicit compatibility reported by its machine',
+    () {
+      final connection = SwitchConnection();
+      final app = fixture(connection, harnessId: devicesHarnessId);
+      addTearDown(app.dispose);
+      app.stateOf('m')!.dsh.replace(const [
+        DshEntry(id: devicesHarnessId, name: 'Devices', engine: 'codex'),
+      ]);
+      expect(app.agentSwitchEngines('m', app.stateOf('m')!.agents.first), [
+        'codex',
+      ]);
+    },
+  );
+
+  test('an unknown harness does not inherit Devices compatibility', () async {
+    final connection = SwitchConnection();
+    final app = fixture(connection, harnessId: 'acme/missing');
+    addTearDown(app.dispose);
+    app.stateOf('m')!.dsh.replace(const []);
+    expect(
+      await app.changeAgent('m', 'a0', 'claude'),
+      contains('not supported'),
+    );
+    expect(connection.events, isEmpty);
+  });
+
+  for (final engine in allEngines.where((engine) => engine.id != 'codex')) {
+    test(
+      'Devices switches to ${engine.id} while retaining its dashboard and split',
+      () async {
+        final connection = SwitchConnection();
+        final app = fixture(connection, harnessId: devicesHarnessId);
+        addTearDown(app.dispose);
+        app.currentUser = const CurrentUserProfile(
+          id: 'a',
+          email: 'a@example.test',
+        );
+        app.experimentalFeatures.bind('a', transport: AccountSettings('a'));
+        await app.experimentalFeatures.refresh();
+        await app.experimentalFeatures.set(
+          ExperimentalFeature.devicesTab,
+          true,
+        );
+        app.stateOf('m')!.dsh.replace(const []);
+        app.openDevices();
+        await app.showDevicesTerminal('m', 'a0');
+        final tab = app.activeSwarm;
+        final panes = [...tab.panes];
+        final sizes = Map.of(tab.paneSizes);
+        expect(panes, hasLength(2));
+        expect(panes.first.isDevices, isTrue);
+        expect(tab.manualLayout!.tiles.first.width, .7);
+
+        expect(await app.changeAgent('m', 'a0', engine.id), isNull);
+        expect(connection.events, ['save/stop', 'start']);
+        expect(connection.creations.single, containsPair('engine', engine.id));
+        expect(
+          connection.creations.single,
+          containsPair('dsh', devicesHarnessId),
+        );
+        expect(
+          connection.creations.single,
+          containsPair('cwd', '/projects/work'),
+        );
+        expect(
+          connection.creations.single,
+          containsPair('permissionMode', 'ask'),
+        );
+        expect(app.activeSwarm, same(tab));
+        expect(tab.panes, panes);
+        expect(panes.first.isDevices, isTrue);
+        expect(panes.first.ownerAgentId, 'manager');
+        expect(panes.last.agentId, 'manager');
+        expect(tab.paneSizes, sizes);
+        expect(app.agentPreference.engineFor(devicesHarnessId), engine.id);
+      },
+    );
+  }
+
+  for (final state in ['starting', 'failed']) {
+    test(
+      'attaches a $state replacement immediately so startup prompts can be answered',
+      () async {
+        final connection = SwitchConnection()
+          ..launch = {
+            'state': state,
+            if (state == 'failed') 'error': 'LAUNCH_TIMEOUT',
+          };
+        final app = fixture(connection, sourceEngine: 'claude');
+        addTearDown(app.dispose);
+        await app.addAgentToSwarm('m', 'a0');
+        final pane = app.panes.single;
+        final tab = app.activeSwarm;
+        final sizes = Map.of(tab.paneSizes);
+        expect(
+          await app
+              .changeAgent('m', 'a0', 'opencode')
+              .timeout(const Duration(seconds: 1)),
+          isNull,
+        );
+        expect(app.panes.single, same(pane));
+        expect(pane.agentId, 'local-session');
+        expect(tab.paneSizes, sizes);
+        expect(connection.creations, hasLength(1));
+        expect(
+          app
+              .stateOf('m')!
+              .agents
+              .firstWhere((a) => a.id == pane.agentId)
+              .launchState,
+          state,
+        );
+        // Readiness arrives later; no second picker action or agent_create.
+        await app.handleEventForTest('m', {
+          'type': 'agent_synced',
+          'payload': {
+            'agent': {
+              'id': 'local-session',
+              'name': 'Work',
+              'engine': 'opencode',
+              'terminal': {'available': true},
+              'launch': {'state': 'ready'},
+            },
+          },
+        });
+        expect(pane.agentId, 'local-session');
+        expect(
+          app
+              .stateOf('m')!
+              .agents
+              .firstWhere((a) => a.id == pane.agentId)
+              .launchState,
+          'ready',
+        );
+        expect(connection.events, ['save/stop', 'start']);
+      },
+    );
+  }
+
+  for (final (source, target) in [
+    ('claude', 'opencode'),
+    ('claude', 'codex'),
+    ('opencode', 'codex'),
+    ('opencode', 'claude'),
+    ('codex', 'opencode'),
+    ('codex', 'claude'),
+  ]) {
+    test(
+      'hands recent context from $source to $target exactly once on retry',
+      () async {
+        final connection = SwitchConnection()
+          ..loseFirstReply = true
+          ..recent = {
+            'asks': [
+              'Remember maple-42; next append step 2.',
+              'Create progress.txt.',
+            ],
+            'events': [
+              {'kind': 'reasoning', 'fullText': 'private reasoning'},
+              {
+                'kind': 'summary',
+                'fullText': 'Created progress.txt with step 1.',
+              },
+            ],
+          };
+        final app = fixture(connection, sourceEngine: source);
+        addTearDown(app.dispose);
+        await app.addAgentToSwarm('m', 'a0');
+        expect(await app.changeAgent('m', 'a0', target), isNotNull);
+        connection.recent = {
+          'asks': ['Changed after dispatch'],
+        };
+        expect(await app.changeAgent('m', 'a0', target), isNull);
+        expect(connection.recentReads, 1);
+        final prompt = connection.creations.single['prompt'] as String;
+        expect(prompt, contains('maple-42'));
+        expect(prompt, contains('Created progress.txt with step 1.'));
+        expect(prompt, isNot(contains('private reasoning')));
+        expect(prompt, contains('wait for instructions'));
+      },
+    );
+  }
+
+  test('an unreadable handoff leaves the original agent running', () async {
+    final connection = SwitchConnection()..recent = {'error': 'UNAVAILABLE'};
+    final app = fixture(connection);
+    addTearDown(app.dispose);
+    await app.addAgentToSwarm('m', 'a0');
+    expect(await app.changeAgent('m', 'a0', 'claude'), contains('handoff'));
+    expect(connection.events, isEmpty);
+    expect(app.panes.single.agentId, 'a0');
+  });
+
+  test(
+    'handoff clips long context to the wire limit, excluding tool output',
+    () {
+      final prompt = agentSwitchHandoff('claude', {
+        'asks': ['latest ${'🍁' * 1600}', 'older ' * 600],
+        'events': [
+          {'kind': 'tool', 'fullText': 'tool secrets'},
+          {'kind': 'summary', 'fullText': 'answer ' * 900},
+        ],
+      })!;
+      expect(prompt.length, lessThanOrEqualTo(2000));
+      expect(prompt, contains('latest'));
+      expect(prompt, contains('Latest saved answer:'));
+      expect(prompt, isNot(contains('tool secrets')));
+      expect(prompt, endsWith('or repeat completed work.'));
+      expect(prompt, startsWith('Context handoff only.'));
+      expect(agentSwitchHandoff('claude', {}), isNull);
+    },
+  );
+
   for (final entireTab in [true, false]) {
     test(
       'switch keeps its slot when a peer prunes ${entireTab ? 'the tab' : 'the pane'}',
@@ -194,6 +455,64 @@ void main() {
           api.doc.tabs.expand((t) => t.panes).where((p) => p.agentId == 'a0'),
           isEmpty,
         );
+      },
+    );
+  }
+
+  for (final otherPane in [false, true]) {
+    test(
+      'late source cleanup cannot close the replacement (other pane: $otherPane)',
+      () async {
+        final connection = SwitchConnection();
+        final app = fixture(connection);
+        final api = SwitchDeskApi();
+        app.api = api;
+        addTearDown(app.dispose);
+        await app.addAgentToSwarm('m', 'a0');
+        if (otherPane) await app.addAgentToSwarm('m', 'a1');
+        await app.deskStartForTest();
+        final tab = app.swarms.single;
+        final oldId = tab.id;
+        final pane = tab.panes.first;
+        final sizes = Map.of(tab.paneSizes);
+        expect(await app.changeAgent('m', 'a0', 'opencode'), isNull);
+        await app.deskFlushForTest();
+        expect(tab.id == oldId, otherPane);
+        // This was queued by an old window when it saw the source stop,
+        // then arrived after our replacement was already acknowledged.
+        api.doc = DeskDoc(
+          revision: api.doc.revision + 1,
+          tabs: applyDeskOps(api.doc.tabs, [
+            if (otherPane)
+              {
+                'op': 'pane.remove',
+                'tabId': oldId,
+                'machineId': 'm',
+                'agentId': 'a0',
+              }
+            else
+              {'op': 'tab.close', 'id': oldId},
+          ]),
+        );
+        await app.deskFetchForTest();
+        expect(app.swarms.single, same(tab));
+        expect(tab.panes.first, same(pane));
+        expect(pane.agentId, 'local-session');
+        expect(tab.paneSizes, sizes);
+        expect(app.activeSwarmId, tab.id);
+        expect(
+          api.doc.tabs.single.panes.map((p) => p.agentId),
+          contains('local-session'),
+        );
+        // A subsequent deliberate close of the replacement still works.
+        api.doc = DeskDoc(
+          revision: api.doc.revision + 1,
+          tabs: applyDeskOps(api.doc.tabs, [
+            {'op': 'tab.close', 'id': tab.id},
+          ]),
+        );
+        await app.deskFetchForTest();
+        expect(app.allPanes, isNot(contains(pane)));
       },
     );
   }
@@ -401,16 +720,26 @@ void main() {
     (tester) async {
       final app = createApp();
       app.stateOf('m')!.nodeOnline = true;
-      app.adoptSessionForTest(terminal('a0', []));
+      final frames = <TerminalBinaryFrame>[];
+      final pane = app.adoptSessionForTest(terminal('a0', frames));
       await mount(tester, app);
-      await tester.tap(find.byKey(const ValueKey('pane-agent-control')));
-      await tester.pump();
-      final field = tester.widget<TextField>(
-        find.byKey(const ValueKey('swarm-search-input')),
-      );
-      expect(field.controller!.text.trim(), '&');
-      expect(find.text('OpenCode'), findsWidgets);
-      expect(tester.takeException(), isNull);
+      for (final width in [1280.0, 480.0]) {
+        tester.view.physicalSize = Size(width, 800);
+        await tester.pump();
+        await tester.tap(find.byKey(const ValueKey('pane-agent-control')));
+        await tester.pump();
+        final field = tester.widget<TextField>(
+          find.byKey(const ValueKey('swarm-search-input')),
+        );
+        expect(field.controller!.text.trim(), '&');
+        expect(find.text('OpenCode'), findsWidgets);
+        await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+        await tester.pump();
+        expect(find.byKey(const ValueKey('swarm-search-input')), findsNothing);
+        expect(app.panes.single, same(pane));
+        expect(frames, isEmpty);
+        expect(tester.takeException(), isNull);
+      }
       await tester.pumpWidget(const SizedBox());
       app.dispose();
     },

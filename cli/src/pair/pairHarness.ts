@@ -5,8 +5,8 @@
  * paired daemon's voice (roster lore, first words, lines) and the floor.
  *
  * On demand only. The window's `daemon_talk { text }` (never a tool: BRAIN.md "Security") forwards the words
- * to it — starting it, or resuming it if it was paused. Paused when idle (the guarded stop: its
- * conversation is kept; the next talk resumes it). Never a tile anyone picks (hidden from the catalog),
+ * to it — starting it, or resuming it if it was paused. Paused when idle unless opted-in background
+ * learning still uses it (the guarded stop keeps its conversation for the next talk). Hidden from the catalog,
  * never counted as a person's turn (zooTurns), never a notification, never watched by the sensor.
  *
  * New conversations use the product's automatic approvals. The control interface still checks the
@@ -219,6 +219,8 @@ export interface PairHarnessDeps {
   send: (agentId: string, text: string) => void
   /** A turn is open on it right now. */
   working: (agentId: string) => boolean
+  /** Opted-in background learning still needs this runtime, even between review jobs. */
+  backgroundInUse?: (agentId: string) => boolean
   now: () => number
   idleMs?: number
 }
@@ -233,6 +235,19 @@ export class PairHarness {
   private activeAgentId: string | null = null
 
   constructor(private readonly deps: PairHarnessDeps) {}
+
+  /** Refresh an existing collection's release files without starting a turn or changing its session. */
+  refreshPackage(): boolean {
+    const daemonId = this.deps.pairedDaemon()
+    const saved = this.saved()
+    if (!daemonId || !saved) return true
+    const engine = this.deps.find().find(row => row.agentId === saved.agentId)?.engine ?? saved.engine
+    if (!engine) return true
+    const identity = this.deps.pairedUid?.()
+    const uid = identity && /^[A-Za-z0-9_-]{1,64}$/.test(identity) ? identity : undefined
+    return this.deps.install(pairPackage({ daemonId, name: this.deps.pairedName?.() ?? null, uid, engine,
+      mcpCommand: this.deps.mcpCommand(), tokenFile: this.deps.token.file }))
+  }
 
   /** `talk` / `daemon_talk`: one at a time, in order — two quick talks never start two harnesses. */
   talk(text: string, expectedUid?: string): Promise<Record<string, unknown>> {
@@ -375,7 +390,7 @@ export class PairHarness {
     if (agentId === this.saved()?.agentId) this.touch()
   }
 
-  /** Pause it when it has been idle long enough: its conversation is kept, the next talk resumes it. */
+  /** Pause unused conversations; keep the learning runtime available without submitting a turn. */
   async idleCheck(): Promise<boolean> {
     const agentId = this.activeAgentId ?? this.saved()?.agentId
     const row = agentId ? this.deps.find().find((r) => r.agentId === agentId) : null
@@ -383,6 +398,7 @@ export class PairHarness {
     // An empty/setup terminal has no conversation to resume. Pausing it discards its selected model
     // and strands a pending memory review; leave it open until a real conversation can be preserved.
     if (row.hasConversation === false) return false
+    if (this.deps.backgroundInUse?.(agentId)) return false
     if (this.deps.working(agentId) || this.deps.now() - this.lastActivity < (this.deps.idleMs ?? PAIR_IDLE_MS)) return false
     try {
       await this.deps.stop(agentId)

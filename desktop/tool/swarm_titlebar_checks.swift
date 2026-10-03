@@ -611,9 +611,10 @@ private extension SwarmTabButton {
       "The close action stays inset inside the tab's curved body")
   }
 
-  func checkCompleteNameFits() throws {
-    try checkTitlebar(titleRect.width >= naturalTitleWidth,
-      "The eight-tab fixture keeps each ordinary name readable")
+  func checkNameFitsOrHasTooltip() throws {
+    try checkTitlebar(titleRect.width >= naturalTitleWidth ||
+      toolTip?.components(separatedBy: "\n").contains(displayLabel) == true,
+      "Equal-width tabs retain the full name in a tooltip when the title truncates")
   }
 
   func clickBothActions() {
@@ -1173,6 +1174,9 @@ private extension SwarmTabStrip {
         "Search and Store stay adjacent after the tabs at width \(width)")
       try checkTitlebar(!subviews.contains { $0.accessibilityLabel() == "Notifications" },
         "Notifications live in the macOS menu bar, with no duplicate titlebar bell")
+      try checkTitlebar(devicesButton.isHidden && !devicesButton.isEnabled &&
+        accessibilityChildren()?.contains(where: { $0 as? NSView === devicesButton }) == false,
+        "Devices stays hidden and outside accessibility navigation until opted in")
       try checkTitlebar(searchButton.toolTip == state["searchTooltip"] as? String &&
         searchButton.accessibilityHelp() == searchButton.toolTip &&
         storeButton.toolTip == state["storeTooltip"] as? String &&
@@ -1183,14 +1187,39 @@ private extension SwarmTabStrip {
     storeButton.performClick(nil)
     try checkTitlebar(calls == ["sessions", "store"],
       "Top actions open the existing search and Store surfaces")
+    state["devicesVisible"] = true
+    for width in [CGFloat(360), CGFloat(640), CGFloat(1280)] {
+      setFrameSize(NSSize(width: width, height: 40))
+      update(state)
+      try checkTitlebar(!devicesButton.isHidden && devicesButton.isEnabled &&
+        searchButton.frame.maxX < devicesButton.frame.minX &&
+        devicesButton.frame.maxX < storeButton.frame.minX &&
+        newButton.frame.maxX < searchButton.frame.minX &&
+        devicesButton.font == storeButton.font &&
+        accessibilityChildren()?.contains(where: { $0 as? NSView === devicesButton }) == true,
+        "Opted-in navigation reads Search, Devices, Store at width \(width)")
+      try captureTabPresentation("native-tabs-tools-\(Int(width))")
+    }
+    devicesButton.performClick(nil)
+    try checkTitlebar(calls == ["sessions", "store", "devices"],
+      "Devices opens its workspace through the native action")
     state["enabled"] = false
     update(state)
     searchButton.performClick(nil)
     storeButton.performClick(nil)
-    try checkTitlebar(!searchButton.isEnabled && !storeButton.isEnabled && calls.count == 2,
+    devicesButton.performClick(nil)
+    try checkTitlebar(!searchButton.isEnabled && !storeButton.isEnabled &&
+      !devicesButton.isEnabled && calls.count == 3,
       "A modal prevents toolbar actions")
+    state["enabled"] = true
+    state["devicesVisible"] = false
+    update(state)
+    devicesButton.performClick(nil)
+    try checkTitlebar(devicesButton.isHidden && !devicesButton.isEnabled && calls.count == 3,
+      "Turning the experiment off removes and disables the native entry")
     update([:])
-    try checkTitlebar(!searchButton.isEnabled && !storeButton.isEnabled,
+    try checkTitlebar(!searchButton.isEnabled && !storeButton.isEnabled &&
+      devicesButton.isHidden && !devicesButton.isEnabled,
       "Teardown disables the toolbar")
   }
 
@@ -1286,20 +1315,14 @@ private extension SwarmTabStrip {
     }
     try checkTitlebar(tabs[0].frame.width == tabs[0].preferredWidth &&
       tabs[1].frame.width == tabs[1].preferredWidth &&
-      tabs[0].frame.width < tabs[1].frame.width,
-      "Tabs keep their label widths instead of expanding to fill the row")
+      tabs[0].frame.width == tabs[1].frame.width,
+      "Tabs share a capped width independent of their labels")
     try checkTitlebar(tabs[0].menu?.font == menuFont, "Native context menus retain the system menu font")
 
   }
 
   func checkTabPresentationAndCapture() throws {
     setFrameSize(NSSize(width: 900, height: 40))
-    if let root = ProcessInfo.processInfo.environment["HARNESS_TITLEBAR_ASSETS"] {
-      let assets = URL(fileURLWithPath: root)
-      storeButton.image = SwarmHistoryIcons(assetURL: { asset in
-        assets.appendingPathComponent(String(asset.dropFirst("assets/".count)))
-      }).image(engine: "store", asset: "assets/store/polymath.png")
-    }
     let rows: [[String: Any]] = [
       ["id": "new", "name": "New Tab", "label": "New Tab", "shortcutHint": "⌘1"],
       ["id": "work", "name": "Desktop", "label": "Desktop", "shortcutHint": "⌘2",
@@ -1362,7 +1385,7 @@ private extension SwarmTabStrip {
         "Eight ordinary tab names with inset close targets fit a 1440pt strip: \(tabs.last!.frame.maxX) in \(scroll.bounds.width)")
       for tab in tabs {
         try tab.checkCenteredLabel()
-        try tab.checkCompleteNameFits()
+        try tab.checkNameFitsOrHasTooltip()
       }
       setShortcutHintsVisible(true)
       try captureTabPresentation("native-tabs-eight-\(name)-command")
@@ -1375,6 +1398,15 @@ private extension SwarmTabStrip {
 
   func captureTabPresentation(_ name: String) throws {
     guard let directory = ProcessInfo.processInfo.environment["HARNESS_TAB_CAPTURE_DIR"] else { return }
+    if let root = ProcessInfo.processInfo.environment["HARNESS_TITLEBAR_ASSETS"] {
+      let assets = URL(fileURLWithPath: root)
+      let icons = SwarmHistoryIcons(assetURL: { asset in
+        assets.appendingPathComponent(String(asset.dropFirst("assets/".count)))
+      })
+      storeButton.image = icons.image(engine: "store", asset: "assets/store/polymath.png")
+      devicesButton.image = icons.image(engine: "devices",
+        asset: "assets/devices/harness-mark.png", pointSize: devicesButton.markSize)
+    }
     let height = Int(bounds.height) + 40
     let bitmap = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: Int(bounds.width), pixelsHigh: height,
       bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
@@ -1393,7 +1425,7 @@ private extension SwarmTabStrip {
       tab.drawWithHoverControl()
       NSGraphicsContext.restoreGraphicsState()
     }
-    for control in [newButton, searchButton, storeButton] {
+    for control in [newButton, searchButton, devicesButton, storeButton] where !control.isHidden {
       NSGraphicsContext.saveGraphicsState()
       let transform = NSAffineTransform()
       transform.translateX(by: control.frame.minX, yBy: control.frame.minY + 40)
@@ -1624,7 +1656,7 @@ private extension SwarmTabStrip {
       newButton.frame.maxX < searchButton.frame.minX, "Tabs precede the search and Store controls")
     try checkTitlebar(tabs[0].frame.width < 136 && tabs[0].displayLabel == "code",
       "Overflow tabs keep readable names without persistent number prefixes")
-    try checkTitlebar(subviews.count == 4 && statusBar.subviews.count == 8 && machineResourcesLabel.isHidden && pullRequestButton.isHidden && subscriptionUsageButton.isHidden && harnessMonitorButton.isHidden && daemonButton.isHidden && voiceLabel.isHidden && shareButton.isHidden,
+    try checkTitlebar(subviews.filter { !$0.isHidden }.count == 4 && devicesButton.isHidden && statusBar.subviews.count == 10 && machineResourcesLabel.isHidden && machinesButton.isHidden && modelsButton.isHidden && pullRequestButton.isHidden && subscriptionUsageButton.isHidden && harnessMonitorButton.isHidden && daemonButton.isHidden && voiceLabel.isHidden && shareButton.isHidden,
       "Navigation lives in the titlebar and focused context lives in the footer")
     let controls = [newButton]
     for control in controls {
@@ -2545,6 +2577,7 @@ do {
   try strip.checkSharedTypography()
   try strip.checkShareAction()
   try strip.checkHarnessMonitor()
+  try strip.checkInventoryFooter()
   try strip.checkTopActions()
   try checkIconTooltipTracking()
   try strip.checkActivityMarks()
@@ -2589,6 +2622,90 @@ do {
 }
 
 private extension SwarmTabStrip {
+  func checkInventoryFooter() throws {
+    if let root = ProcessInfo.processInfo.environment["HARNESS_TITLEBAR_ASSETS"] {
+      SwarmContextButton.statusIcons = SwarmHistoryIcons(assetURL: { asset in
+        URL(fileURLWithPath: root).appendingPathComponent(String(asset.dropFirst("assets/".count)))
+      })
+    }
+    func count(_ text: String) -> [String: Any] {
+      ["text": text, "detail": text, "segments": [["text": text]], "interactive": true]
+    }
+    for dark in [true, false] {
+      let ink = Int64(dark ? 0xfff5f5f5 : 0xff1f1f1d)
+      let low = Int64(dark ? 0xffc4a46c : 0xff87632a)
+      let critical = Int64(dark ? 0xffff7068 : 0xffb3261e)
+      let fields: [[String: Any]] = [
+        ("claude", "a", "68%", ink), ("claude", "b", "18%", low),
+        ("codex", "c", "4%", critical), ("codex", "d", "82%", ink)
+      ].map { engine, account, figure, color in
+        ["text": figure, "iconEngine": engine,
+         "iconAsset": engine == "codex" ? "assets/engine-icons/codex.png" : "",
+         "field": account, "paneId": 0, "interactive": true,
+         "iconColor": Int64(dark ? 0xffcc7c5e : 0xffc2633f),
+         "detail": "Account: \(account)\n\(figure) remaining\nResets in 2h",
+         "segments": [["text": figure, "foreground": color]]]
+      }
+      var state: [String: Any] = ["enabled": true,
+        "palette": ["dark": dark ? 1 : 0, "workspace": Int64(dark ? 0xff282828 : 0xffe6e6e3),
+          "tabBar": Int64(dark ? 0xff1c1c1c : 0xffeeeeec), "foreground": ink],
+        "barStyle": ["size": 13, "foreground": ink],
+        "tabs": [["id": "work", "name": "Work"]], "activeId": "work",
+        "harnessMonitor": count("Harnesses 8"), "footerMachines": count("Machines 3"),
+        "footerModels": count("Models 4"), "focusedContext": count("Mac Studio > harness > main"),
+        "subscriptionUsage": ["text": "Subscriptions", "interactive": true,
+          "paddedFields": true, "overflowFields": true, "fields": fields]]
+      var calls: [(String, Any?)] = []
+      emit = { calls.append(($0, $1)) }
+      for width in [CGFloat(1280), CGFloat(640), CGFloat(360)] {
+        setFrameSize(NSSize(width: width, height: 40))
+        update(state)
+        try checkTitlebar(!machinesButton.isHidden && !modelsButton.isHidden && !subscriptionUsageButton.isHidden,
+          "Inventory and subscription controls remain available at \(width)")
+        let controls = [harnessMonitorButton, machinesButton, modelsButton, subscriptionUsageButton, contextButton]
+        for (left, right) in zip(controls, controls.dropFirst()) {
+          try checkTitlebar(left.frame.maxX <= right.frame.minX,
+            "Footer groups do not overlap at \(width)")
+        }
+        let visible = subscriptionUsageButton.fieldButtons.filter { !$0.isHidden }
+        for account in visible {
+          try checkTitlebar(account.frame.width == account.preferredWidth &&
+            account.frame.maxX <= subscriptionUsageButton.bounds.width,
+            "A visible account always has its full icon and percentage")
+          try checkTitlebar(account.toolTip?.contains("Account:") == true,
+            "Each subscription owns its account tooltip")
+        }
+        if width == 1280 {
+          try checkTitlebar(visible.count == 4, "Multiple accounts each get their own provider icon")
+          machinesButton.performClick(nil)
+          modelsButton.performClick(nil)
+          visible[1].performClick(nil)
+          try checkTitlebar(calls.map { $0.0 } == ["machineControls", "runLocalModel", "subscriptions"],
+            "Footer actions use the existing resource destinations")
+          try checkTitlebar((calls.last?.1 as? [String: String])?["id"] == "b",
+            "Subscription clicks preserve the selected account")
+        } else if width == 360 {
+          try checkTitlebar(visible.count < 4 && subscriptionUsageButton.subviews.contains { view in
+            !view.isHidden && !subscriptionUsageButton.fieldButtons.contains(where: { $0 === view })
+          }, "A narrow footer offers the remaining accounts through overflow")
+        }
+        if let capture = ProcessInfo.processInfo.environment["HARNESS_FOOTER_CAPTURE_DIR"] {
+          let root = URL(fileURLWithPath: capture)
+          try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+          try statusBar.renderedTree(background: palette.workspace).representation(using: .png, properties: [:])!
+            .write(to: root.appendingPathComponent("native-footer-\(dark ? "dark" : "light")-\(Int(width)).png"))
+        }
+      }
+      state["enabled"] = false
+      update(state)
+      let before = calls.count
+      machinesButton.performClick(nil)
+      modelsButton.performClick(nil)
+      for account in subscriptionUsageButton.fieldButtons { account.performClick(nil) }
+      try checkTitlebar(calls.count == before, "Covered footers cannot navigate or select accounts")
+    }
+  }
+
   func checkHarnessMonitor() throws {
     var state: [String: Any] = ["enabled": true,
       "harnessMonitor": ["text": "Harnesses 10", "segments": [["text": "Harnesses 10"]], "label": "Harness Monitor", "detail": "View running harnesses", "interactive": true],
@@ -2634,6 +2751,22 @@ private extension SwarmTabStrip {
     harnessMonitorButton.performClick(nil)
     machineResourcesLabel.performClick(nil)
     try checkTitlebar(calls.count == 2, "A covered or modal footer cannot open the session monitor")
+    state["enabled"] = true
+    state.removeValue(forKey: "machineResources")
+    state.removeValue(forKey: "subscriptionUsage")
+    for width in [CGFloat(360), CGFloat(520), CGFloat(1280)] {
+      setFrameSize(NSSize(width: width, height: 40))
+      update(state)
+      try checkTitlebar(!harnessMonitorButton.isHidden && harnessMonitorButton.isEnabled &&
+        harnessMonitorButton.frame.maxX <= contextButton.frame.minX &&
+        machineResourcesLabel.isHidden && subscriptionUsageButton.isHidden,
+        "The count-only footer preserves context and hides omitted resource and usage groups")
+      if let capture = ProcessInfo.processInfo.environment["HARNESS_RESOURCE_CAPTURE_DIR"] {
+        try statusBar.renderedTree(background: NSColor(white: 0.12, alpha: 1))
+          .representation(using: .png, properties: [:])!.write(to:
+            URL(fileURLWithPath: capture).appendingPathComponent("native-count-\(Int(width)).png"))
+      }
+    }
     update([:])
     try checkTitlebar(harnessMonitorButton.isHidden && !harnessMonitorButton.isEnabled && machineResourcesLabel.isHidden && !machineResourcesLabel.isEnabled,
       "Clearing workspace state clears the counter, hardware and actions")

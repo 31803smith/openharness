@@ -5,12 +5,12 @@ import { hostname, tmpdir } from 'os'
 import { join } from 'path'
 import { fileURLToPath } from 'url'
 import { afterEach, describe, expect, it } from 'vitest'
+import { useBundledCli } from './__fixtures__/bundledCli.js'
 import { b64d, b64e, fingerprint, newIdentity } from './lib/e2ee/core.js'
 import { listenLocalSocket, localSocketPath } from './lib/localSocket.js'
 
 const CLI_ROOT = fileURLToPath(new URL('..', import.meta.url))
-const CLI_SOURCE = join(CLI_ROOT, 'src', 'cli.ts')
-const TSX = join(CLI_ROOT, 'node_modules', 'tsx', 'dist', 'cli.mjs')
+const cli = useBundledCli()
 const FP = /^[0-9A-F]{4}(·[0-9A-F]{4}){3}$/
 const dirs: string[] = []
 const servers: Server[] = []
@@ -72,7 +72,7 @@ function recordingGrid(root: string): string {
 }
 
 function runSync(root: string, args: string[], backendUrl?: string) {
-  return spawnSync(process.execPath, [TSX, CLI_SOURCE, ...args], {
+  return spawnSync(process.execPath, [cli(), ...args], {
     cwd: CLI_ROOT,
     encoding: 'utf8',
     env: envFor(root, backendUrl),
@@ -84,7 +84,7 @@ function runSync(root: string, args: string[], backendUrl?: string) {
  *  so a fake server living here could never answer the child's request and the pair would deadlock. */
 function runAsync(root: string, args: string[], backendUrl?: string): Promise<{ status: number | null; stdout: string; stderr: string }> {
   return new Promise((resolve) => {
-    const child = spawn(process.execPath, [TSX, CLI_SOURCE, ...args], { cwd: CLI_ROOT, env: envFor(root, backendUrl) })
+    const child = spawn(process.execPath, [cli(), ...args], { cwd: CLI_ROOT, env: envFor(root, backendUrl) })
     let stdout = ''
     let stderr = ''
     child.stdout.on('data', (c: Buffer) => { stdout += c.toString() })
@@ -361,7 +361,7 @@ describe('harness status — device row', () => {
 /** A `harness … --json` child driven the way the desktop app drives it: stdin left open (closing it is
  *  the app going away), stdout read one JSON line at a time. */
 function jsonChild(root: string, backendUrl: string, args: string[]) {
-  const child = spawn(process.execPath, [TSX, CLI_SOURCE, ...args], { cwd: CLI_ROOT, env: envFor(root, backendUrl) })
+  const child = spawn(process.execPath, [cli(), ...args], { cwd: CLI_ROOT, env: envFor(root, backendUrl) })
   const lines: Record<string, unknown>[] = []
   const waiters: Array<(line: Record<string, unknown>) => void> = []
   let buffer = ''
@@ -466,7 +466,8 @@ describe('harness login --json', () => {
     expect(await login.next()).toEqual({ type: 'result', status: 'success', email: 'dee@example.com', fingerprint: expect.stringMatching(FP) })
     expect(await login.exit).toBe(0)
     const session = JSON.parse(readFileSync(join(root, 'auth', 'session.json'), 'utf8')) as Record<string, unknown>
-    expect(session).toMatchObject({ accessToken: 'tok_qr', method: 'qr' })
+    // A sign-in by hand: a sign-in epoch of its own, which the device key log keeps its marks by.
+    expect(session).toMatchObject({ accessToken: 'tok_qr', method: 'qr', signInEpoch: expect.stringMatching(/^[0-9a-f]{32}@\d+$/) })
     expect(calls.map((c) => c.url)).not.toContain('/api/auth/qr/cancel')
   }, 30_000)
 
@@ -509,6 +510,53 @@ describe('harness login --json', () => {
     expect(lines).toEqual([{ type: 'result', status: 'error', code: 'BACKEND_ERROR', message: expect.any(String) }])
   })
 
+  it('names the account the person chose and the surface that asked, and nothing it was not told', async () => {
+    // `--google` / `--apple` are what the app's two buttons and the terminal picker send; a client
+    // that predates them sends neither and still gets the sign-in page's own chooser. The surface
+    // is the auth-service client the sign-in is made as: the terminal's, or the desktop app's.
+    for (const [flags, expected] of [
+      [['--google'], { provider: 'google', clientId: 'harness-cli' }],
+      [['--apple', '--entry-point=desktop'], { provider: 'apple', clientId: 'harness-desktop' }],
+      [[], { provider: undefined, clientId: 'harness-cli' }],
+    ] as const) {
+      let body: Record<string, unknown> = {}
+      const { base } = await fakeBackend({
+        authorizeNative: (sent) => { body = sent; return { authorizeUrl: 'https://sso.example.test/authorize?tx=abc', tx: 'tx_abc' } },
+      })
+      const login = jsonChild(tempRoot(), base, ['login', '--force', ...flags, '--json'])
+      const page = await login.next()
+      expect(page).toMatchObject({ type: 'authorize_url' })
+      // This backend's page does not name the account (one from before `provider`): the page the
+      // browser is sent to names it all the same.
+      expect(new URL(String(page.url)).searchParams.get('provider')).toBe(expected.provider ?? null)
+      expect(body.provider).toBe(expected.provider)
+      expect(body.clientId).toBe(expected.clientId)
+      login.child.kill()
+      await login.exit
+    }
+  }, 30_000)
+
+  it('keeps the client the backend exchanged as — not the one it asked for — with the session', async () => {
+    // A refresh has to name the client the tokens were issued to. A backend from before the
+    // clients were split exchanges as its configured one and names none: the session keeps none.
+    for (const [answered, kept] of [['harness-cli', 'harness-cli'], [undefined, undefined], ['someone-else', undefined]] as const) {
+      const root = tempRoot()
+      let redirectUri = ''
+      const { base } = await fakeBackend({
+        authorizeNative: (body) => { redirectUri = body.redirectUri; return { authorizeUrl: 'https://sso.example.test/authorize?tx=abc', tx: 'tx_abc' } },
+        exchange: () => ({ token: 'tok_new', refreshToken: 'refresh_new', expiresIn: 3600, autonomousEnv: 'prod', ...(answered ? { clientId: answered } : {}) }),
+        resolveComputer: () => ({ machine: { machineId: 'm_new' } }),
+      })
+      const login = jsonChild(root, base, ['login', '--google', '--json'])
+      expect(await login.next()).toMatchObject({ type: 'authorize_url' })
+      await fetch(`${redirectUri}?code=code_123&state=state_456`)
+      expect(await login.next()).toMatchObject({ type: 'result', status: 'success' })
+      await login.exit
+      const session = JSON.parse(readFileSync(join(root, 'auth', 'session.json'), 'utf8')) as Record<string, unknown>
+      expect(session.clientId).toBe(kept)
+    }
+  }, 45_000)
+
   it('drives the full loopback flow: emits authorize_url, then a success result once the callback lands', async () => {
     const root = tempRoot()
     let capturedRedirectUri = ''
@@ -519,7 +567,7 @@ describe('harness login --json', () => {
     })
 
     const gridCalls = recordingGrid(root)
-    const child = spawn(process.execPath, [TSX, CLI_SOURCE, 'login', '--json'], {
+    const child = spawn(process.execPath, [cli(), 'login', '--json'], {
       cwd: CLI_ROOT,
       env: envFor(root, base),
     })

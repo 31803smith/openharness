@@ -104,7 +104,8 @@ describe('the package', () => {
 })
 
 describe('talking to it', () => {
-  function world(opts: { engine?: 'claude' | 'codex' | 'opencode' | null; pair?: string | null } = {}) {
+  function world(opts: { engine?: 'claude' | 'codex' | 'opencode' | null; pair?: string | null;
+    backgroundInUse?: (agentId: string) => boolean } = {}) {
     let pair = opts.pair === undefined ? 'tim' : opts.pair
     const rows: PairHarnessRow[] = []
     let working = false
@@ -124,6 +125,7 @@ describe('talking to it', () => {
       stop: vi.fn<PairHarnessDeps['stop']>(async (agentId) => { rows.find((r) => r.agentId === agentId)!.status = 'stopped' }),
       send: vi.fn(),
       working: () => working,
+      backgroundInUse: opts.backgroundInUse,
       now: Date.now,
     }
     const harness = new PairHarness(deps)
@@ -141,6 +143,36 @@ describe('talking to it', () => {
     expect(w.deps.send).toHaveBeenCalledWith('pair-1', 'and on the laptop?')
     expect(readFileSync(join(dir, 'pair', 'token'), 'utf8')).toBe(token)   // no new launch, no new token
     expect(w.deps.create).toHaveBeenCalledTimes(1)
+  })
+
+  it('refreshes an existing companion package on restart without sending, resuming, or rotating its token', async () => {
+    const w = world()
+    await w.harness.open()
+    const saved = readFileSync(w.deps.stateFile, 'utf8')
+    const token = readFileSync(w.token.file, 'utf8')
+    w.deps.install.mockClear(); w.deps.create.mockClear()
+    const restarted = new PairHarness(w.deps)
+    expect(restarted.refreshPackage()).toBe(true)
+    expect(w.deps.install).toHaveBeenCalledOnce()
+    expect(w.deps.create).not.toHaveBeenCalled()
+    expect(w.deps.resume).not.toHaveBeenCalled()
+    expect(w.deps.send).not.toHaveBeenCalled()
+    expect(w.deps.stop).not.toHaveBeenCalled()
+    expect(readFileSync(w.deps.stateFile, 'utf8')).toBe(saved)
+    expect(readFileSync(w.token.file, 'utf8')).toBe(token)
+    expect(restarted.agentId()).toBe('pair-1')
+  })
+
+  it('refreshing release files never creates a companion when none was opened or pairing is off', async () => {
+    const fresh = world()
+    expect(fresh.harness.refreshPackage()).toBe(true)
+    expect(fresh.deps.install).not.toHaveBeenCalled()
+    expect(fresh.deps.create).not.toHaveBeenCalled()
+    await fresh.harness.open()
+    fresh.deps.install.mockClear()
+    fresh.setPair(null)
+    expect(fresh.harness.refreshPackage()).toBe(true)
+    expect(fresh.deps.install).not.toHaveBeenCalled()
   })
 
   it('two quick talks start one harness', async () => {
@@ -207,6 +239,38 @@ describe('talking to it', () => {
     w.harness.activity('pair-1')
     await vi.advanceTimersByTimeAsync(PAIR_IDLE_MS + 60_000)
     expect(w.deps.stop).toHaveBeenCalledWith('pair-1')
+  })
+
+  it.each(['claude', 'codex', 'opencode'] as const)('keeps the %s model connection available while background learning is enabled', async engine => {
+    let learning = true
+    const backgroundInUse = vi.fn((id: string) => id === 'pair-1' && learning)
+    const w = world({ engine, backgroundInUse })
+    expect(await w.harness.open(undefined, engine)).toMatchObject({ ok: true, started: true })
+    w.rows[0]!.hasConversation = true
+    await vi.advanceTimersByTimeAsync(PAIR_IDLE_MS * 3)
+    expect(w.rows[0]!.status).toBe('live')
+    expect(w.deps.stop).not.toHaveBeenCalled()
+    expect(w.deps.send).not.toHaveBeenCalled()
+    expect(w.deps.resume).not.toHaveBeenCalled()
+    expect(w.deps.create).toHaveBeenCalledOnce()
+    expect(w.deps.create.mock.calls[0]?.[0].prompt).toBe('')
+    learning = false
+    await vi.advanceTimersByTimeAsync(60_000)
+    expect(w.rows[0]!.status).toBe('stopped')
+    expect(w.deps.stop).toHaveBeenCalledExactlyOnceWith('pair-1')
+  })
+
+  it('still honors explicit off and never reopens a stopped companion for background learning', async () => {
+    const w = world({ backgroundInUse: () => true })
+    await w.harness.open()
+    w.rows[0]!.hasConversation = true
+    await w.harness.off()
+    expect(w.rows[0]!.status).toBe('stopped')
+    await vi.advanceTimersByTimeAsync(PAIR_IDLE_MS * 3)
+    expect(await w.harness.idleCheck()).toBe(false)
+    expect(w.deps.stop).toHaveBeenCalledOnce()
+    expect(w.deps.resume).not.toHaveBeenCalled()
+    expect(w.deps.send).not.toHaveBeenCalled()
   })
 
   it('a new paired daemon keeps the collection conversation and does not interrupt its terminal', async () => {

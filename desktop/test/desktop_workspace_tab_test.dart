@@ -58,52 +58,56 @@ Widget _host(
               children: [
                 const SizedBox(width: 8),
                 Expanded(
-                  child: SingleChildScrollView(
-                    scrollDirection: Axis.horizontal,
-                    child: Row(
-                      children: [
-                        for (final tab in tabs)
-                          Builder(
-                            builder: (context) => SizedBox(
-                              width: DesktopWorkspaceTab.widthOf(
-                                context,
-                                tab.name,
-                                shortcutHint: tab.hint,
-                                hasActivity: tab.working,
-                              ),
-                              child: DesktopWorkspaceTab(
-                                id: tab.name,
-                                label: tab.name,
-                                selected: tab.name == 'Desktop',
-                                shortcutHint: tab.hint,
-                                showShortcuts: hints,
-                                onSelect: enabled ? (onSelect ?? () {}) : null,
-                                onClose: enabled ? (onClose ?? () {}) : null,
-                                onRename: onRename,
-                                activityLabel: tab.working ? 'Working' : null,
-                                activity: tab.working
-                                    ? SizedBox(
-                                        key: ValueKey('status:${tab.name}'),
-                                        width: 16,
-                                        child: Text(
-                                          '⠋',
-                                          textAlign: TextAlign.center,
-                                          textScaler: TextScaler.noScaling,
-                                          style:
-                                              grid.AppType.mono(
-                                                color: const Color(0xff64d2ff),
-                                              ).copyWith(
-                                                fontFamilyFallback: const [
-                                                  'Apple Symbols',
-                                                ],
-                                              ),
-                                        ),
-                                      )
-                                    : null,
+                  child: LayoutBuilder(
+                    builder: (context, constraints) => SingleChildScrollView(
+                      scrollDirection: Axis.horizontal,
+                      child: Row(
+                        children: [
+                          for (final tab in tabs)
+                            Builder(
+                              builder: (context) => SizedBox(
+                                width: DesktopWorkspaceTab.widthForStrip(
+                                  constraints.maxWidth,
+                                  tabs.length,
+                                ),
+                                child: DesktopWorkspaceTab(
+                                  id: tab.name,
+                                  label: tab.name,
+                                  selected: tab.name == 'Desktop',
+                                  shortcutHint: tab.hint,
+                                  showShortcuts: hints,
+                                  onSelect: enabled
+                                      ? (onSelect ?? () {})
+                                      : null,
+                                  onClose: enabled ? (onClose ?? () {}) : null,
+                                  onRename: onRename,
+                                  activityLabel: tab.working ? 'Working' : null,
+                                  activity: tab.working
+                                      ? SizedBox(
+                                          key: ValueKey('status:${tab.name}'),
+                                          width: 16,
+                                          child: Text(
+                                            '⠋',
+                                            textAlign: TextAlign.center,
+                                            textScaler: TextScaler.noScaling,
+                                            style:
+                                                grid.AppType.mono(
+                                                  color: const Color(
+                                                    0xff64d2ff,
+                                                  ),
+                                                ).copyWith(
+                                                  fontFamilyFallback: const [
+                                                    'Apple Symbols',
+                                                  ],
+                                                ),
+                                          ),
+                                        )
+                                      : null,
+                                ),
                               ),
                             ),
-                          ),
-                      ],
+                        ],
+                      ),
                     ),
                   ),
                 ),
@@ -235,13 +239,20 @@ void main() {
         expect(tester.getRect(_label('Desktop')), title);
         expect(tester.getRect(_tab('Desktop')), tabBounds);
         final shortcut = tester.getRect(_hint('Desktop'));
-        expect(shortcut.left - title.right, closeTo(6, .5));
+        final indicator = tester.getRect(
+          find.ancestor(of: _hint('Desktop'), matching: find.byType(Center)),
+        );
+        // The stable slot also holds the 16px activity mark. A narrower hint
+        // remains centered inside it; its font-dependent glyph edge can be
+        // farther from the label than the slot's six-pixel gap.
+        expect(indicator.left - title.right, closeTo(6, .5));
+        expect(shortcut.center.dx, closeTo(indicator.center.dx, .01));
         expect(
-          shortcut.right,
+          indicator.right,
           lessThanOrEqualTo(tester.getRect(_close('Desktop')).left),
         );
         expect(
-          (title.left + shortcut.right) / 2,
+          (title.left + indicator.right) / 2,
           closeTo(tabBounds.center.dx, .5),
         );
         await _capture(
@@ -259,6 +270,40 @@ void main() {
       });
     }
   }
+
+  testWidgets('a narrow hint preserves the centered activity slot', (
+    tester,
+  ) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(640, 100);
+    addTearDown(tester.view.reset);
+    final hints = ValueNotifier(false);
+    addTearDown(hints.dispose);
+    await tester.pumpWidget(
+      _host(hints, tabs: [(name: 'Desktop', hint: '1', working: true)]),
+    );
+    final title = tester.getRect(_label('Desktop'));
+    final slot = tester.getRect(
+      find.ancestor(
+        of: find.byKey(const ValueKey('status:Desktop')),
+        matching: find.byType(Center),
+      ),
+    );
+    expect(slot.width, 16);
+    expect(slot.left - title.right, closeTo(6, .01));
+    hints.value = true;
+    await tester.pump();
+    final shortcut = tester.getRect(_hint('Desktop'));
+    expect(shortcut.width, lessThan(slot.width));
+    expect(shortcut.left - title.right, greaterThan(6));
+    expect(shortcut.center.dx, closeTo(slot.center.dx, .01));
+    expect(tester.getRect(_label('Desktop')), title);
+    expect(
+      (title.left + slot.right) / 2,
+      closeTo(tester.getCenter(_tab('Desktop')).dx, .01),
+    );
+    expect(tester.takeException(), isNull);
+  });
 
   testWidgets(
     'resolved remaps replace status and preserve purposeful actions',

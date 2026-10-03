@@ -7,7 +7,6 @@ import 'dart:convert';
 import 'dart:math' as math;
 
 import 'package:harness/shared/theme/app_icons.dart';
-import 'package:harness/shared/theme/app_pane_icon.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
@@ -18,6 +17,7 @@ import '../clipboard/native_clipboard.dart';
 import '../core/models.dart';
 import '../core/runtime_platform.dart';
 import '../state/app_state.dart';
+import '../state/harness_activity.dart';
 import '../state/model_start_watch.dart';
 
 import 'agent_drag.dart';
@@ -70,10 +70,8 @@ typedef TerminalNotice = ({
   String? actionLabel,
   VoidCallback? onAction,
 
-  /// Whether this one also earns the band across the top of the pane, over the
-  /// output. The chip is the resting place for a notice; the band is for the
-  /// few that are CONFUSING as well as blocking — a pane still printing while
-  /// its keyboard is locked — where the sentence has to be read, not hovered.
+  /// Whether this one also earns a band above the terminal output.
+  /// Startup and failure guidance needs to be read, not hovered.
   /// An offline machine is neither confusing nor rare, and a band on every one
   /// of those would cost rows in every tile.
   bool banner,
@@ -323,6 +321,7 @@ class _TerminalPanelState extends State<TerminalPanel>
     WidgetsBinding.instance.addObserver(this);
     widget.session.attachViewport(this);
     widget.session.addListener(_onSessionChanged);
+    widget.session.remoteCursorVisibility.addListener(_syncCursorBlink);
     terminalFontStore.addListener(_onFontChanged);
     // Colours repaint the view in place — no relayout, no resize frame — but
     // they still need a rebuild to reach it, and this widget reads the store
@@ -414,9 +413,11 @@ class _TerminalPanelState extends State<TerminalPanel>
       _previewProgress = null;
       oldWidget.session.setCursorBlinkPhase(true);
       oldWidget.session.removeListener(_onSessionChanged);
+      oldWidget.session.remoteCursorVisibility.removeListener(_syncCursorBlink);
       oldWidget.session.detachViewport(this);
       widget.session.attachViewport(this);
       widget.session.addListener(_onSessionChanged);
+      widget.session.remoteCursorVisibility.addListener(_syncCursorBlink);
       _composerFocusPending = false;
       _cancelDialInertia();
       _controller.clearSelection();
@@ -503,6 +504,7 @@ class _TerminalPanelState extends State<TerminalPanel>
     _observeLinkModifiers(false);
     widget.session.setCursorBlinkPhase(true);
     widget.session.removeListener(_onSessionChanged);
+    widget.session.remoteCursorVisibility.removeListener(_syncCursorBlink);
     widget.session.detachViewport(this);
     terminalFontStore.removeListener(_onFontChanged);
     terminalThemeStore.removeListener(_onFontChanged);
@@ -811,11 +813,10 @@ class _TerminalPanelState extends State<TerminalPanel>
   /// usually a beat long — the app reattaches them itself
   /// (`_paneNeedsAttach`) — and a band that flashes up for those frames is
   /// noise, where a taken-over pane stays taken over until somebody acts.
-  /// Never a pane-level [TerminalPanel.notice] (offline, unlinked — nothing
-  /// here would help) and never a shared read-only view.
+  /// Unavailable/read-only panes cannot take control. A writable startup
+  /// notice must still allow it: setup prompts need a controlling client.
   bool get _inputBlocked =>
       !widget.readOnly &&
-      widget.notice == null &&
       // A watcher is the same situation seen from the other side: this window
       // has the output but another client has the terminal, and the band's
       // button is how a person here asks for it.
@@ -951,6 +952,7 @@ class _TerminalPanelState extends State<TerminalPanel>
         !widget.readOnly &&
         _focusNode.hasFocus &&
         widget.session.acceptsInput &&
+        widget.session.remoteCursorVisibility.value &&
         (_tickerMode?.value.enabled ?? false) &&
         (lifecycle == null || lifecycle == AppLifecycleState.resumed);
     if (!enabled) {
@@ -972,8 +974,9 @@ class _TerminalPanelState extends State<TerminalPanel>
   void _setCursorBlinkVisible(bool visible) {
     if (visible == _cursorBlinkVisible) return;
     _cursorBlinkVisible = visible;
-    widget.session.setCursorBlinkPhase(visible);
-    _repaintTerminalCursor();
+    if (widget.session.setCursorBlinkPhase(visible)) {
+      _repaintTerminalCursor();
+    }
   }
 
   void _repaintTerminalCursor() {
@@ -2216,6 +2219,12 @@ class _TerminalPanelState extends State<TerminalPanel>
             // [PhoneHeader], and keeping this one would stack two.
             if (widget.showHeader) Divider(height: 1, color: AppColors.border),
             ?_modelNote(),
+            // Reserve space for launch guidance so it cannot cover the shell
+            // prompt on the first line. Stream-ownership notices below remain
+            // overlays over frozen output until control is restored.
+            if (widget.notice case final notice?
+                when notice.banner && !_inputBlocked && !_retakingControl)
+              _ControlBanner.notice(notice),
             Expanded(
               // Any press into the pane's body — the terminal, the band, its
               // scrollbar; not the header, which is chrome — is the person
@@ -2307,13 +2316,6 @@ class _TerminalPanelState extends State<TerminalPanel>
                     // frozen output itself, where the eyes already are, and
                     // stays through `opening` so the pane does not jump when
                     // it is answered.
-                    //
-                    // It also carries a pane-level notice that has something to
-                    // DO about itself (a failed start offering Check again or
-                    // Restart). One strip, never two: a noticed pane is already
-                    // excluded from `_inputBlocked` — nothing the takeover band
-                    // offers would help a pane whose machine or launch is the
-                    // problem — so these two conditions cannot both hold.
                     if (_passageId != null && !_inputBlocked)
                       Positioned(
                         top: 0,
@@ -2342,14 +2344,6 @@ class _TerminalPanelState extends State<TerminalPanel>
                               ? () => unawaited(_takeControl())
                               : null,
                         ),
-                      )
-                    else if (widget.notice case final notice?
-                        when notice.banner && notice.onAction != null)
-                      Positioned(
-                        top: 0,
-                        left: 0,
-                        right: 0,
-                        child: _ControlBanner.notice(notice),
                       ),
                     if (session.uploadProgress != null ||
                         _previewProgress != null)
@@ -2732,15 +2726,12 @@ class _TerminalHeader extends StatelessWidget {
     // Reserve space for the pane-local model selector.
     // Engines without a picker keep their existing header width.
     final showModelPicker = modelPickerSupports(session.engineId);
-    // The picker: a model id up to 220px and its padding.
+    // Both text selectors keep their natural width until the title has yielded.
     final pickerWidth =
-        (showModelPicker ? 250.0 : 0.0) + (agent != null ? 90.0 : 0.0);
-    final showSplit = compact || onSplitDown != null || onSplitRight != null;
-    final showZoom = compact || onToggleZoom != null;
-    final controlsWidth =
-        ((showSplit ? 2 : 0) + (showZoom ? 1 : 0) + (onClose != null ? 1 : 0)) *
-        PaneHeaderButton.width;
-    final actionsWidth = pickerWidth + controlsWidth;
+        (showModelPicker ? 232.0 : 0.0) + (agent != null ? 140.0 : 0.0);
+    // A domain harness has a different identity from its coding agent. The
+    // latter is already named by the selector on the right.
+    final showIdentityMark = agent == null || agent.dsh != null;
     // A fork says so first: "forked from X" is the one fact about this pane
     // that the folder and the branch — shared with its source — cannot tell.
     final forkedFrom = agent?.forkedFrom;
@@ -2755,6 +2746,10 @@ class _TerminalHeader extends StatelessWidget {
           builder: (context, constraints) {
             final scale = grid.appTextScaleOf(context);
             final narrow = constraints.maxWidth < 560 * math.max(1, scale);
+            final controlsWidth = onClose != null
+                ? PaneHeaderButton.width
+                : 0.0;
+            final actionsWidth = pickerWidth + controlsWidth;
             // At the smallest widths, connection state takes the leading
             // mark's place so the pane name survives beside the fixed tools.
             final leadingStatus =
@@ -2804,7 +2799,7 @@ class _TerminalHeader extends StatelessWidget {
                     )
                   : 16.0;
               return math.min(
-                17 + 10 + width + 8 + statusRoom + 8,
+                (showIdentityMark ? 27 : 0) + width + 8 + statusRoom + 8,
                 constraints.maxWidth * .45,
               );
             }
@@ -2823,32 +2818,47 @@ class _TerminalHeader extends StatelessWidget {
                     // shortened to "…" beside a short name with half the header empty.
                     constraints.maxWidth - titleRoom(),
                   );
-            // The name/status retain space while model and project text yield.
+            // Budget the title's fixed neighbours too. An activity mark and
+            // connection status must not consume the name's entire flex width
+            // when the model/agent controls share a narrow split pane.
+            final hasActivity =
+                harnessActivity(notifier, session.machineId, session.agentId) !=
+                null;
+            final activityWidth = hasActivity
+                ? workspaceBarCellSizeOf(context).width * 2
+                : 0.0;
+            final leadingWidth = leadingStatus
+                ? 34.0
+                : showIdentityMark
+                ? 27.0
+                : 0.0;
+            final statusWidth = status != null && !leadingStatus
+                ? 36.0
+                : starting != null
+                ? 8 +
+                      paneStartingChipWidth(
+                        starting,
+                        MediaQuery.textScalerOf(context),
+                        narrow: narrow,
+                      )
+                : 0.0;
+            final minimumLeftWidth = compact
+                ? 56 + leadingWidth + activityWidth + statusWidth + 8
+                : 99.0;
             final rightWidth = math.min(
-              compact
-                  ? controlsWidth +
-                        math.min(
-                          pickerWidth,
-                          math.max(
-                            agent != null ? 180.0 : 56.0,
-                            (constraints.maxWidth - controlsWidth) * .38,
-                          ),
-                        )
-                  : desiredRightWidth,
-              math.max(0.0, constraints.maxWidth - 99),
+              compact ? actionsWidth : desiredRightWidth,
+              math.max(0.0, constraints.maxWidth - minimumLeftWidth),
             );
             return Row(
               children: [
                 if (leadingStatus)
                   statusButton()
-                else if (agent != null)
+                else if (agent != null && showIdentityMark)
                   EngineMark.forAgent(agent, size: 17)
-                else
+                else if (showIdentityMark)
                   EngineMark(engine: session.engineId, size: 17),
-                // Icon and name, the same as every other pane (owner,
-                // 2026-09-15): a harness agent is its harness here, and the
-                // engine it runs on is the dialog's and the tooltip's to say.
-                SizedBox(width: leadingStatus ? 6 : 10),
+                if (leadingStatus || showIdentityMark)
+                  SizedBox(width: leadingStatus ? 6 : 10),
                 Expanded(
                   child: Row(
                     children: [
@@ -3026,6 +3036,7 @@ class _TerminalHeader extends StatelessWidget {
                             constraints: BoxConstraints(maxWidth: badgeWidth),
                             child: PullRequestBadge(
                               compact: narrow,
+                              foreground: notifier.foreground,
                               identity: (
                                 session.machineId,
                                 agent.id,
@@ -3111,30 +3122,6 @@ class _TerminalHeader extends StatelessWidget {
                           ),
                   ),
                 ),
-                if (showSplit) ...[
-                  PaneHeaderButton(
-                    key: const ValueKey('pane-split-down'),
-                    label: 'New Pane Below',
-                    command: 'pane.split_down',
-                    icon: AppPaneSymbol.splitDown,
-                    onPressed: onSplitDown,
-                  ),
-                  PaneHeaderButton(
-                    key: const ValueKey('pane-split-right'),
-                    label: 'New Pane to the Right',
-                    command: 'pane.split_right',
-                    icon: AppPaneSymbol.splitRight,
-                    onPressed: onSplitRight,
-                  ),
-                ],
-                if (showZoom)
-                  PaneHeaderButton(
-                    key: const ValueKey('pane-zoom'),
-                    label: zoomed ? 'Restore Pane' : 'Zoom Pane',
-                    command: 'pane.zoom',
-                    icon: zoomed ? AppPaneSymbol.restore : AppPaneSymbol.zoom,
-                    onPressed: onToggleZoom,
-                  ),
                 if (onClose != null) PaneCloseButton(onPressed: onClose!),
               ],
             );

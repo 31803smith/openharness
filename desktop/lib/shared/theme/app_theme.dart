@@ -265,6 +265,12 @@ abstract final class AppPalette {
   /// would drop that text to ~3.1:1 — fixing the icon by breaking the buttons.
   static Color get accentOnSurface => AppDesktop.focus;
 
+  /// A quiet location cue around a focused remote pane. Desaturated separately
+  /// from teal ink so a full perimeter stays subordinate to terminal content.
+  /// Clears 3:1 against every built-in pane ground and workspace gutter.
+  static Color get remotePaneFocus =>
+      AppTheme.pick(const Color(0xFF567C77), const Color(0xFF6C9691));
+
   // avatar fill (white text on it); a touch brighter in dark for contrast.
   static Color get accentMuted =>
       AppTheme.pick(const Color(0xFF3550C8), const Color(0xFF4E6BF0));
@@ -331,7 +337,7 @@ abstract final class AppPalette {
   // ground they meet — Paper's search #E2E2DF / Mist's #DCE4EE — not only on
   // white: teal 4.90, online 5.02, warn 4.93 there (6.4–6.5 on white).
 
-  // "Owner" badge and remote pane focus — legible on either surface.
+  // Teal ink for badges and labels — legible on either surface.
   static Color get teal =>
       AppTheme.pick(const Color(0xFF0D6B63), const Color(0xFF2DD4BF));
 
@@ -346,6 +352,10 @@ abstract final class AppPalette {
   /// A quiet allowance limit in workspace chrome, distinct from an app error.
   static Color get usageLow =>
       AppTheme.pick(const Color(0xFF87632A), const Color(0xFFC4A46C));
+
+  /// Remaining subscription capacity is nearly exhausted (5% or less).
+  static Color get usageCritical =>
+      AppTheme.pick(const Color(0xFFB3261E), const Color(0xFFFF7068));
 
   // grey dot — a state mark, so ≥3:1 in light (3.14 on Paper's search ground).
   static Color get offline =>
@@ -1419,6 +1429,9 @@ abstract final class AppDesktop {
   static const double tabShoulder = 8;
   static const double tabTopInset = 6;
   static const double tabCloseInset = 8;
+  static const double tabMinWidth = 128;
+  static const double tabMaxWidth = 256;
+  static const double tabBarTrailingInset = 12;
   static const double paneCloseInset = 4;
   static const double panelPadding = 24;
   static const double groupGap = 16;

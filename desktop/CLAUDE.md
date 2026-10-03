@@ -23,6 +23,11 @@ it from memory. The harness CLI (`autonomous-harness`) still carries its own gri
 
 ## Toolchain and commands
 
+Choose and time-bound validation using the repository's
+[validation and release guide](../docs/validation-and-release.md). The full-suite
+command below is available for broad changes and suite maintenance; it is not an
+extra mandatory run after affected checks and equivalent CI have already passed.
+
 `pubspec.yaml` pins `sdk: ^3.13.0`, i.e. **Flutter ≥ 3.47 / Dart ≥ 3.13**. An older Flutter fails at
 `flutter pub get` ("version solving failed") and every command below fails with it — check
 `flutter --version` first.
@@ -37,7 +42,7 @@ back to CocoaPods and rewrites tracked files (`project.pbxproj`, `contents.xcwor
 ```bash
 flutter pub get
 flutter analyze                                   # lints: package:flutter_lints, no custom rules
-flutter test                                      # whole unit/widget suite (test/)
+make -C .. desktop-test                           # bounded VM suite, workers + receipt
 flutter test test/terminal_session_test.dart      # one file
 flutter test test/ws_conn_test.dart --plain-name "reconnects"   # one test by name substring
 flutter run -d macos                              # or: flutter run -d linux
@@ -114,9 +119,17 @@ which runs the same `_commands` table keys use, gives the picker a clickable Bac
 `KeyHints` — `widgets/key_hints.dart`, absent means hints shown). Below
 `WorkspaceChrome.compactBelow` (web: 720px, a phone) the workspace goes compact: a tab
 switcher replaces the tab row, `WorkspaceChrome.compactFooter` replaces the status bar with one
-dropdown plus Share (hidden while the on-screen keyboard is up), and `PaneGrid.soloFocused` draws only the focused harness —
-without touching zoom or the synced layout, so the same desk keeps its grid on a computer. Do not change desktop behavior for the
+dropdown, Download app, and Share when it is on (hidden while the on-screen keyboard is up), and `PaneGrid.soloFocused` draws only the focused harness —
+without touching zoom or the synced layout, so the same desk keeps its grid on a computer. Solo still records the desk's
+arrangement (`Swarm.arranged`), because that is what a split divides: without it the menu's Split pane could never run on a phone. Do not change desktop behavior for the
 web, and do not copy shared screens into `lib/web/` — add a seam instead.
+
+A browser on a phone or tablet (iOS, Android by `defaultTargetPlatform`, whatever the window's width) gets a bar over
+every screen, sign-in and shared harnesses included, sending it to the Harness app in its store
+(`web/shell/web_store_banner.dart`). It is the app's frame — `startHarness(frame:)`, which `main.dart` takes from the
+same conditional import as the workspace; native builds pass the app through. Closing it is remembered on that
+origin, and the on-screen keyboard hides it. It sits above the Navigator, so nothing in it may need an Overlay (no
+tooltips), and it keeps one tree shape shown or not so the app below is never remounted.
 
 `kViewerMode` is true on the web:
 the browser owns its OAuth session, peer links, and end-to-end relay encryption.
@@ -143,6 +156,17 @@ The native desktop target uses the CLI for cloud access and SSO tokens:
 
 - **Auth** lives in the CLI. `lib/auth/cli_login.dart` shells out to `harness auth status --json` and
   drives `harness login --json` (NDJSON event stream); `cli_link.dart` wraps `harness link create/import/list`.
+  The login screen's way in is two buttons, Continue with Google and Continue with Apple
+  (`widgets/sign_in_provider_button.dart`), on desktop and web alike: `AppNotifier.login(provider)`
+  hands a `SignInProvider` to the sign-in client — `--google`/`--apple` to the CLI, `provider` to the
+  backend's authorize routes in a viewer build — and auth-service opens that account's own sign-in.
+  A caller with no button of its own (`login()` with none) still gets the page's chooser.
+  Each surface signs in as its own auth-service client (backend `SSO_CLIENT_IDS`): the CLI as
+  `harness-cli`, or `harness-desktop` when this app runs it (`--entry-point=desktop`); a viewer
+  build as `auth/sso_client.dart` says (`harness-web` in the browser). ⚠️ A token belongs to the
+  client it was issued to, so the session keeps the client the backend's exchange REPORTS — never
+  the one it asked for, since an older backend exchanges as its configured client and names none
+  — and every refresh names it again (`AuthSession.ssoClientId`, the CLI's `session.json`).
   Sign-out owns its CLI process, checks its exit, and terminates it on timeout. `AppNotifier` joins
   repeated sign-out requests and blocks another sign-in until credential and connection cleanup
   finish; failure offers keyboard-focused Retry sign out. Development fixture disconnects never
@@ -258,8 +282,12 @@ An owned idle session saves its native conversation and terminal snapshot
 before releasing its process, regardless of other viewers. A ready, unused Claude/Codex chat with
 an empty composer also closes directly, saving its terminal snapshot without requiring a native
 conversation. Missing activity evidence for an existing chat remains unknown. Working,
-waiting-for-input, draft, or unknown sessions show one short sentence with Cancel and Close;
-there is no title or deferred-close button. Cancel is the default. Previously queued daemon close
+waiting-for-input, draft, or unknown sessions share one confirmation for the whole tab, with
+their names, activity, and the number of sessions that will stop. Its only choices are Cancel
+and Stop; Cancel is the default. Stop saves and stops every reviewed session before the tab
+closes. Idle-only closes retain the daemon's activity guard; newly active work gets one review
+of the remaining sessions. Failures keep the view and identify confirmed stops separately
+from uncertain ones. Previously queued daemon close
 plans remain compatible. Layout cleanup, moving panes, switching tabs, and sign-out retain their view-only behavior. A failed save
 or unconfirmed close keeps the pane. Older daemons retain their existing behavior until updated.
 
@@ -297,6 +325,24 @@ Creation and draft precedence are documented in `design/new-harness-entry-rules.
 by its listed tests. Cmd-T/Cmd-O retarget the same draft/search; Store requests own their explicit
 product and machine. `test/benchmarks/swarm_benchmark.dart` measures large synthetic inventories;
 its headless debug timings do not establish native display or network latency.
+
+A New Harness box takes files three ways, all into the same `HarnessAttachments`: 📎, a drop, and a
+paste (`widgets/new_harness_paste.dart`). ⌘V/Ctrl-V in the task asks the clipboard three things, in
+this order. Files copied in a file manager come first (`NativeClipboard.readFilePaths` — the runner's
+`readFilePaths` on `harness/clipboard_image`, NSPasteboard file URLs on macOS and GTK's
+`text/uri-list` on Linux — read off disk by `clipboard/copied_files.dart`, which names a file over
+the limit without ever reading it): Finder leaves each file's NAME as text and its ICON as a picture
+beside them, and neither is what was copied. Then text, which pastes into the task and wins whenever
+it is there — except a lone web address, which is what Safari's Copy Image puts beside the picture
+(`pastedTextWins`). Then a picture — a screenshot, Copy Image — attached as `pasted-image.png` through
+the same `NativeClipboard` the terminal reads. In a browser the page's `paste` event carries the files
+instead (`clipboard/pasted_files.dart`, a no-op natively), because Flutter leaves ⌘V to the browser
+there and `PasteTextIntent` never fires. Pasted files are numbered, never swapped for one of the same name — every
+clipboard picture is called alike. The field's own paste is the fallback and must be captured inside
+`Action.invoke`: `callingAction` is gone by the time a clipboard read returns. A chip
+(`widgets/new_harness_attachment_chip.dart`) shows a picture as itself and any other file by the mark
+of its kind — `fileTypeIcon` in `shared/theme/file_type_icon.dart`, one table from extension to icon;
+add a kind there, not at the call site.
 
 ### Terminals
 
@@ -339,11 +385,13 @@ its headless debug timings do not establish native display or network latency.
   Chrome widgets call `grid.AppTheme.watch(context)` at the top of `build` so `const` subtrees still
   repaint on a theme flip.
 - The [workspace status bar](design/workspace-status-bar.md) places system-font tabs and global actions at the top,
-  with harness count, local hardware and subscription allowance used at the bottom left and focused machine/repo/branch/PR at the bottom right.
+  with harness, machine and installed local model counts plus subscription allowance remaining at the bottom left and focused machine/repo/branch/PR at the bottom right.
   Tabs center their name/status group without permanent number prefixes; Command replaces
   the status with the resolved shortcut beside the name. Tab and pane close marks are small
-  and quiet, with larger click targets. Each pane ends with agent, model, split down,
-  split right, zoom, close. Split opens New Harness directly for the clicked pane.
+  and quiet, with larger click targets. Terminal panes end with matching
+  plain-text agent/model selectors and close at every width. Hovering the right
+  or bottom edge reveals its split icon; zoom stays in commands, menus and keyboard
+  shortcuts. Only distinct domain-harness icons stay on the left.
   Usage has no dot separators and colors only low/exhausted
   percentages. Automatic names use the strongest shared harness type,
   project, or machine, preferring traits that distinguish tabs and excluding dependent viewers.
@@ -383,7 +431,10 @@ its headless debug timings do not establish native display or network latency.
   have spent. Each account shows its `tightest` window, the limit that stops the work first.
   The shared controller reads ahead at startup and every five minutes; opening a menu requests
   a fresh reading, capped at once per minute. The footer uses these same deduplicated accounts
-  and freshness rules, displaying whole allowance-used percentages (100 − remaining) in neutral ink.
+  and freshness rules, displaying one provider icon and remaining percentage per account.
+  Values are neutral above 20%, muted amber at 6–20%, and red at 5% or less; tooltips identify
+  the account, machines, limiting window and resets. Models counts distinct installed local
+  model variants across linked owned machines, sharing the picker's cached inventories.
   **Remote machines' accounts arrive through `usage_read`** (`AppNotifier.readRemoteUsage`,
   `usage/remote_usage.dart`, `usage/usage_accounts.dart`; CLI side `cli/src/lib/accountUsage.ts`).
   A remote machine may be signed in to a DIFFERENT subscription, and the only honest way to read
@@ -556,7 +607,11 @@ its headless debug timings do not establish native display or network latency.
   `redactSecretsInText` (`logging/redact.dart`, beside the frame-level `redactValue`) before
   anything is written. The Debug pane is a **mirror** of those sinks, not a second stream
   (`log_stream.dart` + `log_stream_sinks.dart`): a bounded ring of the last 500 entries that
-  `installFileLogs` tees into, so a line on screen is a line the file already has. It is developer
+  `installFileLogs` tees into. Routine DEBUG records use a one-second flush deadline,
+  256 entries or 64 Ki characters. INFO/WARN and admitted ERROR records flush their preceding context;
+  export, backgrounding, normal quit and updater handoff also flush. An abrupt process kill
+  can lose the pending DEBUG batch. CLI transcripts remain immediately
+  flushed. No timer runs with an empty buffer. It is developer
   furniture — `kDebugSurfaceEnabled` (`logging/debug_surface.dart`, `kDebugMode` or
   `--dart-define=HARNESS_DEBUG_SURFACE=true`) gates the rail row, the ⌘D shortcut
   (`kDebugShortcut`, in `appShortcuts()` rather than `kAppShortcuts`) and the ring itself; the log

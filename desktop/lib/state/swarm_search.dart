@@ -10,11 +10,13 @@ import '../models/api_connections_controller.dart'
 import '../models/local_model.dart';
 import '../models/model_search_catalog.dart';
 import '../core/dsh_catalog.dart';
+import '../store/experimental_harnesses.dart';
 import '../core/machine_resources.dart';
 import '../core/models.dart'
     show Agent, ConnectionStatus, GridModels, GridModel;
 
 import 'app_state.dart';
+import 'agent_switch_handoff.dart';
 import 'harness_placement.dart';
 import 'pane_arrangement.dart';
 import 'swarm_catalog.dart';
@@ -89,6 +91,7 @@ class SwarmSearchController extends ChangeNotifier {
     }
     _refresh();
     app.addListener(_refresh);
+    app.experimentalFeatures.addListener(_refresh);
     projects?.addListener(_refresh);
     models?.addListener(_modelsChanged);
     app.gridPictures.addListener(_modelChoicesChanged);
@@ -1501,9 +1504,11 @@ class SwarmSearchController extends ChangeNotifier {
 
   bool _refreshStore() {
     final entries = {
-      for (final machine in app.machineStates.values)
-        for (final entry in machine.dsh.byId.values)
-          if (!entry.isViewerPackage) entry.id: entry,
+      for (final entry in storeVisibleHarnesses(
+        app.machineStates.values.expand((machine) => machine.dsh.byId.values),
+        app.experimentalFeatures,
+      ))
+        if (!entry.isViewerPackage) entry.id: entry,
     };
     if (mapEquals(entries, _storeEntries)) return false;
     _storeEntries = entries;
@@ -1617,7 +1622,9 @@ class SwarmSearchController extends ChangeNotifier {
                   : agentSelection?.engine == engine.id
                   ? 'Current agent'
                   : engine.id == 'opencode'
-                  ? 'Muse Spark 1.3 · new conversation'
+                  ? 'Muse Spark 1.3 · continue with recent context'
+                  : supportsAgentHandoff(engine.id)
+                  ? 'Continue this project with recent context'
                   : 'New conversation in the same project',
               swarmId: null,
               current: agentSelection?.engine == engine.id,
@@ -2319,6 +2326,7 @@ class SwarmSearchController extends ChangeNotifier {
     _modelUseTimer?.cancel();
     if (_modelUseWait?.isCompleted == false) _modelUseWait!.complete();
     app.removeListener(_refresh);
+    app.experimentalFeatures.removeListener(_refresh);
     projects?.removeListener(_refresh);
     models?.removeListener(_modelsChanged);
     app.gridPictures.removeListener(_modelChoicesChanged);

@@ -64,9 +64,9 @@ from the control that owns it.
 | What should happen? | Prompt, then the terminal's work | The task remains the focal point |
 | Where is the project? | Project selector; machine inside its search row | A folder belongs to a machine; its path is not globally interchangeable |
 | Which agent or specialized harness? | Agent selector, with its real mark | A specialized harness can run with an agent framework: “Run Blender with” |
-| Which model and effort? | Model control and its options | Available models belong to the selected agent and connection |
+| Which model? | Model control and its options | Available models belong to the selected agent and connection |
 | What may it do? | Visible approvals control | Preserve the explicit setting; never hide a permission change behind styling |
-| How is the work isolated? | Worktree and branch together | Fresh main default, remembered worktree choice, reviewed draft kept intact |
+| How is the work isolated? | Worktree and branch together | Fresh main default, worktree remembered after a successful Git launch |
 | Which work am I returning to? | Session name in tabs/search, with machine/project context when useful | Session identity stays stable when its model or activity changes |
 
 The footer describes the focused work. Creation controls describe the next
@@ -145,9 +145,15 @@ Avoid repeatedly drawing cards inside a dialog.
 - Primary text is nearly white or nearly black. Metadata remains readable.
 - Blue filled capsules identify the primary action. Blue rows identify the
   active keyboard/pointer choice; their labels and secondary text turn white.
-- Focused pane rims use blue for this computer and `AppPalette.teal` for a
-  known remote machine. Only the focused pane carries this location cue;
-  waiting-question borders retain their amber priority.
+- Focused pane rims share one solid 1-point boundary: blue for this computer,
+  muted teal-gray (`AppPalette.remotePaneFocus`) for a known remote machine.
+  Location is a quiet cue, with less emphasis than the local focus blue; avoid
+  saturated teal, dashes, double rims or glow. The remote token is `#567C77` in
+  light appearance and `#6C9691` in dark, distinct from teal text and badge ink.
+  It retains at least 3:1 contrast against built-in pane grounds and workspace
+  gutters. Only the focused pane carries the cue; unfocused rims stay neutral
+  and waiting-question borders retain their amber priority. The footer's
+  machine name supplies explicit location context alongside the color.
 - A stored choice also has a checkmark. Focus and stored selection differ.
 - Ordinary controls use a faint neutral fill and one thin rim. Hover increases
   the fill. Press increases it again. Focus has a stable 1.5-point blue boundary.
@@ -290,26 +296,34 @@ reuses `StatusLine`, honoring the selected wording, machine/project/branch
 visibility and status font, but omitting ANSI colors and segment backplates.
 It is never a second renderer with a hard-coded dot separator.
 A new user with no history sees the composer
-without an empty recents section; initial project guidance is neutral. Empty
-tabs hide the workspace footer, which returns when there is work to describe.
+without an empty recents section; initial project guidance is neutral. Keep the
+workspace footer visible on empty tabs so inventory controls are discoverable
+from first launch, including zero counts. Leave the right-side context blank on
+Welcome and New Tab; machine/project/branch context appears when a harness is
+open. Model inventory shows `—` until its first reading.
 Before a creation machine is available, show “Harness anything”, a short next
 step and a natural-width “Choose a machine” action. Keep that action available
 while finding machines. While saved defaults load, show “Preparing your harness…”
 in the same quiet hierarchy, then hand focus to the existing composer. Startup
 must not leave a blank page or imply that a harness has already started.
 
-Fresh forms focus the prompt and use the last explicit agent, project,
-approvals and worktree choices. Fresh branches default to main; reopening a
-draft preserves its selected branch. Enter submits except during composition.
-Escape and outside click dismiss the innermost picker first, then the dialog;
-they preserve its draft. Pending operations retain their existing close guards.
+Fresh forms focus an empty prompt. The last focused real project supplies its
+machine and folder; the global last successful launch supplies agent, model,
+approvals, account and worktree choice. Fresh branches default to main. Enter
+submits even with an empty prompt, except during composition. Escape and outside
+click dismiss the innermost picker first, then the dialog. Closing discards ordinary
+edits; pending operations retain their close guards and exact recovery values.
 Opening any form or preview must never start work.
 The GitHub entry starts with only “Enter GitHub URL”; a valid address reveals
 its clone action and an invalid submission reveals inline validation. Do not
 add a duplicate example line or an empty results area beneath an empty field.
 
-**Workspace tabs and pane frames** — tabs use the 13-point system control face,
-independent of the status bar and terminal font. Center the name and its adjacent
+**Workspace tabs and pane frames** — tabs share one width, independent of label
+length, selection, activity and shortcut hints. Divide the available tab area
+equally, capped at 256 points; shrink together down to 128 points, then scroll.
+A tab area narrower than 128 points can show one clipped tab. Mirror these limits
+in Flutter and AppKit. Tabs use the 13-point system control face, independent of
+the status bar and terminal font. Center the name and its adjacent
 status as one compact group, without permanent number prefixes. Navigation ink
 follows the tab-bar surface, including beside light app content. The default label
 is New Tab. A small right-hand close icon appears on hover, with its 32-point
@@ -322,6 +336,12 @@ never moves the name, and Command never changes tab width. Long names truncate
 and retain a full-name tooltip. Selection, dragging, middle-click close and the
 existing keyboard commands keep their meaning.
 
+Devices and Harness Store use compact 28-point capsules, centered in the
+40-point row with 6-point vertical gutters and a 12-point trailing inset.
+Keep 12-point internal horizontal padding and an 8-point icon-to-label gap.
+Flutter capsules grow with platform text scaling and retain at least 6 points
+above and below the label; search and New Tab keep their 32-point icon targets.
+
 The selected tab has 10-point upper corners and 8-point outward lower shoulders,
 joining the workspace along its bottom edge. It starts 6 points below the top
 of the strip. Pane frames use the related 10-point radius, with a 9-point clipped
@@ -329,40 +349,64 @@ inner edge beneath their 1-point rim. Only their frame changes: terminal content
 input, selection and status typography remain the terminal's own. AppKit mirrors
 these shared geometry values; Flutter uses AppDesktop directly.
 
-**Pane header** — the right-hand controls read agent, model, split down, split right,
-zoom, close. Use the rounded 14-point `AppPaneIcon` split/zoom variants and the
-shared 12-point close glyph in 28-point targets. The close target sits 4 points
+**Pane header** — terminal panes show agent, model and close at every width.
+Splitting is revealed at the pane edges; zoom remains available through menus,
+command search and shortcuts. Keep split, add and zoom icons out of the header.
+
+Agent and model share `PaneHeaderTextButton`: plain 13-point workspace text,
+regular weight, matching padding and a 28-point target height. No pill, border or
+chevron. Both brighten on hover and keyboard focus without changing weight or
+geometry; use a hand cursor and Change agent / Change model tooltips. Their labels
+rest at 75% foreground (85% with Increase Contrast). Both selectors use 8-point
+horizontal padding, matching the close glyph's inset within its target. Their
+targets meet without an extra gap, leaving 16 points between adjacent contents.
+The agent keeps its natural width up to 140 points; the model uses the remaining
+selector space. Long names truncate with an ellipsis and show their full text on
+hover, without wrapping or reducing the font size. Remove a coding-agent logo
+that repeats the agent selector; keep a distinct domain-harness mark on the left.
+The session name and its activity/status remain on the left.
+
+Use the shared 12-point close glyph in a 28-point target, sitting 4 points
 inside the header's trailing edge. Resting ink is 45%; hover and keyboard focus
 brighten the glyph without a fill, border, or movement. Keep the controls on one
-line; model and title text truncate before icon targets shrink. Zoom becomes
-Restore while enlarged. Unavailable controls stay in place with disabled ink.
-Split opens New Harness directly, inheriting the clicked pane's agent, machine,
+line; the session title yields first, then the model truncates while the agent
+retains readable identity. Never shrink the close target.
+
+Hovering within 44 points of the right or bottom edge reveals one 32-point
+target, inset 8 points and centered along that edge. Use the rounded
+`AppPaneIcon` with `AppPaneSymbol.splitRight` or `splitDown` at 16 points, not a plus. Keep the header
+and corners clear and the resize gaps unobstructed. Hide edge controls while
+dragging, zoomed, in a phone's single-pane view, or unable to add a pane. Hover
+does not focus, resize or rebuild the terminal. Split opens New Harness directly,
+inheriting the clicked pane's agent, machine,
 and project; the pane is created only after submission. Clicking the model focuses that
-pane and opens the same Models picker as Cmd-:. The agent name and chevron open the shared Agents picker (`&` in Cmd-P). Selection stays bound to that
+pane and opens the same Models picker as Cmd-:. The agent name opens the shared Agents picker (`&` in Cmd-P). Selection stays bound to that
 harness; a closed or replaced pane cannot receive a stale selection. Long model
 names truncate and retain their full-name tooltip. Keep effort in the terminal,
 and keep the icon targets clear at narrow widths. Tab-strip close behavior is
 separate and remains hover-revealed.
 
-**Focused workspace footer** — running harness count and attributable CPU/RAM/GPU/SSD across
-connected owned machines, then subscription allowance used at the left; focused machine, project,
-branch and PR at the right. Each context field keeps its action. Harness count and every resource
-metric select the existing Harness Monitor tab or create it if absent. Process-tree CPU uses 100%
-per core; GPU sums reported process utilization, which can exceed 100%. Shared servers count once. Unsupported GPU
-attribution stays unknown. RAM/SSD are absolute, rounded whole MB/GB; shared/nested workspace
-folders count once per machine. See [workspace status bar](workspace-status-bar.md) for accounting.
-Titles stay quiet when several panes are visible. Do not repeat branches in pane headers or
-model/effort in the footer. Context honors the selected status face, fields, colors and shell/
-Powerline treatment. Recent-harness context uses its monochrome presentation.
-Use whole figures, one space between title and value, and 2.5 character cells between parts:
-`Harnesses 118   CPU 20%   RAM 10 GB   GPU 10%   SSD 1 GB   Claude 100%   Codex 90%`.
-Labels and numbers use neutral readable ink; no severity color, dot separators, trailing plus or
-decimal figures. Harness metrics show — when unavailable and ≥ for partial totals. Subscription
-figures mean allowance used and preserve Models' deduplicated accounts, limiting window and
-freshness rules. Hover explains scope and units. Clicking subscription usage opens Subscriptions
-without switching a model. Narrow widths hide complete groups: SSD, then GPU, then RAM.
+**Focused workspace footer** — `Harnesses N`, `Machines N`, `Models N`, then subscription
+icons with remaining percentages at the left; focused machine, project, branch and PR at the right.
+Harnesses counts connected owned sessions, including idle and starting sessions, and opens Harness
+Monitor. Machines counts linked owned computers, including this computer, and opens the `@` picker.
+Models counts distinct installed local model variants across those computers, running or stopped,
+and opens local models. Exclude downloadable catalog, API, subscription and shared-grid rows.
+The picker and footer share cached model inventory; background reads never force a disk scan,
+set up Grid, download models or create harnesses. CPU/RAM/GPU/storage remain in Monitor.
 
-Companion and sharing controls follow usage. See the full [status bar contract](workspace-status-bar.md).
+Each distinct subscription account has its own authentic provider icon and remaining percentage.
+Account identity, machines, limiting window, freshness and resets stay in its tooltip; clicking
+selects that subscription in Models. Percentages use neutral ink above 20%, `usageLow` amber at
+6–20%, and `usageCritical` red at 5% or less. Keep positive fractions as `<1%`, zero as `0%`,
+unknown as `—`. Color only the value; retain provider artwork. Omit signed-out accounts. Compact
+widths preserve whole account controls and expose overflow through `+N`.
+
+Count labels use neutral readable ink. Preserve focused context actions and the selected status face,
+fields, colors and shell/Powerline treatment. Companion and sharing controls follow the count;
+the companion's fixed gutter replaces the preceding control's trailing padding. See the
+[status bar contract](workspace-status-bar.md). Do not repeat branches in pane headers or model/effort
+in the footer. Recent-harness context uses its monochrome presentation.
 
 **Settings, Store and supporting screens** — the same type, colors and controls
 at page scale. Related settings use grouping and whitespace. Existing artwork,

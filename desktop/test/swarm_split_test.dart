@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:harness/core/models.dart';
+import 'package:harness/shared/theme/app_pane_icon.dart';
 import 'package:harness/state/new_harness.dart';
 import 'package:harness/state/pane_arrangement.dart';
 import 'package:harness/state/pane_preset.dart';
@@ -277,77 +278,107 @@ void main() {
       });
     }
 
-    testWidgets('header creates $direction from the clicked, unfocused pane', (
-      tester,
-    ) async {
-      final (app, connection) = _splitApp();
-      final frames = <TerminalBinaryFrame>[];
-      final first = app.adoptSessionForTest(terminal('a0', frames));
-      final neighbor = app.adoptSessionForTest(terminal('a1', frames));
-      app.focusPane(neighbor.id);
-      await mountWide(tester, app);
-      tester.view.physicalSize = const Size(3000, 1800);
-      await tester.pump();
-      final target = find.byKey(first.cellKey);
-      final rect = tester.getRect(target);
-      final neighborRect = tester.getRect(find.byKey(neighbor.cellKey));
-      final view = find.descendant(
-        of: target,
-        matching: find.byType(TerminalView),
-      );
-      final retained = tester.element(view);
-      final previousFocus = FocusManager.instance.primaryFocus;
-      final button = find.descendant(
-        of: target,
-        matching: find.byKey(ValueKey('pane-split-$direction')),
-      );
-      expect(button.hitTestable(), findsOneWidget);
-      final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
-      await mouse.addPointer(location: rect.center);
-      await mouse.moveTo(tester.getCenter(button));
-      await tester.pump();
-      expect(app.focusedPaneId, neighbor.id);
-      expect(FocusManager.instance.primaryFocus, same(previousFocus));
-      expect(tester.element(view), same(retained));
-      expect(tester.getRect(target), rect);
-      await tester.tap(button);
-      await tester.pump();
-      expect(_form(tester).split?.paneId, first.id);
-      expect(_form(tester).engine, 'claude');
-      expect(_form(tester).project.folder, '/work/a0');
-      expect(app.focusedPaneId, first.id);
-      expect(connection.creation, isNull);
-      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
-      await tester.pump();
-      expect(app.panes, [first, neighbor]);
-      expect(tester.getRect(target), rect);
-      expect(tester.element(view), same(retained));
-      await tester.sendKeyEvent(LogicalKeyboardKey.arrowRight);
-      await tester.pump(const Duration(milliseconds: 10));
-      expect(frames.single.streamId, first.session!.streamId);
-      frames.clear();
-      await tester.tap(button);
-      await tester.pump();
-      await _create(tester, connection);
-      expect(app.panes.map((pane) => pane.agentId), ['a0', 'created', 'a1']);
-      expect(tester.element(view), same(retained));
-      expect(tester.getRect(find.byKey(neighbor.cellKey)), neighborRect);
-      final splitRect = tester.getRect(target);
-      final addedRect = tester.getRect(find.byKey(app.panes[1].cellKey));
-      if (axis == PaneResizeAxis.x) {
-        expect(addedRect.left, greaterThan(splitRect.right));
-        expect(addedRect.top, splitRect.top);
-        expect(addedRect.height, splitRect.height);
-      } else {
-        expect(addedRect.top, greaterThan(splitRect.bottom));
-        expect(addedRect.left, splitRect.left);
-        expect(addedRect.width, splitRect.width);
-      }
-      expect(frames, isEmpty);
-      await mouse.removePointer();
-      await tester.pumpWidget(const SizedBox());
-      app.dispose();
-    });
+    testWidgets(
+      'hovering the $direction edge splits with its project and keeps the terminal',
+      (tester) async {
+        final (app, connection) = _splitApp();
+        final frames = <TerminalBinaryFrame>[];
+        final first = app.adoptSessionForTest(terminal('a0', frames));
+        final neighbor = app.adoptSessionForTest(terminal('a1', frames));
+        app.focusPane(neighbor.id);
+        await mountWide(tester, app);
+        tester.view.physicalSize = const Size(3000, 1800);
+        await tester.pump();
+        final target = find.byKey(first.cellKey);
+        final rect = tester.getRect(target);
+        final neighborRect = tester.getRect(find.byKey(neighbor.cellKey));
+        final view = find.descendant(
+          of: target,
+          matching: find.byType(TerminalView),
+        );
+        final retained = tester.element(view);
+        final splitButton = find.descendant(
+          of: target,
+          matching: find.byKey(ValueKey('pane-split-$direction')),
+        );
+        expect(splitButton.hitTestable(), findsNothing);
+        final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
+        await mouse.addPointer(location: rect.center);
+        final edge = axis == PaneResizeAxis.x
+            ? Offset(rect.right - 2, rect.center.dy)
+            : Offset(rect.center.dx, rect.bottom - 2);
+        await mouse.moveTo(edge);
+        await tester.pump(const Duration(milliseconds: 150));
+        expect(splitButton.hitTestable(), findsOneWidget);
+        expect(
+          tester
+              .widget<AppPaneIcon>(
+                find.descendant(
+                  of: splitButton,
+                  matching: find.byType(AppPaneIcon),
+                ),
+              )
+              .symbol,
+          axis == PaneResizeAxis.x
+              ? AppPaneSymbol.splitRight
+              : AppPaneSymbol.splitDown,
+        );
+        expect(app.focusedPaneId, neighbor.id);
+        expect(tester.element(view), same(retained));
+        expect(tester.getRect(target), rect);
+        expect(frames, isEmpty);
+        await mouse.moveTo(rect.center);
+        await tester.pump(const Duration(milliseconds: 150));
+        expect(splitButton.hitTestable(), findsNothing);
+        await mouse.moveTo(edge);
+        await tester.pump(const Duration(milliseconds: 150));
+        await mouse.moveTo(tester.getCenter(splitButton));
+        await tester.pump();
+        expect(splitButton.hitTestable(), findsOneWidget);
+        await mouse.down(tester.getCenter(splitButton));
+        await mouse.up();
+        await tester.pump();
+        expect(_form(tester).split?.paneId, first.id);
+        expect(_form(tester).engine, 'claude');
+        expect(_form(tester).project.folder, '/work/a0');
+        expect(app.focusedPaneId, first.id);
+        expect(connection.creation, isNull);
+        // Opening schedules focus after layout. Deliver it before Escape so
+        // the key reaches the composer rather than the previous terminal.
+        await tester.pump();
+        await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+        await tester.pump();
+        expect(find.byType(NewHarnessForm), findsNothing);
+        expect(app.panes, [first, neighbor]);
+        expect(tester.getRect(target), rect);
+        expect(tester.element(view), same(retained));
+        await tester.sendKeyEvent(LogicalKeyboardKey.arrowRight);
+        await tester.pump(const Duration(milliseconds: 10));
+        expect(frames.single.streamId, first.session!.streamId);
+        frames.clear();
+        await chord(tester, shortcut);
+        await tester.pump();
+        await _create(tester, connection);
+        expect(app.panes.map((pane) => pane.agentId), ['a0', 'created', 'a1']);
+        expect(tester.element(view), same(retained));
+        expect(tester.getRect(find.byKey(neighbor.cellKey)), neighborRect);
+        final splitRect = tester.getRect(target);
+        final addedRect = tester.getRect(find.byKey(app.panes[1].cellKey));
+        if (axis == PaneResizeAxis.x) {
+          expect(addedRect.left, greaterThan(splitRect.right));
+          expect(addedRect.top, splitRect.top);
+          expect(addedRect.height, splitRect.height);
+        } else {
+          expect(addedRect.top, greaterThan(splitRect.bottom));
+          expect(addedRect.left, splitRect.left);
+          expect(addedRect.width, splitRect.width);
+        }
+        expect(frames, isEmpty);
+        await mouse.removePointer();
+        await tester.pumpWidget(const SizedBox());
+        app.dispose();
+      },
+    );
   }
 
   testWidgets('zoom restores the layout and keeps terminal renderers alive', (
@@ -362,26 +393,29 @@ void main() {
     final view = find.descendant(of: pane, matching: find.byType(TerminalView));
     final retained = tester.element(view);
     final rect = tester.getRect(pane);
-    final zoom = find.descendant(
-      of: pane,
-      matching: find.byKey(const ValueKey('pane-zoom')),
-    );
-    await tester.tap(zoom);
+    app.focusPane(first.id);
+    await tester.pump();
+    await chord(tester, LogicalKeyboardKey.enter);
     await tester.pump();
     expect(app.focusedPaneId, first.id);
     expect(app.zoomedPaneId, first.id);
     expect(tester.element(view), same(retained));
     expect(tester.getSize(pane).width, greaterThan(rect.width));
-    final split = find.descendant(
-      of: pane,
-      matching: find.byKey(const ValueKey('pane-split-right')),
+    final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
+    final zoomed = tester.getRect(pane);
+    await mouse.addPointer(location: zoomed.center);
+    await mouse.moveTo(Offset(zoomed.right - 2, zoomed.center.dy));
+    await tester.pump(const Duration(milliseconds: 150));
+    expect(
+      find.byKey(const ValueKey('pane-split-right')).hitTestable(),
+      findsNothing,
     );
-    expect(tester.widget<PaneHeaderButton>(split).onPressed, isNull);
-    await tester.tap(split);
+    expect(find.byKey(const ValueKey('pane-zoom')), findsNothing);
+    await chord(tester, LogicalKeyboardKey.keyR);
     await tester.pump();
     expect(find.byType(NewHarnessForm), findsNothing);
     expect(connection.creation, isNull);
-    await tester.tap(zoom);
+    await chord(tester, LogicalKeyboardKey.enter);
     await tester.pump();
     expect(app.zoomedPaneId, isNull);
     expect(tester.getRect(pane), rect);
@@ -393,6 +427,7 @@ void main() {
     await tester.pump();
     expect(app.panes, [neighbor]);
     expect(neighbor.session, isNotNull);
+    await mouse.removePointer();
     await tester.pumpWidget(const SizedBox());
     app.dispose();
   });
@@ -592,10 +627,12 @@ void main() {
     expect(_form(tester).split?.paneId, pane.id);
     expect(_form(tester).project.folder, '/work/checkout');
     expect(app.panes, [pane]);
+    await tester.pump();
     await tester.sendKeyEvent(LogicalKeyboardKey.escape);
     await tester.pump();
     await tester.pump();
     expect(find.byType(AlertDialog), findsNothing);
+    expect(find.byType(NewHarnessForm), findsNothing);
     expect(app.panes, [pane]);
     expect(connection.calls, isNot(contains('agent_create')));
     expect(frames, isEmpty);

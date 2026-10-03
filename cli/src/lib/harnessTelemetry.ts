@@ -2,9 +2,14 @@ import { execFile } from 'node:child_process'
 import { readFile, realpath, stat } from 'node:fs/promises'
 import { isAbsolute } from 'node:path'
 import { promisify } from 'node:util'
+import { readMacProcessGpu, type MacProcessGpu } from './macosProcessGpu.js'
+
+import type { RegisteredSession } from './registry.js'
+import { sessionCheckpoints } from './sessionCheckpoint.js'
+import { sessionDataBytes } from './purgeAgentService.js'
 
 const exec = promisify(execFile)
-export type ProcessTelemetry = { readBytes: number | null; writeBytes: number | null; gpuMemoryBytes: number | null; gpuPercent?: number | null }
+export type ProcessTelemetry = { readBytes: number | null; writeBytes: number | null; gpuMemoryBytes: number | null; gpuPercent?: number | null; macGpu?: MacProcessGpu }
 const count = (value: string | undefined) => value != null && /^\d+$/.test(value.trim()) && Number.isSafeInteger(Number(value)) ? Number(value) : null
 
 export function parseProcessIo(text: string): Pick<ProcessTelemetry, 'readBytes' | 'writeBytes'> {
@@ -60,9 +65,14 @@ async function processGpus(): Promise<{ memory: Map<number, number | null>; usag
   } catch { gpuRetryAfter = Date.now() + 60_000; return empty() }
 }
 
-/** Only owned processes are read. No privilege escalation or whole-machine fallback. */
+/** Only owned processes are returned. No privilege escalation or whole-machine fallback. */
 export async function readProcessTelemetry(pids: number[]): Promise<Map<number, ProcessTelemetry>> {
   if (!pids.length) return new Map()
+  if (process.platform === 'darwin') {
+    const gpu = await readMacProcessGpu(pids)
+    return new Map(pids.map(pid => [pid, { readBytes: null, writeBytes: null, gpuMemoryBytes: null,
+      macGpu: gpu.get(pid) ?? { sampledAt: performance.now(), contexts: null } }]))
+  }
   const gpu = await processGpus(), result = new Map<number, ProcessTelemetry>()
   let index = 0
   await Promise.all(Array.from({ length: Math.min(8, pids.length) }, async () => {
@@ -77,13 +87,15 @@ export async function readProcessTelemetry(pids: number[]): Promise<Map<number, 
   return result
 }
 
-export type StorageReading = { workspaceBytes: number | null; workspacePath: string | null; workspaceSampledAt: string | null; transcriptBytes: number | null }
-type Target = { agentId: string; cwd?: string | null; transcriptPath?: string | null }
+export type StorageReading = { workspaceBytes: number | null; workspacePath: string | null; workspaceSampledAt: string | null; transcriptBytes: number | null; sessionBytes: number | null }
+type Target = Partial<RegisteredSession> & { agentId: string }
+type StorageDeps = { now(): number; size(path: string): Promise<number | null>; transcript(path: string): Promise<number | null>; canonical(path: string): Promise<string>; session?(agent: Target): Promise<number | null> }
 
 /** Directory sizes are shared by path and read in a bounded queue, at most once
  * a minute. A process sample never waits for du, and failure is not a zero. */
-export function createHarnessStorageReader(deps = {
+export function createHarnessStorageReader(deps: StorageDeps = {
   now: Date.now,
+  session: async agent => agent.engine ? sessionDataBytes(agent as RegisteredSession, sessionCheckpoints) : null,
   size: async (path: string): Promise<number | null> => {
     if (!isAbsolute(path) || path === '/') return null
     const { stdout } = await exec('du', ['-sk', '-P', path], { timeout: 2500, maxBuffer: 4096 })
@@ -94,6 +106,7 @@ export function createHarnessStorageReader(deps = {
   canonical: async (path: string): Promise<string> => realpath(path),
 }) {
   const cache = new Map<string, { at: number; bytes: number | null; pending: boolean }>()
+  const sessionCache = new Map<string, { at: number; bytes: number | null; pending: boolean }>()
   let active = 0
   const queue: Array<() => Promise<void>> = []
   function drain() {
@@ -102,7 +115,10 @@ export function createHarnessStorageReader(deps = {
       void queue.shift()!().finally(() => { active--; drain() })
     }
   }
-  return async (agents: readonly Target[]): Promise<Map<string, StorageReading>> => {
+  return async (agents: readonly Target[], invalidate = false): Promise<Map<string, StorageReading>> => {
+    // A confirmed deletion changes ancestor totals too. Drop queued work and cached values;
+    // the two already-running probes finish into detached entries, never into fresh readings.
+    if (invalidate) { cache.clear(); sessionCache.clear(); queue.length = 0 }
     const canonical = new Map(await Promise.all([...new Set(agents.map(a => a.cwd).filter((p): p is string => !!p && isAbsolute(p) && p !== '/'))]
       .map(async path => [path, await deps.canonical(path).catch(() => path)] as const)))
     const paths = new Set(canonical.values())
@@ -118,6 +134,21 @@ export function createHarnessStorageReader(deps = {
         finally { target.at = deps.now(); target.pending = false }
       })
     }
+    const sessionKey = (agent: Target) => JSON.stringify([agent.agentId, agent.engine, agent.sessionId, agent.transcriptPath, agent.codexHome, agent.hermesHome])
+    const sessionKeys = new Set(agents.map(sessionKey))
+    for (const [key, entry] of sessionCache) if (!sessionKeys.has(key) && !entry.pending) sessionCache.delete(key)
+    if (deps.session) for (const agent of agents) {
+      const key = sessionKey(agent)
+      let entry = sessionCache.get(key)
+      if (entry?.pending || entry && deps.now() - entry.at < 60_000) continue
+      if (!entry) { entry = { at: 0, bytes: null, pending: false }; sessionCache.set(key, entry) }
+      entry.pending = true
+      const target = entry
+      queue.push(async () => {
+        try { target.bytes = await deps.session!(agent) } catch { target.bytes = null }
+        finally { target.at = deps.now(); target.pending = false }
+      })
+    }
     drain()
     const result = new Map<string, StorageReading>()
     await Promise.all(agents.map(async agent => {
@@ -125,7 +156,7 @@ export function createHarnessStorageReader(deps = {
       const workspace = workspacePath ? cache.get(workspacePath) : null
       const transcriptBytes = agent.transcriptPath ? await deps.transcript(agent.transcriptPath).catch(() => null) : null
       result.set(agent.agentId, { workspaceBytes: workspace?.bytes ?? null, workspacePath,
-        workspaceSampledAt: workspace?.at ? new Date(workspace.at).toISOString() : null, transcriptBytes })
+        workspaceSampledAt: workspace?.at ? new Date(workspace.at).toISOString() : null, transcriptBytes, sessionBytes: sessionCache.get(sessionKey(agent))?.bytes ?? null })
     }))
     return result
   }
