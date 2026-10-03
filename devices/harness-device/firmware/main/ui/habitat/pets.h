@@ -40,12 +40,14 @@ typedef struct {
 typedef struct {
     const char *engine;                          // focus.c ENGINES name: "claude", "codex"
     uint16_t w, h;                               // frame size
-    const ht_icon_t *frames;
+    const ht_icon_t *frames;                     // RGB565 + alpha8 frames; NULL when `cells` holds them
     const ht_pet_step_t (*loops)[HT_PET_STEPS];  // [HT_PET_STATES][HT_PET_STEPS]
     const uint16_t *step_ms;                     // [HT_PET_STATES]
     const ht_pet_scene_t *working_scene;         // NULL: the small pet and the centred working line
     const ht_pet_scene_t *listening_scene;       // NULL: the voice screen's meter
     const ht_pet_scene_t *sending_scene;         // NULL: the voice screen's three sparkles
+    const ht_cell_frame_t *cells;                // non-NULL (Muse): the small pet as cell frames (cell 1, w x h), drawn
+                                                 // with ht_cell_sprite in place of frames[]; same indices, same place
 } ht_pet_t;
 extern const ht_pet_t ht_pets[];
 extern const unsigned ht_pet_count;
