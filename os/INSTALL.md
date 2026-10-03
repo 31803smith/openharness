@@ -1,6 +1,6 @@
 # Install Harness on a ThinkPad
 
-These instructions are for **0.1.0-preview.5**, using a Mac to prepare the USB.
+These instructions are for **0.1.0-preview.6**, using a Mac to prepare the USB.
 The USB starts a live session. Installation begins only when you choose **Install**
 in the installer; it erases the entire selected disk.
 
@@ -21,20 +21,20 @@ compute still need testing on the actual hardware.
 
 ## 2. Download and verify on the Mac
 
-From the [preview 5 release](https://github.com/autonomous-ai/openharness/releases/tag/os-v0.1.0-preview.5),
+From the [preview 6 release](https://github.com/autonomous-ai/openharness/releases/tag/os-v0.1.0-preview.6),
 download both files into the same folder:
 
-- `harness-0.1.0-preview.5-x86_64.iso`
-- `harness-0.1.0-preview.5-x86_64.iso.sha256`
+- `harness-0.1.0-preview.6-x86_64.iso`
+- `harness-0.1.0-preview.6-x86_64.iso.sha256`
 
 If they are in Downloads, open Terminal and run:
 
 ```sh
 cd ~/Downloads
-shasum -a 256 -c harness-0.1.0-preview.5-x86_64.iso.sha256
+shasum -a 256 -c harness-0.1.0-preview.6-x86_64.iso.sha256
 ```
 
-The result must say `harness-0.1.0-preview.5-x86_64.iso: OK`.
+The result must say `harness-0.1.0-preview.6-x86_64.iso: OK`.
 If it does not, download the files again before flashing.
 
 ## 3. Flash the USB
@@ -67,6 +67,25 @@ If the USB is absent, try another USB port and check that USB boot is enabled.
 The welcome screen offers **Enter — Install Harness** and **T — Try without
 installing**. No account or password is needed to use the live session. Work in
 the USB session is temporary and is not copied during installation.
+
+### Trying an older Intel Mac
+
+Intel Macs with a 64-bit EFI and no T2 chip are an experimental target. The USB
+includes optional support for selected Broadcom radios, but no physical Mac
+model has passed our complete hardware checks yet. This image is not the
+Apple Silicon or T2 installation path. Core 2 CPUs cannot run bundled OpenCode;
+Try explains that limitation before attempting to start it.
+
+Shut down, insert the USB, then hold **Option (⌥)** while turning on the Mac.
+Choose the external **EFI Boot** entry. Apple's
+[startup-key guide](https://support.apple.com/en-us/102603) describes that menu.
+Start with **T — Try without installing** and check built-in keyboard, trackpad,
+Wi-Fi, brightness and sound before choosing the internal disk. Installation uses
+the same form below and erases the whole selected disk, including macOS.
+
+For a hardware report, open a terminal and run `harness hardware`. Keep that
+report with the Mac's model and the behavior you observed. It contains device
+IDs and driver names, without serial numbers or Wi-Fi passwords.
 
 ## 5. Install
 

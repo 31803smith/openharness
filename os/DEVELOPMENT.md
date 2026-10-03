@@ -5,8 +5,8 @@ boot changes. Reflashing is a release/install test, not the intended way to try
 every interface fix. Keep the development tools on the build/test host; the
 installed OS keeps the same minimal interface.
 
-This plan was recorded on October 3, 2026. Preview 4 and its optional small-package
-update are published. Native update/rollback acceptance passed; remote-launcher
+This plan was recorded on October 3, 2026. Preview 5 and its small bootstrap bundle
+and update channel are published. Native update/rollback acceptance passed; remote-launcher
 argument tests passed but remote display/SSH interaction is still unverified.
 
 ## Next release priorities
@@ -238,7 +238,41 @@ the small updater; install its separately validated development bundle to add it
 
 Intel Macs and Apple Silicon are both intended OS targets. They share the Harness
 interface and behavior, but need separate platform work. None is claimed as a
-validated Harness OS hardware target by preview 4.
+validated Harness OS hardware target by preview 5.
+
+The next image prepares selected older Broadcom radios by PCI ID, not Mac model.
+BCM4331 (`14e4:4331`) and BCM4360 (`14e4:43a0`) may load the optional wl driver;
+an already working native interface is preserved. BCM43602 and other native
+brcmfmac/brcmsmac devices are outside that selection. The vendor package's broad
+blacklist is overridden so it cannot disable those other drivers.
+
+The live driver is about 2 MB. A separate signed package cache is kept on the
+USB for offline installation; its compiler, DKMS and matching LTS headers are
+installed only when the radio needs them. The cache is removed from every
+installed system. The standard package hooks then rebuild wl on kernel updates.
+The driver bundle is built in a disposable root using the same complete Arch
+snapshot as the image; none of its build packages enter the normal image base.
+This selection happens during a fresh installation. Updating an older installed
+preview adds the device policy and report, but does not silently download driver
+packages. On a connected older installation that needs wl, an agent can first
+complete `sudo hn-os update`, then install `broadcom-wl-dkms linux-lts-headers`
+with pacman from that same snapshot and reboot. A working native interface needs
+neither package.
+
+[Native preparation run 37145711377](https://github.com/autonomous-ai/openharness/actions/runs/37145711377)
+used the exact preview 5 kernel, `6.18.54-1-lts`. Its signed extra closure was
+128.76 MiB. Online package installation/build took 32.831 seconds, then removing
+exactly those packages and reinstalling with networking off took 13.440 seconds.
+The prebuilt module loaded on a fresh 1 GiB USB VM without GCC or DKMS, and hn
+accepted keyboard input. This proves module compatibility and offline package
+availability, not association with a physical access point. The integrated
+candidate image and device-selection policy have their own validation records.
+The Arch wl package is an unmaintained out-of-tree driver; retain its original
+license and prefer a working native driver where available.
+
+`harness hardware` produces a small local JSON report for agents and hardware
+testing. It includes device IDs and current bindings, not serial numbers, SSIDs
+or network addresses. No additional daemon or settings application is needed.
 
 | Target | Approach | Current Harness OS status |
 | --- | --- | --- |
@@ -254,6 +288,8 @@ reached the USB welcome and successfully ran hn, Node and Chromium version
 commands, but OpenCode exited with SIGILL (132). This is an instruction-set
 finding, not physical Mac or full browser validation. Older CPUs need a separately
 validated agent path; do not describe them as ready for the default trial.
+The OS Try action detects this limitation before Wi-Fi setup and explains it,
+instead of launching a binary that immediately fails with an illegal instruction.
 [Bun's executable targets](https://bun.com/docs/bundler/executables) document the
 SSE4.2 baseline used by its compiled runtime.
 
