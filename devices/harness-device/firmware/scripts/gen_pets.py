@@ -12,12 +12,19 @@ steps of 120 ms. Codex's three come from the owner's robot pack (assets/pets/cod
 the pack's 192 x 208 robot frames at one byte per pixel (cell 1) and an overlay sprite (the sandbox bubble, the
 equalizer bubble, the paper plane) drawn after them: 28 steps of 120 ms, 15 steps of 80 ms for each mic level
 0..4, and 15 steps of 140 ms.
+Muse Code: Jolly, Meta Muse's mascot, cut from Meta's own render and from Meta's waving clip
+(assets/pets/muse, exported by mockup/muse_jolly.py; the look is mockup/muse-jolly.html). The small pet is
+the waving clip, 24 frames cropped to their ink box, one loop for all four states. Its three scenes are
+pack scenes like Codex's, from straight-alpha PNG frames at device scale (cell 1): working (headphones, typing
+at the laptop) 8 steps of 140 ms, listening 12 steps of 140 ms for every mic level 0..4, and sending (the clip's
+throw of a paper plane, the plane and its swoosh an overlay sprite) 13 steps of 166 ms with the last one held.
 Each state (idle, working, done, asking) is a loop of 24 steps, each a frame and a vertical offset in
 px, on the Pro daemons' clock. Frames are de-duplicated per pet, so the file holds each pose once and
 the loops index it. Writes main/ui/habitat/pets.c: each pet's frames, loops and step_ms, and the
 registry ht_pets[] / ht_pet_count (declared in pets.h). Frames use the same encoding as
 gen_focus_marks.py: RGB565 in panel order plus alpha8 (0 or 255 only).
 """
+import json
 import math
 import sys
 from pathlib import Path
@@ -573,6 +580,163 @@ def generate_pack_scene(prefix, kind):
     return out, n + on, nbytes + obytes + (len(palette) + len(opal)) * 2
 
 
+# ---- Muse Code's Jolly: PNG frames (assets/pets/muse, straight alpha, device scale) ----
+MUSE = root / 'assets/pets/muse'
+MUSE_SCENES = json.loads((MUSE / 'scenes.json').read_text())
+MUSE_FLY = json.loads((MUSE / 'send.json').read_text())
+MUSE_REST_MS = MUSE_SCENES['rest']['step_ms']
+MUSE_SEND_HOLD = 5        # the sending scene's last step shows this many steps (900 ms asked, 5 x 166 = 830)
+
+
+def muse_frames(folder, alpha_cut=True):
+    """The PNGs of a folder, alpha thresholded at 128 (the dial's alpha is 1 bit; the edge colour is
+    composited over black by the quantiser, so no halo)."""
+    out = []
+    for path in sorted((MUSE / folder).glob('*.png')):
+        im = Image.open(path).convert('RGBA')
+        if alpha_cut:
+            im.putalpha(im.getchannel('A').point(lambda a: 255 if a >= 128 else 0))
+        out.append(im)
+    return out
+
+
+def union_box(frames):
+    boxes = [f.getchannel('A').getbbox() for f in frames]
+    return (min(b[0] for b in boxes), min(b[1] for b in boxes), max(b[2] for b in boxes), max(b[3] for b in boxes))
+
+
+def quantise_pieces(pieces):
+    """Like quantise_robot for images of different sizes (already cropped): per image a grid of palette
+    indices (1..) and 0 where it is transparent or pure black; one <= 255 colour palette for all."""
+    black = [Image.alpha_composite(Image.new('RGBA', p.size, (0, 0, 0, 255)), p).convert('RGB') for p in pieces]
+    strip = Image.new('RGB', (sum(f.width for f in black), max(f.height for f in black)))
+    x = 0
+    for f in black:
+        strip.paste(f, (x, 0))
+        x += f.width
+    pal = strip.quantize(colors=255, method=Image.Quantize.MEDIANCUT)
+    rgb = pal.getpalette()
+    grids, used = [], {}
+    for f, src in zip(black, pieces):
+        q = f.quantize(palette=pal, dither=Image.Dither.NONE)
+        grid = []
+        for qv, a, px in zip(q.get_flattened_data(), src.getchannel('A').get_flattened_data(), f.get_flattened_data()):
+            if not a or px == (0, 0, 0):
+                grid.append(0)
+                continue
+            used.setdefault(qv, len(used) + 1)
+            grid.append(used[qv])
+        grids.append(grid)
+    palette = [(0, 0, 0)] + [tuple(rgb[3 * k:3 * k + 3]) for k in sorted(used, key=used.get)]
+    assert len(palette) <= 256
+    return grids, palette
+
+
+def muse_rest_images():
+    """The small pet: the 24 waving frames over black, cropped to their union ink box (RGBA, alpha 0 / 255)."""
+    frames = muse_frames('rest')
+    box = union_box(frames)
+    out = []
+    for f in frames:
+        rgb = Image.alpha_composite(Image.new('RGBA', f.size, (0, 0, 0, 255)), f).convert('RGB')
+        im = rgb.convert('RGBA')
+        im.putalpha(f.getchannel('A'))
+        out.append(im.crop(box))
+    return out
+
+
+def muse_pet_states():
+    """One waving loop for idle / working / done / asking; identical frames stored once."""
+    ims = muse_rest_images()
+    seen, index = {}, []
+    for i, im in enumerate(ims):
+        index.append(seen.setdefault(im.tobytes(), i))
+    loop = [({'i': index[i]}, 0) for i in range(STEPS)]
+    assert len(ims) == STEPS
+    return (lambda: loop,) * 4, ims
+
+
+MUSE_STATES, MUSE_IMAGES = muse_pet_states()
+MUSE_SIZE = MUSE_IMAGES[0].size
+
+
+def muse_render(cells):
+    return MUSE_IMAGES[cells['i']]
+
+
+def clip_to_glass(im, gx, gy):
+    """The plane's swoosh flies off the left edge: drop the pixels at r >= 229 on the 466 glass (the dial keeps
+    all ink inside r 230; the bezel hides them anyway). `gx`, `gy`: where the image's top-left lands on the glass."""
+    im = im.copy()
+    a = im.getchannel('A')
+    px = a.load()
+    for y in range(im.height):
+        for x in range(im.width):
+            if (gx + x - 233) ** 2 + (gy + y - 233) ** 2 >= 229 * 229:
+                px[x, y] = 0
+    im.putalpha(a)
+    return im
+
+
+def generate_muse_scene(prefix, kind):
+    """One Muse scene from its PNG frames: Jolly frames + (sending) the plane overlay, in the ht_pet_scene_t layout."""
+    folder, bias = {'work': ('work', 4), 'listen': ('listen', -6), 'send': ('send/body', 0)}[kind]
+    meta = MUSE_SCENES[{'work': 'work', 'listen': 'listen', 'send': 'send'}[kind]]
+    frames = muse_frames(folder)
+    seq = list(range(len(frames)))
+    levels = LEVELS if kind == 'listen' else 1
+    if kind == 'send':
+        seq += [seq[-1]] * (MUSE_SEND_HOLD - 1)
+    steps = len(seq)
+    box = union_box(frames)
+    w, h = box[2] - box[0], box[3] - box[1]
+    assert w < 256 and h < 256
+    cw, ch = meta['size']
+    assert frames[0].size == (cw, ch)
+    grids, palette = quantise_pieces([f.crop(box) for f in frames])
+    out = [f'static const uint16_t {prefix}_pal[{len(palette)}] = {{' + ','.join(str(0 if k == 0 else rgb565_panel(c)) for k, c in enumerate(palette)) + '};\n']
+    code, order, n, nbytes = cell_frames(prefix, [(w, h, g) for g in grids], f'{prefix}_pal')
+    out += code
+    loop = [order[i] for _ in range(levels) for i in seq]
+    out.append(f'static const uint8_t {prefix}_loop[{len(loop)}] = {{' + ','.join(map(str, loop)) + '};\n')
+    out.append(f'_Static_assert(sizeof {prefix}_loop == {steps} * {"HT_PET_SCENE_LEVELS" if levels > 1 else 1}, "{prefix}: steps x levels");\n')
+    ov_ref, extra, obytes = 'NULL', 0, 0
+    if kind == 'send':
+        fly = muse_frames('send/fly')
+        assert len(MUSE_FLY) == len(frames)
+        pieces, where = [], []
+        for item in MUSE_FLY:
+            if item.get('empty'):
+                pieces.append(None)
+                where.append((0, 0))
+            else:
+                pieces.append(clip_to_glass(fly[item['frame']], meta['centre'][0] - cw // 2 + item['x'],
+                                            meta['centre'][1] - ch // 2 + item['y']))
+                where.append((item['x'] - box[0], item['y'] - box[1]))
+        real = [p for p in pieces if p is not None]
+        ogrids, opal = quantise_pieces(real)
+        it = iter(ogrids)
+        shapes = []
+        for p in pieces:
+            shapes.append((1, 1, [0]) if p is None else (p.width, p.height, next(it)))
+        ov = prefix + '_ov'
+        out.append(f'static const uint16_t {ov}_pal[{len(opal)}] = {{' + ','.join(str(0 if k == 0 else rgb565_panel(c)) for k, c in enumerate(opal)) + '};\n')
+        code, oorder, on, obytes = cell_frames(ov, shapes, f'{ov}_pal')
+        out += code
+        oloop = [oorder[i] for i in seq]
+        at = [where[i] for i in seq]
+        out.append(f'static const uint8_t {ov}_loop[{len(oloop)}] = {{' + ','.join(map(str, oloop)) + '};\n')
+        out.append(f'static const int16_t {ov}_at[{len(at)}][2] = {{' + ','.join(f'{{{x},{y}}}' for x, y in at) + '};\n')
+        out.append(f'static const ht_pet_overlay_t {ov} = {{{ov}_frames,{ov}_loop,{ov}_at}};\n')
+        ov_ref, extra, obytes = '&' + ov, on, obytes + len(opal) * 2
+    # The scene's canvas centre lands on the glass at meta['centre']; focus.c centres the ink box (plus `bias`).
+    x0 = meta['centre'][0] - cw // 2 + box[0]
+    y0 = meta['centre'][1] - ch // 2 + box[1]
+    dx, dy = x0 - (466 - w) // 2, y0 - (233 - h // 2 + bias)
+    out.append(f'static const ht_pet_scene_t {prefix} = {{{w},{h},{prefix}_frames,{prefix}_loop,{steps},{meta["step_ms"]},{ov_ref},{dx},{dy}}};\n')
+    return out, n + extra, nbytes + obytes + len(palette) * 2
+
+
 def rgb565_panel(rgb):
     r, g, b = rgb
     v = ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3)
@@ -595,6 +759,7 @@ def emit(name, img):
 PETS = (
     ('claude', 'claude', (W, H), (idle, working, done, asking), render, STEP_MS),
     ('codex', 'codex', (XW, XH), (xidle, xworking, xdone, xasking), xrender, XSTEP_MS),
+    ('muse', 'muse', MUSE_SIZE, MUSE_STATES, muse_render, (MUSE_REST_MS,) * 4),
 )
 
 
@@ -658,6 +823,7 @@ SCENES = {
                ('claude_listen', listening_loop, SCENE_LISTEN, LEVELS),
                ('claude_send', sending_loop, SCENE_SEND, 1)),
     'codex': (('codex_work', 'work'), ('codex_listen', 'listen'), ('codex_send', 'send')),
+    'muse': (('muse_work', 'mwork'), ('muse_listen', 'mlisten'), ('muse_send', 'msend')),
 }
 
 
@@ -679,7 +845,10 @@ def generate():
             if not spec:
                 refs_to.append('NULL')
                 continue
-            if spec[1] in ('work', 'listen', 'send'):
+            if spec[1] in ('mwork', 'mlisten', 'msend'):
+                sprefix = spec[0]
+                code, n, nbytes = generate_muse_scene(sprefix, spec[1][1:])
+            elif spec[1] in ('work', 'listen', 'send'):
                 sprefix = spec[0]
                 code, n, nbytes = generate_pack_scene(sprefix, spec[1])
             else:

@@ -547,7 +547,7 @@ static void focus_face(void)
         f.activity = ""; f.elapsed = 0;
         static const char *const resting[] = {"Let's build it", "Do anything", "What's next?",
             "Ready when you are", "Tap to talk", "Say the word", "Make it happen", "Start something",
-            "Hold to switch tabs", "Tap the name to switch"};
+            "Hold to switch tabs", "Tap the name to switch panes"};
         char first[64] = "";
         const char *names[] = {"Payments refactor", "Landing page", "Deploy firmware", "Docs sweep",
                                "Bug triage", "Release notes"};
@@ -602,8 +602,8 @@ static void focus_face(void)
                 if (!known && kinds < 10) snprintf(seen[kinds++], sizeof seen[0], "%s", said);
             }
             assert(kinds >= 5);
-            // The teaching lines come up more (owner, 2026-10-03): "Tap to talk" is listed 6 times of 18,
-            // "Hold to switch tabs" 3, "Tap the name to switch" 2, the rest once — and still never twice running.
+            // The teaching lines come up more (owner, 2026-10-03): "Tap to talk" is listed 10 times of 27,
+            // "Hold to switch tabs" 5, "Tap the name to switch panes" 5, the rest once — never twice running.
             int talk = 0, tabs = 0, name = 0, other = 0;
             for (int visit = 0; visit < 900; visit++) {
                 f.activity = "Working"; f.elapsed = 3; f.clock_ms = 7u + (uint32_t)visit * 613u;
@@ -619,10 +619,10 @@ static void focus_face(void)
                 snprintf(last, sizeof last, "%s", said);
                 if (!strcmp(said, "Taptotalk")) talk++;
                 else if (!strcmp(said, "Holdtoswitchtabs")) tabs++;
-                else if (!strcmp(said, "Tapthenametoswitch")) name++;
+                else if (!strcmp(said, "Tapthenametoswitchpanes")) name++;
                 else other++;
             }
-            assert(talk > tabs && tabs > name && name > other / 7 && talk > 150 && other > 150);
+            assert(talk > tabs && talk > name && tabs > other / 7 * 2 && name > other / 7 * 2 && talk > 200 && other > 60);
             f.clock_ms = 0;
         }
         f.recipient = "Payments refactor";
@@ -728,8 +728,11 @@ static void focus_face(void)
             assert(moves);
         }
         // The working legs change on the next step: 90 ms later is a different frame.
-        assert(frame_at[HT_PET_WORKING][0] != frame_at[HT_PET_WORKING][3]);
-        assert(frame_at[HT_PET_IDLE][0] != frame_at[HT_PET_IDLE][20]);   // the blink
+        // (Muse's Jolly waves one loop for every state: no legs, no blink.)
+        if (strcmp(eng, "muse")) {
+            assert(frame_at[HT_PET_WORKING][0] != frame_at[HT_PET_WORKING][3]);
+            assert(frame_at[HT_PET_IDLE][0] != frame_at[HT_PET_IDLE][20]);   // the blink
+        }
 
         // clock_ms 0, and a sleeping or offline mood, hold idle step 0 whatever the state says.
         ht_character_face_t held[3] = {
@@ -782,8 +785,13 @@ static void focus_face(void)
         {   // the next frame change from step 0 (equal frames are skipped), or nothing without a scene
             const ht_pet_scene_t *sn = pet_of(eng)->sending_scene;
             uint32_t want = 0;
-            for (unsigned i = 1; sn && i <= sn->steps && !want; i++)
-                if (sn->loop[i % sn->steps] != sn->loop[0]) want = i * sn->step_ms;
+            for (unsigned i = 1; sn && i <= sn->steps && !want; i++) {
+                const ht_pet_overlay_t *o = sn->overlay;   // the frame, or the overlay's frame or place
+                unsigned j = i % sn->steps;
+                if (sn->loop[j] != sn->loop[0] || (o && (o->loop[j] != o->loop[0] || o->at[j][0] != o->at[0][0] ||
+                                                         o->at[j][1] != o->at[0][1])))
+                    want = i * sn->step_ms;
+            }
             assert(ht_focus_pet_next_ms(&w, "") == want);
         }
         w.voice = false;
@@ -1032,6 +1040,61 @@ static void focus_face(void)
                 sparks += cs_.runs[i].font == &ht_spark && cs_.runs[i].text[0];
             }
             assert(cs_.count == 11 && sparks == 3);
+        }
+        // Muse (Jolly, from Meta's render and clip): the small pet waves one 24-step loop in every state; working
+        // (8 x 140 ms) and listening (12 x 140 ms, the same frames at every level) have no overlay, sending (13
+        // body steps of 166 ms and the last held) carries the paper plane; ink inside r 230, run counts constant.
+        {
+            const ht_pet_t *mp = pet_of("muse");
+            assert(mp && mp->working_scene && mp->listening_scene && mp->sending_scene);
+            assert(mp->w > 0 && mp->w < 128 && mp->h > 0 && mp->h < 128);
+            for (int st = 1; st < HT_PET_STATES; st++) {
+                assert(mp->step_ms[st] == mp->step_ms[0]);
+                for (int k = 0; k < HT_PET_STEPS; k++) assert(mp->loops[st][k].frame == mp->loops[0][k].frame && !mp->loops[st][k].dy);
+            }
+            assert(mp->step_ms[0] == 217);
+            const ht_pet_scene_t *ms_[3] = {mp->working_scene, mp->listening_scene, mp->sending_scene};
+            assert(!ms_[0]->overlay && !ms_[1]->overlay && ms_[2]->overlay);
+            assert(ms_[0]->steps == 8 && ms_[0]->step_ms == 140 && ms_[1]->steps == 12 && ms_[1]->step_ms == 140);
+            assert(ms_[2]->steps >= 13 && ms_[2]->step_ms == 166);
+            // the sending scene holds its last step and the plane is gone there
+            assert(ms_[2]->loop[ms_[2]->steps - 1] == ms_[2]->loop[ms_[2]->steps - 2]);
+            assert(ms_[2]->overlay->frames[ms_[2]->overlay->loop[ms_[2]->steps - 1]].cols == 1);
+            assert(ms_[2]->overlay->frames[ms_[2]->overlay->loop[0]].cols > 1);
+            static const int mbias_[3] = {4, -6, 0};
+            ht_character_face_t mbase = {.recipient = "Payments refactor", .tab = "", .engine = "muse", .activity = "Coalescing",
+                .elapsed = 34, .status = "", .hint = "", .detail = "", .foreground = 0xffff, .dim = 0x8410, .ink = 0xffff};
+            ht_scene_t ms;
+            for (int kind = 0; kind < 3; kind++) {
+                const ht_pet_scene_t *sc = ms_[kind];
+                assert(sc->frames[0].cell == 1 && !sc->frames[0].palette[0]);
+                unsigned levels = kind == 1 ? HT_PET_SCENE_LEVELS : 1;
+                const int scene_run = kind == 0 ? 1 : 7;
+                for (unsigned level = 0; level < levels; level++)
+                    for (unsigned step = 0; step < sc->steps; step++) {
+                        ht_character_face_t v = mbase;
+                        v.clock_ms = step * sc->step_ms + 1; v.pose.level = level;
+                        if (kind == 0) v.mood = HT_CHARACTER_WORKING;
+                        else { v.voice = true; v.mood = kind == 1 ? HT_CHARACTER_LISTENING : HT_CHARACTER_WORKING; }
+                        ht_scene_clear(&ms, 0); ht_character_face(&ms, &c, &v, 0xffff, ""); only_literata(&ms);
+                        assert(ms.count == 11);
+                        unsigned i = level * sc->steps + step;
+                        const ht_run_t *sr = &ms.runs[scene_run];
+                        assert(sr->sprite.cells == sc->frames[sc->loop[i]].cells && sr->sprite.width == sc->w);
+                        assert(sr->x == (466 - sc->w) / 2 + sc->dx && sr->y == 233 - sc->h / 2 + mbias_[kind] + sc->dy);
+                        ht_raster(&ms, (ht_rect_t){0, 0, HT_WIDTH, HT_HEIGHT}, full);
+                        int ink = 0;
+                        for (int y = 0; y < HT_HEIGHT; y++) for (int xx = 0; xx < HT_WIDTH; xx++)
+                            if (full[y * HT_WIDTH + xx]) {
+                                ink++;
+                                assert((xx - 233) * (xx - 233) + (y - 233) * (y - 233) < 230 * 230);
+                            }
+                        assert(ink > 0);
+                    }
+            }
+            // the listening scene's loop is the same 12 frames at every level
+            for (unsigned level = 1; level < HT_PET_SCENE_LEVELS; level++)
+                for (unsigned step = 0; step < 12; step++) assert(ms_[1]->loop[level * 12 + step] == ms_[1]->loop[step]);
         }
         // THE LISTENING WORD (Claude and Codex): "Listening", Literata Medium 26, green, on the lower arc in the first bar's
         // slot, brightness per letter by rhythm B; 11 runs listening, sending, held and plain.

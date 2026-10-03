@@ -57,18 +57,19 @@ enum { MARK_SIZE = 56, TITLE_BOTTOM = HT_ARC_Y + HT_ARC_CELL_HEIGHT, COL_X = 41,
  * after a turn, on another agent, back from voice — and never the same line twice running (owner,
  * 2026-10-02). It holds while that face stays up, so a redraw never swaps it. Each fits two lines of
  * literata_36 at EMPTY_W. The lines that teach the dial come up more often (owner, 2026-10-03): a line
- * listed k times is k times as likely — "Tap to talk" 6, "Hold to switch tabs" 3, "Tap the name to
- * switch" 2, every other line once.
+ * listed k times is k times as likely — "Tap to talk" 10, "Hold to switch tabs" 5, "Tap the name to
+ * switch panes" 5, every other line once.
  */
 #define TAP_TO_TALK "Tap to talk"
 #define HOLD_FOR_TABS "Hold to switch tabs"
-#define TAP_THE_NAME "Tap the name to switch"
+#define TAP_THE_NAME "Tap the name to switch panes"
 static const char *const RESTING[] = {
     "Let's build it", "Do anything", "What's next?", "Ready when you are",
     "Say the word", "Make it happen", "Start something",
-    TAP_TO_TALK, TAP_TO_TALK, TAP_TO_TALK, TAP_TO_TALK, TAP_TO_TALK, TAP_TO_TALK,
-    HOLD_FOR_TABS, HOLD_FOR_TABS, HOLD_FOR_TABS,
-    TAP_THE_NAME, TAP_THE_NAME,
+    TAP_TO_TALK, TAP_TO_TALK, TAP_TO_TALK, TAP_TO_TALK, TAP_TO_TALK,
+    TAP_TO_TALK, TAP_TO_TALK, TAP_TO_TALK, TAP_TO_TALK, TAP_TO_TALK,
+    HOLD_FOR_TABS, HOLD_FOR_TABS, HOLD_FOR_TABS, HOLD_FOR_TABS, HOLD_FOR_TABS,
+    TAP_THE_NAME, TAP_THE_NAME, TAP_THE_NAME, TAP_THE_NAME, TAP_THE_NAME,
 };
 static struct {
     bool showing;           // the last home face drawn was a resting one
