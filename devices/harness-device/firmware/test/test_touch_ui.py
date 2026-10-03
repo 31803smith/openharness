@@ -351,17 +351,17 @@ static bool title_is(const char *text) {
         if((scene.runs[i].arc==1 || (s.straight_title && scene.runs[i].y==41)) && !strcmp(scene.runs[i].text,text)) return true;
     return false;
 }
-// A Focus page draws in ONE font (owner, 2026-10-02): every visible text run is one of the five Literata faces, except an
+// A Focus page draws in ONE font (owner, 2026-10-02): every visible text run is one of the five Inter faces, except an
 // icon run (the bell and the close cross, FontAwesome in Montserrat, alone in their run) and the voice bars / sparkles
 // (drawn art in ht_wave / ht_spark). No GeistMono, no Geist, no Roboto; a curved run (the name on the upper arc, the
-// status and the Listening word on the lower) is Literata Medium 26. An empty run is an invisible placeholder: its font
+// status and the Listening word on the lower) is Inter Medium 26. An empty run is an invisible placeholder: its font
 // pointer does not count. Then the portrait.
 static void portrait(const char *dir, const char *name);
-static bool focus_literata(const ht_font_t *f) {
-    return f==&ht_lv_literata_20.base || f==&ht_lv_literata_25.base || f==&ht_lv_literata_med_26.base ||
-           f==&ht_lv_literata_30.base || f==&ht_lv_literata_36.base;
+static bool focus_inter(const ht_font_t *f) {
+    return f==&ht_lv_inter_20.base || f==&ht_lv_inter_25.base || f==&ht_lv_inter_med_26.base ||
+           f==&ht_lv_inter_30.base || f==&ht_lv_inter_36.base;
 }
-static void focus_only_literata(void) {
+static void focus_only_inter(void) {
     for (int i = 0; i < scene.count; i++) {
         const ht_run_t *r = &scene.runs[i];
         if (!r->text[0]) continue;
@@ -369,15 +369,15 @@ static void focus_only_literata(void) {
                     (r->font == &ht_lv_montserrat_14.base && !strcmp(r->text, HT_LV_BELL)) ||
                     (r->font == &ht_lv_montserrat_22.base && !strcmp(r->text, HT_LV_CROSS));
         bool art = r->font == &ht_wave || r->font == &ht_spark;
-        assert(focus_literata(r->font) || icon || art);
-        if (r->arc) assert(r->font == &ht_lv_literata_med_26.base);
+        assert(focus_inter(r->font) || icon || art);
+        if (r->arc) assert(r->font == &ht_lv_inter_med_26.base);
     }
 }
 // Every straight text run of a Focus page sits inside the glass (r 230 on its four corners) and a bracket
 // control's label sits inside a rect that is tapped (the hit rects did not move with the font).
 static void focus_inside(void);
 static void portrait_focus(const char *dir, const char *name) {
-    focus_only_literata();
+    focus_only_inter();
     portrait(dir, name);
 }
 static void portrait(const char *dir, const char *name) {
@@ -418,8 +418,8 @@ static void focus_inside(void) {
         }
     }
 }
-// One Focus page: Literata only, inside the glass, then its picture.
-#define FOCUS_PAGE(name) do { scene_take(); focus_only_literata(); focus_inside(); portrait(dir, name); } while (0)
+// One Focus page: Inter only, inside the glass, then its picture.
+#define FOCUS_PAGE(name) do { scene_take(); focus_only_inter(); focus_inside(); portrait(dir, name); } while (0)
 static void carry_return_setup(bool with_text) {
     reset();
     assert(ht_visit_latest(&visit,"reading-return","a",100,visit_emit,NULL));
@@ -1907,7 +1907,7 @@ int main(int argc, char **argv) {
         bool bell = false, one = false;   // the blue pill: the bell, and its count beside it
         for (int i = 0; i < scene.count; i++) {
             if (scene.runs[i].font == &ht_lv_montserrat_14.base && !strcmp(scene.runs[i].text, HT_LV_BELL)) bell = true;
-            if (scene.runs[i].font == &ht_lv_literata_20.base && !strcmp(scene.runs[i].text, "1")) one = true;
+            if (scene.runs[i].font == &ht_lv_inter_20.base && !strcmp(scene.runs[i].text, "1")) one = true;
         }
         assert(bell && one);
         s.active=0; scene_take(); assert(!action_enabled(A_INBOX));
@@ -1987,7 +1987,7 @@ int main(int argc, char **argv) {
         strcpy(s.agents[0].engine, "claude"); strcpy(s.agents[1].engine, "codex");
         fake_ms = 1200; dispatch((action_t){.kind = A_VOICE, .id = "b"}); scene_take();
         assert(s.view == VOICE && !strcmp(s.voice_engine, "codex") && XRUN(ls) && !XBARS());
-        focus_only_literata();
+        focus_only_inter();
         // Level 0 (no mic yet), at the rest of the "Listening" sweep: the word's first step of the next period (1365),
         // or the scene's own next frame, whichever is first. The word is on the lower arc, the bars are not drawn.
         due = s.pet_next_ms; assert(due > 1200 && due <= 1365);
@@ -2026,7 +2026,7 @@ int main(int argc, char **argv) {
             scene_run |= scene.runs[i].sprite.width == ws->w;
             if (scene.runs[i].arc == 2 && scene.runs[i].text[0]) { raised_arc = true; assert(scene.runs[i].fg == ht_rgb(0x00ff2f)); }
             if (scene.runs[i].box.h == 32) { box = true; assert(scene.runs[i].y == 376); }
-            assert(scene.runs[i].font != &ht_lv_literata_30.base || !scene.runs[i].text[0]);
+            assert(scene.runs[i].font != &ht_lv_inter_30.base || !scene.runs[i].text[0]);
         }
         assert(bell && scene_run && raised_arc && box);
         // Ink: the pill is rows 376..407; the arc's green text, under the pill's columns, starts below it
@@ -2060,7 +2060,7 @@ int main(int argc, char **argv) {
         scene_run = false; bool line = false;
         for (int i = 0; i < scene.count; i++) {
             scene_run |= scene.runs[i].sprite.width == ws->w; assert(scene.runs[i].arc != 2);
-            if (scene.runs[i].font == &ht_lv_literata_30.base && !strncmp(scene.runs[i].text, "Running firm", 12)) { line = true; assert(scene.runs[i].y == 334); }
+            if (scene.runs[i].font == &ht_lv_inter_30.base && !strncmp(scene.runs[i].text, "Running firm", 12)) { line = true; assert(scene.runs[i].y == 334); }
         }
         assert(scene_run && line);
         carry.active = false;
@@ -2070,7 +2070,7 @@ int main(int argc, char **argv) {
         bool arc = false;
         for (int i = 0; i < scene.count; i++) {
             if (scene.runs[i].arc == 2) { arc = true; assert(strlen(scene.runs[i].text) <= 26); }
-            assert(scene.runs[i].font != &ht_lv_literata_30.base || !scene.runs[i].text[0]);
+            assert(scene.runs[i].font != &ht_lv_inter_30.base || !scene.runs[i].text[0]);
         }
         assert(arc);
         portrait_focus(dir,"focus-working");   // the Claude scene, its status on the lower arc
@@ -2155,7 +2155,7 @@ int main(int argc, char **argv) {
         int last_text = 0, bell_top = HT_HEIGHT;
         for (int i = 0; i < scene.count; i++) {
             const ht_run_t *r = &scene.runs[i];
-            if (r->font == &ht_lv_literata_30.base && r->text[0]) last_text = r->y + r->font->height;
+            if (r->font == &ht_lv_inter_30.base && r->text[0]) last_text = r->y + r->font->height;
             if (r->box.h && r->box.fill == color(0x006fff) && r->y < bell_top) bell_top = r->y;
         }
         assert(last_text && bell_top < HT_HEIGHT && last_text <= bell_top);
@@ -2308,17 +2308,17 @@ int main(int argc, char **argv) {
             }
             for(int k=0;k<3;k++) if(!strcmp(scene.runs[i].text,names[k])) {
                 rows++;
-                assert(scene.runs[i].font == &ht_lv_literata_30.base && scene.runs[i].fg == color(0xeaeaf0));
+                assert(scene.runs[i].font == &ht_lv_inter_30.base && scene.runs[i].fg == color(0xeaeaf0));
                 assert(scene.runs[i].w <= 360 - 2 - 32);   // the card's room: centred, never cut by the card
                 assert(scene.runs[i].x + scene.runs[i].w / 2 >= 232 && scene.runs[i].x + scene.runs[i].w / 2 <= 234);   // on the card's middle
             }
         }
         assert(rows==3 && rims==1);
-        // The header: "PANES" a letter to a run in Literata 20, grey, spaced 2 at y 62.
+        // The header: "PANES" a letter to a run in Inter 20, grey, spaced 2 at y 62.
         {
             const char *letters = "PANES"; int at = -1, found = 0;
             for(int i=0;i<scene.count;i++) if (scene.runs[i].y == 62 && scene.runs[i].text[0] && !scene.runs[i].text[1]) {
-                assert(scene.runs[i].font == &ht_lv_literata_20.base && scene.runs[i].fg == color(0x4c4c4c));
+                assert(scene.runs[i].font == &ht_lv_inter_20.base && scene.runs[i].fg == color(0x4c4c4c));
                 assert(scene.runs[i].text[0] == letters[found]);
                 if (found) assert(scene.runs[i].x == at);
                 at = scene.runs[i].x + scene.runs[i].w + 2; found++;
@@ -2330,28 +2330,28 @@ int main(int argc, char **argv) {
         tap(2000,233,233); assert(switches==1 && s.view==AGENT);
         view(AGENTS); scene_take(); tap(3000,233,30); assert(s.view==HOME);   // the cross goes back
     }
-    // The names are cut by focus_centred's rules with Literata too: a long and a Vietnamese one end in "..." inside the card.
+    // The names are cut by focus_centred's rules with Inter too: a long and a Vietnamese one end in "..." inside the card.
     reset(); ht_character_select(&character, HT_CHARACTER_FOCUS); s.count=2; s.active=0;
     {
         COPY(s.agents[0].id,"p0"); COPY(s.agents[0].name,"Tri\xe1\xbb\x83n khai firmware m\xe1\xbb\x9bi nh\xe1\xba\xa5t cho m\xe1\xbb\x8di thi\xe1\xba\xbft b\xe1\xbb\x8b");
         COPY(s.agents[1].id,"p1"); COPY(s.agents[1].name,"Nguy\xe1\xbb\x85n V\xc4\x83n \xe1\xba\xbe");
         view(AGENTS); scene_take(); portrait_focus(dir,"focus-panes-vietnamese");
         int seen=0;
-        for(int i=0;i<scene.count;i++) if (scene.runs[i].font == &ht_lv_literata_30.base && scene.runs[i].text[0]) {
+        for(int i=0;i<scene.count;i++) if (scene.runs[i].font == &ht_lv_inter_30.base && scene.runs[i].text[0]) {
             seen++; assert(scene.runs[i].w <= 360 - 2 - 32 && ht_measure(scene.runs[i].font, scene.runs[i].text) == scene.runs[i].w);
             if(!strncmp(scene.runs[i].text,"Tri",3)) { size_t n=strlen(scene.runs[i].text); assert(n>3 && !strcmp(scene.runs[i].text+n-3,"...")); }
         }
         assert(seen==2);
     }
-    // The empty page: the message in Literata 30 on the middle, the header as ever, "Choose a tab" still Montserrat.
+    // The empty page: the message in Inter 30 on the middle, the header as ever, "Choose a tab" still Montserrat.
     reset(); ht_character_select(&character, HT_CHARACTER_FOCUS); s.count=0; s.connected=true;
     {
         view(AGENTS); scene_take(); portrait_focus(dir,"focus-panes-empty");
         bool message=false, pill=false, header=false;
         for(int i=0;i<scene.count;i++) {
-            if(!strcmp(scene.runs[i].text,"No panes in this tab.")) { message = scene.runs[i].font == &ht_lv_literata_30.base && scene.runs[i].y == 180; }
-            if(!strcmp(scene.runs[i].text,"Choose a tab")) pill = scene.runs[i].font == &ht_lv_literata_25.base;
-            if(!strcmp(scene.runs[i].text,"P") && scene.runs[i].y == 62) header = scene.runs[i].font == &ht_lv_literata_20.base;
+            if(!strcmp(scene.runs[i].text,"No panes in this tab.")) { message = scene.runs[i].font == &ht_lv_inter_30.base && scene.runs[i].y == 180; }
+            if(!strcmp(scene.runs[i].text,"Choose a tab")) pill = scene.runs[i].font == &ht_lv_inter_25.base;
+            if(!strcmp(scene.runs[i].text,"P") && scene.runs[i].y == 62) header = scene.runs[i].font == &ht_lv_inter_20.base;
         }
         assert(message && pill && header);
     }
@@ -2379,7 +2379,7 @@ int main(int argc, char **argv) {
     {
         bool green=false;
         for(int i=0;i<scene.count;i++) if(strstr(scene.runs[i].text,"Harness") && scene.runs[i].fg==color(HT_THEME_VOICE) &&
-                                          scene.runs[i].font==&ht_lv_literata_30.base) green=true;
+                                          scene.runs[i].font==&ht_lv_inter_30.base) green=true;
         assert(green);
         bool title=false, arrow=false, done=false;
         for(int i=0;i<scene.count;i++) { title |= !strcmp(scene.runs[i].text,"T") && scene.runs[i].y==62;
@@ -2392,7 +2392,7 @@ int main(int argc, char **argv) {
     reset(); ht_character_select(&character, HT_CHARACTER_FOCUS); s.connected = false; scene_take();
     {
         bool brand = false;
-        for (int i = 0; i < scene.count; i++) brand |= !strcmp(scene.runs[i].text, "Harness") && scene.runs[i].font == &ht_lv_literata_36.base;
+        for (int i = 0; i < scene.count; i++) brand |= !strcmp(scene.runs[i].text, "Harness") && scene.runs[i].font == &ht_lv_inter_36.base;
         assert(brand);
     }
     portrait_focus(dir,"focus-connecting");
@@ -2400,20 +2400,20 @@ int main(int argc, char **argv) {
     dispatch((action_t){.kind=A_TABS}); scene_take();
     {
         bool none = false;
-        for (int i = 0; i < scene.count; i++) none |= !strcmp(scene.runs[i].text, "No tabs yet.") && scene.runs[i].font == &ht_lv_literata_30.base;
+        for (int i = 0; i < scene.count; i++) none |= !strcmp(scene.runs[i].text, "No tabs yet.") && scene.runs[i].font == &ht_lv_inter_30.base;
         assert(none);
     }
     portrait_focus(dir,"focus-empty-tabs");
-    // EVERY PAGE THE FOCUS SKIN CAN SHOW IS LITERATA (owner, 2026-10-02: "all pages, one font"): the question, its
+    // EVERY PAGE THE FOCUS SKIN CAN SHOW IS INTER (owner, 2026-10-02: "all pages, one font"): the question, its
     // choices and the answer review, the controls list, the empty inbox, the machines list, the workspace preview,
-    // the form, the selection pages and the draft. Each is scanned for a face that is not Literata, for ink outside
+    // the form, the selection pages and the draft. Each is scanned for a face that is not Inter, for ink outside
     // r 230, and for a bracket control drawn outside its own hit rect; the mono skins' pages are byte-for-byte the
     // goldens above.
     {
         // Wrapping: whole words at the width, a word wider than the line cut at a letter, every line within it.
         reset(); ht_character_select(&character, HT_CHARACTER_FOCUS);
         {
-            const ht_font_t *body = &ht_lv_literata_25.base;
+            const ht_font_t *body = &ht_lv_inter_25.base;
             const char *words = "The quick brown fox jumps over the lazy dog and keeps running through the whole afternoon without stopping";
             const char *p = words; int lines = 0;
             while (*p) { const char *e = focus_take(&p, body, 200); assert(ht_measure(body, "x") > 0 && e > p - strlen(p) - 200); lines++; }
@@ -2460,7 +2460,7 @@ int main(int argc, char **argv) {
         reset(); ht_character_select(&character, HT_CHARACTER_FOCUS); view(INBOX); s.notice_count = 0; FOCUS_PAGE("lit-inbox-empty");
         {
             bool caught = false;
-            for (int i = 0; i < scene.count; i++) caught |= !strcmp(scene.runs[i].text, "All caught up.") && focus_literata(scene.runs[i].font);
+            for (int i = 0; i < scene.count; i++) caught |= !strcmp(scene.runs[i].text, "All caught up.") && focus_inter(scene.runs[i].font);
             assert(caught);
         }
         reset(); ht_character_select(&character, HT_CHARACTER_FOCUS); view(MACHINES); s.machine_count = 2;

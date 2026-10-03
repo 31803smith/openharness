@@ -681,9 +681,9 @@ static uint16_t color(unsigned rgb)
 #define FACE_CX(w) ((HT_WIDTH - (w)) / 2)
 #define UI_FONT (&ht_mono_28)
 /*
- * THE FOCUS SKIN SETS EVERY PAGE IN LITERATA (owner, 2026-10-02: "all pages, one font, drop Geist").
+ * THE FOCUS SKIN SETS EVERY PAGE IN INTER (owner, 2026-10-02: "all pages, one font, drop Geist").
  *
- * The helpers below are the one seam: on Focus they measure proportional Literata (25 for what the mono
+ * The helpers below are the one seam: on Focus they measure proportional Inter (25 for what the mono
  * 28 cell said, 20 for the mono 20 chrome) instead of counting cells, cut a line that runs long with "…"
  * at whole letters, wrap at words, and keep every line inside the glass (r 230) by clipping it to the
  * chord at its own rows. Hit rects are never touched: a label is drawn inside the rect it was always
@@ -693,10 +693,10 @@ static bool focus_skin(void)
 {
     return character.id == HT_CHARACTER_FOCUS;
 }
-// The Literata face that stands in for a mono cell font on Focus: 20 for mono_20's chrome, 25 for the rest.
+// The Inter face that stands in for a mono cell font on Focus: 20 for mono_20's chrome, 25 for the rest.
 static const ht_font_t *focus_face_for(const ht_font_t *mono)
 {
-    return mono == &ht_mono_20 ? &ht_lv_literata_20.base : &ht_lv_literata_25.base;
+    return mono == &ht_mono_20 ? &ht_lv_inter_20.base : &ht_lv_inter_25.base;
 }
 // The x span a line of `h` px at `y` may ink inside r 230 (its far edge decides).
 static void focus_chord(int y, int h, int *left, int *right)
@@ -780,7 +780,7 @@ static int ui_rows(const char *text, const ht_font_t *mono, int width)
 {
     return focus_skin() ? focus_rows(text, focus_face_for(mono), width) : ht_text_rows(text, mono, width);
 }
-// ht_can_display, in the face the page is set in: on Focus every letter must be one Literata draws.
+// ht_can_display, in the face the page is set in: on Focus every letter must be one Inter draws.
 static bool ui_can_display(const char *text, const ht_font_t *mono, int width, int lines)
 {
     if (!focus_skin()) return ht_can_display(text, mono, width, lines);
@@ -844,11 +844,11 @@ static void center(ht_scene_t *f, int y, const char *t, uint16_t c)
     if (!focus_skin()) { ht_center(f, y, UI_FONT, c, t); return; }
     text_in(f, 40, y, HT_WIDTH - 80, UI_FONT, t, c, true);
 }
-// The wordmark shown while connecting, loading and updating. On Focus it is Literata 36, like every word on the face.
+// The wordmark shown while connecting, loading and updating. On Focus it is Inter 36, like every word on the face.
 static void render_brand(ht_scene_t *f)
 {
     if (character.id == HT_CHARACTER_FOCUS) {
-        const ht_font_t *font = &ht_lv_literata_36.base;
+        const ht_font_t *font = &ht_lv_inter_36.base;
         int w = ht_measure(font, "Harness");
         ht_text(f, (HT_WIDTH - w) / 2, (HT_HEIGHT - font->height) / 2, w, font, FG, BG, "Harness");
         return;
@@ -866,7 +866,7 @@ static void control(ht_scene_t *f, int x, int y, int w, const char *label, actio
     s.hits[n] = (hit_t){{x, y - 14, w, 66}, a, value, enabled};
     uint16_t ink = enabled ? (a == A_STOP_YES ? ERROR : n == s.pressed ? ACCENT : FG) : DIM,
              ground = n == s.pressed ? SEL : BG;
-    if (focus_skin()) {   // Literata, centred in the rect it is tapped in
+    if (focus_skin()) {   // Inter, centred in the rect it is tapped in
         const ht_font_t *font = focus_face_for(UI_FONT);
         focus_put(f, x, y + (UI_FONT->height - font->height) / 2, w, font, ink, ground, label, true);
         return;
@@ -902,8 +902,8 @@ static void footer_control(ht_scene_t *f, int x, int w, const char *label,
     s.hits[n] = (hit_t){{x, (inbox ? 359 : 389), w, inbox ? 80 : 50}, action, 0, enabled};
     // These short footer labels are ASCII. The two targets stay separate and
     // retain a full finger-height hit area even at the bottom of the circle.
-    // Focus sets them in Literata 20, measured; the other skins keep the mono cell.
-    const ht_font_t *font = character.id == HT_CHARACTER_FOCUS ? &ht_lv_literata_20.base : &ht_mono_20;
+    // Focus sets them in Inter 20, measured; the other skins keep the mono cell.
+    const ht_font_t *font = character.id == HT_CHARACTER_FOCUS ? &ht_lv_inter_20.base : &ht_mono_20;
     int width = ht_pfont(font) ? ht_measure(font, label) : (int)strlen(label) * ht_mono_20.width;
     if (inbox && width > 276) width = 276;
     ht_text(f, x + (w - width) / 2, (inbox ? 385 : 399) + (ht_pfont(font) ? (ht_mono_20.height - font->height) / 2 : 0),
@@ -1048,11 +1048,11 @@ static void render_workspace_preview(ht_scene_t *f)
     const char *primary = i==workspace.origin ? "release to stay" : "release to open";
     if (focus_skin()) {
         /*
-         * The same face as command_face, in Literata: the heading, the workspace's name (30, two lines
+         * The same face as command_face, in Inter: the heading, the workspace's name (30, two lines
          * centred, "..." past them), the context row (empty here), the primary line and the way out,
          * each centred in its target and clipped to the glass. The four targets are the same rects.
          */
-        const ht_font_t *small = &ht_lv_literata_20.base, *big = &ht_lv_literata_30.base;
+        const ht_font_t *small = &ht_lv_inter_20.base, *big = &ht_lv_inter_30.base;
         const ht_rect_t *t = ht_command_targets;
         uint16_t ground[4];
         for (int k = 0; k < 4; k++) ground[k] = s.pressed == k ? SEL : BG;
@@ -1079,14 +1079,14 @@ static void render_workspace_preview(ht_scene_t *f)
 /*
  * THE BLUE BELL — the Focus skin's notification pill, as the LVGL firmware drew it: #006fff, fully
  * round, padded 13 px, always 32 px tall: the bell (FontAwesome, montserrat_14, the one icon face) and, 6 px on,
- * the count in Literata 20, each centred vertically in it. Three runs: box, bell, count. It sits at the bottom edge, where the
+ * the count in Inter 20, each centred vertically in it. Three runs: box, bell, count. It sits at the bottom edge, where the
  * microphone was: the top belongs to the curved name. `bell_y` is 400, or 376 where the working scene's status
  * is on the lower arc and the pill steps up to clear it.
  */
 static void focus_bell(ht_scene_t *f, unsigned count, int bell_y)
 {
     enum { BELL_H = 32, BELL_PAD_H = 13, BELL_GAP = 6 };
-    const ht_font_t *bf = &ht_lv_montserrat_14.base, *cf = &ht_lv_literata_20.base;
+    const ht_font_t *bf = &ht_lv_montserrat_14.base, *cf = &ht_lv_inter_20.base;
     char text[16];
     snprintf(text, sizeof text, "%u", count);
     int bw = ht_measure(bf, HT_LV_BELL), cw = ht_measure(cf, text);
@@ -1214,9 +1214,9 @@ static void render_home(ht_scene_t *f)
                                        : (hit_t){{33, 66, 400, 316}, A_PET, 0, true};
 }
 /*
- * FOCUS'S LISTS SPEAK THE AGENT SCREEN'S TYPE (owner, 2026-09-30), in the Kindle style's one font (owner,
- * 2026-10-02: Literata everywhere): Literata 20 for the grey title straight across the top, Literata 30 for a
- * pane or tab row, and the one button the tab pill's own shape in Literata 25, not the terminal skin's mono.
+ * FOCUS'S LISTS SPEAK THE AGENT SCREEN'S TYPE (owner, 2026-09-30), in the one font of the "Kindle dark" layout (owner,
+ * 2026-10-03: Inter, SF Compact's open look-alike, everywhere): Inter 20 for the grey title straight across the top, Inter 30 for a
+ * pane or tab row, and the one button the tab pill's own shape in Inter 25, not the terminal skin's mono.
  */
 static void focus_centred(ht_scene_t *f, int y, int room, const ht_font_t *font, uint16_t ink,
                           uint16_t bg, const char *text)
@@ -1275,13 +1275,13 @@ static void focus_clipped(ht_scene_t *f, int x, int y, const ht_font_t *font, ui
 }
 /*
  * The top of Focus's lists: the 60 x 32 close pill at y 16 (tabs use Done below) —
- * the way back, in place of a ← — and the list's name in grey Literata 20 (literata_20: the Kindle
- * style of the curved name and the pane names, owner 2026-10-02), letter-spaced 2, at y 62.
+ * the way back, in place of a ← — and the list's name in grey Inter 20 (inter_20: the "Kindle dark"
+ * style of the curved name and the pane names, in Inter since owner 2026-10-03), letter-spaced 2, at y 62.
  */
 static void focus_header(ht_scene_t *f, const char *title)
 {
     enum { CLOSE_X = 203, CLOSE_Y = 16, CLOSE_W = 60, CLOSE_H = 32, TITLE_Y = 62 };
-    const ht_font_t *small = &ht_lv_literata_20.base, *cross = &ht_lv_montserrat_22.base;
+    const ht_font_t *small = &ht_lv_inter_20.base, *cross = &ht_lv_montserrat_22.base;
     uint16_t fg = color(0xeaeaf0), close = color(0x171718);
     // make_close_pill: COL_FG at 10 % over black, the cross centred in it.
     if (s.view != TABS) {
@@ -1305,8 +1305,8 @@ static void focus_header(ht_scene_t *f, const char *title)
 /*
  * FOCUS'S PANE LIST, in the LVGL firmware's TABS picker (swarm_picker_build / _rebuild at
  * e96fc50c^), one line to a row (owner, 2026-10-01): black, the 60 x 32 close pill at the top, a
- * grey spaced "PANES" at y 62 (Literata 20), then a column of cards 8 apart — the pane's name in
- * Literata 30 (the recap's face, owner 2026-10-02) centred, padded 16 x 10, radius 16,
+ * grey spaced "PANES" at y 62 (Inter 20), then a column of cards 8 apart — the pane's name in
+ * Inter 30 (the recap's face, owner 2026-10-02) centred, padded 16 x 10, radius 16,
  * #16161c at 60 % — the pane on the face at full fill with a 1 px Focus-green rim.
  * The column is centred 10 px below the middle. Four rows is what a 360 px card keeps inside the
  * round glass; past four the list scrolls a row at a time. Each card is its own tap; the cross, back.
@@ -1314,7 +1314,7 @@ static void focus_header(ht_scene_t *f, const char *title)
 static void render_focus_panes(ht_scene_t *f)
 {
     enum { CARD_X = 53, CARD_W = 360, CARD_H = 58, CARD_GAP = 8, CARD_R = 16 };
-    const ht_font_t *font = &ht_lv_literata_30.base;
+    const ht_font_t *font = &ht_lv_inter_30.base;
     // The cards wear the recap/inbox card's 0x23252f so they stand off the black (owner, 2026-10-02);
     // the chosen one adds the green rim, a press lightens one step.
     uint16_t fg = color(0xeaeaf0), card = color(0x23252f), rest = color(0x23252f),
@@ -1323,7 +1323,7 @@ static void render_focus_panes(ht_scene_t *f)
     if (!s.count) {
         focus_centred(f, 180, 348, font, FG, BG, s.loading ? "Loading..." : "No panes in this tab.");
         // "Choose a tab", in the tab pill's shape and face: the door to the tab list looks like one.
-        const ht_font_t *pf = &ht_lv_literata_25.base;
+        const ht_font_t *pf = &ht_lv_inter_25.base;
         int n = s.hit_count++, w = ht_measure(pf, "Choose a tab"), box = w + 2 * 12 + 2;
         int x = (HT_WIDTH - box) / 2, y = 250;
         s.hits[n] = (hit_t){{x - 20, y - 12, box + 40, 41 + 24}, A_TABS, 0, s.connected};
@@ -1570,14 +1570,14 @@ static void tab_name(ht_scene_t *f, const char *name, int center_x, uint16_t ink
     }
 }
 /*
- * FOCUS'S TABS: "TABS" on top (focus_header), then the same carousel, in Literata 30 — the name on at most two lines of 204 px, as
+ * FOCUS'S TABS: "TABS" on top (focus_header), then the same carousel, in Inter 30 — the name on at most two lines of 204 px, as
  * the mono version wrapped at twelve cells, ending in "..." past that; neighbours peek in at the
  * edges, cut to whole letters inside x 42..424. The tab you are in is green.
  */
 static void render_focus_tabs(ht_scene_t *f)
 {
     focus_header(f, "TABS");
-    const ht_font_t *font = &ht_lv_literata_30.base;
+    const ht_font_t *font = &ht_lv_inter_30.base;
     enum { SPAN = 204 };
     int current = ht_tab_carousel_index(&tab_carousel);
     if (current < 0) focus_centred(f, 214, 348, font, DIM, BG, "No tabs yet.");
@@ -1694,7 +1694,7 @@ static void render_focus_inbox(ht_scene_t *f)
            CLOSE_X = 203, CLOSE_Y = 16, CLOSE_W = 60, CLOSE_H = 32 };
     if (s.offset >= s.notice_count) s.offset = s.notice_count - 1;
     if (s.offset < 0) s.offset = 0;
-    const ht_font_t *small = &ht_lv_literata_20.base, *body = &ht_lv_literata_25.base,
+    const ht_font_t *small = &ht_lv_inter_20.base, *body = &ht_lv_inter_25.base,
                     *cross = &ht_lv_montserrat_22.base;
     uint16_t fg = color(0xeaeaf0);
     // make_close_pill: COL_FG at 10 % over black, the cross centred in it.
@@ -1946,7 +1946,7 @@ static void render_settings(ht_scene_t *f)
                 (active() && (action != A_STOP || active()->busy) && (action != A_LATEST || !visit.pending))));
         int y = TAB_TOP + row * TAB_ROW_HEIGHT, hit = s.hit_count++;
         s.hits[hit] = (hit_t){{LIST_HIT_X, y, LIST_HIT_W, TAB_ROW_HEIGHT}, action, 0, enabled};
-        if (focus_skin()) {   // Literata, centred in the row it is tapped in
+        if (focus_skin()) {   // Inter, centred in the row it is tapped in
             const ht_font_t *font = focus_face_for(UI_FONT);
             focus_put(f, LIST_HIT_X, y + 14 + (UI_FONT->height - font->height) / 2, LIST_HIT_W, font,
                       !enabled ? DIM : hit == s.pressed ? ACCENT : FG, hit == s.pressed ? SEL : BG, label, true);

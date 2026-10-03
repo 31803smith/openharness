@@ -555,14 +555,14 @@ bool ht_box(ht_scene_t *s, int x, int y, int w, int h, int radius, uint16_t fill
 }
 
 /*
- * A PROPORTIONAL ARC LABEL (Focus: Literata Medium 26 for the name and the lower status). Each glyph keeps its own advance and kerning, in
+ * A PROPORTIONAL ARC LABEL (Focus: Inter Medium 26 for the name and the lower status). Each glyph keeps its own advance and kerning, in
  * 1/16 px like the straight text, and stands upright at its own place on the 205 px curve: the arc
  * length from the label's centre to the glyph's advance centre, divided by 205, is its angle (the Q14
  * table in arc_geometry.inc steps 1 px of arc; the 1/16 between entries is interpolated). The curve
  * carries the middle of the caps, ARC_PROP_MID above the baseline (a face's own `mid`, when it has one), at 205 (the baseline on 194, as in
  * mockup/focus-v2.html) so the tallest stacked Vietnamese letter ends inside the 128 px canvas at
  * 12 o'clock; the lower arc sits 3 px nearer the centre, so its descenders end inside it as well.
- * Literata's stacked marks stand tall, so its upper-arc face carries mid 16; its lower-arc face keeps
+ * Inter's stacked marks stand tall (mid 14 clips them, 15 just fits), so its upper-arc face carries mid 16; its lower-arc face keeps
  * mid 11 (its descenders would leave the canvas at 16).
  * The three walks over a label — bounds, mask geometry, mask paint — share one placement, so the
  * bounds can never be smaller than the ink.
@@ -1186,7 +1186,7 @@ static const uint16_t *glyph_cached(uint32_t c, const uint8_t *glyph,
 // Scenes retain immutable text, allowing old scenes to rasterize correctly.
 // A proportional label's mask keeps its 4-bit coverage (two pixels a byte, `bpp` 4) instead of the mono
 // atlases' two bits, so the same cache entry holds either. 9216 holds every label arc_text lets through:
-// the worst real one (stacked Vietnamese capitals, 24 glyphs) needs 9116 in Literata, and arc_text re-fits any label
+// the worst real one (stacked Vietnamese capitals, 24 glyphs) needs 9070 in Inter, and arc_text re-fits any label
 // whose mask would not fit shorter (with "…") rather than drawing nothing; the mono ones need 4538.
 typedef struct {
     uint8_t mask[ARC_MASK_BYTES];

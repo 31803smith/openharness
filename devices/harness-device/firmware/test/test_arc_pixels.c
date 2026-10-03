@@ -22,7 +22,7 @@ static void arc_title_is_mono(void)
     ht_arc_title_face(&y,ht_rgb(0xc8a9f0),"harness-pro",&ht_arc_geist);
     assert(ht_arc_geist.mono==&ht_mono_24 && !memcmp(&x.runs[0],&y.runs[0],sizeof x.runs[0]));
 }
-// The proportional (Literata Medium 26, upper-arc name face and lower face) arcs: ink inside r 230 and clear of the canvas edge (so nothing is
+// The proportional (Inter Medium 26, upper-arc name face and lower face) arcs: ink inside r 230 and clear of the canvas edge (so nothing is
 // clipped), inside the run's bounds, kerned, a different mask from the mono face, fitted to the span.
 static void prop_face(const ht_arc_face_t *pf, const ht_pfont_t *font, int first_edge, int edges)
 {
@@ -119,26 +119,26 @@ static void sweep_face(void)
     static uint16_t plain[HT_WIDTH*HT_HEIGHT], got[HT_WIDTH*HT_HEIGHT];
     const ht_rect_t all={0,0,HT_WIDTH,HT_HEIGHT};
     ht_scene_t a, b;
-    ht_scene_clear(&a,0); ht_arc_status_face(&a,ht_rgb(0x00ff2f),"Listening",&ht_arc_literata_lower);
+    ht_scene_clear(&a,0); ht_arc_status_face(&a,ht_rgb(0x00ff2f),"Listening",&ht_arc_inter_lower);
     ht_raster(&a,all,plain);
     uint8_t full[HT_ARC_GAINS], none[HT_ARC_GAINS]={0}, one[HT_ARC_GAINS];
     for (int i=0;i<HT_ARC_GAINS;i++) full[i]=one[i]=255;
     one[0]=0;
-    ht_scene_clear(&b,0); ht_arc_status_sweep(&b,ht_rgb(0x00ff2f),"Listening",&ht_arc_literata_lower,NULL);
+    ht_scene_clear(&b,0); ht_arc_status_sweep(&b,ht_rgb(0x00ff2f),"Listening",&ht_arc_inter_lower,NULL);
     assert(b.count==1 && !b.runs[0].gained && b.runs[0].arc==2);
     ht_raster(&b,all,got); assert(!memcmp(plain,got,sizeof plain));
-    ht_scene_clear(&b,0); ht_arc_status_sweep(&b,ht_rgb(0x00ff2f),"Listening",&ht_arc_literata_lower,full);
+    ht_scene_clear(&b,0); ht_arc_status_sweep(&b,ht_rgb(0x00ff2f),"Listening",&ht_arc_inter_lower,full);
     assert(b.count==1 && b.runs[0].gained);
     ht_raster(&b,all,got); assert(!memcmp(plain,got,sizeof plain));
     // The same bounds as the plain run, whatever the gains: damage and hit areas do not move.
     ht_rect_t rb=ht_run_bounds(&b.runs[0]), ra=ht_run_bounds(&a.runs[0]);
     assert(rb.x==ra.x && rb.y==ra.y && rb.w==ra.w && rb.h==ra.h);
     // All dark: no ink. First letter dark: only pixels at the left of the word change, all dimmer.
-    ht_scene_clear(&b,0); ht_arc_status_sweep(&b,ht_rgb(0x00ff2f),"Listening",&ht_arc_literata_lower,none);
+    ht_scene_clear(&b,0); ht_arc_status_sweep(&b,ht_rgb(0x00ff2f),"Listening",&ht_arc_inter_lower,none);
     ht_raster(&b,all,got);
     for (unsigned i=0;i<sizeof got/sizeof got[0];i++) assert(!got[i]);
     uint32_t builds=ht_arc_cache_builds();
-    ht_scene_clear(&b,0); ht_arc_status_sweep(&b,ht_rgb(0x00ff2f),"Listening",&ht_arc_literata_lower,one);
+    ht_scene_clear(&b,0); ht_arc_status_sweep(&b,ht_rgb(0x00ff2f),"Listening",&ht_arc_inter_lower,one);
     ht_raster(&b,all,got);
     assert(ht_arc_cache_builds()==builds+1);
     int changed=0;
@@ -149,13 +149,13 @@ static void sweep_face(void)
     ht_raster(&b,all,got); assert(ht_arc_cache_builds()==builds+1);   // same text, same gains: the mask is reused
     // Half brightness: every inked pixel dimmer than full and brighter than black, in the 565 green channel.
     uint8_t half[HT_ARC_GAINS]; for (int i=0;i<HT_ARC_GAINS;i++) half[i]=128;
-    ht_scene_clear(&b,0); ht_arc_status_sweep(&b,ht_rgb(0x00ff2f),"Listening",&ht_arc_literata_lower,half);
+    ht_scene_clear(&b,0); ht_arc_status_sweep(&b,ht_rgb(0x00ff2f),"Listening",&ht_arc_inter_lower,half);
     ht_raster(&b,all,got);
     int inked=0;
     for (unsigned i=0;i<sizeof got/sizeof got[0];i++) if (plain[i]) { inked++; assert(green(got[i])<=green(plain[i]) && (green(got[i])>0 || green(plain[i])<4)); }
     assert(inked>200);
     // Another label's glyph count outside the table keeps full gain; a mono face ignores gains.
-    ht_scene_clear(&b,0); ht_arc_status_sweep(&b,ht_rgb(0x00ff2f),"Listening and then some more words",&ht_arc_literata_lower,none);
+    ht_scene_clear(&b,0); ht_arc_status_sweep(&b,ht_rgb(0x00ff2f),"Listening and then some more words",&ht_arc_inter_lower,none);
     ht_scene_clear(&b,0); ht_arc_status_sweep(&b,ht_rgb(0x00ff2f),"Hi",&ht_arc_geist,none);
     assert(b.count==1 && !b.runs[0].gained);
 }
@@ -181,17 +181,17 @@ int main(void)
     }
 #ifndef HT_UPDATE_ARC_GOLDEN
     arc_title_is_mono();
-    prop_face(&ht_arc_literata_lower, &ht_lv_literata_med_26, 1, 2);   // the lower face: lower arc only (mid 11 would clip stacked marks above)
-    prop_face(&ht_arc_literata_prop, &ht_lv_literata_med_26, 0, 1);   // the Focus name: upper arc only
+    prop_face(&ht_arc_inter_lower, &ht_lv_inter_med_26, 1, 2);   // the lower face: lower arc only (mid 11 would clip stacked marks above)
+    prop_face(&ht_arc_inter_prop, &ht_lv_inter_med_26, 0, 1);   // the Focus name: upper arc only
     {   // the name face carries the curve nearer the centre than the lower face (same glyphs, another mask)
         ht_scene_t g,l; ht_scene_clear(&g,0); ht_scene_clear(&l,0);
-        ht_arc_title_face(&g,ht_rgb(0xeaeaf0),"Payments refactor",&ht_arc_literata_lower);
-        ht_arc_title_face(&l,ht_rgb(0xeaeaf0),"Payments refactor",&ht_arc_literata_prop);
-        assert(ht_arc_literata_lower.mid==11 && g.runs[0].arc_mid==11 && ht_arc_literata_prop.mid>11 && l.runs[0].arc_mid==ht_arc_literata_prop.mid);
+        ht_arc_title_face(&g,ht_rgb(0xeaeaf0),"Payments refactor",&ht_arc_inter_lower);
+        ht_arc_title_face(&l,ht_rgb(0xeaeaf0),"Payments refactor",&ht_arc_inter_prop);
+        assert(ht_arc_inter_lower.mid==11 && g.runs[0].arc_mid==11 && ht_arc_inter_prop.mid>11 && l.runs[0].arc_mid==ht_arc_inter_prop.mid);
         assert(l.runs[0].font==g.runs[0].font && l.runs[0].arc_mid!=g.runs[0].arc_mid);
     }
     sweep_face();
-    puts("arc pixels: Literata Medium 26 arcs (name face and lower face) kerned, ink in r230 and inside tight bounds, unclipped, own mask per face, fitted with an ellipsis");
+    puts("arc pixels: Inter Medium 26 arcs (name face and lower face) kerned, ink in r230 and inside tight bounds, unclipped, own mask per face, fitted with an ellipsis");
     puts("arc pixels: per-glyph gains scale the proportional lower arc, none/full are ht_arc_status_face to the pixel");
     printf("arc pixels: all %u upper/lower 24 px angle/color hashes preserved\n",2*HT_ARC_COLS);
 #endif

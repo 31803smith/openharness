@@ -8,14 +8,15 @@
 /*
  * THE FOCUS FACE — the agent screen, laid out like the octopus's (owner, 2026-10-01).
  *
- * The session's name curves along the top edge in the octopus's own arc, in Literata Medium 26 laid out
- * glyph by glyph along it (ht_arc_title_face, ht_arc_literata_prop; the lower-arc status and the Listening
- * sweep wear the same face on the lower curve, ht_arc_literata_lower);
+ * The session's name curves along the top edge in the octopus's own arc, in Inter Medium 26 laid out
+ * glyph by glyph along it (ht_arc_title_face, ht_arc_inter_prop; the lower-arc status and the Listening
+ * sweep wear the same face on the lower curve, ht_arc_inter_lower);
  * the engine's mark stands where the octopus does, 56 px (focus_marks.c) — for an engine with a pet
  * (Claude, Codex: pets.c) it is the animated pet instead, centred in the same box. Under it the recap
- * is set like a Kindle page in dark mode (owner, 2026-10-02, K3: mockup/kindle_options.py): no card,
- * soft white Literata 30 (literata_30, focus_faces.c) on the black ground, each line centred
- * on x 233 in a 364 px column at x 51, 44 px apart, up to four lines — as many as the octopus reads — and a longer recap
+ * is set in the "Kindle dark" layout (owner, 2026-10-02, K3: mockup/kindle_options.py), now in Inter, SF Compact's
+ * open look-alike (owner, 2026-10-03): no card,
+ * soft white Inter 30 (inter_30, focus_faces.c) on the black ground, each line centred
+ * on x 233 in a 364 px column at x 51, 43 px apart, up to four lines — as many as the octopus reads — and a longer recap
  * ends in "…". The block is centred vertically in a fixed area (y 176..376), so the mark never moves
  * with its length. A question takes the recap's place and look. With no recap, the working line or a
  * resting line ("Let's build it", …) is centred on the glass. The mark stands halfway between the
@@ -23,14 +24,14 @@
  * on the face talks to the agent, a hold opens the tabs, a tap on the name opens the panes
  * (ui_habitat.c).
  *
- * Every word is Literata (focus_faces.c, owner 2026-10-02: one font), laid out by ht_lv_label — LVGL's own wrap,
+ * Every word is Inter (focus_faces.c, owner 2026-10-02: one font), laid out by ht_lv_label — LVGL's own wrap,
  * centring and LONG_DOT.
  *
  * ── the rule that decides the SHAPE of this file ────────────────────────────────────────────────
  *
  * ht_damage() diffs run index against run index and repaints the whole 466x466 the moment the count
  * or the order changes (terminal.c). So the home face emits the SAME ELEVEN RUNS IN THE SAME ORDER on
- * every frame — name, mark, card (an invisible placeholder since the Kindle recap, kept so the count and
+ * every frame — name, mark, card (an invisible placeholder since the "Kindle dark" recap, kept so the count and
  * order never move), recap ×4, status, resting line ×2, lower-arc status — each empty
  * where it has nothing to say. Do not make one conditional. The lower arc is a working scene's
  * status line (arc_status below); every other state, and every other engine, leaves it empty. A scene's
@@ -38,15 +39,15 @@
  * leaves empty, and is emitted after the scene's own run so it draws over it.
  */
 // The text column of the working and resting lines: 384 px at x 41. The recap has its own: 364 px at
-// x 51 (233 - 182), each line centred in it (LVGL's centring, as every label here), up to four lines 44 px apart, centred vertically in the area
+// x 51 (233 - 182), each line centred in it (LVGL's centring, as every label here), up to four lines 43 px apart, centred vertically in the area
 // y 176..376 (RECAP_AREA_*), the first baseline 30 px under the block's top. Every
 // line's ink stays inside r 230. TITLE_BOTTOM is the foot of the arc's cells at the top of the curve,
 // where the mark is measured from.
 enum { MARK_SIZE = 56, TITLE_BOTTOM = HT_ARC_Y + HT_ARC_CELL_HEIGHT, COL_X = 41, COL_W = 384,
-       RECAP_X = 51, RECAP_W = 364, RECAP_LINES = 4, RECAP_PITCH = 44, RECAP_BASELINE = 30,
+       RECAP_X = 51, RECAP_W = 364, RECAP_LINES = 4, RECAP_PITCH = 43, RECAP_BASELINE = 30,
        RECAP_AREA_Y = 176, RECAP_AREA_H = 200, EMPTY_W = 276,
        SCENE_LINE_Y = 334 };   // the working scene ends at y 325
-#define FOCUS_RECAP   0xd6d6d2u   // Kindle's soft white
+#define FOCUS_RECAP   0xd6d6d2u   // the "Kindle dark" layout's soft white
 #define FOCUS_FG      0xeaeaf0u
 #define FOCUS_EMPTY   0x585863u
 #define FOCUS_VOICE   0x00ff2fu
@@ -56,7 +57,7 @@ enum { MARK_SIZE = 56, TITLE_BOTTOM = HT_ARC_Y + HT_ARC_CELL_HEIGHT, COL_X = 41,
  * invitation rather than a report, picked at random each time the resting face appears — on arrival,
  * after a turn, on another agent, back from voice — and never the same line twice running (owner,
  * 2026-10-02). It holds while that face stays up, so a redraw never swaps it. Each fits two lines of
- * literata_36 at EMPTY_W. The lines that teach the dial come up more often (owner, 2026-10-03): a line
+ * inter_36 at EMPTY_W. The lines that teach the dial come up more often (owner, 2026-10-03): a line
  * listed k times is k times as likely — "Tap to talk" 10, "Hold to switch tabs" 5, "Tap the name to
  * switch panes" 5, every other line once.
  */
@@ -397,7 +398,7 @@ static void voice_face(ht_scene_t *s, const ht_character_face_t *f, uint8_t fram
         if (k == 0 && scene) {
             uint8_t gain[HT_ARC_GAINS];
             sweep_gains(f->clock_ms, gain);
-            ht_arc_status_sweep(s, ht_rgb(FOCUS_VOICE), LISTENING_WORD, &ht_arc_literata_lower, gain);
+            ht_arc_status_sweep(s, ht_rgb(FOCUS_VOICE), LISTENING_WORD, &ht_arc_inter_lower, gain);
             continue;
         }
         char bar[4] = {0};
@@ -511,7 +512,7 @@ static void status_text(char *out, size_t cap, const ht_character_face_t *f)
     snprintf(out, cap, "%s\xe2\x80\xa6 %s", verb, when);
 }
 /*
- * The working line where the room is short — the scene's lower arc (`arc` set: Literata Medium 26, measured
+ * The working line where the room is short — the scene's lower arc (`arc` set: Inter Medium 26, measured
  * in px of arc length against `limit`) or its straight line (`font` set: `limit` px). The seconds always
  * survive: the verb is cut a letter at a time and its "…" doubles as the cut.
  */
@@ -571,8 +572,8 @@ void ht_focus_face(ht_scene_t *s, const ht_character_face_t *f, uint8_t frame, u
     bool retry = !has_recap && !working && f->status && *f->status;
 
     // The live line: listening meter, the working verb and its seconds, or a status of its own.
-    const ht_font_t *sf = &ht_lv_literata_30.base, *ef = &ht_lv_literata_36.base,
-                    *rf = &ht_lv_literata_30.base;
+    const ht_font_t *sf = &ht_lv_inter_30.base, *ef = &ht_lv_inter_36.base,
+                    *rf = &ht_lv_inter_30.base;
     char status[HT_TEXT_BYTES] = "";
     if (!has_recap && f->mood == HT_CHARACTER_LISTENING) snprintf(status, sizeof status, "%s", meter(f->pose.level));
     else if (working) status_text(status, sizeof status, f);
@@ -604,7 +605,7 @@ void ht_focus_face(ht_scene_t *s, const ht_character_face_t *f, uint8_t frame, u
 
     // The name on the top curve, the octopus's arc; a tap there opens the pane list.
     ht_arc_title_face(s, ht_rgb(FOCUS_FG), f->recipient && *f->recipient ? f->recipient : "\xe2\x80\xa6",
-                      &ht_arc_literata_prop);
+                      &ht_arc_inter_prop);
 
     // The engine's mark, where the octopus stands. An unknown engine leaves the place empty.
     int engine = ht_focus_engine_index(f->engine);
@@ -622,8 +623,9 @@ void ht_focus_face(ht_scene_t *s, const ht_character_face_t *f, uint8_t frame, u
         ht_pet_state_t state = hold ? HT_PET_IDLE : pet_state(f, recap);
         unsigned step = hold ? 0 : (f->clock_ms / pet->step_ms[state]) % HT_PET_STEPS;
         const ht_pet_step_t *p = &pet->loops[state][step];
-        ht_icon(s, (HT_WIDTH - pet->w) / 2, mark_top + (MARK_SIZE - pet->h) / 2 + p->dy,
-                &pet->frames[p->frame]);
+        int px = (HT_WIDTH - pet->w) / 2, py = mark_top + (MARK_SIZE - pet->h) / 2 + p->dy;
+        if (pet->cells) ht_cell_sprite(s, px, py, &pet->cells[p->frame]);
+        else ht_icon(s, px, py, &pet->frames[p->frame]);
     } else if (engine >= 0) ht_icon(s, mark_x, mark_top, &ht_icon_engine56[engine]);
     else no_text(s, rf);
 
@@ -642,7 +644,7 @@ void ht_focus_face(ht_scene_t *s, const ht_character_face_t *f, uint8_t frame, u
     // control has the bottom edge — a straight line under the scene, in this same slot.
     bool taken = f->footer_action;
     if (scene && taken) {
-        const ht_font_t *lf = &ht_lv_literata_30.base;
+        const ht_font_t *lf = &ht_lv_inter_30.base;
         char line[HT_TEXT_BYTES];
         status_fitted(line, sizeof line, f, lf, NULL, COL_W);
         ht_lv_label_t l;
@@ -662,8 +664,8 @@ void ht_focus_face(ht_scene_t *s, const ht_character_face_t *f, uint8_t frame, u
     int before = s->count;
     if (scene && !taken) {
         char arc[HT_TEXT_BYTES];
-        status_fitted(arc, sizeof arc, f, NULL, &ht_arc_literata_lower, HT_ARC_SPAN);
-        ht_arc_status_face(s, ht_rgb(FOCUS_VOICE), arc, &ht_arc_literata_lower);
+        status_fitted(arc, sizeof arc, f, NULL, &ht_arc_inter_lower, HT_ARC_SPAN);
+        ht_arc_status_face(s, ht_rgb(FOCUS_VOICE), arc, &ht_arc_inter_lower);
     }
     if (s->count == before) no_text(s, sf);
 }

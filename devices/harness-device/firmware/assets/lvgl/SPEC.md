@@ -34,7 +34,7 @@ ARGB8888 (B,G,R,A, straight alpha), blended with `lv_color_24_16_mix`.
 ## Layout of the LVGL firmware (COL_FG `0xeaeaf0`, COL_MUTED `0x8a8a99`)
 
 Historical: the face names below are the old firmware's Geist ones. The Focus skin now sets every word and
-number in Literata (focus_faces.c, gen_focus_faces.py, docs/plans/2026-10-02-literata-only.md); only the
+number in Inter (focus_faces.c, gen_focus_faces.py, docs/plans/2026-10-03-inter-sf-compact.md); only the
 boxes, colours and spacing here still apply.
 
 | item | values |

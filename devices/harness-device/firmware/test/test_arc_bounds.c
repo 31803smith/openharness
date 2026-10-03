@@ -17,7 +17,7 @@ static size_t encode(char *p, unsigned cp)
 static const ht_arc_face_t *face;
 static void compare(const char *text, int edge)
 {
-    if(edge && face==&ht_arc_literata_prop) return; // the Literata name (mid 16) is upper arc only
+    if(edge && face==&ht_arc_inter_prop) return; // the Inter name (mid 16) is upper arc only
     ht_scene_t scene;
     ht_scene_clear(&scene,ht_rgb(next()&0xffffff));
     if(edge) ht_arc_status_face(&scene,ht_rgb(next()&0xffffff),text,face);
@@ -56,7 +56,7 @@ int main(void)
 {
     face=&ht_arc_geist; run();
     // The proportional faces: the same sweeps, here with their own 1/16 px layout.
-    face=&ht_arc_literata_lower; run();   // both arcs
-    face=&ht_arc_literata_prop; run();    // upper arc only
-    puts("arc bounds: Literata Medium 26 (lower face on both arcs, name face on the upper) matches too; 227 glyphs at every upper/lower rotation + 2000 mixed labels match full-cell pixels PASS");
+    face=&ht_arc_inter_lower; run();   // both arcs
+    face=&ht_arc_inter_prop; run();    // upper arc only
+    puts("arc bounds: Inter Medium 26 (lower face on both arcs, name face on the upper) matches too; 227 glyphs at every upper/lower rotation + 2000 mixed labels match full-cell pixels PASS");
 }
