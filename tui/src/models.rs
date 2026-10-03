@@ -1,6 +1,6 @@
 //! The Models view — `:` in the launcher, and Models… in the Commands panel: every model a harness
-//! can run on, in the desktop's sections (This computer, Shared · <grid>, Subscriptions, APIs, the
-//! downloads that fit this computer), each row saying what Enter does on it. Enter is **Use**: a
+//! can run on, in the desktop picker's sections and order (Subscriptions, APIs, Your models, the
+//! downloads that fit this computer, Shared with you), each row saying what Enter does on it. Enter is **Use**: a
 //! local model is downloaded, started and waited for until it serves, then the focused harness is
 //! moved onto it (`agent_retarget`); a shared or API model moves it at once; a subscription puts it
 //! back on its own login. ^S stops a local model. One local model runs at a time: Use stops the one
@@ -558,14 +558,6 @@ pub fn this_computer() -> &'static str { if cfg!(target_os = "macos") { "this Ma
 
 fn capital(s: &str) -> String { let mut c = s.chars(); c.next().map(|f| f.to_uppercase().collect::<String>() + c.as_str()).unwrap_or_default() }
 
-/// `On your machines · this Mac · 64 GB memory · 120 GB free`: this computer's models, then the
-/// ones the account's other machines serve.
-pub fn local_heading(snap: Option<&Snapshot>) -> String {
-    let mut parts = vec!["On your machines".to_string(), this_computer().to_string()];
-    if let Some(m) = snap.and_then(|s| s.memory) { parts.push(format!("{} memory", gb(m))) }
-    if let Some(d) = snap.and_then(|s| s.free_disk) { parts.push(format!("{} free", gb(d))) }
-    parts.join(" · ")
-}
 
 /// `Get for this Mac · 64 GB`: the downloads, and the memory they were chosen for.
 pub fn catalog_heading(snap: Option<&Snapshot>) -> String {
@@ -577,11 +569,13 @@ pub fn catalog_heading(snap: Option<&Snapshot>) -> String {
 /// A row's size and speed in two columns that line up, then its word: `20 GB  ~78 tok/s  Get`.
 fn columns(size: &str, speed: &str, word: &str) -> String { format!("{size:>6}  {speed:>9}  {word:>9}") }
 
+/// A model's second column, as the desktop's: its speed — measured while it runs, else the catalog's
+/// estimate for this machine (`~`) — else the app it runs in (`Ollama`).
 fn speed(m: &LocalModel) -> String {
     match (m.running().then_some(m.tok_s).flatten(), m.est_tok_s) {
         (Some(s), _) => format!("{} tok/s", s.round() as u64),
         (None, Some(e)) => format!("~{} tok/s", e.round() as u64),
-        _ => String::new(),
+        _ => m.app.clone().unwrap_or_default(),
     }
 }
 
@@ -605,15 +599,16 @@ fn local_row(app: &App, m: &LocalModel, t: Option<&Target>, group: &str) -> Row 
     // (No round marks: `✓` in use, `↻` busy, `✗` failed, `▶` running, `·` downloaded, `↓` to get.)
     let (dot, color) = if f.in_use { ("✓ ", theme::accent()) } else if f.active || f.pending.is_some() { ("↻ ", theme::WARN) } else if f.failed { ("✗ ", theme::DANGER) }
         else if m.running() { ("▶ ", theme::ONLINE) } else if m.downloaded() { ("· ", theme::SOFT) } else { ("↓ ", theme::MUTED) };
+    // As the desktop's row: the name alone, then its size and speed (or the app it runs in) in
+    // columns that line up, then the word — the word alone where the list is narrow. Its
+    // quantization and app are in the preview, and found by a search.
     let quant = m.quantization().unwrap_or_default();
-    // (The app it runs in beside its quantization: `Q4_K_M · Ollama`.)
     let app_name = m.app.clone().unwrap_or_default();
-    let detail = [quant.as_str(), app_name.as_str()].into_iter().filter(|s| !s.is_empty()).collect::<Vec<_>>().join(" · ");
     Row::new(format!("mv:local:{}", m.id), m.name.clone()).group(group.to_string())
         .extra(format!("{} {quant} {app_name} {word} local{}", m.id, if m.recommended { " recommended" } else { "" }))
         .lead(vec![span(dot, fg(color))])
-        .detail(vec![span(detail, fg(theme::MUTED))])
         .right(columns(&m.size.map(gb).unwrap_or_default(), &speed(m), &word))
+        .right_narrow(word)
 }
 
 /// The word a grid model's row ends with: in use, Use, or why not.
@@ -634,7 +629,7 @@ fn grid_row(app: &App, s: &Section, x: &GridModel, t: Option<&Target>, group: &s
         .extra(format!("{} {} {} {}", s.name, x.node, if s.own { "local" } else { "shared" }, word))
         .lead(vec![span(dot, fg(color))])
         .detail(vec![span(x.node.clone(), fg(theme::MUTED))])
-        .right(format!("{word:>9}"))
+        .right(word)
 }
 
 fn sub_word(app: &App, sub: &Sub, t: Option<&Target>) -> String {
@@ -645,29 +640,33 @@ fn sub_word(app: &App, sub: &Sub, t: Option<&Target>) -> String {
 /// Amber once the tightest window is nearly out (the desktop's low water).
 const LOW_WATER: f64 = 20.0;
 
-/// The subscription the harness's own login is: its engine's — the account its machine is signed
-/// in to, else one with a figure, else any.
-fn subscription_for<'a>(app: &App, subs: &'a [Sub], t: &Target) -> Option<&'a Sub> {
-    let theirs = app.usage.get(&t.machine).and_then(|u| u.iter().find(|u| u.provider == t.engine)).map(|u| u.account.clone().unwrap_or_default());
-    let mine = || subs.iter().filter(|s| s.engine == t.engine);
-    mine().find(|s| Some(&s.account) == theirs.as_ref()).or_else(|| mine().find(|s| s.left.is_some())).or_else(|| mine().next())
-}
 
-/// A subscription's row: how much is left and whether that is running low, then Use / In use.
+/// A subscription's row, as the desktop's: the account (`Anthropic 315df1`), then how much of it is
+/// left (`20% remaining`) — the one figure worth a glance; Enter on it is the preview's to say. Its
+/// mark says it is in use (✓) or running low (!).
 fn sub_row(app: &App, sub: &Sub, t: Option<&Target>, group: &str, twin: bool) -> Row {
     let word = sub_word(app, sub, t);
     let low = sub.left.is_some_and(|l| l <= LOW_WATER);
-    let health = match sub.left { Some(_) if low => " · Running low", Some(_) => " · Healthy", None => "" };
-    let label = if twin && !sub.account.is_empty() { format!("{} · {}", sub.title, sub.account) } else { sub.title.clone() };
-    let (dot, color) = if low { ("! ", theme::WARN) } else if word.starts_with('✓') { ("✓ ", theme::accent()) } else { ("◇ ", theme::SOFT) };
+    let short: String = sub.account.chars().take(6).collect();
+    let label = if twin && !short.is_empty() { format!("{} · {short}", sub.title) } else { sub.title.clone() };
+    let (dot, color) = if word.starts_with('✓') { ("✓ ", if low { theme::WARN } else { theme::accent() }) } else if low { ("! ", theme::WARN) } else { ("◇ ", theme::SOFT) };
+    let left = sub.left.map(|l| format!("{} remaining", left_of(100.0 - l))).unwrap_or_else(|| sub.status.clone());
     Row::new(format!("mv:sub:{}\t{}", sub.engine, sub.account), label).group(group.to_string())
         .extra(format!("{} {} subscription own login {word}", sub.engine, sub.account))
         .lead(vec![span(dot, fg(color))])
-        .detail(vec![span(if sub.account.is_empty() { String::new() } else { format!("key ···{}", sub.account) }, fg(theme::MUTED))])
-        .right(format!("{}{health}  {word:>9}", sub.status))
+        .detail(vec![span(if twin { String::new() } else { short }, fg(theme::MUTED))])
+        .right(left)
 }
 
-/// The rows of the Models view, in its sections. [query]: what is typed (a search lists what
+/// The desktop picker's headings (`ModelSearchSection`), in its order.
+const SUBSCRIPTIONS: &str = "Subscriptions";
+const APIS: &str = "APIs";
+const YOUR_MODELS: &str = "Your models";
+const SHARED: &str = "Shared with you";
+
+/// The rows of the Models view: the desktop picker's sections in its order (`model_search_catalog.dart`)
+/// — Subscriptions, APIs, Your models, the downloads for this computer, Shared with you — drawn from
+/// the top as the desktop's are (`settings::top_down`). [query]: what is typed (a search lists what
 /// "More models" and a folded API hide).
 pub fn rows(app: &App, query: &str) -> Vec<Row> {
     let searching = !query.trim().is_empty();
@@ -678,76 +677,19 @@ pub fn rows(app: &App, query: &str) -> Vec<Row> {
     let snap = v.local.get(&machine);
     let mut out = Vec::new();
 
-    // The harness's own login first — its engine's subscription, how much of it is left, and
-    // whether that is running low (the reason to move it onto a model below). With no harness in
-    // front, every subscription.
+    // Subscriptions: every account's, as the desktop lists them — how much of it is left and whether
+    // that is running low; the harness's own login says it is in use.
     let subs = subscriptions(app);
-    match t {
-        Some(t) => out.extend(subscription_for(app, &subs, t).map(|sub| sub_row(app, sub, Some(t), "Subscription", false))),
-        None => out.extend(subs.iter().map(|sub| sub_row(app, sub, None, "Subscriptions", subs.iter().filter(|s| s.title == sub.title).count() > 1))),
-    }
-
-    // On your machines: this computer's models — running, downloaded, being got right now — then
-    // the own grid's models the account's other machines serve.
-    let head = local_heading(snap);
-    if let Some(t) = t.filter(|t| v.grids.contains_key(&machine) && !can_run(app, &t.engine)) {
-        out.push(note("engine", &format!("{} can only run on its own login.", engine_label(&t.engine)), &head));
-    }
-    match snap {
-        None => out.push(note("local", if !up(app, &machine) { "Connect this computer to see its models." } else { v.local_error.get(&machine).map(String::as_str).unwrap_or("Finding models that fit…") }, &head)),
-        Some(s) => {
-            if let Some(n) = &s.notice { out.push(note("notice", n, &head)) }
-            // What can be used now first: one being got or started, one running here, one the own
-            // grid serves from another machine; then one downloaded and stopped; a grid's offline
-            // one last. (In the daemon's order within each.)
-            let rank = |m: &LocalModel| if v.op_for(&machine, m).is_some_and(Operation::active) || v.pending.as_ref().is_some_and(|p| p.1 == m.id) { 0 } else if m.running() { 1 } else if m.downloaded() { 3 } else { 5 };
-            let mut mine: Vec<(u8, usize, Row)> = s.models.iter().enumerate().map(|(i, m)| (rank(m), i, m)).filter(|(r, _, _)| *r < 5).map(|(r, i, m)| (r, i, local_row(app, m, t, &head))).collect();
-            let theirs = v.grids.get(&machine).is_some_and(|g| g.sections.iter().any(|s| s.own && !s.models.is_empty()));
-            if let Some(g) = v.grids.get(&machine) {
-                // (This computer's running ones are listed by their local names.)
-                let here: Vec<&LocalModel> = s.models.iter().filter(|m| m.running()).collect();
-                let served = g.sections.iter().filter(|s| s.own).flat_map(|s| s.models.iter().map(move |x| (s, x)))
-                    .filter(|(_, x)| !here.iter().any(|m| x.id.eq_ignore_ascii_case(&m.id) || x.id.eq_ignore_ascii_case(&m.name)));
-                mine.extend(served.enumerate().map(|(i, (s, x))| (if x.offline.is_some() { 4 } else { 2 }, i, grid_row(app, s, x, t, &head))));
-            }
-            mine.sort_by_key(|(r, i, _)| (*r, *i));
-            if mine.is_empty() && !theirs && !searching { out.push(note("none", "No models here yet — get one below", &head)) }
-            out.extend(mine.into_iter().map(|(_, _, r)| r));
-        }
-    }
-
-    if let Some(g) = v.grids.get(&machine) {
-        // (Without this computer's list yet, the own grid's models as they come.)
-        if snap.is_none() {
-            for s in g.sections.iter().filter(|s| s.own) { for x in &s.models { out.push(grid_row(app, s, x, t, &head)) } }
-        }
-        for s in g.sections.iter().filter(|s| !s.own) {
-            let words = section_words(s, v.asking.contains(&s.name));
-            // (A grid with no model to show is not shown — "Nobody was serving here…" says nothing
-            // you can use; one that is resting with models to wake keeps its "Show models".)
-            let asleep_empty = s.state == "asleep" && !words.offer_wake && !v.asking.contains(&s.name);
-            if s.models.is_empty() && (searching || asleep_empty || (words.subtitle.is_none() && words.sentence.is_none() && !words.offer_wake)) { continue }
-            let head = match &words.subtitle { Some(sub) => format!("Shared · {} · {sub}", s.name), None => format!("Shared · {}", s.name) };
-            if !searching {
-                if let Some(sentence) = &words.sentence { out.push(note(&format!("grid:{}", s.name), sentence, &head)) }
-                if words.offer_wake {
-                    out.push(Row::new(format!("mv:wake:{}", s.name), "Show models").group(head.clone()).extra(format!("{} wake", s.name))
-                        .lead(vec![span("↻ ", fg(theme::accent()))]).right("usually 15–40 s"));
-                }
-            }
-            out.extend(s.models.iter().map(|x| grid_row(app, s, x, t, &head)));
-        }
-        if !g.reachable && !searching { out.push(note("shared", "Shared models are unavailable.", "Shared")) }
-    }
+    out.extend(subs.iter().map(|sub| sub_row(app, sub, t, SUBSCRIPTIONS, subs.iter().filter(|s| s.title == sub.title).count() > 1)));
 
     // APIs saved on this computer: each folds its models until Enter (or a search) opens it.
     match &v.apis {
-        Some(Err(why)) if !searching => out.push(note("apis", why, "APIs")),
+        Some(Err(why)) if !searching => out.push(note("apis", why, APIS)),
         Some(Ok(apis)) => for api in apis {
             let listed = v.api_models.get(&api.id);
             let open = v.api_open.contains(&api.id) || searching;
             let hint = match listed { _ if !api.serves_models() => "Tools".to_string(), Some(Ok(l)) if !l.is_empty() => format!("{} model{}", l.len(), if l.len() == 1 { "" } else { "s" }), None => "Loading…".into(), _ => "Tools".into() };
-            out.push(Row::new(format!("mv:api:{}", api.id), api.name.clone()).group("APIs").extra(format!("{} api", api.host()))
+            out.push(Row::new(format!("mv:api:{}", api.id), api.name.clone()).group(APIS).extra(format!("{} api", api.host()))
                 .lead(vec![span(if open && api.serves_models() { "▾ " } else { "▸ " }, fg(theme::MUTED))])
                 .detail(vec![span(api.host(), fg(theme::MUTED))]).right(hint));
             if !open { continue }
@@ -757,7 +699,7 @@ pub fn rows(app: &App, query: &str) -> Vec<Row> {
                         _ if switching_for(app, t) == Some(m.id.as_str()) => SWITCHING.to_string(),
                         Ok(_) => "Use".to_string(), Err(w) if w == IN_USE => "✓ In use".into(), Err(_) => String::new(),
                     };
-                    out.push(Row::new(format!("mv:apimodel:{}\t{}", api.id, m.id), m.id.clone()).group("APIs")
+                    out.push(Row::new(format!("mv:apimodel:{}\t{}", api.id, m.id), m.id.clone()).group(APIS)
                         .extra(format!("{} {} api", api.name, m.name.clone().unwrap_or_default()))
                         .lead(vec![span("  ", Style::default()), span(if word.starts_with('✓') { "✓ " } else { "· " }, fg(if word.starts_with('✓') { theme::accent() } else { theme::MUTED }))])
                         .detail(vec![span(m.context.map(|w| format!("{} context", context_label(w))).unwrap_or_default(), fg(theme::MUTED))])
@@ -768,23 +710,82 @@ pub fn rows(app: &App, query: &str) -> Vec<Row> {
         _ => {}
     }
 
-    // The downloads that fit this computer, in the daemon's order (its best for a coding agent
-    // first): five, then "More models".
+    // Your models: this computer's — being started, running, downloaded, in the daemon's order
+    // within each — then the own grid's models the account's other machines serve.
+    if let Some(t) = t.filter(|t| v.grids.contains_key(&machine) && !can_run(app, &t.engine)) {
+        out.push(note("engine", &format!("{} can only run on its own login.", engine_label(&t.engine)), YOUR_MODELS));
+    }
+    let own = |g: &Grids| -> Vec<(Section, GridModel)> {
+        g.sections.iter().filter(|s| s.own).flat_map(|s| s.models.iter().map(move |x| (s.clone(), x.clone()))).collect()
+    };
+    match snap {
+        None => {
+            out.push(note("local", if !up(app, &machine) { "Connect this computer to see its models." } else { v.local_error.get(&machine).map(String::as_str).unwrap_or("Finding models that fit…") }, YOUR_MODELS));
+            // (Without this computer's list yet, the own grid's models as they come.)
+            if let Some(g) = v.grids.get(&machine) { for (s, x) in own(g) { out.push(grid_row(app, &s, &x, t, YOUR_MODELS)) } }
+        }
+        Some(s) => {
+            if let Some(n) = &s.notice { out.push(note("notice", n, YOUR_MODELS)) }
+            let rank = |m: &LocalModel| if v.op_for(&machine, m).is_some_and(Operation::active) || v.pending.as_ref().is_some_and(|p| p.1 == m.id) { 0 } else if m.running() { 1 } else { 2 };
+            let mut mine: Vec<(u8, usize, Row)> = s.models.iter().enumerate().filter(|(_, m)| m.downloaded() || m.can_stop)
+                .map(|(i, m)| (rank(m), i, local_row(app, m, t, YOUR_MODELS))).collect();
+            mine.sort_by_key(|(r, i, _)| (*r, *i));
+            // (This computer's running ones are listed by their local names, above.)
+            let here: Vec<&LocalModel> = s.models.iter().filter(|m| m.running()).collect();
+            let theirs: Vec<Row> = v.grids.get(&machine).map(own).unwrap_or_default().into_iter()
+                .filter(|(_, x)| !here.iter().any(|m| x.id.eq_ignore_ascii_case(&m.id) || x.id.eq_ignore_ascii_case(&m.name)))
+                .map(|(s, x)| grid_row(app, &s, &x, t, YOUR_MODELS)).collect();
+            if mine.is_empty() && theirs.is_empty() && !searching { out.push(note("none", "No models here yet — get one below", YOUR_MODELS)) }
+            out.extend(mine.into_iter().map(|(_, _, r)| r));
+            out.extend(theirs);
+        }
+    }
+
+    // The downloads that fit this computer, under `Get for this Mac · 64 GB`: one being got first,
+    // then the daemon's order (its best for a coding agent first) — five, then "More models".
     if let Some(s) = snap {
-        let get: Vec<&LocalModel> = s.models.iter().filter(|m| !m.downloaded() && !v.op_for(&machine, m).is_some_and(Operation::active) && v.pending.as_ref().is_none_or(|p| p.1 != m.id)).collect();
         let head = catalog_heading(snap);
-        let shown = if v.more || searching { get.len() } else { get.len().min(SHOWN_DOWNLOADS) };
-        out.extend(get.iter().take(shown).map(|m| local_row(app, m, t, &head)));
-        if !searching && get.len() > SHOWN_DOWNLOADS {
-            let label = if v.more { "Show fewer".to_string() } else { format!("More models ({})", get.len() - SHOWN_DOWNLOADS) };
+        let busy = |m: &LocalModel| v.op_for(&machine, m).is_some_and(Operation::active) || v.pending.as_ref().is_some_and(|p| p.1 == m.id);
+        let (now, rest): (Vec<&LocalModel>, Vec<&LocalModel>) = s.models.iter().filter(|m| !m.downloaded() && !m.can_stop).partition(|m| busy(m));
+        let shown = if v.more || searching { rest.len() } else { rest.len().min(SHOWN_DOWNLOADS) };
+        out.extend(now.iter().chain(rest.iter().take(shown)).map(|m| local_row(app, m, t, &head)));
+        if !searching && rest.len() > SHOWN_DOWNLOADS {
+            let label = if v.more { "Show fewer".to_string() } else { format!("More models ({})", rest.len() - SHOWN_DOWNLOADS) };
             out.push(Row::new("mv:more", label).group(head).extra("more models").lead(vec![span(if v.more { "− " } else { "+ " }, fg(theme::accent()))]));
         }
     }
+
+    // Shared with you: every grid shared with this account, one section as on the desktop — each
+    // row naming the machine and the grid it is on, and a resting grid saying so.
+    if let Some(g) = v.grids.get(&machine) {
+        for s in g.sections.iter().filter(|s| !s.own) {
+            let words = section_words(s, v.asking.contains(&s.name));
+            // (A grid with no model to show is not shown — "Nobody was serving here…" says nothing
+            // you can use; one that is resting with models to wake keeps its "Show models".)
+            let asleep_empty = s.state == "asleep" && !words.offer_wake && !v.asking.contains(&s.name);
+            if s.models.is_empty() && (searching || asleep_empty || (words.subtitle.is_none() && words.sentence.is_none() && !words.offer_wake)) { continue }
+            if !searching {
+                if let Some(sentence) = &words.sentence { out.push(note(&format!("grid:{}", s.name), &format!("{} · {sentence}", s.name), SHARED)) }
+                if words.offer_wake {
+                    out.push(Row::new(format!("mv:wake:{}", s.name), format!("Show models · {}", s.name)).group(SHARED).extra(format!("{} wake", s.name))
+                        .lead(vec![span("↻ ", fg(theme::accent()))]).right("usually 15–40 s"));
+                }
+            }
+            for x in &s.models {
+                let detail = [x.node.as_str(), s.name.as_str(), words.subtitle.as_deref().unwrap_or("")].into_iter().filter(|w| !w.is_empty()).collect::<Vec<_>>().join(" · ");
+                out.push(grid_row(app, s, x, t, SHARED).detail(vec![span(detail, fg(theme::MUTED))]));
+            }
+        }
+        if !g.reachable && !searching { out.push(note("shared", "Shared models are unavailable.", SHARED)) }
+    }
+
     out
 }
 
 /// The row the harness is on now, if the view lists it: where the cursor starts.
-pub fn in_use_row(rows: &[Row]) -> Option<String> { rows.iter().find(|r| is_row(&r.id) && r.right.trim_end().ends_with("✓ In use")).map(|r| r.id.clone()) }
+pub fn in_use_row(rows: &[Row]) -> Option<String> {
+    rows.iter().find(|r| is_row(&r.id) && (r.right.trim_end().ends_with("✓ In use") || (r.id.starts_with("mv:sub:") && r.extra.ends_with("✓ In use")))).map(|r| r.id.clone())
+}
 
 // ── what Enter and ^S do ─────────────────────────────────────────────────────────
 
@@ -1601,17 +1602,17 @@ mod tests {
         app.fleet.agents.insert(key, a);
     }
 
-    /// On your machines: what can be used now first — a model running here, then one the own grid
-    /// serves from another machine — then one downloaded and stopped; a grid's offline one last.
+    /// Your models, as the desktop's: this computer's — running, then downloaded — then the own
+    /// grid's models the account's other machines serve, in the grid's order.
     #[test]
-    fn models_ready_now_come_before_ones_not_running() {
+    fn your_models_are_this_computer_s_then_the_own_grid_s() {
         let mut app = app();
         on_local(&mut app, "local", Ok(local_reply(qwen("running", Value::Null), false)));
         let mut g = grids_reply(&["box-model"]);
         g["grids"][0]["models"].as_array_mut().unwrap().push(json!({ "id": "away-model", "node": "lap", "unavailable": { "reason": "offline", "machine": "lap" } }));
         on_grids(&mut app, "local", Ok(g));
-        let mine: Vec<String> = super::rows(&app, "").into_iter().filter(|r| r.group.as_deref().is_some_and(|g| g.starts_with("On your machines")) && is_row(&r.id)).map(|r| r.id).collect();
-        assert_eq!(mine, vec!["mv:local:qwen-35b".to_string(), "mv:grid:own-grid\tstudio\tbox-model".into(), "mv:local:gemma-12b".into(), "mv:grid:own-grid\tlap\taway-model".into()]);
+        let mine: Vec<String> = super::rows(&app, "").into_iter().filter(|r| r.group.as_deref() == Some("Your models") && is_row(&r.id)).map(|r| r.id).collect();
+        assert_eq!(mine, vec!["mv:local:qwen-35b".to_string(), "mv:local:gemma-12b".into(), "mv:grid:own-grid\tstudio\tbox-model".into(), "mv:grid:own-grid\tlap\taway-model".into()]);
     }
 
     /// Which harness Enter moves: the focused pane's. A focused terminal is the one meant — never
@@ -1691,9 +1692,11 @@ mod tests {
     fn the_focused_harness_moves_onto_a_local_model_and_back() {
         let mut app = loaded();
         let rows = rows(&app, "");
-        // The harness's own login first, running low, and it is on it.
-        assert_eq!(rows[0].group.as_deref(), Some("Subscription"));
-        assert!(rows[0].right.contains("12% left · Running low") && rows[0].right.ends_with("✓ In use"), "{}", rows[0].right);
+        // The subscriptions first, as on the desktop: the harness's own login, how much is left, its
+        // mark saying it is in use (amber: running low).
+        assert_eq!(rows[0].group.as_deref(), Some("Subscriptions"));
+        assert_eq!((rows[0].label.as_str(), rows[0].right.as_str()), ("Anthropic", "12% remaining"));
+        assert_eq!(rows[0].lead[0].content, "✓ ");
         assert_eq!(in_use_row(&rows).as_deref(), Some("mv:sub:claude\t7f0c"));
         assert!(row(&rows, "mv:local:qwen-35b").right.ends_with("Get"));
 
@@ -1752,16 +1755,17 @@ mod tests {
         let rows = rows_of(&app);
         assert!(row(&rows, "mv:local:qwen-35b").right.ends_with("✓ In use"));
         assert!(pane_note(&app, "local", "a1").is_none());
-        assert!(rows[0].right.ends_with("Use"), "its own login is a Use away: {}", rows[0].right);
+        // (A subscription's row says how much is left; what Enter does is its preview's, and its mark's.)
+        assert!(rows[0].extra.ends_with("Use") && rows[0].lead[0].content != "✓ ", "its own login is a Use away: {}", rows[0].extra);
 
         // And back to the subscription.
         let before = app.models_view.sent.len();
         choose(&mut app, &mut picker, "mv:sub:claude\t7f0c", false);
         assert_eq!(app.models_view.sent.len(), before + 1);
         assert_eq!(last_sent(&app), ("local".into(), "agent_retarget".into(), json!({ "agentId": "a1", "clearGrid": true })));
-        assert!(rows_of(&app)[0].right.ends_with(SWITCHING));
+        assert!(rows_of(&app)[0].extra.ends_with(SWITCHING));
         frame(&mut app, json!({}));
-        assert!(rows_of(&app)[0].right.ends_with("✓ In use"));
+        assert!(rows_of(&app)[0].extra.ends_with("✓ In use") && rows_of(&app)[0].lead[0].content == "✓ ");
     }
 
     fn rows_of(app: &App) -> Vec<Row> { rows(app, "") }
@@ -2018,8 +2022,9 @@ mod tests {
         assert_eq!(next(&stopping, Some(&still), None, false, None, Instant::now() + USE_WAIT + Duration::from_secs(1)), Next::Fail("Phi is still stopping. Try again in a moment.".into()));
     }
 
-    /// The app a model runs in — Ollama, LM Studio, llama.cpp, or Grid's own engine — beside its
-    /// quantization on its row, as "Runs in" in its preview, and found by a search for it.
+    /// A model's row as the desktop's: its name, then its size and speed — the catalog's estimate
+    /// here (`~`), else the app it runs in (Ollama, LM Studio, llama.cpp, Grid) — then its word, the
+    /// word alone in a narrow list. The app is "Runs in" in its preview, and a search finds it.
     #[test]
     fn a_model_says_the_app_it_runs_in() {
         let mut app = app();
@@ -2029,9 +2034,11 @@ mod tests {
         on_local(&mut app, "local", Ok(reply));
         on_grids(&mut app, "local", Ok(grids_reply(&[])));
         let rows = rows_of(&app);
-        let detail = |r: &Row| r.detail.iter().map(|s| s.content.as_ref()).collect::<String>();
-        assert_eq!(detail(row(&rows, "mv:local:qwen-35b")), "Q4_K_M · Grid");
-        assert_eq!(detail(row(&rows, "mv:local:app:ollama:llama3.2:3b")), "Ollama");
+        let squeezed = |r: &Row| r.right.split_whitespace().collect::<Vec<_>>().join(" ");
+        assert_eq!(squeezed(row(&rows, "mv:local:qwen-35b")), "20 GB ~78 tok/s Use");
+        assert_eq!(squeezed(row(&rows, "mv:local:app:ollama:llama3.2:3b")), "1.9 GB Ollama Use");
+        assert!(row(&rows, "mv:local:qwen-35b").detail.iter().all(|s| s.content.is_empty()), "the name alone");
+        assert_eq!(row(&rows, "mv:local:qwen-35b").right_at(40), "Use", "a narrow list: the word");
         assert!(text(&preview(&app, "mv:local:app:ollama:llama3.2:3b")).contains("Runs in  Ollama"), "{}", text(&preview(&app, "mv:local:app:ollama:llama3.2:3b")));
         assert!(!text(&preview(&app, "mv:local:gemma-12b")).contains("Runs in"), "an older daemon says nothing");
         assert!(row(&rows, "mv:local:app:ollama:llama3.2:3b").extra.contains("Ollama"), "typing its app finds it");
@@ -2062,19 +2069,22 @@ mod tests {
         assert_eq!(target(&app).map(|t| t.agent).as_deref(), Some("a1"));
     }
 
-    /// The sections, in the order the per-pane picker has them: Subscription, On your machines
-    /// (with this computer's memory and free disk), Shared · <grid> (a resting one offering "Show
-    /// models"), APIs, then five downloads and "More models (N)".
+    /// The sections, in the desktop picker's order (`ModelSearchSection`): Subscriptions, APIs, Your
+    /// models, the downloads under `Get for this Mac · 64 GB` (five, then "More models (N)"), Shared
+    /// with you (every shared grid's rows, a resting one offering "Show models").
     #[test]
     fn rows_are_in_sections() {
         let mut app = loaded();
+        on_apis(&mut app, Ok(json!({ "connections": [{ "id": "or", "name": "OpenRouter", "baseUrl": "https://openrouter.ai/api/v1" }], "presets": [] })));
         let rows = rows_of(&app);
         let mut groups: Vec<&str> = rows.iter().filter_map(|r| r.group.as_deref()).collect();
         groups.dedup();
         let here = this_computer();
-        assert_eq!(groups, vec!["Subscription".to_string(), format!("On your machines · {here} · 64 GB memory · 120 GB free"), "Shared · team".into(), "Shared · night".into(), format!("Get for {here} · 64 GB")]);
+        assert_eq!(groups, vec!["Subscriptions".to_string(), "APIs".into(), "Your models".into(), format!("Get for {here} · 64 GB"), "Shared with you".into()]);
         assert!(row(&rows, "mv:grid:team\tlap\tmistral").right.ends_with("Offline"));
-        assert!(row(&rows, "mv:wake:night").label == "Show models");
+        let detail = |r: &Row| r.detail.iter().map(|s| s.content.as_ref()).collect::<String>();
+        assert_eq!(detail(row(&rows, "mv:grid:team\tgpu-box\tllama-70b")), "gpu-box · team", "the machine and the grid it is on");
+        assert!(row(&rows, "mv:wake:night").label == "Show models · night");
         let downloads: Vec<&Row> = rows.iter().filter(|r| r.group.as_deref().is_some_and(|g| g.starts_with("Get for"))).collect();
         assert_eq!(downloads.len(), 6, "five, then More models");
         assert_eq!(downloads[5].label, "More models (2)");
@@ -2125,7 +2135,7 @@ mod tests {
         let mut picker = Picker::new("models", "");
         choose(&mut app, &mut picker, "mv:wake:night", false);
         assert_eq!(last_sent(&app), ("local".into(), "grid_models_list".into(), json!({ "rowState": true, "wake": ["night"] })));
-        assert!(rows_of(&app).iter().any(|r| r.label == STARTING_UP_WAIT), "the wake in flight says so");
+        assert!(rows_of(&app).iter().any(|r| r.label == format!("night · {STARTING_UP_WAIT}")), "the wake in flight says so");
         assert_eq!(plan_enter(&app, "mv:wake:night"), Plan::Say(STARTING_UP_WAIT.into()), "once, however often it is pressed");
         let mut waking = grids_reply(&[]);
         waking["grids"][2]["state"] = json!("waking");
@@ -2133,7 +2143,7 @@ mod tests {
         assert!(app.models_view.follow_until.is_some());
         assert_eq!(grids_every(false, false, true), Some(Duration::from_secs(5)));
         let rows = rows_of(&app);
-        assert!(rows.iter().any(|r| r.label == STARTING_UP_WAIT && r.group.as_deref() == Some("Shared · night")));
+        assert!(rows.iter().any(|r| r.label == format!("night · {STARTING_UP_WAIT}") && r.group.as_deref() == Some("Shared with you")));
     }
 
     #[test]
@@ -2307,22 +2317,22 @@ mod tests {
         let Some(crate::modal::Modal::Picker { kind: crate::modal::PickerKind::Models, picker }) = &app.modal else { panic!("not open") };
         assert_eq!(picker.current_id().as_deref(), Some("mv:sub:claude\t7f0c"), "on the row the harness is on");
         let s = screen(&mut app, 150, 42);
-        for want in ["Models", "Subscription", "Anthropic", "12% left · Running low", "On your machines", "gemma-12b", "Shared · team", "llama-70b", "Show models"] {
+        for want in ["Models", "Subscriptions", "Anthropic", "12% left · Running low", "Your models", "gemma-12b", "Shared with you", "llama-70b", "Show models"] {
             assert!(s.contains(want), "{want:?} missing at 150×42:\n{s}");
         }
         let at = |w: &str| s.find(w).unwrap_or(usize::MAX);
-        // (The launcher's lists read bottom up: the first section by the query, the rest over it,
-        // each heading over its rows.)
-        // ("Subscription" is in the preview too, higher up: the list's is the last.)
-        let sub = s.rfind("Subscription").unwrap_or(0);
-        assert!(at("Get for") < at("Shared · team") && at("Shared · team") < at("On your machines") && at("On your machines") < at("gemma-12b") && at("gemma-12b") < sub, "sections out of order:\n{s}");
+        // Top to bottom as on the desktop, each heading over its rows (the launcher's lists read
+        // from the bottom, so the last section is by the query).
+        assert!(at("Subscriptions") < at("Your models") && at("Your models") < at("gemma-12b") && at("gemma-12b") < at("Get for")
+            && at("Get for") < at("Shared with you") && at("Shared with you") < at("llama-70b"), "sections out of order:\n{s}");
         app.size = (80, 24);
         app.fit_panes();
         let s = screen(&mut app, 80, 24);
-        for want in ["Models", "Subscription", "Anthropic", "On your machines"] { assert!(s.contains(want), "{want:?} missing at 80×24:\n{s}") }
-        // Scrolled up (the list reads from the bottom), the downloads and More models are there.
-        let s = { crate::input::modal_key(&mut app, crossterm::event::KeyEvent::new(crossterm::event::KeyCode::PageUp, crossterm::event::KeyModifiers::NONE)); crate::input::modal_key(&mut app, crossterm::event::KeyEvent::new(crossterm::event::KeyCode::PageUp, crossterm::event::KeyModifiers::NONE)); screen(&mut app, 80, 24) };
-        assert!(s.contains("More models (2)") || s.contains("Get for"), "{s}");
+        // (On the row in use, the top one: at this height the list starts at it, its heading above.)
+        for want in ["Models", "Anthropic", "Your models"] { assert!(s.contains(want), "{want:?} missing at 80×24:\n{s}") }
+        // Further down, the downloads and what is shared.
+        let s = { crate::input::modal_key(&mut app, crossterm::event::KeyEvent::new(crossterm::event::KeyCode::PageDown, crossterm::event::KeyModifiers::NONE)); crate::input::modal_key(&mut app, crossterm::event::KeyEvent::new(crossterm::event::KeyCode::PageDown, crossterm::event::KeyModifiers::NONE)); screen(&mut app, 80, 24) };
+        assert!(s.contains("Shared with you") || s.contains("llama-70b"), "{s}");
         // It is in the Commands panel, in the Harness group.
         assert!(crate::modal::command_rows(&app).iter().any(|r| r.id == "cmd:models" && r.group.as_deref() == Some("Harness")));
     }
