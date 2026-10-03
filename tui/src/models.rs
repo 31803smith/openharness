@@ -3,7 +3,8 @@
 //! downloads that fit this computer), each row saying what Enter does on it. Enter is **Use**: a
 //! local model is downloaded, started and waited for until it serves, then the focused harness is
 //! moved onto it (`agent_retarget`); a shared or API model moves it at once; a subscription puts it
-//! back on its own login. ^S stops a local model. One local model runs at a time.
+//! back on its own login. ^S stops a local model. One local model runs at a time: Use stops the one
+//! running first (asked first when another harness answers with it).
 //!
 //! The daemon's replies are read here defensively, the way the desktop's `LocalModel`, `GridModels`
 //! and `ApiConnection` read them: an older daemon's missing fields are absent, never a failure.
@@ -71,6 +72,9 @@ pub struct LocalModel {
     /// The catalog's word on it for this machine: its window, speed and billions of parameters.
     pub context: Option<f64>, pub est_tok_s: Option<f64>, pub params_b: Option<f64>,
     pub operation: Option<Operation>, pub asleep: bool,
+    /// The app it runs in: `Ollama`, `LM Studio` or `llama.cpp` for one that app downloaded, `Grid`
+    /// for Grid's own engine (absent from an older daemon).
+    pub app: Option<String>,
 }
 
 impl LocalModel {
@@ -81,7 +85,7 @@ impl LocalModel {
             size: num(&v["sizeBytes"]), quant: text(&v["quant"]), recommended: v["recommended"] == true, can_start: v["canStart"] == true, can_stop: v["canStop"] == true,
             tok_s: num(&v["tokensPerSecond"]), requests: num(&v["requests"]), window_secs: num(&v["windowSeconds"]),
             context: num(&v["contextWindow"]), est_tok_s: num(&v["estTokS"]), params_b: num(&v["paramsB"]),
-            operation: Operation::parse(&v["operation"]), asleep: v["gridAsleep"] == true, id,
+            operation: Operation::parse(&v["operation"]), asleep: v["gridAsleep"] == true, app: text(&v["app"]), id,
         })
     }
     pub fn running(&self) -> bool { self.state == "running" }
@@ -251,16 +255,22 @@ pub fn subscriptions(app: &App) -> Vec<Sub> {
 
 // ── what the view keeps ──────────────────────────────────────────────────────────
 
-/// Where a Use is: getting the weights, starting them, waiting for the grid to list the model as
-/// served, or moving the harness onto it.
+/// Where a Use is: getting the weights, stopping the model running here (one local model runs at a
+/// time), starting them, waiting for the grid to list the model as served, or moving the harness
+/// onto it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Step { Get, Start, Serve, Switch }
+pub enum Step { Get, Stop, Start, Serve, Switch }
 
 /// Enter's Use on a local model, carried through its steps as the replies come in. It outlives
 /// the view: a download takes minutes, and the view must not hold the terminal that long — the
 /// harness moves when the model serves, and the status line says so.
 #[derive(Clone, Debug)]
-pub struct Use { pub model: String, pub name: String, pub machine: String, pub agent: String, pub step: Step, pub since: Instant }
+pub struct Use {
+    pub model: String, pub name: String, pub machine: String, pub agent: String, pub step: Step, pub since: Instant,
+    /// The model running here that it stops before this one starts (id, name) — after a download, so
+    /// that one answers until this one can start.
+    pub stops: Option<(String, String)>,
+}
 
 /// An `agent_retarget` sent: the harness, the model it goes to (empty: its own login), and when —
 /// "Switching…" on the row and the pane until its frame says it is there (the pane restarts), or
@@ -273,26 +283,32 @@ const SWITCH_FOR: Duration = Duration::from_secs(60);
 /// A Use over: its row, its model's name, the step it reached, and why it failed (None: ready);
 /// [seen]: the cursor has been on its row since (leaving the row then ends it).
 #[derive(Clone, Debug)]
-pub struct Ended { pub row: String, pub name: String, pub step: Step, pub failed: Option<String>, pub seen: bool }
+pub struct Ended { pub row: String, pub name: String, pub step: Step, pub failed: Option<String>, pub seen: bool, pub stops: Option<String> }
 
-/// A Use's steps, as its preview lists them.
-pub const STEPS: [&str; 4] = ["Download", "Start", "Serve", "Switch harness"];
+/// A Use's steps, as its preview lists them: a stop of the model running here only when it makes one.
+pub fn steps(stops: Option<&str>) -> Vec<String> {
+    let mut out = vec!["Download".to_string()];
+    out.extend(stops.map(|name| format!("Stop {name}")));
+    out.extend(["Start", "Serve", "Switch harness"].map(String::from));
+    out
+}
 
 /// A step's mark: done ✓, under way ↻ (its progress, when the daemon sends one), failed ✗, or
 /// still to come.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Mark { Done, Now(Option<f64>), Failed, Later }
 
-/// The marks of a Use at [step], [op] the operation on its model; [ended]: Some(true) ready,
-/// Some(false) failed at [step], None under way.
-pub fn checklist(step: Step, op: Option<&Operation>, ended: Option<bool>) -> [Mark; 4] {
-    let at = match step { Step::Get => 0, Step::Start => 1, Step::Serve => 2, Step::Switch => 3 };
-    std::array::from_fn(|i| match (i.cmp(&at), ended) {
+/// The marks of a Use at [step] ([stops]: it stops the model running here), [op] the operation on
+/// its model; [ended]: Some(true) ready, Some(false) failed at [step], None under way.
+pub fn checklist(step: Step, stops: bool, op: Option<&Operation>, ended: Option<bool>) -> Vec<Mark> {
+    let order: Vec<Step> = [Step::Get, Step::Stop, Step::Start, Step::Serve, Step::Switch].into_iter().filter(|s| stops || *s != Step::Stop).collect();
+    let at = order.iter().position(|s| *s == step).unwrap_or(0);
+    (0..order.len()).map(|i| match (i.cmp(&at), ended) {
         (_, Some(true)) | (std::cmp::Ordering::Less, _) => Mark::Done,
         (std::cmp::Ordering::Equal, Some(false)) => Mark::Failed,
         (std::cmp::Ordering::Equal, None) => Mark::Now(progress(step, op)),
         _ => Mark::Later,
-    })
+    }).collect()
 }
 
 /// How far the operation under [step] is, while it runs and the daemon says (a download's or a
@@ -391,8 +407,8 @@ pub struct Target { pub machine: String, pub agent: String, pub engine: String, 
 
 pub fn target(app: &App) -> Option<Target> {
     let of = |machine: String, agent: String| -> Option<Target> {
-        let a = app.fleet.agent(&machine, &agent)?;
-        (a.engine != "terminal").then(|| Target { engine: a.engine.clone(), grid_model: a.grid_model.clone(), base_url: a.grid_base_url.clone(), machine, agent })
+        let a = live_in_pane(app, app.fleet.agent(&machine, &agent)?);
+        (a.engine != "terminal").then(|| Target { engine: a.engine.clone(), grid_model: a.grid_model.clone(), base_url: a.grid_base_url.clone(), machine, agent: a.id.clone() })
     };
     if let Some(t) = crate::input::focused_agent(app).and_then(|(m, a)| of(m, a)) { return Some(t) }
     // No pane focused at all: the harness on screen, when it is the only one. (A pane that is
@@ -401,6 +417,15 @@ pub fn target(app: &App) -> Option<Target> {
     let mut shown = app.rects.iter().filter_map(|(id, _)| app.panes.get(id)).filter_map(|p| of(p.machine_id.clone(), p.agent_id.clone()));
     let only = shown.next()?;
     shown.next().is_none().then_some(only)
+}
+
+/// The harness pane [a] is showing now. When an engine exits, the daemon retires its harness with the
+/// conversation and the shell left in its tmux pane goes on under a new id — so does an engine started
+/// in that shell next. A pane still on the retired id shows that one: Use moves it, never the archive
+/// ("That harness is gone").
+pub fn live_in_pane<'a>(app: &'a App, a: &'a crate::fleet::Agent) -> &'a crate::fleet::Agent {
+    if a.status != "stopped" || a.tmux_pane.is_empty() { return a }
+    app.fleet.agents.values().find(|o| o.machine_id == a.machine_id && o.id != a.id && o.status != "stopped" && o.tmux_pane == a.tmux_pane).unwrap_or(a)
 }
 
 /// Why there is no harness to move: what the focused pane is, said so a person can act on it.
@@ -427,6 +452,31 @@ fn served_in(grids: Option<&Grids>, m: &LocalModel) -> Option<(String, String)> 
         .map(|x| (s.name.clone(), x.id.clone())))
 }
 
+/// The model running on this computer besides [m]: the one a Use of [m] stops first.
+fn other_running(app: &App, m: &LocalModel) -> Option<LocalModel> {
+    app.models_view.local.get(&app.fleet.local_id)?.models.iter().find(|o| o.can_stop && o.id != m.id).cloned()
+}
+
+/// The harnesses answering with [m] besides [t], by name: what stopping it leaves without a model
+/// until they move to another (the desktop's `_harnessesOn`).
+fn harnesses_on(app: &App, m: &LocalModel, t: Option<&Target>) -> Vec<String> {
+    let served = served_in(app.models_view.grids.get(&app.fleet.local_id), m).map(|(_, id)| id);
+    let names = [Some(&m.name), Some(&m.id), served.as_ref()];
+    let mut out: Vec<String> = app.fleet.agents.values()
+        .filter(|a| !t.is_some_and(|t| t.machine == a.machine_id && t.agent == a.id))
+        .filter(|a| !a.grid_model.is_empty() && names.iter().flatten().any(|n| n.eq_ignore_ascii_case(&a.grid_model)))
+        .map(|a| a.name.clone()).collect();
+    out.sort();
+    out
+}
+
+/// What stopping [model] does to [users], the harnesses answering with it — the desktop's words.
+fn stop_words(model: &str, users: &[String]) -> Option<String> {
+    let first = users.first()?;
+    let (who, uses, moves) = if users.len() == 1 { (first.clone(), "uses", "it moves") } else { (format!("{first} and {} more", users.len() - 1), "use", "they move") };
+    Some(format!("{who} {uses} {model}, and will stop answering until {moves} to another model."))
+}
+
 /// Everything that decides a local model's row: what it says, and what Enter and ^S may do.
 #[derive(Clone, Debug, Default)]
 pub struct Facts {
@@ -440,7 +490,7 @@ pub struct Facts {
     pub use_running: bool, pub use_start: bool,
     /// Get downloads it; and goes on to start it and move the harness onto it.
     pub get: bool, pub get_use: bool,
-    /// Another model running here — the one to stop first: one local model runs at a time.
+    /// Another model running here — the one Use stops first: one local model runs at a time.
     pub other: Option<String>,
     pub served: Option<(String, String)>,
 }
@@ -469,7 +519,7 @@ pub fn facts(app: &App, m: &LocalModel, t: Option<&Target>) -> Facts {
     let active = op.as_ref().is_some_and(Operation::active);
     let busy = v.busy(machine);
     let online = up(app, machine) && v.local.contains_key(machine);
-    let other = v.local.get(machine).and_then(|s| s.models.iter().find(|o| o.can_stop && o.id != m.id)).map(|o| o.name.clone());
+    let other = other_running(app, m).map(|o| o.name);
     let runs = t.is_some_and(|t| can_run(app, &t.engine));
     let served = served_in(v.grids.get(machine), m);
     let in_use = t.is_some_and(|t| m.running() && !t.grid_model.is_empty()
@@ -482,7 +532,7 @@ pub fn facts(app: &App, m: &LocalModel, t: Option<&Target>) -> Facts {
         pending: v.pending.as_ref().filter(|p| p.0 == machine && p.1 == m.id).map(|p| pending_word(p.2)),
         use_running: runs && m.running() && !active && served.is_some(),
         use_start: runs && m.downloaded() && !m.running() && m.can_start && !busy && online,
-        get_use: get && runs && other.is_none(),
+        get_use: get && runs,
         op, in_use, active, busy, get, other, served,
     }
 }
@@ -556,10 +606,13 @@ fn local_row(app: &App, m: &LocalModel, t: Option<&Target>, group: &str) -> Row 
     let (dot, color) = if f.in_use { ("✓ ", theme::accent()) } else if f.active || f.pending.is_some() { ("↻ ", theme::WARN) } else if f.failed { ("✗ ", theme::DANGER) }
         else if m.running() { ("▶ ", theme::ONLINE) } else if m.downloaded() { ("· ", theme::SOFT) } else { ("↓ ", theme::MUTED) };
     let quant = m.quantization().unwrap_or_default();
+    // (The app it runs in beside its quantization: `Q4_K_M · Ollama`.)
+    let app_name = m.app.clone().unwrap_or_default();
+    let detail = [quant.as_str(), app_name.as_str()].into_iter().filter(|s| !s.is_empty()).collect::<Vec<_>>().join(" · ");
     Row::new(format!("mv:local:{}", m.id), m.name.clone()).group(group.to_string())
-        .extra(format!("{} {quant} {word} local{}", m.id, if m.recommended { " recommended" } else { "" }))
+        .extra(format!("{} {quant} {app_name} {word} local{}", m.id, if m.recommended { " recommended" } else { "" }))
         .lead(vec![span(dot, fg(color))])
-        .detail(vec![span(quant, fg(theme::MUTED))])
+        .detail(vec![span(detail, fg(theme::MUTED))])
         .right(columns(&m.size.map(gb).unwrap_or_default(), &speed(m), &word))
 }
 
@@ -830,9 +883,17 @@ pub fn plan_enter(app: &App, id: &str) -> Plan {
             Some(_) => say("Not serving yet — try again in a moment"),
         };
     }
+    // One local model runs at a time: Use stops the one running here, then starts this one — asked
+    // first when another harness answers with that one.
+    let other = other_running(app, &m);
+    let users = other.as_ref().map(|o| harnesses_on(app, o, t)).unwrap_or_default();
+    let stop_said = other.as_ref().and_then(|o| stop_words(&o.name, &users));
     if m.downloaded() {
+        if f.use_start {
+            let go = Plan::Use { model: m.id.clone(), download: false };
+            return match (&other, &stop_said) { (Some(o), Some(said)) => Plan::Arm(format!("Stop {}? {said} Enter · Esc", o.name), Box::new(go)), _ => go };
+        }
         if let Some(o) = &f.other { return Plan::Say(format!("Stop {o} first: one local model runs at a time — ^S on it")) }
-        if f.use_start { return Plan::Use { model: m.id.clone(), download: false } }
         return match t {
             None if m.can_start && up(app, &app.fleet.local_id) => Plan::Act { model: m.id.clone(), action: "start" },
             Some(t) if !can_run(app, &t.engine) => Plan::Say(format!("{} runs only on its own login", engine_label(&t.engine))),
@@ -844,8 +905,9 @@ pub fn plan_enter(app: &App, id: &str) -> Plan {
     let go = if f.get_use { Plan::Use { model: m.id.clone(), download: true } } else { Plan::Act { model: m.id.clone(), action: if supports { "download" } else { "start" } } };
     // A download is gigabytes: the first Enter asks, in the preview, what the second will do.
     let size = m.size.map(gb).map(|s| format!(" ({s})")).unwrap_or_default();
-    let then = if f.get_use { ", start it, move this harness onto it" } else { "" };
-    Plan::Arm(format!("Get {}{size}{then}? Enter · Esc", m.name), Box::new(go))
+    let then = match (f.get_use, &f.other) { (true, Some(o)) => format!(", stop {o}, start it, move this harness onto it"), (true, None) => ", start it, move this harness onto it".into(), _ => String::new() };
+    let said = stop_said.filter(|_| f.get_use).map(|s| format!(" {s}")).unwrap_or_default();
+    Plan::Arm(format!("Get {}{size}{then}?{said} Enter · Esc", m.name), Box::new(go))
 }
 
 /// What ^S does on row [id]: stop a local model (asked first).
@@ -904,11 +966,15 @@ pub fn using_label(app: &App, u: &Use) -> String {
     match (u.step, op) {
         (Step::Get, Some(o)) if o.active() && o.stage == "downloading" => format!("{}…", o.word()),
         (Step::Get, _) => format!("Getting {}…", u.name),
+        (Step::Stop, _) => format!("Stopping {}…", stopping(u)),
         (Step::Start, _) => format!("Starting {}…", u.name),
         (Step::Serve, _) => format!("Waiting for {} to serve…", u.name),
         (Step::Switch, _) => format!("Moving the harness onto {}…", u.name),
     }
 }
+
+/// The model [u] stops first, by name.
+fn stopping(u: &Use) -> &str { u.stops.as_ref().map(|(_, n)| n.as_str()).unwrap_or("the model running here") }
 
 /// Esc on the view: a first Enter's question taken back (true), the view left open.
 pub fn cancel(app: &mut App, picker: &mut Picker) -> bool {
@@ -929,7 +995,7 @@ pub fn working(app: &App) -> Option<String> {
 pub fn status_text(app: &App) -> Option<String> {
     let u = app.models_view.using.as_ref()?;
     let op = local_model(app, &u.model).and_then(|m| app.models_view.op_for(&app.fleet.local_id, &m).cloned());
-    let doing = match u.step { Step::Get => "downloading", Step::Start => "starting", Step::Serve => "waiting to serve", Step::Switch => "switching" };
+    let doing = match u.step { Step::Get => "downloading".to_string(), Step::Stop => format!("waiting for {} to stop", stopping(u)), Step::Start => "starting".into(), Step::Serve => "waiting to serve".into(), Step::Switch => "switching".into() };
     Some(match progress(u.step, op.as_ref()) { Some(p) => format!("↻ {} {}%", u.name, percent(p)), None => format!("↻ {} {doing}", u.name) })
 }
 
@@ -1132,7 +1198,7 @@ pub fn on_retarget(app: &mut App, name: &str, job: bool, reply: Result<Value, Rp
     let used = if job { app.models_view.using.take() } else { None };
     let who = app.models_view.switching.as_ref().and_then(|s| app.fleet.agent(&s.machine, &s.agent)).map(|a| a.name.clone()).unwrap_or_else(|| "the harness".into());
     // (A Use's last step: its end, and the one toast that says it.)
-    let end = |app: &mut App, failed: Option<String>| if let Some(u) = &used { app.models_view.ended = Some(Ended { row: format!("mv:local:{}", u.model), name: u.name.clone(), step: Step::Switch, failed, seen: false }) };
+    let end = |app: &mut App, failed: Option<String>| if let Some(u) = &used { app.models_view.ended = Some(Ended { row: format!("mv:local:{}", u.model), name: u.name.clone(), step: Step::Switch, failed, seen: false, stops: u.stops.as_ref().map(|(_, n)| n.clone()) }) };
     match reply {
         // Moved: the list has done its job — it closes, and the status line says so.
         Ok(_) if used.is_some() => { end(app, None); close(app); app.say(format!("✓ {name} is ready · {who} is on it"), theme::ONLINE) }
@@ -1156,10 +1222,16 @@ pub fn close(app: &mut App) {
 
 /// What a Use does next, from what the daemon last said.
 #[derive(Clone, Debug, PartialEq)]
-pub enum Next { Wait, Start, Serve, Retarget { grid: String, model: String }, Fail(String) }
+pub enum Next { Wait, Stop, Start, Serve, Retarget { grid: String, model: String }, Fail(String) }
+
+/// The model [job] stops first, still able to stop in [snap]: it runs here yet.
+fn still_running(job: &Use, snap: Option<&Snapshot>) -> bool {
+    job.stops.as_ref().is_some_and(|(id, _)| snap.is_some_and(|s| s.models.iter().any(|o| &o.id == id && o.can_stop)))
+}
 
 /// Where [job] goes from here, given this computer's models ([snap]), the operation on its model
-/// ([op]), whether a request is still out ([pending]) and the grids ([grids]).
+/// ([op] — on the model it stops, while it stops one), whether a request is still out ([pending])
+/// and the grids ([grids]).
 pub fn next(job: &Use, snap: Option<&Snapshot>, op: Option<&Operation>, pending: bool, grids: Option<&Grids>, now: Instant) -> Next {
     if pending { return Next::Wait }
     let m = snap.and_then(|s| s.models.iter().find(|m| m.id == job.model));
@@ -1170,7 +1242,16 @@ pub fn next(job: &Use, snap: Option<&Snapshot>, op: Option<&Operation>, pending:
         // A download takes as long as it takes: no deadline, its progress on the row.
         Step::Get => {
             if let Some(o) = op.filter(|o| o.failed()) { return Next::Fail(o.error.clone().unwrap_or_else(|| "Could not download this model. Try again.".into())) }
-            match m { Some(m) if m.downloaded() && !active && !snap.is_some_and(|s| s.busy) => if m.running() { Next::Serve } else { Next::Start }, _ => Next::Wait }
+            match m {
+                Some(m) if m.downloaded() && !active && !snap.is_some_and(|s| s.busy) => if m.running() { Next::Serve } else if still_running(job, snap) { Next::Stop } else { Next::Start },
+                _ => Next::Wait,
+            }
+        }
+        Step::Stop => {
+            let name = job.stops.as_ref().map(|(_, n)| n.as_str()).unwrap_or("the model running here");
+            if let Some(o) = op.filter(|o| o.failed()) { return Next::Fail(o.error.clone().unwrap_or_else(|| format!("Could not stop {name}. Try again."))) }
+            if !still_running(job, snap) && !active && !snap.is_some_and(|s| s.busy) { return Next::Start }
+            if late { Next::Fail(format!("{name} is still stopping. Try again in a moment.")) } else { Next::Wait }
         }
         Step::Start => {
             if let Some(o) = op.filter(|o| o.failed()) { return Next::Fail(o.error.clone().unwrap_or_else(|| "Could not start this model. Try again.".into())) }
@@ -1190,9 +1271,16 @@ fn start_use(app: &mut App, model: &str, download: bool) {
     let Some(t) = target(app) else { return };
     let Some(m) = local_model(app, model) else { return };
     let supports = app.models_view.local.get(&app.fleet.local_id).is_some_and(|s| s.supports_download);
-    app.models_view.using = Some(Use { model: m.id.clone(), name: m.name.clone(), machine: t.machine, agent: t.agent, step: if download { Step::Get } else { Step::Start }, since: Instant::now() });
+    // One local model runs at a time: the one running here stops first — after a download, so it
+    // answers until this one is ready to start.
+    let stops = other_running(app, &m).map(|o| (o.id, o.name));
+    let step = match (&stops, download && supports) { (_, true) => Step::Get, (Some(_), false) => Step::Stop, (None, false) => if download { Step::Get } else { Step::Start } };
+    app.models_view.using = Some(Use { model: m.id.clone(), name: m.name.clone(), machine: t.machine, agent: t.agent, step, stops: stops.clone(), since: Instant::now() });
     app.models_view.ended = None;
-    act(app, &m.id, if download && supports { "download" } else { "start" });
+    match (step, stops) {
+        (Step::Stop, Some((other, _))) => act(app, &other, "stop"),
+        _ => act(app, &m.id, if download && supports { "download" } else { "start" }),
+    }
 }
 
 /// The Use stops at its step: its row's preview says why (✗) and how to try again, and one toast.
@@ -1200,7 +1288,7 @@ fn fail(app: &mut App, why: &str) {
     let Some(job) = app.models_view.using.take() else { return };
     let row = format!("mv:local:{}", job.model);
     app.models_view.use_error = Some((row.clone(), why.to_string()));
-    app.models_view.ended = Some(Ended { row, name: job.name.clone(), step: job.step, failed: Some(why.to_string()), seen: false });
+    app.models_view.ended = Some(Ended { row, name: job.name.clone(), step: job.step, failed: Some(why.to_string()), seen: false, stops: job.stops.as_ref().map(|(_, n)| n.clone()) });
     app.say(format!("✗ {}: {why}", job.name), theme::DANGER);
 }
 
@@ -1210,12 +1298,15 @@ pub fn advance(app: &mut App) {
     let machine = app.fleet.local_id.clone();
     let v = &app.models_view;
     let snap = v.local.get(&machine);
-    let m = snap.and_then(|s| s.models.iter().find(|m| m.id == job.model));
-    let op = match m { Some(m) => v.op_for(&machine, m).cloned(), None => v.op.as_ref().filter(|(_, o)| o.model == job.model).map(|(_, o)| o.clone()) };
-    let pending = v.pending.as_ref().is_some_and(|p| p.1 == job.model);
+    // (While it stops the model running here, that model's operation is the one it waits on.)
+    let watched = match (job.step, &job.stops) { (Step::Stop, Some((other, _))) => other.as_str(), _ => job.model.as_str() };
+    let m = snap.and_then(|s| s.models.iter().find(|m| m.id == watched));
+    let op = match m { Some(m) => v.op_for(&machine, m).cloned(), None => v.op.as_ref().filter(|(_, o)| o.model == watched).map(|(_, o)| o.clone()) };
+    let pending = v.pending.as_ref().is_some_and(|p| p.1 == watched);
     let step = |app: &mut App, step: Step| if let Some(u) = app.models_view.using.as_mut() { u.step = step; u.since = Instant::now() };
     match next(&job, snap, op.as_ref(), pending, v.grids.get(&machine), Instant::now()) {
         Next::Wait => {}
+        Next::Stop => { step(app, Step::Stop); if let Some((other, _)) = &job.stops { act(app, other, "stop") } }
         Next::Start => { step(app, Step::Start); act(app, &job.model, "start") }
         Next::Serve => { step(app, Step::Serve); read_grids(app, &machine) }
         Next::Retarget { grid, model } => {
@@ -1282,6 +1373,7 @@ pub fn watch_turn(app: &mut App, machine: &str, ty: &str, payload: &Value) {
 /// its resting computers, or the daemon's note (`grid.note`) — offline, or not served (then which
 /// key picks another).
 pub fn pane_note(app: &App, machine: &str, agent: &str) -> Option<String> {
+    let agent = app.fleet.agent(machine, agent).map(|a| live_in_pane(app, a).id.as_str()).unwrap_or(agent);
     if let Some(s) = app.models_view.switching.as_ref().filter(|s| s.machine == machine && s.agent == agent && !switched(app, s)) {
         return Some(format!("Switching to {}…", s.name));
     }
@@ -1311,14 +1403,14 @@ fn use_lines(app: &App, m: &LocalModel, id: &str) -> Vec<Line<'static>> {
     let v = &app.models_view;
     if let Some((_, words)) = v.confirm.as_ref().filter(|(row, _)| row == id) { return vec![Line::raw(""), Line::from(span(words.clone(), theme::bold(theme::accent())))] }
     let ended = v.ended.as_ref().filter(|e| e.row == id);
-    let (step, op, since) = match (v.using.as_ref().filter(|u| u.model == m.id), ended) {
-        (Some(u), _) => (u.step, v.op_for(&app.fleet.local_id, m).cloned(), Some(u.since)),
-        (None, Some(e)) => (e.step, None, None),
+    let (step, op, since, stops) = match (v.using.as_ref().filter(|u| u.model == m.id), ended) {
+        (Some(u), _) => (u.step, v.op_for(&app.fleet.local_id, m).cloned(), Some(u.since), u.stops.as_ref().map(|(_, n)| n.clone())),
+        (None, Some(e)) => (e.step, None, None, e.stops.clone()),
         _ => return vec![],
     };
     let ended = ended.filter(|_| since.is_none());
     let mut out = vec![Line::raw("")];
-    for (name, mark) in STEPS.iter().zip(checklist(step, op.as_ref(), ended.map(|e| e.failed.is_none()))) {
+    for (name, mark) in steps(stops.as_deref()).iter().zip(checklist(step, stops.is_some(), op.as_ref(), ended.map(|e| e.failed.is_none()))) {
         out.push(match mark {
             Mark::Done => Line::from(span(format!("✓ {name}"), fg(theme::ONLINE))),
             Mark::Now(Some(p)) => Line::from(span(format!("↻ {name}  {} {}%", bar(p), percent(p)), fg(theme::accent()))),
@@ -1363,6 +1455,7 @@ pub fn preview(app: &App, id: &str) -> Vec<Line<'static>> {
         if !v.ended.as_ref().is_some_and(|e| e.row == id) { out.extend(failed) }
         out.extend(use_lines(app, &m, id));
         out.push(Line::raw(""));
+        if let Some(a) = &m.app { out.push(kv("Runs in", a.clone())) }
         let here = this_computer();
         if let Some(size) = m.size {
             let free = snap.and_then(|s| s.free_disk).filter(|_| !m.downloaded()).map(|d| format!(" · {} free", gb(d))).unwrap_or_default();
@@ -1385,10 +1478,10 @@ pub fn preview(app: &App, id: &str) -> Vec<Line<'static>> {
         else if !m.downloaded() && !snap.is_some_and(|s| s.supports_download) && m.can_start && f.pending.is_none() && !active { out.push(warn(format!("Downloads and starts on {here}."))) }
         let mut said = Vec::new();
         if !f.in_use {
-            if f.get_use { said.push("Enter gets it: downloads it, starts it, and moves this harness onto it.".to_string()) }
+            if f.get_use { said.push(match &f.other { None => "Enter gets it: downloads it, starts it, and moves this harness onto it.".to_string(), Some(o) => format!("Enter gets it: downloads it, stops {o}, starts it, and moves this harness onto it.") }) }
             else if f.get { said.push(match &f.other { None => "Enter downloads it.".into(), Some(o) => format!("Enter downloads it. Stop {o} to run it: one local model runs at a time.") }) }
             else if f.use_running { said.push("Enter moves this harness onto it.".into()) }
-            else if f.use_start { said.push(match &f.other { None => "Enter starts it and moves this harness onto it.".into(), Some(o) => format!("Stop {o} first: one local model runs at a time.") }) }
+            else if f.use_start { said.push(match &f.other { None => "Enter starts it and moves this harness onto it.".into(), Some(o) => format!("Enter stops {o}, starts this one, and moves this harness onto it.") }) }
             else if t.is_none() && m.downloaded() && !m.running() && m.can_start { said.push("Enter starts it.".into()) }
         }
         if m.can_stop { said.push("^S stops it and frees its memory. The download is kept.".into()) }
@@ -1704,7 +1797,7 @@ mod tests {
         assert!(text(&preview(&app, "mv:local:gemma-12b")).contains("✗ Failed · Stop a running model to make room"));
 
         // A download the daemon reports failed.
-        let job = Use { model: "qwen-35b".into(), name: "Qwen".into(), machine: "local".into(), agent: "a1".into(), step: Step::Get, since: Instant::now() };
+        let job = Use { model: "qwen-35b".into(), name: "Qwen".into(), machine: "local".into(), agent: "a1".into(), step: Step::Get, since: Instant::now(), stops: None };
         let failed = Operation::parse(&op("download", "downloading", "failed", None)).map(|mut o| { o.error = Some("The download stopped. Start again to resume.".into()); o });
         assert_eq!(next(&job, None, failed.as_ref(), false, None, Instant::now()), Next::Fail("The download stopped. Start again to resume.".into()));
         // Started, but never listed as served: after three minutes it says so.
@@ -1718,21 +1811,27 @@ mod tests {
         assert_eq!(next(&serving, Some(&snap), None, false, Some(&parse_grids(&grids_reply(&["QWEN-35B"]))), Instant::now()), Next::Retarget { grid: "own-grid".into(), model: "QWEN-35B".into() });
     }
 
-    /// A Use's four steps, from where it is and the operation on its model: done, the one under
-    /// way (with its progress only while the daemon sends one), failed, or still to come.
+    /// A Use's steps, from where it is and the operation on its model: done, the one under way
+    /// (with its progress only while the daemon sends one), failed, or still to come — and a stop
+    /// of the model running here among them only when it makes one.
     #[test]
     fn the_steps_follow_the_use_and_its_operation() {
         use Mark::*;
         let o = |action: &str, stage: &str, phase: &str, p: Option<f64>| Operation::parse(&op(action, stage, phase, p));
-        assert_eq!(checklist(Step::Get, o("download", "downloading", "running", Some(0.42)).as_ref(), None), [Now(Some(0.42)), Later, Later, Later]);
-        assert_eq!(checklist(Step::Get, None, None), [Now(None), Later, Later, Later]);
-        assert_eq!(checklist(Step::Get, o("download", "downloading", "done", Some(1.0)).as_ref(), None), [Now(None), Later, Later, Later], "a finished operation is no bar");
-        assert_eq!(checklist(Step::Start, o("start", "starting", "running", None).as_ref(), None), [Done, Now(None), Later, Later]);
-        assert_eq!(checklist(Step::Serve, None, None), [Done, Done, Now(None), Later]);
-        assert_eq!(checklist(Step::Switch, None, None), [Done, Done, Done, Now(None)]);
-        assert_eq!(checklist(Step::Switch, None, Some(true)), [Done, Done, Done, Done]);
-        assert_eq!(checklist(Step::Start, o("start", "starting", "failed", None).as_ref(), Some(false)), [Done, Failed, Later, Later]);
-        assert_eq!(checklist(Step::Get, None, Some(false)), [Failed, Later, Later, Later]);
+        assert_eq!(checklist(Step::Get, false, o("download", "downloading", "running", Some(0.42)).as_ref(), None), [Now(Some(0.42)), Later, Later, Later]);
+        assert_eq!(checklist(Step::Get, false, None, None), [Now(None), Later, Later, Later]);
+        assert_eq!(checklist(Step::Get, false, o("download", "downloading", "done", Some(1.0)).as_ref(), None), [Now(None), Later, Later, Later], "a finished operation is no bar");
+        assert_eq!(checklist(Step::Start, false, o("start", "starting", "running", None).as_ref(), None), [Done, Now(None), Later, Later]);
+        assert_eq!(checklist(Step::Serve, false, None, None), [Done, Done, Now(None), Later]);
+        assert_eq!(checklist(Step::Switch, false, None, None), [Done, Done, Done, Now(None)]);
+        assert_eq!(checklist(Step::Switch, false, None, Some(true)), [Done, Done, Done, Done]);
+        assert_eq!(checklist(Step::Start, false, o("start", "starting", "failed", None).as_ref(), Some(false)), [Done, Failed, Later, Later]);
+        assert_eq!(checklist(Step::Get, false, None, Some(false)), [Failed, Later, Later, Later]);
+        assert_eq!(steps(None), ["Download", "Start", "Serve", "Switch harness"]);
+        assert_eq!(steps(Some("Phi")), ["Download", "Stop Phi", "Start", "Serve", "Switch harness"]);
+        assert_eq!(checklist(Step::Stop, true, None, None), [Done, Now(None), Later, Later, Later]);
+        assert_eq!(checklist(Step::Start, true, None, None), [Done, Done, Now(None), Later, Later]);
+        assert_eq!(checklist(Step::Stop, true, None, Some(false)), [Done, Failed, Later, Later, Later]);
     }
 
     /// How a Use ended stays in its row's preview — past the 3 s a flash lasts — until the cursor
@@ -1773,17 +1872,45 @@ mod tests {
         assert!(picker.armed.is_none());
     }
 
-    /// One local model runs at a time: with another running, Use says to stop it first, and Get
-    /// only downloads. While an operation runs, nothing else starts.
+    /// The daemon's list with Phi running here (the one model that runs at a time), [gemma] and
+    /// [qwen] as given.
+    fn with_phi(gemma: Value, qwen: Value, phi: Value) -> Value {
+        let mut reply = local_reply(qwen, false);
+        reply["models"][1] = gemma;
+        reply["models"].as_array_mut().unwrap().push(phi);
+        reply
+    }
+
+    fn phi(state: &str, operation: Value) -> Value {
+        json!({ "id": "phi", "name": "Phi", "state": state, "sizeBytes": 3.0 * GIB, "canStart": state != "running", "canStop": state == "running", "tokensPerSecond": 91.3, "operation": operation })
+    }
+
+    fn gemma(state: &str, operation: Value) -> Value {
+        json!({ "id": "gemma-12b", "name": "gemma-12b", "state": state, "sizeBytes": 7.5 * GIB, "canStart": state != "running", "canStop": state == "running", "operation": operation })
+    }
+
+    fn op_on(model: &str, action: &str, stage: &str, phase: &str) -> Value {
+        json!({ "id": format!("op-{action}-{model}"), "modelId": model, "action": action, "stage": stage, "phase": phase, "updatedAt": "2026-09-30T00:00:00.000Z" })
+    }
+
+    /// One local model runs at a time: with another running, Use stops it first and Get goes on to
+    /// stop it once downloaded — Enter says so. While an operation runs, nothing else starts.
     #[test]
     fn one_local_model_runs_at_a_time() {
         let mut app = app();
-        let mut reply = local_reply(qwen("available", Value::Null), false);
-        reply["models"].as_array_mut().unwrap().push(json!({ "id": "phi", "name": "Phi", "state": "running", "sizeBytes": 3.0 * GIB, "canStart": false, "canStop": true, "tokensPerSecond": 91.3 }));
-        on_local(&mut app, "local", Ok(reply));
+        on_local(&mut app, "local", Ok(with_phi(gemma("downloaded", Value::Null), qwen("available", Value::Null), phi("running", Value::Null))));
         on_grids(&mut app, "local", Ok(grids_reply(&["phi"])));
-        assert_eq!(plan_enter(&app, "mv:local:gemma-12b"), Plan::Say("Stop Phi first: one local model runs at a time — ^S on it".into()));
-        match plan_enter(&app, "mv:local:qwen-35b") { Plan::Arm(_, then) => assert_eq!(*then, Plan::Act { model: "qwen-35b".into(), action: "download" }), p => panic!("{p:?}") }
+        // Nobody else is on Phi: no question, Use goes.
+        assert_eq!(plan_enter(&app, "mv:local:gemma-12b"), Plan::Use { model: "gemma-12b".into(), download: false });
+        assert!(text(&preview(&app, "mv:local:gemma-12b")).contains("Enter stops Phi, starts this one, and moves this harness onto it."), "{}", text(&preview(&app, "mv:local:gemma-12b")));
+        match plan_enter(&app, "mv:local:qwen-35b") {
+            Plan::Arm(words, then) => {
+                assert_eq!(words, "Get Qwen3.6-35B-A3B (20 GB), stop Phi, start it, move this harness onto it? Enter · Esc");
+                assert_eq!(*then, Plan::Use { model: "qwen-35b".into(), download: true });
+            }
+            p => panic!("{p:?}"),
+        }
+        assert!(text(&preview(&app, "mv:local:qwen-35b")).contains("Enter gets it: downloads it, stops Phi, starts it, and moves this harness onto it."));
         let rows = rows_of(&app);
         assert!(row(&rows, "mv:local:phi").right.contains("91 tok/s") && row(&rows, "mv:local:phi").right.ends_with("Use"), "measured speed, and it serves: Use");
         assert!(row(&rows, "mv:local:qwen-35b").right.contains("~78 tok/s"), "an estimate before it runs");
@@ -1797,6 +1924,142 @@ mod tests {
         // While it stops, the daemon is busy: nothing else starts.
         assert_eq!(plan_enter(&app, "mv:local:qwen-35b"), Plan::Say("Wait for the current model operation to finish.".into()));
         assert!(row(&rows_of(&app), "mv:local:phi").right.ends_with("Stopping"));
+    }
+
+    /// Use on a model while another runs here: Phi stops (its stop the checklist's step), then
+    /// gemma starts, serves, and the harness moves onto it — one Enter.
+    #[test]
+    fn use_stops_the_model_running_then_starts_this_one() {
+        let mut app = app();
+        on_local(&mut app, "local", Ok(with_phi(gemma("downloaded", Value::Null), qwen("available", Value::Null), phi("running", Value::Null))));
+        on_grids(&mut app, "local", Ok(grids_reply(&["phi"])));
+        let mut picker = Picker::new("models", "");
+        choose(&mut app, &mut picker, "mv:local:gemma-12b", false);
+        assert_eq!(last_sent(&app), ("local".into(), "grid_fleet_model_stop".into(), json!({ "modelId": "phi" })));
+        assert_eq!(app.models_view.using.as_ref().map(|u| u.step), Some(Step::Stop));
+        let gemma_preview = |app: &App| text(&preview(app, "mv:local:gemma-12b"));
+        let p = gemma_preview(&app);
+        assert!(p.contains("✓ Download\n↻ Stop Phi · 0s\n  Start\n  Serve\n  Switch harness"), "{p}");
+        assert_eq!(status_text(&app).as_deref(), Some("↻ gemma-12b waiting for Phi to stop"));
+        assert_eq!(using_label(&app, app.models_view.using.as_ref().unwrap()), "Stopping Phi…");
+
+        // Still stopping: nothing starts.
+        on_act(&mut app, "local", Ok(json!({ "operation": op_on("phi", "stop", "stopping", "running") })));
+        on_local(&mut app, "local", Ok(with_phi(gemma("downloaded", Value::Null), qwen("available", Value::Null), phi("running", op_on("phi", "stop", "stopping", "running")))));
+        assert!(app.models_view.sent.iter().all(|s| s.1 != "grid_fleet_model_start"));
+        // Stopped: gemma starts.
+        on_local(&mut app, "local", Ok(with_phi(gemma("downloaded", Value::Null), qwen("available", Value::Null), phi("downloaded", op_on("phi", "stop", "stopping", "done")))));
+        assert_eq!(last_sent(&app), ("local".into(), "grid_fleet_model_start".into(), json!({ "modelId": "gemma-12b" })));
+        assert_eq!(app.models_view.using.as_ref().map(|u| u.step), Some(Step::Start));
+        assert!(gemma_preview(&app).contains("✓ Stop Phi\n↻ Start"), "{}", gemma_preview(&app));
+        on_act(&mut app, "local", Ok(json!({ "operation": op_on("gemma-12b", "start", "starting", "running") })));
+        on_local(&mut app, "local", Ok(with_phi(gemma("running", op_on("gemma-12b", "start", "verifying", "done")), qwen("available", Value::Null), phi("downloaded", Value::Null))));
+        on_grids(&mut app, "local", Ok(grids_reply(&["gemma-12b"])));
+        assert_eq!(last_sent(&app), ("local".into(), "agent_retarget".into(), json!({ "agentId": "a1", "gridModel": "gemma-12b", "gridName": "own-grid" })));
+        on_retarget(&mut app, "gemma-12b", true, Ok(json!({ "retargeted": true })));
+        assert_eq!(toast(&app), "✓ gemma-12b is ready · fix-login is on it");
+        assert!(gemma_preview(&app).contains("✓ Stop Phi") && gemma_preview(&app).contains("✓ Ready"), "{}", gemma_preview(&app));
+        let sent: Vec<&str> = app.models_view.sent.iter().map(|s| s.1.as_str()).filter(|t| *t != "grid_fleet_models_list" && *t != "grid_models_list").collect();
+        assert_eq!(sent, ["grid_fleet_model_stop", "grid_fleet_model_start", "agent_retarget"]);
+    }
+
+    /// Another harness on the model running here is asked about first — the first Enter only asks,
+    /// in the preview; a refused stop ends the Use and says why.
+    #[test]
+    fn another_harness_on_the_running_model_is_asked_about_first() {
+        let mut app = app();
+        let row = json!({ "id": "r2", "name": "review", "engine": "codex", "grid": { "model": "Phi", "state": "awake" } });
+        let other = crate::fleet::agent_from("local", &row, None);
+        app.fleet.agents.insert(("local".into(), "r2".into()), other);
+        on_local(&mut app, "local", Ok(with_phi(gemma("downloaded", Value::Null), qwen("available", Value::Null), phi("running", Value::Null))));
+        on_grids(&mut app, "local", Ok(grids_reply(&["phi"])));
+        let words = "Stop Phi? review uses Phi, and will stop answering until it moves to another model. Enter · Esc";
+        match plan_enter(&app, "mv:local:gemma-12b") { Plan::Arm(w, then) => { assert_eq!(w, words); assert_eq!(*then, Plan::Use { model: "gemma-12b".into(), download: false }) } p => panic!("{p:?}") }
+        match plan_enter(&app, "mv:local:qwen-35b") { Plan::Arm(w, _) => assert!(w.ends_with("stop Phi, start it, move this harness onto it? review uses Phi, and will stop answering until it moves to another model. Enter · Esc"), "{w}"), p => panic!("{p:?}") }
+        let mut picker = Picker::new("models", "");
+        choose(&mut app, &mut picker, "mv:local:gemma-12b", false);
+        assert!(app.models_view.sent.iter().all(|s| s.1 != "grid_fleet_model_stop"), "the first Enter only asks");
+        assert!(text(&preview(&app, "mv:local:gemma-12b")).contains(words));
+        choose(&mut app, &mut picker, "mv:local:gemma-12b", false);
+        assert_eq!(last_sent(&app), ("local".into(), "grid_fleet_model_stop".into(), json!({ "modelId": "phi" })));
+        on_act(&mut app, "local", Err(RpcError::new("Phi is busy. Try again.", "")));
+        assert!(app.models_view.using.is_none());
+        assert_eq!(toast(&app), "✗ gemma-12b: Phi is busy. Try again.");
+        assert!(text(&preview(&app, "mv:local:gemma-12b")).contains("✗ Stop Phi"), "{}", text(&preview(&app, "mv:local:gemma-12b")));
+    }
+
+    /// Get while another model runs: the download first — the running one answers meanwhile — then
+    /// it stops, and this one starts.
+    #[test]
+    fn get_downloads_before_it_stops_the_model_running() {
+        let mut app = app();
+        on_local(&mut app, "local", Ok(with_phi(gemma("downloaded", Value::Null), qwen("available", Value::Null), phi("running", Value::Null))));
+        on_grids(&mut app, "local", Ok(grids_reply(&["phi"])));
+        let mut picker = Picker::new("models", "");
+        choose(&mut app, &mut picker, "mv:local:qwen-35b", false);
+        choose(&mut app, &mut picker, "mv:local:qwen-35b", false);
+        assert_eq!(last_sent(&app), ("local".into(), "grid_fleet_model_download".into(), json!({ "modelId": "qwen-35b" })));
+        assert_eq!(app.models_view.using.as_ref().map(|u| u.step), Some(Step::Get));
+        on_act(&mut app, "local", Ok(json!({ "operation": op("download", "downloading", "running", Some(0.5)) })));
+        on_local(&mut app, "local", Ok(with_phi(gemma("downloaded", Value::Null), qwen("downloaded", op("download", "downloading", "done", None)), phi("running", Value::Null))));
+        assert_eq!(last_sent(&app), ("local".into(), "grid_fleet_model_stop".into(), json!({ "modelId": "phi" })));
+        assert_eq!(app.models_view.using.as_ref().map(|u| u.step), Some(Step::Stop));
+        on_act(&mut app, "local", Ok(json!({ "operation": op_on("phi", "stop", "stopping", "running") })));
+        on_local(&mut app, "local", Ok(with_phi(gemma("downloaded", Value::Null), qwen("downloaded", Value::Null), phi("downloaded", op_on("phi", "stop", "stopping", "done")))));
+        assert_eq!(last_sent(&app), ("local".into(), "grid_fleet_model_start".into(), json!({ "modelId": "qwen-35b" })));
+        // Phi stopped already by the time the download ends: straight to the start.
+        let job = Use { model: "qwen-35b".into(), name: "Qwen".into(), machine: "local".into(), agent: "a1".into(), step: Step::Get, since: Instant::now(), stops: Some(("phi".into(), "Phi".into())) };
+        let snap = parse_local(&with_phi(gemma("downloaded", Value::Null), qwen("downloaded", Value::Null), phi("downloaded", Value::Null))).unwrap();
+        assert_eq!(next(&job, Some(&snap), None, false, None, Instant::now()), Next::Start);
+        // A stop that never ends says so after three minutes.
+        let stopping = Use { step: Step::Stop, ..job };
+        let still = parse_local(&with_phi(gemma("downloaded", Value::Null), qwen("downloaded", Value::Null), phi("running", Value::Null))).unwrap();
+        assert_eq!(next(&stopping, Some(&still), None, false, None, Instant::now()), Next::Wait);
+        assert_eq!(next(&stopping, Some(&still), None, false, None, Instant::now() + USE_WAIT + Duration::from_secs(1)), Next::Fail("Phi is still stopping. Try again in a moment.".into()));
+    }
+
+    /// The app a model runs in — Ollama, LM Studio, llama.cpp, or Grid's own engine — beside its
+    /// quantization on its row, as "Runs in" in its preview, and found by a search for it.
+    #[test]
+    fn a_model_says_the_app_it_runs_in() {
+        let mut app = app();
+        let mut reply = local_reply(qwen("downloaded", Value::Null), false);
+        reply["models"][0]["app"] = json!("Grid");
+        reply["models"].as_array_mut().unwrap().push(json!({ "id": "app:ollama:llama3.2:3b", "name": "llama3.2:3b", "state": "downloaded", "sizeBytes": 1.9 * GIB, "canStart": true, "canStop": false, "app": "Ollama" }));
+        on_local(&mut app, "local", Ok(reply));
+        on_grids(&mut app, "local", Ok(grids_reply(&[])));
+        let rows = rows_of(&app);
+        let detail = |r: &Row| r.detail.iter().map(|s| s.content.as_ref()).collect::<String>();
+        assert_eq!(detail(row(&rows, "mv:local:qwen-35b")), "Q4_K_M · Grid");
+        assert_eq!(detail(row(&rows, "mv:local:app:ollama:llama3.2:3b")), "Ollama");
+        assert!(text(&preview(&app, "mv:local:app:ollama:llama3.2:3b")).contains("Runs in  Ollama"), "{}", text(&preview(&app, "mv:local:app:ollama:llama3.2:3b")));
+        assert!(!text(&preview(&app, "mv:local:gemma-12b")).contains("Runs in"), "an older daemon says nothing");
+        assert!(row(&rows, "mv:local:app:ollama:llama3.2:3b").extra.contains("Ollama"), "typing its app finds it");
+    }
+
+    /// A terminal harness whose Claude Code exited is retired with its conversation, and the shell
+    /// left in its tmux pane goes on under a new id — so does the Claude Code started in it next. The
+    /// pane still on the retired id moves that one: never the archive ("That harness is gone").
+    #[test]
+    fn a_pane_on_a_retired_harness_moves_the_one_its_shell_runs_now() {
+        let mut app = loaded();
+        let key = ("local".to_string(), "a1".to_string());
+        let row = |id: &str, status: &str, pane: Value| json!({ "id": id, "name": format!("Terminal harness {id}"), "engine": "claude", "status": status, "tmuxPane": pane, "grid": {} });
+        let live = crate::fleet::agent_from("local", &row("a1", "active", json!("%141")), app.fleet.agents.get(&key));
+        app.fleet.agents.insert(key.clone(), live);
+        // Retired: the row no longer says its pane; the shell's new harness runs Claude Code there.
+        let retired = crate::fleet::agent_from("local", &row("a1", "stopped", Value::Null), app.fleet.agents.get(&key));
+        assert_eq!(retired.tmux_pane, "%141", "the pane it was in is kept");
+        app.fleet.agents.insert(key, retired);
+        app.fleet.agents.insert(("local".into(), "a2".into()), crate::fleet::agent_from("local", &row("a2", "active", json!("%141")), None));
+        assert_eq!(target(&app).map(|t| t.agent).as_deref(), Some("a2"));
+        let mut picker = Picker::new("models", "");
+        choose(&mut app, &mut picker, "mv:grid:team\tgpu-box\tllama-70b", false);
+        assert_eq!(last_sent(&app), ("local".into(), "agent_retarget".into(), json!({ "agentId": "a2", "gridModel": "llama-70b", "gridName": "team" })));
+        assert_eq!(pane_note(&app, "local", "a1").as_deref(), Some("Switching to llama-70b…"), "the pane's heading follows it too");
+        // Nothing live in that pane: the retired one stays the pane's (and the view says so as before).
+        app.fleet.agents.remove(&("local".to_string(), "a2".to_string()));
+        assert_eq!(target(&app).map(|t| t.agent).as_deref(), Some("a1"));
     }
 
     /// The sections, in the order the per-pane picker has them: Subscription, On your machines
