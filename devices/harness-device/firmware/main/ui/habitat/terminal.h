@@ -29,7 +29,7 @@ typedef struct {
     int8_t ox, oy;     // ink box from the pen's x, and from the top of the line
 } ht_glyph_t;
 /*
- * A PROPORTIONAL FACE — the Focus skin's Literata (scripts/gen_focus_faces.py) and the two Montserrat icon
+ * A PROPORTIONAL FACE — the Focus skin's Inter (scripts/gen_focus_faces.py) and the two Montserrat icon
  * glyphs copied from the LVGL firmware (scripts/gen_lvgl_assets.py). It IS an ht_font_t, as its first member, so a run
  * carries it like any other font; `first > last` is what marks it, a range no fixed-cell atlas can
  * have. A separate type rather than fields appended to ht_font_t so every fixed-cell atlas keeps its
@@ -53,7 +53,7 @@ static inline const ht_pfont_t *ht_pfont(const ht_font_t *f)
 }
 extern const ht_font_t ht_mono_16, ht_mono_20, ht_mono_24, ht_mono_28, ht_pixel_40;
 // The Focus skin's icon faces (lvgl_fonts.c; see assets/lvgl/SPEC.md): Montserrat cut down to a space and one
-// FontAwesome symbol each. Every word and number on Focus is Literata (focus_faces.h).
+// FontAwesome symbol each. Every word and number on Focus is Inter (focus_faces.h).
 extern const ht_pfont_t ht_lv_montserrat_22, ht_lv_montserrat_14;
 // FontAwesome in LVGL's Montserrat: the bell (montserrat_14) and the close cross (montserrat_22).
 #define HT_LV_BELL  "\xef\x83\xb3"
@@ -200,16 +200,16 @@ typedef struct {
     // The curved run's font is this face's base, as it is the mono atlas for the other faces.
     const ht_pfont_t *prop;
     // A proportional face's mid-caps offset above the baseline on the curve, px; 0 = terminal.c's
-    // ARC_PROP_MID. Literata's taller stacked marks need it larger (focus_faces.c).
+    // ARC_PROP_MID. Inter's taller stacked marks need it larger (focus_faces.c).
     uint8_t mid;
     // A proportional label too long for the span ends at a word with no "…" (the Focus name: owner,
     // 2026-10-03); false keeps the "…".
     bool bare;
 } ht_arc_face_t;
 extern const ht_arc_face_t ht_arc_geist;
-// Literata Medium 26 on the same arcs (focus_faces.c, which holds the face): ht_arc_literata_prop is the Focus
-// name on the upper arc; ht_arc_literata_lower the lower-arc status and the Listening sweep.
-extern const ht_arc_face_t ht_arc_literata_prop, ht_arc_literata_lower;
+// Inter Medium 26 on the same arcs (focus_faces.c, which holds the face): ht_arc_inter_prop is the Focus
+// name on the upper arc; ht_arc_inter_lower the lower-arc status and the Listening sweep.
+extern const ht_arc_face_t ht_arc_inter_prop, ht_arc_inter_lower;
 // The arc length a proportional label may span, in px: the 26 cells the mono arcs allow.
 enum { HT_ARC_SPAN = HT_ARC_COLS * HT_ARC_CELL_WIDTH };
 void ht_arc_title(ht_scene_t *scene, uint16_t fg, const char *text);

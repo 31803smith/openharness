@@ -270,16 +270,16 @@ static int scene_frame(const ht_pet_scene_t *sc, const uint8_t *cells)
     for (unsigned k = 0; k < n; k++) if (sc->frames[k].cells == cells) return (int)k;
     return -1;
 }
-// Focus draws in ONE font (owner, 2026-10-02): every visible text run of the scene is one of the five Literata faces,
+// Focus draws in ONE font (owner, 2026-10-02): every visible text run of the scene is one of the five Inter faces,
 // except an icon run (the bell and the close cross are FontAwesome in Montserrat, alone in their run) and the voice
 // bars / sparkles (drawn art in the ht_wave / ht_spark atlases, not letters). No GeistMono, no Geist, no Roboto, and
-// the curved runs are Literata Medium 26. An empty run is an invisible placeholder: its font pointer does not count.
-static bool literata_face(const ht_font_t *font)
+// the curved runs are Inter Medium 26. An empty run is an invisible placeholder: its font pointer does not count.
+static bool inter_face(const ht_font_t *font)
 {
-    return font == &ht_lv_literata_20.base || font == &ht_lv_literata_25.base || font == &ht_lv_literata_med_26.base ||
-           font == &ht_lv_literata_30.base || font == &ht_lv_literata_36.base;
+    return font == &ht_lv_inter_20.base || font == &ht_lv_inter_25.base || font == &ht_lv_inter_med_26.base ||
+           font == &ht_lv_inter_30.base || font == &ht_lv_inter_36.base;
 }
-static void only_literata(const ht_scene_t *scene)
+static void only_inter(const ht_scene_t *scene)
 {
     for (int i = 0; i < scene->count; i++) {
         const ht_run_t *r = &scene->runs[i];
@@ -287,8 +287,8 @@ static void only_literata(const ht_scene_t *scene)
         bool icon = (r->font == &ht_lv_montserrat_14.base && !strcmp(r->text, HT_LV_BELL)) ||
                     (r->font == &ht_lv_montserrat_22.base && !strcmp(r->text, HT_LV_CROSS));
         bool art = r->font == &ht_wave || r->font == &ht_spark;
-        assert(literata_face(r->font) || icon || art);
-        if (r->arc) assert(r->font == &ht_lv_literata_med_26.base);
+        assert(inter_face(r->font) || icon || art);
+        if (r->arc) assert(r->font == &ht_lv_inter_med_26.base);
     }
 }
 static void focus_face(void)
@@ -325,7 +325,7 @@ static void focus_face(void)
         ht_character_face(&scene, &c, &f, 0xffff, cases[i].recap);
         if (expected < 0) expected = scene.count;
         assert(scene.count == expected);   // property 1
-        only_literata(&scene);
+        only_inter(&scene);
         ht_raster(&scene, (ht_rect_t){0, 0, HT_WIDTH, HT_HEIGHT}, full);
         for (int y = 0; y < HT_HEIGHT; y++) for (int x = 0; x < HT_WIDTH; x++)
             if (full[y * HT_WIDTH + x])
@@ -349,9 +349,9 @@ static void focus_face(void)
         const ht_run_t *last = NULL;
         for (int i = 0; i < scene.count; i++) {
             const ht_run_t *r = &scene.runs[i];
-            if (r->arc == 1) { arc++; assert(r->font == &ht_lv_literata_med_26.base); }
+            if (r->arc == 1) { arc++; assert(r->font == &ht_lv_inter_med_26.base); }
             if (r->sprite.width == 56 || r->sprite.width == pet_of("claude")->w) mark++;
-            if (r->font == &ht_lv_literata_30.base && r->text[0]) {
+            if (r->font == &ht_lv_inter_30.base && r->text[0]) {
                 lines++; last = r;
                 // LVGL lets a wrapped line's trailing space run past the width; its ink may not.
                 char ink[HT_TEXT_BYTES];
@@ -363,14 +363,14 @@ static void focus_face(void)
         assert(arc == 1 && mark == 1 && lines >= 3 && lines <= 4);
         size_t n = strlen(last->text);
         assert(n >= 3 && !strcmp(last->text + n - 3, "\xe2\x80\xa6"));
-        only_literata(&scene);
+        only_inter(&scene);
         // No tab pill and no name row: nothing in Montserrat is drawn.
         for (int i = 0; i < scene.count; i++)
             assert(scene.runs[i].font != &ht_lv_montserrat_22.base && scene.runs[i].font != &ht_lv_montserrat_14.base);
     }
 
     // The check and cross marks (U+2713 / U+2717) reach the glass: every Focus face holds them (the five
-    // Literata faces take them from Noto Sans Symbols 2 through gen_focus_faces.py's second --font); a missing glyph is "?".
+    // Inter faces take them from Noto Sans Symbols 2 through gen_focus_faces.py's second --font); a missing glyph is "?".
     {
         const char *marks = "Tests \xe2\x9c\x93 pushed \xe2\x9c\x97";
         ht_character_face_t f = {.recipient = "pane", .tab = "", .engine = "claude", .activity = "",
@@ -380,10 +380,10 @@ static void focus_face(void)
         ht_character_face(&scene, &c, &f, 0xffff, marks);
         int found = 0;
         for (int i = 0; i < scene.count; i++)
-            if (scene.runs[i].font == &ht_lv_literata_30.base && strstr(scene.runs[i].text, "\xe2\x9c\x93")) found++;
+            if (scene.runs[i].font == &ht_lv_inter_30.base && strstr(scene.runs[i].text, "\xe2\x9c\x93")) found++;
         assert(found == 1);
-        const ht_pfont_t *faces[] = {&ht_lv_literata_20, &ht_lv_literata_25, &ht_lv_literata_med_26,
-            &ht_lv_literata_30, &ht_lv_literata_36};
+        const ht_pfont_t *faces[] = {&ht_lv_inter_20, &ht_lv_inter_25, &ht_lv_inter_med_26,
+            &ht_lv_inter_30, &ht_lv_inter_36};
         for (unsigned k = 0; k < sizeof faces / sizeof faces[0]; k++) {
             int has[2] = {0, 0};   // the face itself holds both marks, not its "?" or a fallback
             for (unsigned g = 0; g < faces[k]->count; g++) {
@@ -430,9 +430,9 @@ static void focus_face(void)
     }
 
     /*
-     * WHERE THEY STAND: the name on the arc. A recap is a Kindle page (owner, 2026-10-02, K3): no visible card
-     * (its run stays, an invisible placeholder), up to four lines of literata_30 in 0xd6d6d2, each centred on x 233
-     * in the 364 px column at x 51, 44 px apart, the block centred in y 176..376 with its first baseline 30 px under the block's top. Working or resting
+     * WHERE THEY STAND: the name on the arc. A recap is a "Kindle dark" page, set in Inter (owner, 2026-10-02, K3): no visible card
+     * (its run stays, an invisible placeholder), up to four lines of inter_30 in 0xd6d6d2, each centred on x 233
+     * in the 364 px column at x 51, 43 px apart, the block centred in y 176..376 with its first baseline 30 px under the block's top. Working or resting
      * there is no recap and the line is centred on the glass. The 56 px mark sits halfway between the foot of the
      * arc's cells (y 44) and the recap area's top (176) or the line: the gap above it equals the gap below, and it
      * never moves with the recap's length.
@@ -447,7 +447,7 @@ static void focus_face(void)
              "including the new reader tests. Nothing is committed yet."),
             ("Flashed 0.0.91 to both dials and verified the image on each. All 44 host checks pass, "
              "including the new reader tests. Nothing is committed yet; say commit and I will push it.")};
-        const ht_pfont_t *lit = &ht_lv_literata_30;
+        const ht_pfont_t *lit = &ht_lv_inter_30;
         int mark_y = -1, count = -1;
         for (unsigned k = 0; k < 4; k++) {
             ht_scene_t scene; ht_scene_clear(&scene, 0);
@@ -455,8 +455,8 @@ static void focus_face(void)
             if (count < 0) count = scene.count;
             assert(scene.count == count);   // the run count never moves with the recap
             const ht_run_t *name = &scene.runs[0], *mark = &scene.runs[1];
-            assert(name->arc == 1 && !strcmp(name->text, "Payments refactor") && name->font == &ht_lv_literata_med_26.base);
-            only_literata(&scene);
+            assert(name->arc == 1 && !strcmp(name->text, "Payments refactor") && name->font == &ht_lv_inter_med_26.base);
+            only_inter(&scene);
             // The Claude pet, still (clock 0), centred in the 56 px mark's box: 60 x 45 at its step 0.
             const ht_pet_t *cp = pet_of("claude");
             assert(cp && cp->w == 60 && cp->h == 45);
@@ -476,9 +476,9 @@ static void focus_face(void)
                 const ht_run_t *ln = &scene.runs[i];
                 assert(ln->x + ln->w / 2 >= 232 && ln->x + ln->w / 2 <= 234 && ln->x >= 51 && ln->x + ln->w <= 51 + 364);
             }
-            int top = 176 + (200 - 44 * lines) / 2;
+            int top = 176 + (200 - 43 * lines) / 2;
             for (int i = 0; i < lines; i++) {
-                assert(scene.runs[3 + i].y == top + 30 - lit->ascent + i * 44);   // baseline top + 30, pitch 44
+                assert(scene.runs[3 + i].y == top + 30 - lit->ascent + i * 43);   // baseline top + 30, pitch 43
                 assert(scene.runs[3 + i].y + lit->base.height <= 376 && scene.runs[3 + i].y >= 176 - 5);
             }
             if (k == 3) {   // cut at four lines with its ellipsis
@@ -489,7 +489,7 @@ static void focus_face(void)
             assert(above >= 0 && (below - above == 0 || below - above == 1));
         }
 
-        // The name in Literata on the arc: ink inside r 230 and the canvas for an ASCII, a Vietnamese and a long name, the
+        // The name in Inter on the arc: ink inside r 230 and the canvas for an ASCII, a Vietnamese and a long name, the
         // long one cut with its ellipsis; the caption's tap target (the run's bounds) stays on the top edge.
         {
             const char *long_names[] = {"Payments refactor", "Tri\xe1\xbb\x83n khai firmware m\xe1\xbb\x9bi nh\xe1\xba\xa5t",
@@ -500,13 +500,13 @@ static void focus_face(void)
                 ht_scene_t sc; ht_scene_clear(&sc, 0);
                 ht_character_face(&sc, &c, &g, 0xffff, "Done.");
                 const ht_run_t *name = &sc.runs[0];
-                assert(name->arc == 1 && name->font == &ht_lv_literata_med_26.base && name->ink && name->text[0]);
-                assert(ht_arc_measure(&ht_arc_literata_prop, name->text) <= HT_ARC_SPAN);
+                assert(name->arc == 1 && name->font == &ht_lv_inter_med_26.base && name->ink && name->text[0]);
+                assert(ht_arc_measure(&ht_arc_inter_prop, name->text) <= HT_ARC_SPAN);
                 ht_rect_t b = ht_run_bounds(name);
                 assert(b.y >= HT_ARC_Y && b.y + b.h <= HT_ARC_Y + HT_ARC_HEIGHT && b.y < 66);   // on the top edge, inside the tap strip
                 static uint16_t px[HT_WIDTH * HT_HEIGHT], blank[HT_WIDTH * HT_HEIGHT];   // the name alone: every inked pixel inside r 230
                 ht_scene_t only, none; ht_scene_clear(&only, 0); ht_scene_clear(&none, 0);
-                ht_arc_title_face(&only, 0xffff, long_names[k], &ht_arc_literata_prop);
+                ht_arc_title_face(&only, 0xffff, long_names[k], &ht_arc_inter_prop);
                 ht_raster(&only, (ht_rect_t){0, 0, HT_WIDTH, HT_HEIGHT}, px);
                 ht_raster(&none, (ht_rect_t){0, 0, HT_WIDTH, HT_HEIGHT}, blank);
                 int ink = 0;
@@ -522,7 +522,7 @@ static void focus_face(void)
                            name->text[n - 1] != ' ' && !strncmp(long_names[k], name->text, n));
                     ht_scene_t w; ht_scene_clear(&w, 0);   // a name of short words ends at a whole word
                     const char *words = "Deploy the latest firmware to every dial in the studio tonight";
-                    ht_arc_title_face(&w, 0xffff, words, &ht_arc_literata_prop);
+                    ht_arc_title_face(&w, 0xffff, words, &ht_arc_inter_prop);
                     size_t m = strlen(w.runs[0].text);
                     assert(m && m < strlen(words) && !strncmp(words, w.runs[0].text, m) && words[m] == ' ' &&
                            !strstr(w.runs[0].text, "\xe2\x80\xa6"));
@@ -533,8 +533,8 @@ static void focus_face(void)
         f.activity = "Working"; f.elapsed = 34;
         ht_scene_t scene; ht_scene_clear(&scene, 0);
         ht_character_face(&scene, &c, &f, 0xffff, "");
-        only_literata(&scene);
-        assert(scene.runs[7].y == 233 - ht_lv_literata_30.base.height / 2 && scene.runs[7].font == &ht_lv_literata_30.base &&
+        only_inter(&scene);
+        assert(scene.runs[7].y == 233 - ht_lv_inter_30.base.height / 2 && scene.runs[7].font == &ht_lv_inter_30.base &&
                !strcmp(scene.runs[7].text, "Simmering\xe2\x80\xa6 34s"));   // the gerund for 30..35 s
         {
             int top = scene.runs[1].y - (56 - pet_of("claude")->h) / 2;
@@ -556,7 +556,7 @@ static void focus_face(void)
             for (int again = 0; again < 2; again++) {
                 ht_scene_clear(&scene, 0);
                 ht_character_face(&scene, &c, &f, 0xffff, "");
-                only_literata(&scene);
+                only_inter(&scene);
                 const ht_run_t *l1 = &scene.runs[8], *l2 = &scene.runs[9];
                 // Compared without spaces: a wrapped line keeps the space LVGL broke it at.
                 char said[64], want[64];
@@ -568,7 +568,7 @@ static void focus_face(void)
                     known |= !strcmp(said, want);
                 }
                 assert(known);
-                assert(l1->y == 233 - ht_lv_literata_30.base.height / 2);
+                assert(l1->y == 233 - ht_lv_inter_30.base.height / 2);
                 int top = scene.runs[1].y - (56 - pet_of("claude")->h) / 2;
                 int above = top - TITLE_BOTTOM, below = l1->y - (top + 56);
                 assert(above > 0 && (below - above == 0 || below - above == 1));
@@ -694,7 +694,7 @@ static void focus_face(void)
                     assert(mark->y == 233 + 4 - ws->h / 2 + ws->dy);
                     assert(!scene.runs[7].text[0]);                 // the centred status is empty
                     const ht_run_t *lower = &scene.runs[10];
-                    assert(lower->arc == 2 && !strcmp(lower->text, "Working\xe2\x80\xa6 5s"));   // Literata has the real ellipsis
+                    assert(lower->arc == 2 && !strcmp(lower->text, "Working\xe2\x80\xa6 5s"));   // Inter has the real ellipsis
                     assert(lower->fg == ht_rgb(0x00ff2f));
                     frame_at[state][step] = frame;
                 } else {
@@ -829,7 +829,7 @@ static void focus_face(void)
             assert(!scene.runs[7].text[0]);
             assert(scene.runs[10].arc == 2 && scene.runs[10].fg == ht_rgb(0x00ff2f) &&
                    !strcmp(scene.runs[10].text, "Coalescing\xe2\x80\xa6 34s") &&
-                   scene.runs[10].font == &ht_lv_literata_med_26.base);
+                   scene.runs[10].font == &ht_lv_inter_med_26.base);
             bool fresh = true;
             for (int k = 0; k < distinct; k++) fresh &= frames_seen[k] != ws->loop[step];
             if (fresh) frames_seen[distinct++] = ws->loop[step];
@@ -850,14 +850,14 @@ static void focus_face(void)
         g.asking = true; ht_scene_clear(&scene, 0); ht_character_face(&scene, &c, &g, 0xffff, "");
         assert(scene.count == 11 && scene.runs[1].sprite.width == cp->w && scene.runs[7].text[0] && !scene.runs[10].text[0]);
 
-        // An engine without scenes working: its mark, the centred literata_30 green line, nothing on the lower arc.
+        // An engine without scenes working: its mark, the centred inter_30 green line, nothing on the lower arc.
         ht_character_face_t x = {.recipient = "x", .engine = "cursor", .activity = "Coalescing", .elapsed = 34,
             .status = "", .hint = "", .detail = "", .mood = HT_CHARACTER_WORKING, .clock_ms = 500,
             .foreground = 0xffff, .dim = 0x8410, .ink = 0xffff};
         ht_scene_clear(&scene, 0); ht_character_face(&scene, &c, &x, 0xffff, "");
         assert(scene.count == 11 && scene.runs[1].sprite.width == 56);
-        assert(scene.runs[7].font == &ht_lv_literata_30.base && scene.runs[7].fg == ht_rgb(0x00ff2f) &&
-               scene.runs[7].y == 233 - ht_lv_literata_30.base.height / 2 &&
+        assert(scene.runs[7].font == &ht_lv_inter_30.base && scene.runs[7].fg == ht_rgb(0x00ff2f) &&
+               scene.runs[7].y == 233 - ht_lv_inter_30.base.height / 2 &&
                !strcmp(scene.runs[7].text, "Coalescing\xe2\x80\xa6 34s"));
         assert(!scene.runs[10].text[0] && !scene.runs[10].arc);
 
@@ -871,7 +871,7 @@ static void focus_face(void)
                     .status = "", .hint = "", .detail = "", .voice = true, .mood = HT_CHARACTER_LISTENING,
                     .foreground = 0xffff, .dim = 0x8410, .ink = 0xffff, .clock_ms = step * ls->step_ms + 1};
                 v.pose.level = level;
-                ht_scene_clear(&scene, 0); ht_character_face(&scene, &c, &v, 0xffff, ""); only_literata(&scene);
+                ht_scene_clear(&scene, 0); ht_character_face(&scene, &c, &v, 0xffff, ""); only_inter(&scene);
                 assert(scene.count == 11);
                 int icons = 0, bars = 0;
                 for (int i = 0; i < scene.count; i++) {
@@ -903,7 +903,7 @@ static void focus_face(void)
             const uint8_t *seen[12];
             for (unsigned step = 0; step < ss->steps; step++) {
                 ht_character_face_t v = sending; v.clock_ms = step * ss->step_ms + 1;
-                ht_scene_clear(&scene, 0); ht_character_face(&scene, &c, &v, 0xffff, ""); only_literata(&scene);
+                ht_scene_clear(&scene, 0); ht_character_face(&scene, &c, &v, 0xffff, ""); only_inter(&scene);
                 assert(scene.count == 11);
                 int icons = 0, sparks = 0;
                 for (int i = 0; i < scene.count; i++) {
@@ -938,7 +938,7 @@ static void focus_face(void)
         // An engine without scenes and an empty engine, sending: still the three sparkles.
         for (int e = 0; e < 2; e++) {
             ht_character_face_t v = sending; v.engine = e ? "" : "cursor";
-            ht_scene_clear(&scene, 0); ht_character_face(&scene, &c, &v, 0xffff, ""); only_literata(&scene);
+            ht_scene_clear(&scene, 0); ht_character_face(&scene, &c, &v, 0xffff, ""); only_inter(&scene);
             int sparks = 0;
             for (int i = 0; i < scene.count; i++) sparks += scene.runs[i].font == &ht_spark && scene.runs[i].text[0];
             assert(scene.count == 11 && sparks == 3);
@@ -977,7 +977,7 @@ static void focus_face(void)
                         v.clock_ms = step * sc->step_ms + 1; v.pose.level = level;
                         if (kind == 0) v.mood = HT_CHARACTER_WORKING;
                         else { v.voice = true; v.mood = kind == 1 ? HT_CHARACTER_LISTENING : HT_CHARACTER_WORKING; }
-                        ht_scene_clear(&cs_, 0); ht_character_face(&cs_, &c, &v, 0xffff, ""); only_literata(&cs_);
+                        ht_scene_clear(&cs_, 0); ht_character_face(&cs_, &c, &v, 0xffff, ""); only_inter(&cs_);
                         assert(cs_.count == 11);
                         unsigned i = level * sc->steps + step;
                         int ox = (466 - sc->w) / 2 + sc->dx, oy = 233 - sc->h / 2 + bias_[kind] + sc->dy;
@@ -1076,7 +1076,7 @@ static void focus_face(void)
                         v.clock_ms = step * sc->step_ms + 1; v.pose.level = level;
                         if (kind == 0) v.mood = HT_CHARACTER_WORKING;
                         else { v.voice = true; v.mood = kind == 1 ? HT_CHARACTER_LISTENING : HT_CHARACTER_WORKING; }
-                        ht_scene_clear(&ms, 0); ht_character_face(&ms, &c, &v, 0xffff, ""); only_literata(&ms);
+                        ht_scene_clear(&ms, 0); ht_character_face(&ms, &c, &v, 0xffff, ""); only_inter(&ms);
                         assert(ms.count == 11);
                         unsigned i = level * sc->steps + step;
                         const ht_run_t *sr = &ms.runs[scene_run];
@@ -1096,7 +1096,7 @@ static void focus_face(void)
             for (unsigned level = 1; level < HT_PET_SCENE_LEVELS; level++)
                 for (unsigned step = 0; step < 12; step++) assert(ms_[1]->loop[level * 12 + step] == ms_[1]->loop[step]);
         }
-        // THE LISTENING WORD (Claude and Codex): "Listening", Literata Medium 26, green, on the lower arc in the first bar's
+        // THE LISTENING WORD (Claude and Codex): "Listening", Inter Medium 26, green, on the lower arc in the first bar's
         // slot, brightness per letter by rhythm B; 11 runs listening, sending, held and plain.
         for (int e = 0; e < 2; e++) {
             const char *eng = e ? "codex" : "claude";
@@ -1104,13 +1104,13 @@ static void focus_face(void)
                 .detail = "", .voice = true, .mood = HT_CHARACTER_LISTENING, .foreground = 0xffff, .dim = 0x8410, .ink = 0xffff};
             for (uint32_t clock = 1; clock < 2700; clock += 13) {
                 v.clock_ms = clock;
-                ht_scene_clear(&scene, 0); ht_character_face(&scene, &c, &v, 0xffff, ""); only_literata(&scene);
+                ht_scene_clear(&scene, 0); ht_character_face(&scene, &c, &v, 0xffff, ""); only_inter(&scene);
                 assert(scene.count == 11);
                 int words = 0;
                 for (int i = 0; i < scene.count; i++) if (scene.runs[i].arc == 2) {
                     words++;
                     const ht_run_t *r = &scene.runs[i];
-                    assert(i == 0 && !strcmp(r->text, "Listening") && r->font == &ht_lv_literata_med_26.base && r->fg == ht_rgb(0x00ff2f) && r->gained);
+                    assert(i == 0 && !strcmp(r->text, "Listening") && r->font == &ht_lv_inter_med_26.base && r->fg == ht_rgb(0x00ff2f) && r->gained);
                     // rhythm B at the 65 ms step the clock is in: dim 30 %, a band two letters wide, sweeping 900 ms, resting 400 ms.
                     unsigned t = clock % 1300 / 65 * 65;
                     for (int g = 0; g < 9; g++) {
@@ -1202,7 +1202,7 @@ static void focus_face(void)
 
     /*
      * THE BOTTOM EDGE IS TAKEN (a footer control; the bell steps up instead): the working scene stays, its status is a
-     * straight centred literata_30 line at y 334 in the same slot (the run count never moves) and the
+     * straight centred inter_30 line at y 334 in the same slot (the run count never moves) and the
      * lower arc is the empty placeholder. Long verbs keep their seconds, on the arc and on the line.
      */
     {
@@ -1216,7 +1216,7 @@ static void focus_face(void)
             ht_scene_clear(&scene, 0); ht_character_face(&scene, &c, &f, 0xffff, "");
             assert(scene.count == 11 && scene.runs[1].sprite.width == cp->working_scene->w);
             const ht_run_t *line = &scene.runs[7];
-            assert(!line->arc && line->font == &ht_lv_literata_30.base && line->y == 334 &&
+            assert(!line->arc && line->font == &ht_lv_inter_30.base && line->y == 334 &&
                    line->fg == ht_rgb(0x00ff2f) && !strcmp(line->text, "Coalescing\xe2\x80\xa6 34s"));
             assert(line->x + line->w / 2 >= 232 && line->x + line->w / 2 <= 234);
             assert(!scene.runs[10].text[0] && !scene.runs[10].arc);
@@ -1226,12 +1226,12 @@ static void focus_face(void)
         f.footer_action = false; f.activity = "Running firmware checks";
         ht_scene_clear(&scene, 0); ht_character_face(&scene, &c, &f, 0xffff, "");
         size_t n = strlen(scene.runs[10].text);
-        assert(scene.runs[10].arc == 2 && n >= 3 && !strcmp(scene.runs[10].text + n - 3, "34s") && ht_arc_measure(&ht_arc_literata_lower, scene.runs[10].text) <= HT_ARC_SPAN);
+        assert(scene.runs[10].arc == 2 && n >= 3 && !strcmp(scene.runs[10].text + n - 3, "34s") && ht_arc_measure(&ht_arc_inter_lower, scene.runs[10].text) <= HT_ARC_SPAN);
         assert(strstr(scene.runs[10].text, "Running firmw") && !scene.runs[7].text[0]);
         f.elapsed = 65;
         ht_scene_clear(&scene, 0); ht_character_face(&scene, &c, &f, 0xffff, "");
         n = strlen(scene.runs[10].text);
-        assert(!strcmp(scene.runs[10].text + n - 6, "1m 05s") && ht_arc_measure(&ht_arc_literata_lower, scene.runs[10].text) <= HT_ARC_SPAN);
+        assert(!strcmp(scene.runs[10].text + n - 6, "1m 05s") && ht_arc_measure(&ht_arc_inter_lower, scene.runs[10].text) <= HT_ARC_SPAN);
         f.elapsed = 34; f.activity = "Reconciling the payment ledger migration plan"; f.footer_action = true;
         ht_scene_clear(&scene, 0); ht_character_face(&scene, &c, &f, 0xffff, "");
         n = strlen(scene.runs[7].text);

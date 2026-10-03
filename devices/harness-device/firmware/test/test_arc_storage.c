@@ -94,10 +94,10 @@ static void hard_labels(const ht_arc_face_t *pf,int edges)
             assert(now<=last && !strcmp(run.text+strlen(run.text)-3,"\xe2\x80\xa6") && ++steps<64);
             last=now;
         }
-        assert(!strcmp(run.text,"\xe2\x80\xa6") && steps>=12);   // Literata is wide: few glyphs fit the span
+        assert(!strcmp(run.text,"\xe2\x80\xa6") && steps>=12);   // Inter is wide: few glyphs fit the span
     }
     printf("Hard proportional labels (%s): mask <=%u/%uB after fit (raw worst %u B, %u re-fitted shorter), every label inks PASS\n",
-           pf==&ht_arc_literata_prop ? "Literata Medium 26, upper arc" : "Literata Medium 26, lower face",sweep_peak,ARC_MASK_BYTES,sweep_raw_peak,sweep_refit);
+           pf==&ht_arc_inter_prop ? "Inter Medium 26, upper arc" : "Inter Medium 26, lower face",sweep_peak,ARC_MASK_BYTES,sweep_raw_peak,sweep_refit);
     sweep_peak=sweep_raw_peak=sweep_refit=0;
 }
 int main(void)
@@ -136,7 +136,7 @@ int main(void)
         }
         text[n]=0;compare(text,trial&1,trial%3!=0);
     }
-    hard_labels(&ht_arc_literata_lower,2);
-    hard_labels(&ht_arc_literata_prop,1);
+    hard_labels(&ht_arc_inter_lower,2);
+    hard_labels(&ht_arc_inter_prop,1);
     printf("Packed arcs: all %u geometries <=%u/%uB; 227 glyphs at every angle, 4000 mixed/clipped labels match dense pixels; caches=%zuB PASS\n",2*HT_ARC_COLS,peak,ARC_MASK_BYTES,sizeof arc_caches);
 }

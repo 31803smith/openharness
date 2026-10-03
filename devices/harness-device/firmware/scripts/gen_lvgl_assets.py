@@ -5,7 +5,7 @@
 
 Nothing here is re-drawn. The Montserrat faces are LVGL 9.5.0's built-in ones, read from an LVGL
 checkout (LVGL_DIR, default below), cut down to the two FontAwesome symbols Focus still draws (the bell
-and the close cross; every word and number on the Focus skin is Literata, gen_focus_faces.py — the old
+and the close cross; every word and number on the Focus skin is Inter, gen_focus_faces.py — the old
 firmware's Geist faces are no longer emitted); the engine marks and the microphone are the old
 icons_*.c ARGB8888 arrays, read from git at SOURCE (the tree 0.0.86 was built from). Glyph bitmaps are copied byte for byte. The 28 px header marks are LVGL's
 own scaling of the 20 px ones, ported from lv_draw_sw_transform.c so the pixels are the ones the old
@@ -30,7 +30,7 @@ LVGL = Path(sys.argv[1]) if len(sys.argv) > 1 else Path.home() / (
 MONT = ['montserrat_22', 'montserrat_14']
 USE = {'montserrat_22': 'the close cross', 'montserrat_14': 'the bell glyph in the pill'}
 # Text codepoints kept: Latin-1, Latin Extended-A, the Vietnamese horn letters and the precomposed
-# Vietnamese block, a little punctuation, ✓ ✗. Literata (gen_focus_faces.py) is cut to this set.
+# Vietnamese block, a little punctuation, ✓ ✗. Inter (gen_focus_faces.py) is cut to this set.
 TEXT = (set(range(0x20, 0x7F)) | set(range(0xA0, 0x180)) | {0x1A0, 0x1A1, 0x1AF, 0x1B0} |
         set(range(0x1EA0, 0x1EFA)) |
         {0x2013, 0x2014, 0x2018, 0x2019, 0x201C, 0x201D, 0x2022, 0x2026, 0x2039, 0x203A, 0x2713, 0x2717})
@@ -302,7 +302,7 @@ ARGB8888 (B,G,R,A, straight alpha), blended with `lv_color_24_16_mix`.
 ## Layout of the LVGL firmware (COL_FG `0xeaeaf0`, COL_MUTED `0x8a8a99`)
 
 Historical: the face names below are the old firmware's Geist ones. The Focus skin now sets every word and
-number in Literata (focus_faces.c, gen_focus_faces.py, docs/plans/2026-10-02-literata-only.md); only the
+number in Inter (focus_faces.c, gen_focus_faces.py, docs/plans/2026-10-03-inter-sf-compact.md); only the
 boxes, colours and spacing here still apply.
 
 | item | values |
