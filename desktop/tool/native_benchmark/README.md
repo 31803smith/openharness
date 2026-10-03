@@ -41,6 +41,12 @@ The launcher refuses an existing root or a normal installed app. Its additional
 macOS sandbox allows writes only inside that run and terminal devices, and
 outbound networking only over loopback or its private Unix sockets. macOS's
 setuid `/bin/ps` has a narrow execution exception for read-only discovery.
+Keep the desktop unlocked for native runs. Before creating any fixture process,
+the launcher checks console lock metadata. A known locked session produces a
+sibling `RUN_NAME.preflight.json` rejection receipt without creating the run
+directory. This registry field is not a public API contract: unavailable metadata
+is recorded as unknown, and never substitutes for the framework/native visibility
+checks below. Console account names and identifiers are not retained.
 Closing the owning launcher's stdin stops its daemon and its explicitly named
 tmux server; `cleanup.json` verifies the private socket has stopped listening.
 The app also refuses startup without the matching private-home environment.
@@ -52,7 +58,20 @@ cursor, foreground output, hidden-app idle, and hidden-app output. Active
 workers redraw eight rows at 20 Hz. Output must reach every retained terminal,
 connections must remain controlling, and actual output counts and skipped ticks
 are retained. A focus, visibility or geometry change during a phase rejects it.
+Native visibility alone is insufficient: foreground phases require Flutter
+`resumed` with frames enabled, and hidden phases require Flutter `hidden` with
+frames disabled and no new drawn frames after settling. The fixture records
+framework lifecycle transitions/frame counts and native occlusion independently.
+Rebuild older fixture apps that lack those observations. A missing or contradictory
+lifecycle rejects the run and retains the rejected state and cleanup outcome.
+Run `python3 tool/native_benchmark/test_connected_visibility.py` for that guard's
+regression checks. An [October 3 diagnostic](../../../docs/performance/2026-10-02-daemon-process-discovery.md#lifecycle-diagnostic-and-stricter-acceptance)
+reproduced a null framework lifecycle with continued hidden rendering; older
+native-only background checks do not establish normal product background behavior.
 This controls terminal traffic, not model behavior, inference or cloud latency.
+Use `--background-only` for the two hidden-app phases when foreground focus
+cannot be held. Compare it only with the same mode: it starts idle directly,
+without the foreground phases' preceding allocation and output history.
 
 `process_forest_usage.swift` samples the app, daemon and tmux process trees at
 1 Hz. CPU and wakeup accounting includes kernel-recorded exited children, so
@@ -69,6 +88,15 @@ physical footprints can include shared mappings. Neither this sampler nor the
 single-process sampler measures GPU joules, battery discharge, or macOS's
 “Using Significant Energy” classification.
 
+On supported macOS kernels the sampler also records per-process instructions,
+cycles, performance-core time and kernel-accounted CPU energy through
+`RUSAGE_INFO_V6`. These are raw diagnostic counters, not additions to the forest
+summary: unlike CPU time, they have no exited-child rollup in this API. Compare
+matching PID/birth identities that persist throughout the measured interval.
+Older kernels fall back to V4 and omit the V6 fields; zero hardware counters can
+also mean unsupported hardware. CPU energy excludes GPU, shared system services
+and battery discharge. See Apple's [counter mapping](https://github.com/apple-oss-distributions/xnu/blob/main/osfmk/kern/task.c).
+
 Use `prepare.py --source /path/to/baseline/desktop` and `connected_run.py
 --bundle /path/to/baseline/cli/dist/cli.js` to compare a second source variant
 with the same tooling. The copied build records its source revision, production
@@ -84,6 +112,12 @@ The [October 2 connected comparison](../../../docs/performance/2026-10-02-connec
 records three pairs, the rejected initial accounting experiment, and both the
 hidden-cursor idle improvement and higher foreground active-output CPU. It does
 not establish overall energy savings.
+
+The [macOS discovery experiment](../../../docs/performance/2026-10-02-daemon-process-discovery.md)
+records a cheaper executable-image probe, lower idle daemon CPU in three matched
+pairs, inconsistent connected CPU results, and a diagnostic that keeps the same
+app and worker processes alive. The daemon result does not establish whole-app
+energy savings; native comparisons still require a valid framework lifecycle.
 
 ## Core experiences and process resources
 
