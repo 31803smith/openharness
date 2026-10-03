@@ -29,8 +29,9 @@ branch, while the required tests and review run. It selects the next version by 
 as a release, builds/signs/notarizes all platforms in CI, and verifies all six downloads at an
 isolated candidate path. It creates neither a release tag nor a product manifest/Release page.
 After checks pass, merge and release that same version normally. CI reuses the candidate only
-when the complete source tree and version match; a clean squash is supported. Changed code,
-build inputs or version require a new build. Candidate packaging does not replace application
+when the Desktop build inputs and version match; unrelated component merges and a clean
+squash are supported. Changed build inputs or version require a new build.
+Candidate packaging does not replace application
 tests or authorize publication. See the [validation guide](../docs/validation-and-release.md#package-desktop-while-final-checks-run)
 for identity checks, bounded waiting, expiration and disposable promotion validation.
 
@@ -161,6 +162,11 @@ arm64/x86_64 slices, signatures and hardened runtime are checked before publicat
 still receives both app and DMG notarization, with the stapled app inside the DMG. Separate scratch
 manifests are combined only after all macOS and Linux builds succeed, followed by verification of
 all six public downloads. `macos-build-timings` records the bounded build and per-variant phases.
+App copies and DMG staging use independent APFS clones when available. The temporary
+notarization ZIP uses faster compression; the downloadable ZIP retains normal compression
+and is rebuilt from the stapled app while DMG notarization runs. Compression failures stop
+publication; uploads wait for both artifacts and their checks. Packaging phase timings are
+printed in the build log. Signing and both notarization checks remain the same.
 
 `scripts/publish-macos-variant.sh intel|apple-silicon <version>` remains the single-variant entry
 point. With `--no-build`, `APP_BUNDLE` selects an existing bundle; the uploader's `OUTPUT_DIR`
@@ -254,10 +260,10 @@ For one macOS build, `publish-macos-variant.sh`:
    publishing anything.
 6. Packages the `.app` with `ditto -c -k --sequesterRsrc --keepParent` (keeps the bundle structure and
    extended attributes intact — a plain `zip` does not).
-7. Notarizes the zip, staples the ticket into the `.app`, re-zips from the stapled bundle, and
-   asserts Gatekeeper accepts it (`spctl`).
+7. Notarizes the zip, staples the ticket into the `.app`, and asserts Gatekeeper accepts it (`spctl`).
 8. Packages a `.dmg` from that same stapled bundle — a staging folder holding `Harness.app` plus an
    `/Applications` symlink, imaged with `hdiutil` — then signs, notarizes and staples the image too.
+   The final ZIP is rebuilt during DMG notarization; both artifacts must finish and pass their checks.
 9. Uploads **both** artifacts with a year-long immutable `Cache-Control` (see "GCS layout").
 10. Download-merge-reuploads `metadata.json` in a single write, touching only that build's two keys.
 

@@ -245,6 +245,16 @@ jobs:
         working-directory: desktop
     steps:
       - uses: actions/checkout@v7
+        with:
+          # Keep the entire Desktop component and its shared packaging helpers.
+          # The mobile lock is included only to preserve the existing pub-cache key.
+          sparse-checkout: |
+            /desktop/
+            /.github/actions/
+            /scripts/validate-change.py
+            /scripts/verify-desktop-release.py
+            /mobile/pubspec.lock
+          sparse-checkout-cone-mode: false
 
       # main prepares shared caches. A release only restores: per-tag uploads cannot
       # help the next tag and added 81s after the 1.2.51 macOS build had finished.
@@ -270,6 +280,9 @@ jobs:
           workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
       - uses: google-github-actions/setup-gcloud@v2
+        with:
+          # Avoid copying the SDK into a local cache this hosted job discards.
+          skip_tool_cache: ${{ runner.environment == 'github-hosted' }}
 
       # SIGN_IDENTITY is read twice here: by publish-macos-variant.sh, re-signing the Intel build once
       # it pins the renderer, and by upload-desktop.sh, signing the dmg.
@@ -322,6 +335,12 @@ jobs:
         working-directory: desktop
     steps:
       - uses: actions/checkout@v7
+        with:
+          sparse-checkout: |
+            /desktop/
+            /.github/actions/
+            /mobile/pubspec.lock
+          sparse-checkout-cone-mode: false
 
       - name: Install the Linux desktop toolchain
         run: |
@@ -360,7 +379,7 @@ jobs:
         with:
           workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
-      - uses: google-github-actions/setup-gcloud@v2
+      - uses: ./.github/actions/setup-gcloud
 
       - name: Build and upload linux-${{ matrix.arch }}
         env:
@@ -448,6 +467,9 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 1
+          # Notes come from Git objects; no app source or artwork is needed.
+          sparse-checkout: /.github/workflows/release-desktop.yml
+          sparse-checkout-cone-mode: false
 
       - name: Take the release notes from the tag
         if: github.event_name == 'push'
@@ -568,7 +590,7 @@ jobs:
 
   # Same build/signing path and production updater settings. Only the storage
   # destination differs. A successful receipt binds six verified generations to
-  # this complete source tree, version, workflow run and attempt.
+  # its full producer source tree, Desktop build inputs, version, run and attempt.
   candidate:
     needs: [version, build-macos, build-linux]
     if: ${{ inputs.prepare_only }}

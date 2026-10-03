@@ -25,11 +25,26 @@ compiling, or starting a broad suite. Do not clean other sessions' files to make
 Run independent checks concurrently, with enough capacity for their workers;
 two commands each spawning every CPU is not useful parallelism.
 
-Manual **CI → Run workflow** accepts `scope`: `cli`, `tui`, `backend`, or `full`
+Manual **CI → Run workflow** accepts `scope`: `cli`, `tui`, `backend`, `desktop`, or `full`
 (the default). `cli` includes typecheck, all CLI tests, updater coverage, release
 bundle checks, and the serial/login-shell OS/Node matrix. `tui` includes its native
 CLI integration tests. Select `full` for cross-component changes or uncertain impact.
 The workflow remains on demand; this change does not introduce new required gates.
+
+`desktop` runs all Desktop VM files on both macOS and Linux, split into four
+isolated runners per platform. It uses the release's pinned Flutter SDK and shared
+dependency caches. Each shard has four test workers and the bounded runner's
+ten-minute budget; startup recovery retains the same narrow rules below. `full`
+includes this matrix alongside the existing component checks. Changed Dart
+analysis and browser/native integration checks remain separate where relevant.
+
+The Desktop aggregate reads each raw test log, verifies its hash and complete-file
+result, and compares every shard's inventory with the checked-out test files.
+Every file must finish exactly once per platform. Failed jobs, missing or duplicate
+files, changed source/environment, malformed reports and incomplete tests fail it.
+Platform-specific skips and any pre-test loader recovery remain explicit in the
+summary. Logs, receipts and the summary are retained for seven days. Collect the
+result with `scripts/record-ci-validation.py RUN_ID --scope desktop --pr PR_NUMBER`.
 
 CLI's default Vitest suite runs as four file shards on separate runners, retaining
 its worker cap and isolation. Typecheck, lockfile checks, guard fuzz, registry and
@@ -68,6 +83,25 @@ their own key, with the full SDK for the exact same version as a fallback. Cache
 preparation covers macOS and both Linux architectures. Signing, notarization and
 artifact checks remain required.
 
+Desktop build jobs check out the complete `desktop/` component, their local
+actions and shared packaging helpers. Keep these sparse checkout inputs current
+if a build starts using another component. The existing pub-cache key also reads
+`mobile/pubspec.lock`, which remains included so sparse and full checkouts restore
+the same dependency cache. Linux builders reuse a working Google Cloud CLI at or
+above the validated version, with the normal install path as a fallback.
+When installation is needed, hosted jobs use the extracted SDK directly instead
+of copying it into the runner's discarded local tool cache. Authentication still
+runs normally; self-hosted runners retain the upstream tool-cache behavior.
+
+Closing a PR removes caches scoped to that PR's merge ref. Deleting a branch
+removes caches scoped to that absent branch. These finished-work caches cannot
+warm future releases from `main`; retaining them crowds the repository's cache
+storage. Cleanup uses default-branch code, checks the PR/branch state before and
+after listing, and deletes only IDs returned for that exact ref. The default
+branch, tags, open PRs and existing branches are preserved. For a read-only preview,
+run `python3 scripts/prune-finished-caches.py --repo OWNER/REPO --pull-request N`
+or use `--deleted-branch NAME`; `--apply` performs the selected cleanup.
+
 ### Package Desktop while final checks run
 
 When the final implementation is pushed, start `make release-desktop ARGS="--prepare"`
@@ -80,9 +114,21 @@ candidate prefix, verifies all six downloads, and retains a small receipt in
 GitHub Actions. It neither tags nor updates the product manifest or Release page.
 
 After validation and review pass, merge and release that version normally. The
-workflow automatically looks for a candidate with the same version and complete
-Git source tree. A clean squash preserves that tree; any source, dependency,
-toolchain-pin or workflow change requires another build. The workflow checks the
+workflow automatically looks for a candidate with the same version and Desktop
+build inputs. It compares Git objects for the whole `desktop/` and `scripts/`
+trees, `.github/actions/`, the release workflow (including its SDK/runner pins),
+`mobile/pubspec.lock` when present, and root `.gitattributes`, `.gitignore` and
+`.gitmodules` files. File contents, additions, removals and executable modes are
+covered. Extend this input contract before a build starts reading another component;
+the process suite checks that it covers every native builder's sparse checkout.
+
+Unrelated CLI, firmware and documentation merges, or a clean squash, can preserve
+those inputs even when the full repository tree changes. Any Desktop source, asset,
+dependency, native code, packaging helper, toolchain-pin or workflow change requires
+another build. The receipt still identifies the producer's actual commit/full tree;
+reuse records both source identities and the matching input fingerprint. GitHub's
+immutable tree objects must independently confirm the producer's inputs. Truncated
+or malformed responses cannot authorize reuse. The workflow checks the
 producer run's successful completion, repository, workflow, source, attempt and
 immutable receipt digest. Promotion copies only the exact object generations
 whose sizes and SHA-256 hashes were verified, with atomic no-overwrite conditions.
@@ -162,6 +208,8 @@ point, not a fixed cap for a full suite. Choose and record a worker count that f
 the host and other running checks. The full-suite command below selects more
 workers on larger hosts; use an explicit lower count when other checks are active.
 Chrome and native integration tests ignore Flutter's concurrency option.
+Use `make desktop-test ARGS="--shard 1/4 --workers 4"` to reproduce one CI
+assignment locally. A shard alone does not validate the complete suite.
 Tests legitimately needing longer can declare that explicitly. Start a necessary
 broad desktop run early, with
 an outer limit (initial budget: 15 minutes); investigate a timeout instead of waiting
@@ -221,23 +269,65 @@ collect its record with one read-only command:
 python3 scripts/record-ci-validation.py RUN_ID --scope cli --pr PR_NUMBER
 ```
 
-Use the required CI scope (`cli`, `tui`, `backend`, `process`, or `full`). The command
+For a run still in progress, add `--wait` and start the collector alongside review.
+It observes that run every ten seconds and collects its evidence as soon as the
+attempt passes. The default wait budget is 900s (`--wait-timeout`); collection gets
+its own 90s budget (`--timeout`). Both durations are recorded separately. A failed
+or cancelled run, changed source/attempt, or expired observation budget stops the
+command. A timeout or lookup failure does not establish that CI stopped: inspect
+and follow the same run ID. The collector never dispatches, cancels or retries CI,
+and waiting does not bypass the required job, artifact, source or PR checks below.
+
+Use the required CI scope (`cli`, `tui`, `backend`, `desktop`, `process`, or `full`). The command
 writes a short `validation.md` and machine-readable `receipt.json` under ignored
 `.harness/validation/`; use the paragraph/table in the PR's verification section.
 It checks the exact run/repository/workflow, required jobs, completed steps, source
 trees, and an optional PR's head/base stability. For CLI it also downloads the
 coverage summary by immutable artifact ID and verifies its archive checksum and
-file/case totals. Network calls are bounded; the default collection budget is 90s.
+file/case totals. Desktop scope similarly verifies the summary for both platforms
+and preserves explicit startup-recovery counts. Network calls are bounded; the
+default collection budget is 90s.
 
-Exit 0 means the requested CI scope passed and its committed source tree matches
-the selected target (`HEAD` by default). Exit 3 still saves the record but flags
-different source, a dirty working tree or a PR head mismatch for review. It lists
-changed paths without deciding that they are harmless. Review their impact and
-reuse only applicable evidence; a different SHA with the same tree is accepted.
+Exit 0 means the requested CI scope passed and covers the selected target (`HEAD`
+by default): either the full source tree matches or the verified input contract
+below matches. Exit 3 still saves the record but flags uncovered source changes,
+a dirty working tree or a PR head mismatch for review. A clean squash with the
+same tree is accepted. The receipt always retains both actual commits/trees.
 `--target COMMIT` supports historical audits and labels them as covering that
 commit rather than the current working copy. Missing objects need a fetch before
 comparison; failed/pending runs, missing/skipped required jobs, corrupt/expired
 artifacts, and changing run/PR state cannot become a successful record.
+
+For `process` and `desktop`, CI records a `ci-source-inputs` artifact and verifies
+each required job's sparse checkout before running its checks. The collector
+checks that artifact's immutable digest, run/source/attempt identity and recorded
+Git objects, then independently compares the selected inputs with the target:
+
+| CI scope | Complete input boundary |
+| --- | --- |
+| `process` | `.github/`, `scripts/`, `desktop/scripts/`, root Git configuration files and `Makefile` |
+| `desktop` | `.github/`, `scripts/`, `desktop/`, `cli/`, `tests/`, `daemons/`, `store/`, `docs/images/`, `mobile/pubspec.lock`, root Git configuration files and `Makefile` |
+
+The root Git files are `.gitattributes`, `.gitignore` and `.gitmodules`. Directory
+objects include every tracked descendant; file modes, additions and removals are
+covered. Desktop's tests read CLI protocol definitions, shared layout fixtures,
+daemon metadata and catalog artwork, so those are inputs too. The workflow/action
+trees include toolchain pins and cache recipes. Extend both the checkout and
+`SOURCE_INPUTS` in `scripts/record-ci-validation.py` before using a new dependency.
+CI verifies that the checkout agrees with that contract and exposes no tracked
+files outside it; the Desktop aggregate uses a smaller subset of the same inputs.
+
+A documentation edit outside those boundaries or an unrelated firmware merge can
+therefore preserve a completed run. Pass its original run ID to the collector or
+merge helper; no extra option or replacement CI run is needed. The resulting
+receipt says which scope was reused, records the matching fingerprint and lists
+changed paths outside that scope. Review those changes and run any checks they
+require separately. This is a source-input comparison, not a file-extension rule:
+Desktop documentation inside `desktop/` and artwork inside `docs/images/` remain
+inputs. Other CI scopes and older runs without an input receipt still require
+whole-tree equality. A malformed receipt cannot authorize reuse. After a partial
+rerun, the receipt must match the actual successful process job's attempt; a
+stale receipt from a replaced process job is rejected.
 
 Keep routine validation evidence in these receipts, CI artifacts and the PR body.
 Do not add a documentation commit or recreate all raw logs just to record another
@@ -303,6 +393,39 @@ unverified; isolate it once and retain the original error beside the new result.
 Report the combined coverage and any retries explicitly. This is not an
 uninterrupted passing suite, and it is not permission to retry assertion failures
 until they disappear.
+
+## Merge an already-reviewed PR
+
+Once code review and required non-CI checks are complete and merging is authorized,
+start this command while the selected CI run is still running:
+
+```bash
+make merge-pr ARGS="PR_NUMBER --run RUN_ID --scope SCOPE --reviewed-head HEAD_SHA --reviewed-base MAIN_SHA --merge"
+```
+
+Use full commit SHAs. The clean local checkout must be the reviewed head and include
+that reviewed `main` commit. Prepare the PR description with its check scope and CI
+run link first. The command waits for that attempt, verifies the same jobs/artifacts
+as the evidence collector, then rechecks the PR and the live `main` ref before one
+squash-merge request. GitHub must report the PR ready; the request includes the exact
+reviewed head and does not bypass branch rules or enable auto-merge/queueing.
+
+Omit `--merge` for a read-only preview. Logs, CI evidence, per-phase timings and the
+merge outcome are saved under `.harness/validation/*-merge-*/`. `--wait-timeout`
+defaults to 900s; `--timeout` gives preflight and post-CI operations 90s each. The
+command records its intended mutation before sending it. If a response is lost, it
+inspects the same PR without replaying the merge request.
+
+A changed head, dirty checkout, moved main, failed CI or blocked merge stops the
+command. Review new source differences and reuse only applicable evidence, as above;
+the command does not decide that impact or replace native checks and code review.
+After a merge, it verifies the actual Git tree against the reviewed target tree.
+The receipt separately reports whether the full tested tree matches; scoped CI
+reuse may preserve test inputs while other reviewed files differ. A merge tree
+different from the reviewed target is recorded as `merged_source_review_required`
+(exit 3), so resolve that source review before release. An unconfirmed write is
+recorded as `merge_not_confirmed`; inspect the same PR before further action. This
+command does not create release tags or dispatch release workflows.
 
 ## Complete the authorized release
 
