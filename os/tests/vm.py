@@ -25,10 +25,14 @@ import uuid
 
 
 class VM:
-    def __init__(self, folder, iso, firmware, memory, live_transport='cdrom', cpu=None):
+    def __init__(self, folder, iso, firmware, memory, live_transport='cdrom', cpu=None, video='virtio-vga', audio=False):
         self.folder, self.iso, self.firmware, self.memory = folder, iso, firmware, memory
         self.live_transport = live_transport
         self.cpu = cpu
+        if video not in ('virtio-vga', 'VGA'):
+            raise ValueError('Unsupported test display: ' + video)
+        self.video = video
+        self.audio = audio
         self.unlock_count = 0
         self.boot_count = 0
         self.process = None
@@ -62,13 +66,16 @@ class VM:
         acceleration = 'kvm' if os.access('/dev/kvm', os.R_OK | os.W_OK) else 'tcg'
         self.acceleration = acceleration
         args = ['qemu-system-x86_64', '-accel', acceleration, '-m', str(self.memory), '-smp', '2',
-                '-cpu', self.cpu or ('host' if acceleration == 'kvm' else 'max'), '-device', 'virtio-vga',
+                '-cpu', self.cpu or ('host' if acceleration == 'kvm' else 'max'), '-device', self.video,
                 '-display', 'none', '-no-reboot',
                 '-drive', f'file={self.disk},format=qcow2,if=none,id=target',
                 '-device', f'virtio-blk-pci,drive=target,serial=HN_OS_TEST,bootindex={2 if live else 1}',
                 '-device', 'virtio-net-pci,netdev=net', '-netdev', 'user,id=net',
                 '-serial', f'unix:{self.control_path / "serial.sock"},server=on,wait=off',
                 '-qmp', f'unix:{self.control_path / "qmp.sock"},server=on,wait=off']
+        if self.audio:
+            args += ['-audiodev', f'wav,id=sound,path={self.folder / ("audio-" + str(self.boot_count) + ".wav")}',
+                     '-device', 'intel-hda', '-device', 'hda-duplex,audiodev=sound']
         if live:
             # UEFI remembers the installed disk in NVRAM. Explicit device boot
             # indices are needed to select the recovery ISO again on later boots.
@@ -444,9 +451,9 @@ if (rows.some(row => row.engine !== 'terminal')) throw new Error('A plain shell 
 
 
 def install_interactively(vm, config, folder):
-    # The shipped form and installer run on a real guest TTY. The only test
-    # addition is serial-console boot output, needed to observe the next boot.
-    bootstrap = f'''import importlib.util
+    # Drive the actual graphical form. The sole installer addition is serial boot
+    # output so the following installed boot remains observable to this fixture.
+    bootstrap = f'''import importlib.util, traceback
 from pathlib import Path
 spec = importlib.util.spec_from_file_location('installer', '/usr/lib/harness-os/install.py')
 installer = importlib.util.module_from_spec(spec)
@@ -454,48 +461,79 @@ spec.loader.exec_module(installer)
 expected = {config!r}
 installer.selected_disk(expected)
 original_install = installer.install
-def observed_install(actual, source, target):
+def observed_install(actual, source, target, **kwargs):
     assert actual == {{k: v for k, v in expected.items() if k != 'serial_console'}}, 'Interactive installation choices differ from test input'
     actual['serial_console'] = True
-    return original_install(actual, source, target)
+    return original_install(actual, source, target, **kwargs)
 installer.install = observed_install
-installer.main()
+status = 0
+try:
+    installer.main()
+except BaseException:
+    traceback.print_exc()
+    status = 1
+finally:
+    Path('/run/hn-interactive-status').write_text(str(status))
+if status:
+    input('Installation test failed. Press Enter to close.')
 '''
     encoded = base64.b64encode(bootstrap.encode()).decode()
     assert len(encoded) < 3000, 'Keep serial-console commands below the line discipline limit.'
     vm.command(f"printf %s {shlex.quote(encoded)} | base64 -d > /run/hn-interactive-test.py; chmod 600 /run/hn-interactive-test.py")
-    vm.command('stty rows 24 cols 80')
-    marker = 'HN_INTERACTIVE_' + uuid.uuid4().hex
-    vm.send('(TERM=xterm-256color python3 /run/hn-interactive-test.py); '
-            f"hn_status=$?; printf '\\n{marker}:%s\\n' \"$hn_status\"\n")
+    user = lambda command: 'runuser -u me -- env XDG_RUNTIME_DIR=/run/user/1000 DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus ' + command
+    _, progress_status = vm.command("grep -q '^def install_with_progress(' /usr/lib/harness-os/install.py", check=False)
+    vm.command(user('hn new-window -n Install ' + shlex.quote('sudo python3 /run/hn-interactive-test.py')))
     transcript = []
-    def wait(pattern, timeout=30):
-        output = vm.wait(pattern, timeout)
+
+    def wait_screen(pattern, timeout=30):
+        command = ('for n in $(seq 1 ' + str(timeout * 2) + '); do '
+                   'hn capture-pane -p > /tmp/hn-install-screen; '
+                   'grep -Eq ' + shlex.quote(pattern) + ' /tmp/hn-install-screen && exit 0; '
+                   'test ! -e /run/hn-interactive-status || exit 1; sleep .5; done; exit 1')
+        _, status = vm.command(user('sh -c ' + shlex.quote(command)), timeout=timeout + 15, check=False)
+        output, _ = vm.command('cat /tmp/hn-install-screen')
         transcript.append(output)
+        assert status == 0, 'Graphical installer did not show ' + pattern + '; see installer-ui.log'
         return output
+
     try:
-        wait(r'All data on this disk will be erased')
-        vm.send('\n')
-        wait(r'Select disk')
-        vm.send('\x1b')
-        wait(r'All data on this disk will be erased')
-        vm.send('\n')
-        wait(r'Select disk')
-        vm.send('\n')
-        wait(r'All data on this disk will be erased')
-        vm.send('\t' + ('' if config['encrypt'] else ' ') + '\t')
-        vm.send(config['password'] + '\n' + config['password'] + '\n')
-        # Password entry focuses Install. Only its explicit activation starts it.
-        time.sleep(.25)
-        vm.send('\n')
-        output = wait(r'Harness is installed|\r?\n' + marker + r':\d+\r?\n', timeout=900)
-        assert 'Harness is installed' in output, 'Interactive installation failed; see installer-ui.log'
-        vm.send('\x1b')  # Completion remains visible; return to the live system for the receipt.
-        output = wait(r'\r?\n' + marker + r':\d+\r?\n', timeout=900)
-        status = int(re.search(r'\r?\n' + marker + r':(\d+)\r?\n', output).group(1))
-        assert status == 0, 'Interactive installation failed; see installer-ui.log'
+        wait_screen('All data on this disk will be erased')
+        vm.screenshot('install-01-form')
+        vm.keys('ret')
+        wait_screen('Select disk')
+        vm.screenshot('install-02-disks')
+        vm.keys('esc')
+        wait_screen('All data on this disk will be erased')
+        vm.keys('ret')
+        wait_screen('Select disk')
+        vm.keys('ret')
+        wait_screen('All data on this disk will be erased')
+        vm.keys('tab')
+        if not config['encrypt']:
+            vm.keys('spc')
+        vm.keys('tab')
+        vm.type_probe(config['password'])
+        vm.keys('ret')
+        vm.type_probe(config['password'])
+        vm.keys('ret')
+        output = wait_screen('All data on this disk will be erased')
+        assert config['password'] not in output and '*' * len(config['password']) in output, 'Password fields must be masked'
+        vm.screenshot('install-03-ready')
+        # Finishing password entry only focuses Install. No disk has changed yet.
+        vm.command('test "$(lsblk -n -o TYPE /dev/vda | wc -l)" -eq 1')
+        vm.keys('ret')
+        if progress_status == 0:
+            wait_screen('Installing Harness', timeout=30)
+            vm.screenshot('install-04-progress')
+        wait_screen('Harness is installed', timeout=900)
+        vm.screenshot('install-05-complete')
+        vm.keys('esc')
+        vm.command('for n in $(seq 1 30); do test -s /run/hn-interactive-status && break; sleep .25; done; test "$(cat /run/hn-interactive-status)" = 0')
     finally:
-        (folder / 'installer-ui.log').write_text(''.join(transcript))
+        (folder / 'installer-ui.log').write_text('\n'.join(transcript))
+        output, _ = vm.command('cat /var/log/harness-install.log 2>/dev/null', check=False)
+        (folder / 'installer-commands.log').write_text(output)
+        assert config['password'] not in output, 'Installation diagnostics must not contain the password'
 
 
 def main():

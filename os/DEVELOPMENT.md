@@ -9,6 +9,53 @@ This plan was recorded on October 3, 2026. Preview 4 and its optional small-pack
 update are published. Native update/rollback acceptance passed; remote-launcher
 argument tests passed but remote display/SSH interaction is still unverified.
 
+## Next release priorities
+
+The next preview improves the complete experience before expanding the interface.
+Keep the existing terminal, agents and optional browser. Hardware integration must
+not introduce a desktop, control panel or extra launcher. Update checks use a
+short-lived user timer; there is no resident update process.
+
+1. Refine USB welcome, offline installation, Wi-Fi setup, trial, first conversation
+   and disk unlock. Review actual screens, keyboard navigation, narrow displays,
+   cancellation and recoverable errors. Keep the Naming System and text artwork
+   consistent across these steps.
+2. Verify the essentials of daily use: networking, brightness, audio, locking,
+   sleep/wake, browser switching, updates and recovery. Preserve running work
+   through display restarts and session transitions. Agents can use the ordinary
+   system tools; the user should not need to configure basic hardware to start.
+3. Expand hardware coverage by family: older Intel Macs without T2 first, NVIDIA
+   desktops next. Prepare separate boot/platform paths for T2, Apple Silicon and
+   Raspberry Pi. Detect devices rather than hard-coding one person's computer.
+4. Exercise real development work and retain installation, boot, idle-resource and
+   recovery evidence for the actual candidate image. Publish measured results and
+   an honest compatibility table; upstream driver availability is not a physical
+   Harness test.
+
+`checks=session` with an `image_run_id` in the Harness OS workflow exercises
+the published image's live session, then its installed session with the candidate
+`os/root/usr/lib/harness-os/session` launcher. The receipt records both the base
+image and that file's hash; a reboot activates the candidate before lock,
+wrong-password input isolation and actual virtual ACPI suspend/resume checks.
+The same terminal process, heartbeat and project must survive. This is a quick
+integration check, followed by a fresh final image test. It does not establish
+physical laptop suspend, radio, audio or battery behavior.
+
+The focused sleep test uses QEMU standard VGA (`bochs-drm`), whose pinned LTS
+driver implements display suspend/resume. The normal install tests retain
+`virtio-vga`. Preview 4's Virtio display resumed with a working guest and terminal
+process but no visible output after S3; the pinned Virtio GPU driver has no
+freeze/restore callbacks. Keep that VM limitation separate from physical laptop
+acceptance. `--video virtio-vga` reproduces that configuration; do not count an
+unavailable display as successful sleep/wake.
+
+`checks=essentials` reuses the chosen image to test NetworkManager and PipeWire.
+The fixture adds a simulated WPA2 access point in an isolated guest network
+namespace and a virtual HDA codec, operates the actual hn network form and media
+keys, and checks DHCP, DNS, HTTP, reconnection and non-silent audio output. Access
+point tools are installed only inside the disposable guest, never in the ISO.
+Physical radio, backlight, speaker and microphone tests remain separate.
+
 ## The feedback loop
 
 | Work being tested | Best environment | What it proves |
@@ -54,6 +101,61 @@ results for current performance measurements.
 [QEMU documents these acceleration options](https://www.qemu.org/docs/master/system/introduction.html).
 
 ## Small development updates
+
+### Fast hn updates
+
+The installed OS checks the existing public hn and CLI release channels every
+15 minutes, with a small randomized delay. Complete, checksum-verified runtimes
+are prepared under the user's state directory. The OS-owned copy remains an
+offline fallback. Neither downloading nor checking restarts working processes.
+OS windows use hn's local session storage (`HARNESS_TUI_DESK=off`), so their
+layout and pane references survive reconnects without signing into the cloud.
+This setting is confined to the OS launcher; ordinary hn installs are unchanged.
+
+`Update ready · Super+U` appears in the bottom bar. Super+U opens the keyboard
+update action (Ctrl+B, Shift+U remains an alias). Enter applies the prepared
+runtime through a transient user service. An hn-only change reconnects just the
+screen; a CLI change also restarts its supervised service. Failure restores the
+previous selection. Restore previous version holds the rejected versions until
+a newer release arrives. Ordinary macOS/Linux hn shortcuts are unchanged.
+
+This fast track is independent of OS releases. The system channel is checked
+once daily; S in Updates installs the published OS package with an administrator
+password. Root independently fetches the official release metadata, verifies a
+private download, makes a checkpoint, updates any required Arch base first, and
+rebuilds the encrypted boot image. System packages never apply or reboot on a
+timer. After an OS package changes, fast updates wait for a reboot. Publishing an
+ISO is not a requirement for a TUI update. The public preview
+4 ISO predates this feature and needs the small integration bundle from the
+validated preview 5 release; it does not need to be flashed again.
+
+`development_update=true` builds a private, deliberately unpublished `999.0.1`
+hn/CLI fixture. The installed VM's actual timer stages it, then real Super+U and
+Enter keys apply hn and CLI independently. Acceptance checks the same terminal
+process, a live OpenCode process, keyboard input, rollback and an unchanged boot
+ID. Those fixture binaries are never included in the package or public channel.
+The same installed VM restores the public package and upgrades through a private
+loopback OS channel, rejects a corrupt asset, keeps its running agent alive, and
+reboots the rebuilt encrypted image. This does not depend on a public test release.
+
+The OS feed is `os-preview-updates/metadata.json` in the repository's release
+assets. It names the exact package and manifest, their byte sizes and SHA-256
+hashes. HTTPS authenticates the channel; these are not custom package signatures.
+Cross-version packages list the exact validated `upgrades_from` bases. Direct
+local bundles cannot skip a required full Arch upgrade. A lower or equal package
+version is never offered by the public channel. The publisher must retain exact
+source and native acceptance evidence before advancing that feed.
+
+After the matching ISO preview is published, prepare its update assets with
+`tools/publish-update.py --bundle BUNDLE --receipt receipt.json --run RUN --output OUTPUT`.
+Review the resulting metadata and bundle, then use `--publish` with a fresh
+output directory. The publisher requires the exact passing native source and
+package, uploads immutable versioned assets, verifies their public bytes, and
+only then advances the preview channel. Its first channel is uploaded and
+download-verified as a draft before publication. Retain `publication.json` as
+the publication receipt; this does not replace recording the total request time.
+
+### Local OS integration bundles
 
 `tools/build-package.py` assembles the same `harness-os` package used by the ISO.
 On a clean x86 Linux checkout, build a bundle with:
@@ -108,13 +210,12 @@ rollback took 1.083 seconds. Actual post-update keyboard and masked-unlock captu
 were reviewed. Public package/guide/evidence downloads were fully SHA-256 and size
 verified. Physical ThinkPad update behavior and timings remain unverified.
 
-Shared hn changes in preview 4 are still on the OS branch. Ordinary Mac/Linux hn
+Shared hn changes in preview 4 were merged to main in PR #669. Ordinary Mac/Linux hn
 keeps its usual home and detach/quit behavior; live USB and installed OS welcome
 actions require explicit OS mode. Opening Terminal directly is a shared chooser
-change, explicitly approved for all platforms. It needs normal TUI release review
-along with the shared agent-discovery
-and OpenCode compatibility fixes; publishing the ISO did not release these through
-the general TUI channel. The small updater adds no changes to `tui/` or `cli/`.
+change, explicitly approved for all platforms. Publishing the ISO did not release
+these through the general TUI channel. The small updater adds no changes to `tui/`
+or `cli/`.
 
 ## Optional remote VM controls
 
@@ -141,12 +242,22 @@ validated Harness OS hardware target by preview 4.
 
 | Target | Approach | Current Harness OS status |
 | --- | --- | --- |
-| Older Intel Mac, 64-bit CPU and EFI, without T2 | Reuse x86-64 userspace and validate firmware, graphics, Wi-Fi, input, sleep and installation per model | First physical Mac target; no tested model yet |
+| Older Intel Mac, 64-bit CPU and EFI, without T2 | Reuse x86-64 userspace, select drivers by detected hardware, and validate representative Air/Pro families | First Mac target family; no tested model yet |
 | Intel Mac with T2 | Add the T2 kernel/driver and firmware integration; validate built-in input at encrypted unlock | Separate hardware profile, not covered by generic x86 VM success |
 | Apple Silicon | Build arm64 userspace and integrate the Asahi boot/kernel/graphics/firmware stack | Port required; current x86-64 ISO cannot install natively |
+| Raspberry Pi | Evaluate a maintained ARM64 board kernel, firmware and boot image with the same Harness session | Separate board image required; not covered by the PC ISO or an ARM VM |
 | Native Harness app/TUI on macOS | Existing arm64 and x64 app/runtime releases | Separate from installing the Linux OS |
 
-The initial Intel scope excludes 32-bit-only CPUs/EFI. T2 machines need specific
+The initial Intel scope excludes 32-bit-only CPUs/EFI. The bundled OpenCode trial
+also requires SSE4.2. A preview 4 probe under actual Core 2 Duo TCG execution
+reached the USB welcome and successfully ran hn, Node and Chromium version
+commands, but OpenCode exited with SIGILL (132). This is an instruction-set
+finding, not physical Mac or full browser validation. Older CPUs need a separately
+validated agent path; do not describe them as ready for the default trial.
+[Bun's executable targets](https://bun.com/docs/bundler/executables) document the
+SSE4.2 baseline used by its compiled runtime.
+
+T2 machines need specific
 kernel support for built-in input and other hardware; their firmware and install
 preparation differs from an ordinary PC. The maintained references are the
 [t2linux Arch install guide](https://wiki.t2linux.org/distributions/arch/installation/),

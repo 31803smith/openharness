@@ -3,7 +3,8 @@
 Window.SetBackgroundTopColor(0.063, 0.063, 0.063);
 Window.SetBackgroundBottomColor(0.063, 0.063, 0.063);
 
-logo_text = " _                                  \n| |__   __ _ _ __ _ __   ___  ___ ___\n| '_ \\ / _` | '__| '_ \\ / _ \\/ __/ __|\n| | | | (_| | |  | | | |  __/\\__ \\__ \\\n|_| |_|\\__,_|_|  |_| |_|\\___||___/___/";
+# ASCII keeps the early-boot wordmark legible on the minimal text renderer.
+logo_text = " _   _    _    ____  _   _ _____ ____ ____ \n| | | |  / \\  |  _ \\| \\ | | ____/ ___/ ___|\n| |_| | / _ \\ | |_) |  \\| |  _| \\___ \\___ \\\n|  _  |/ ___ \\|  _ <| |\\  | |___ ___) |__) |\n|_| |_/_/   \\_\\_| \\_\\_| \\_|_____|____/____/";
 logo_image = Image.Text(logo_text, 0.85, 0.78, 0.1, 1, "monospace 16", "left");
 logo = Sprite(logo_image);
 logo.SetPosition(Window.GetX() + (Window.GetWidth() - logo_image.GetWidth()) / 2,
