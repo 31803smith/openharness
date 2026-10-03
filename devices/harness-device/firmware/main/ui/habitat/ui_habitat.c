@@ -106,7 +106,7 @@ typedef enum {
     A_INBOX,
     A_NOTICE,
     A_TABS,
-    A_TAB, A_TAB_REFRESH,
+    A_TAB, A_TAB_REFRESH, A_TAB_DONE,
     A_MACHINES,
     A_MACHINE,
     A_VOICE,
@@ -583,6 +583,34 @@ static void workspace_failed(const char *message)
     s.loading=false; s.active=-1;
     COPY(s.title,"Workspaces"); COPY(s.message,message); view(MESSAGE);
 }
+static void tab_request(const char *id, bool browsing)
+{
+    if (!s.connected || s.voice_open || (!browsing && s.loading) || workspace_index(id)<0) return;
+    if (workspace.phase!=HT_WORKSPACE_IDLE) {
+        if (!browsing || !strcmp(id,workspace.pending)) return;
+        // A newer page supersedes both queued selects and their roster receipts.
+        ht_workspace_cancel_request(&workspace);
+    } else if (!strcmp(id,s.selected_tab)) {
+        if (!browsing) view(HOME);
+        return;
+    }
+    if (!ht_workspace_request(&workspace,id,ms())) return;
+    action_t a={.kind=A_TAB,.revision=workspace.serial}; COPY(a.id,id);
+    if (!queue(a)) { workspace_failed("Device busy. Choose the tab again."); return; }
+    ht_visit_close(&visit); s.pending_focus[0]=0;
+    s.loading=true;
+    if (!browsing) {
+        COPY(s.title,"Switching tab"); COPY(s.message,"Opening your workspace...");
+        view(MESSAGE);
+    }
+    change();
+}
+static void tabs_sync(void)
+{
+    if (s.view!=TABS || (s.touch_down && s.touch_cancelled)) return;
+    int index=ht_tab_carousel_index(&tab_carousel);
+    if (index>=0 && index<s.tab_count) tab_request(s.tabs[index].id,true);
+}
 static int waiting(void)
 {
     int n = 0;
@@ -953,7 +981,10 @@ static void surface_tick(uint32_t now)
     if (companion_celebrating && (now-celebration_began>=2400 || s.view!=HOME || s.quiet || !follow_companion || display_is_asleep() || character_mood()==HT_CHARACTER_ATTENTION)) {
         companion_celebrating=false; select_companion(); change();
     }
-    if (s.view == TABS && !display_is_asleep() && ht_tab_carousel_tick(&tab_carousel, now)) change();
+    if (s.view == TABS && !display_is_asleep()) {
+        if (ht_tab_carousel_tick(&tab_carousel, now)) change();
+        tabs_sync();
+    }
     if (home_caption_tick(now)) change();
     uint8_t phase = status_animated() ? ht_shimmer_phase(now * status_speed()) : 0;
     if (phase != s.status_phase) { s.status_phase = phase; change(); }
@@ -1243,7 +1274,7 @@ static void focus_clipped(ht_scene_t *f, int x, int y, const ht_font_t *font, ui
     if (w > 0) ht_text(f, x, y, w, font, ink, BG, probe);
 }
 /*
- * The top of Focus's two lists, as the LVGL TABS picker drew it: the 60 x 32 close pill at y 16 —
+ * The top of Focus's lists: the 60 x 32 close pill at y 16 (tabs use Done below) —
  * the way back, in place of a ← — and the list's name in grey Literata 20 (literata_20: the Kindle
  * style of the curved name and the pane names, owner 2026-10-02), letter-spaced 2, at y 62.
  */
@@ -1253,11 +1284,13 @@ static void focus_header(ht_scene_t *f, const char *title)
     const ht_font_t *small = &ht_lv_literata_20.base, *cross = &ht_lv_montserrat_22.base;
     uint16_t fg = color(0xeaeaf0), close = color(0x171718);
     // make_close_pill: COL_FG at 10 % over black, the cross centred in it.
-    int cw = ht_measure(cross, HT_LV_CROSS);
-    ht_box(f, CLOSE_X, CLOSE_Y, CLOSE_W, CLOSE_H, CLOSE_H / 2, close, close);
-    ht_text(f, CLOSE_X + (CLOSE_W - cw) / 2, CLOSE_Y + (CLOSE_H - cross->height) / 2, cw, cross, fg,
-            close, HT_LV_CROSS);
-    s.hits[s.hit_count++] = (hit_t){{CLOSE_X - 40, 0, CLOSE_W + 80, CLOSE_Y + CLOSE_H + 12}, A_HOME, 0, true};
+    if (s.view != TABS) {
+        int cw = ht_measure(cross, HT_LV_CROSS);
+        ht_box(f, CLOSE_X, CLOSE_Y, CLOSE_W, CLOSE_H, CLOSE_H / 2, close, close);
+        ht_text(f, CLOSE_X + (CLOSE_W - cw) / 2, CLOSE_Y + (CLOSE_H - cross->height) / 2, cw, cross, fg,
+                close, HT_LV_CROSS);
+        s.hits[s.hit_count++] = (hit_t){{CLOSE_X - 40, 0, CLOSE_W + 80, CLOSE_Y + CLOSE_H + 12}, A_HOME, 0, true};
+    }
     // A letter to a run, which is how the spacing is drawn.
     int tw = 0;
     for (const char *c = title; *c; c++) { char one[2] = {*c, 0}; tw += ht_measure(small, one) + 2; }
@@ -1537,7 +1570,7 @@ static void tab_name(ht_scene_t *f, const char *name, int center_x, uint16_t ink
     }
 }
 /*
- * FOCUS'S TABS: the close pill and "TABS" on top (focus_header), then the same carousel, in Literata 30 — the name on at most two lines of 204 px, as
+ * FOCUS'S TABS: "TABS" on top (focus_header), then the same carousel, in Literata 30 — the name on at most two lines of 204 px, as
  * the mono version wrapped at twelve cells, ending in "..." past that; neighbours peek in at the
  * edges, cut to whole letters inside x 42..424. The tab you are in is green.
  */
@@ -1574,13 +1607,19 @@ static void render_focus_tabs(ht_scene_t *f)
             if (left < 33) left = 33;
             if (right > 433) right = 433;
             if (right > left) s.hits[s.hit_count++] = (hit_t){{left, 110, right - left, 252},
-                A_TAB, i, s.connected && !s.loading};
+                A_TAB, i, s.connected};
         }
     }
 }
 static void render_tabs(ht_scene_t *f)
 {
-    if (character.id == HT_CHARACTER_FOCUS) { render_focus_tabs(f); return; }
+    // Done is shared by every face, with the same generous bottom-edge target.
+    ht_text(f, (HT_WIDTH-ht_done_28.width)/2, 400, ht_done_28.width, &ht_done_28, FG, BG, HT_DONE);
+    if (character.id == HT_CHARACTER_FOCUS) {
+        render_focus_tabs(f);
+        s.hits[s.hit_count++] = (hit_t){{83, 392, 300, 74}, A_TAB_DONE, 0, true};
+        return;
+    }
     ht_arc_title(f, DIM, "tabs");
     int current = ht_tab_carousel_index(&tab_carousel);
     if (current < 0) center(f, 214, "No tabs yet.", DIM);
@@ -1593,7 +1632,7 @@ static void render_tabs(ht_scene_t *f)
             ink = ht_character_caption_ink(ink, BG, fade < 210 ? 255 - fade : 45);
             tab_name(f, s.tabs[i].name, 233 + dx, ink);
         }
-        // Each visible name owns its tap; a swipe from any page only browses.
+        // Each visible name owns its tap; dragging selects the centered page live.
         // Keep the centered page first for stable accessibility/test ordering.
         for (int n = 0; n < 3; n++) {
             int i = current + (n == 1 ? -1 : n == 2 ? 1 : 0);
@@ -1604,11 +1643,10 @@ static void render_tabs(ht_scene_t *f)
             if (left < 33) left = 33;
             if (right > 433) right = 433;
             if (right > left) s.hits[s.hit_count++] = (hit_t){{left, 110, right - left, 252},
-                A_TAB, i, s.connected && !s.loading};
+                A_TAB, i, s.connected};
         }
     }
-    ht_text(f, 223, 400, 20, &ht_nav_32, DIM, BG, "←");
-    s.hits[s.hit_count++] = (hit_t){{83, 392, 300, 74}, A_HOME, 0, true};
+    s.hits[s.hit_count++] = (hit_t){{83, 392, 300, 74}, A_TAB_DONE, 0, true};
 }
 static void render_notice(ht_scene_t *f)
 {
@@ -2371,15 +2409,19 @@ static void dispatch(action_t a)
         view(MACHINES);
         break;
     case A_TAB:
-        if (!s.connected || s.voice_open || s.loading || workspace_index(a.id)<0) break;
-        if (!strcmp(a.id,s.selected_tab)) { view(HOME); break; }
-        if (ht_workspace_request(&workspace,a.id,ms())) {
-            a.revision=workspace.serial;
-            if (!queue(a)) { workspace_failed("Device busy. Choose the tab again."); break; }
-            ht_visit_close(&visit); s.pending_focus[0]=0;
+        if (s.view==TABS && workspace_index(a.id)>=0)
+            ht_tab_carousel_reset(&tab_carousel,s.tab_count,workspace_index(a.id));
+        tab_request(a.id,s.view==TABS);
+        break;
+    case A_TAB_DONE:
+        if (s.view!=TABS) break;
+        ht_tab_carousel_cancel(&tab_carousel);
+        tabs_sync();
+        if (s.view!=TABS) break; // preserve a queue failure shown by tabs_sync
+        if (workspace.phase!=HT_WORKSPACE_IDLE) {
             COPY(s.title,"Switching tab"); COPY(s.message,"Opening your workspace...");
-            view(MESSAGE); s.loading=true;
-        }
+            view(MESSAGE);
+        } else view(HOME);
         break;
     case A_MACHINE:
         if (s.connected && queue(a)) {
@@ -2853,7 +2895,9 @@ void habitat_touch(bool down, int x, int y, uint32_t now)
         if (surface && home_footer(pressed_action.kind)) {
             if (pressed_action.kind==A_TABS && ht_workspace_move(&workspace,x,y,gesture.axis,now)) change();
         } else if (s.view == TABS) {
-            if (gesture.axis == 2 && ht_tab_carousel_move(&tab_carousel, x, now)) change();
+            if (gesture.axis == 2 && ht_tab_carousel_move(&tab_carousel, x, now)) {
+                tabs_sync(); change();
+            }
         } else if (s.view == AGENTS && character.id == HT_CHARACTER_FOCUS && gesture.axis == 1) {
             panes_move((s.last_y - y) * (scroll_reversed ? -1 : 1));
         } else if ((s.view == AGENTS || s.view == SETTINGS) && gesture.axis == 1) {
@@ -2897,6 +2941,7 @@ void habitat_touch(bool down, int x, int y, uint32_t now)
             int index = pressed_action.value;
             if (tab_tap && result == HT_TOUCH_TAP && pressed_action.kind == A_TAB && index >= 0 &&
                 index < s.tab_count && !strcmp(pressed_action.id, s.tabs[index].id)) dispatch(pressed_action);
+            tabs_sync();
             change();
         } else if (result == HT_TOUCH_TAP && s.touch_brake) {
             // DOWN already stopped desktop inertia. This entire tap is only a brake.
@@ -3475,7 +3520,7 @@ void ui_project_remove(const char *id)
     display_lock();
     int i = find(id);
     if (i >= 0) {
-        if (s.active == i) {
+        if (s.active == i && s.view != TABS) {
             input_cancel();
         }
         memmove(&s.agents[i], &s.agents[i + 1], (size_t)(s.count - i - 1) * sizeof(agent_t));
@@ -3491,7 +3536,7 @@ void ui_project_remove(const char *id)
 void ui_project_clear_all(void)
 {
     display_lock();
-    input_cancel();
+    if (s.view != TABS) input_cancel();
     s.count = 0;
     s.active = -1;
     change();
@@ -3753,7 +3798,7 @@ void ui_focus_project(const char *id)
     s.pending_focus[0] = 0;
     bool opened = s.opening_notice[0] && !strcmp(s.opening_notice, id);
     if (opened) s.opening_notice[0] = 0;
-    if (s.active != i) {
+    if (s.active != i && s.view != TABS) {
         input_cancel();
     }
     s.active = i;
@@ -3796,7 +3841,7 @@ void ui_land_after_reload(void)
     if (s.loading && (workspace.phase==HT_WORKSPACE_IDLE || workspace.phase==HT_WORKSPACE_READY)) {
         ht_workspace_cancel_request(&workspace);
         s.loading = false;
-        view(HOME);
+        if (s.view != TABS) view(HOME);
     }
     change();
     display_unlock();
@@ -4189,7 +4234,9 @@ void ui_swarms_replace(const cable_swarm_t *rows, int count, const char *selecte
     char focused[ID_MAX] = "";
     int focused_index = ht_tab_carousel_index(&tab_carousel);
     if (s.view == TABS && focused_index >= 0 && focused_index < s.tab_count) COPY(focused, s.tabs[focused_index].id);
-    bool changed=bounded!=s.tab_count || strcmp(s.selected_tab,selected ? selected : "");
+    bool selected_changed=strcmp(s.selected_tab,selected ? selected : "");
+    bool browsing=workspace.phase!=HT_WORKSPACE_IDLE || tab_carousel.touching || tab_carousel.animating;
+    bool changed=bounded!=s.tab_count;
     for (int i=0;!changed && i<bounded;i++) {
         changed=strcmp(rows[i].id,s.tabs[i].id) || strcmp(rows[i].name,s.tabs[i].name);
     }
@@ -4197,8 +4244,8 @@ void ui_swarms_replace(const cable_swarm_t *rows, int count, const char *selecte
     s.tab_count=bounded;
     if (bounded) memcpy(s.tabs,rows,(size_t)bounded*sizeof *rows);
     COPY(s.selected_tab,selected);
-    if (changed && s.view == TABS) {
-        int index = workspace_index(focused);
+    if (s.view == TABS && (changed || (selected_changed && !browsing))) {
+        int index = browsing ? workspace_index(focused) : workspace_index(s.selected_tab);
         ht_tab_carousel_reset(&tab_carousel, bounded, index >= 0 ? index : workspace_index(s.selected_tab));
     }
     if (workspace.phase!=HT_WORKSPACE_IDLE && workspace_index(workspace.pending)<0) {

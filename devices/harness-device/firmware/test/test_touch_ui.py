@@ -202,7 +202,7 @@ static bool scroll_emit(ht_scroll_phase_t phase, int dy, int velocity, void *ctx
 code += function('color')
 code += function('settings_item') + function('settings_count') + function('hit_contains')
 code += function('find')
-for name in ['copy', 'recap_preview', 'notice_unread', 'notice_was_read', 'notice_forget_read', 'notice_flush_reads', 'notice_mark_read', 'habitat_scene_receipt', 'habitat_scene_presented', 'pane_memory', 'pane_memory_apply', 'dismiss_result', 'activity_text', 'ensure', 'input_cancel', 'view', 'notice_open', 'workspace_index', 'tabs_open', 'workspace_failed', 'ui_scroll_reportable', 'focus_skin', 'focus_face_for', 'focus_chord', 'focus_put', 'focus_span', 'focus_take', 'focus_rows', 'ui_rows', 'ui_can_display', 'ui_wrap', 'text_in', 'control', 'home_footer', 'footer_control', 'text', 'center', 'render_brand', 'heading', 'question_view', 'question_rows', 'question_move', 'question_text', 'render_question', 'render_choices', 'render_answer_review', 'question_answer', 'send_answer', 'make_action', 'character_mood', 'voice_status', 'home_caption_rotates', 'home_caption_tick', 'status_animated', 'status_speed', 'status_wake_ms', 'surface_tick', 'command_face', 'render_workspace_preview', 'question_prompt', 'focus_bell', 'render_home', 'render_voice', 'render_selection', 'render_form', 'draft_move', 'render_draft', 'render_draft_options', 'ui_swarms_replace', 'ui_workspace_applied', 'ui_land_after_reload']:
+for name in ['copy', 'recap_preview', 'notice_unread', 'notice_was_read', 'notice_forget_read', 'notice_flush_reads', 'notice_mark_read', 'habitat_scene_receipt', 'habitat_scene_presented', 'pane_memory', 'pane_memory_apply', 'dismiss_result', 'activity_text', 'ensure', 'input_cancel', 'view', 'notice_open', 'workspace_index', 'tabs_open', 'workspace_failed', 'tab_request', 'tabs_sync', 'ui_scroll_reportable', 'focus_skin', 'focus_face_for', 'focus_chord', 'focus_put', 'focus_span', 'focus_take', 'focus_rows', 'ui_rows', 'ui_can_display', 'ui_wrap', 'text_in', 'control', 'home_footer', 'footer_control', 'text', 'center', 'render_brand', 'heading', 'question_view', 'question_rows', 'question_move', 'question_text', 'render_question', 'render_choices', 'render_answer_review', 'question_answer', 'send_answer', 'make_action', 'character_mood', 'voice_status', 'home_caption_rotates', 'home_caption_tick', 'status_animated', 'status_speed', 'status_wake_ms', 'surface_tick', 'command_face', 'render_workspace_preview', 'question_prompt', 'focus_bell', 'render_home', 'render_voice', 'render_selection', 'render_form', 'draft_move', 'render_draft', 'render_draft_options', 'ui_swarms_replace', 'ui_workspace_applied', 'ui_land_after_reload']:
     code += function(name)
 code += function('render_settings') + function('ui_visit_state')
 code += function('ui_project_known') + function('ui_focus_project') + function('ui_apply_pending_focus')
@@ -262,7 +262,7 @@ static void dispatch(action_t a) {
     else if (a.kind == A_RECAP_DISMISS) dismiss_result(a.id);
     else if (a.kind == A_DESKTOP) desktop_action(a);
     else if (a.kind == A_UP || a.kind == A_DOWN) page_action(a);
-    else if (a.kind == A_TABS || a.kind == A_TAB) workspace_action(a);
+    else if (a.kind == A_TABS || a.kind == A_TAB || a.kind == A_TAB_DONE) workspace_action(a);
     else if (a.kind == A_SELECT_BEGIN) {
         view(SELECTION); ht_selection_open(&selection,"pick-test",active()->id,1800,select_emit,NULL);
     } else if (a.kind == A_SELECT_EXTEND) ht_selection_extend(&selection,3000);
@@ -365,7 +365,8 @@ static void focus_only_literata(void) {
     for (int i = 0; i < scene.count; i++) {
         const ht_run_t *r = &scene.runs[i];
         if (!r->text[0]) continue;
-        bool icon = (r->font == &ht_lv_montserrat_14.base && !strcmp(r->text, HT_LV_BELL)) ||
+        bool icon = (r->font == &ht_done_28 && !strcmp(r->text, HT_DONE)) ||
+                    (r->font == &ht_lv_montserrat_14.base && !strcmp(r->text, HT_LV_BELL)) ||
                     (r->font == &ht_lv_montserrat_22.base && !strcmp(r->text, HT_LV_CROSS));
         bool art = r->font == &ht_wave || r->font == &ht_spark;
         assert(focus_literata(r->font) || icon || art);
@@ -1475,7 +1476,7 @@ int main(int argc, char **argv) {
     strcpy(s.tabs[5].id,"tab-5"); strcpy(s.tabs[5].name,"Notes");
     dispatch((action_t){.kind=A_TABS}); scene_take(); portrait(dir,"tabs-names");
     assert(s.view==TABS && s.hit_count==4 && !action_enabled(A_UP) && !action_enabled(A_DOWN));
-    assert(action_enabled(A_HOME) && !action_enabled(A_SETTINGS) && !action_enabled(A_MACHINES));
+    assert(action_enabled(A_TAB_DONE) && !action_enabled(A_HOME) && !action_enabled(A_SETTINGS) && !action_enabled(A_MACHINES));
     assert(ht_tab_carousel_index(&tab_carousel)==1);
     for(int i=0;i<scene.count;i++) {
         assert(!strstr(scene.runs[i].text,"panes") && !strstr(scene.runs[i].text,"selected"));
@@ -1490,30 +1491,57 @@ int main(int argc, char **argv) {
     }
     assert(previous_visible && next_visible);
     habitat_touch(true,300,233,3000); habitat_touch(true,240,233,3120); scene_take();
-    assert(tab_carousel.position==HT_TAB_PITCH+120 && !tab_switches && !starts && !moves);
+    assert(tab_carousel.position==HT_TAB_PITCH+120 && tab_switches==1 && !strcmp(tab_target,"tab-2") && !starts && !moves);
     portrait(dir,"tabs-dragging");
     habitat_touch(false,220,233,3150); scene_take();
-    assert(tab_carousel.animating && !tab_switches && !starts);
+    assert(tab_carousel.animating && tab_switches==1 && !starts);
     surface_tick(3250); scene_take(); portrait(dir,"tabs-settling");
     // A touch brakes a moving page. It must never also open the old rendered target.
-    tap(3260,233,233); assert(s.view==TABS && !tab_switches && !starts);
+    tap(3260,233,233); assert(s.view==TABS && tab_switches==1 && !starts);
     surface_tick(3650); scene_take();
     int chosen=ht_tab_carousel_index(&tab_carousel);
     char chosen_id[ID_MAX]; COPY(chosen_id,s.tabs[chosen].id);
-    tap(3900,233,233); assert(tab_switches==1 && !strcmp(tab_target,chosen_id));
-    // Tapping a visible neighbor opens that exact tab, never the centered name.
+    tap(3900,233,233); assert(s.view==TABS && tab_switches==1 && !strcmp(tab_target,chosen_id));
+    // Host echoes and replacement panes must not break a live drag. Newer
+    // pages supersede earlier requests; only the latest roster can finish it.
     workspace_setup(); dispatch((action_t){.kind=A_TABS}); scene_take();
-    tap(4000,80,233); assert(tab_switches==1 && !strcmp(tab_target,"tab-0") && !starts);
+    habitat_touch(true,300,233,3000); habitat_touch(true,240,233,3120);
+    uint32_t first_tab_serial=workspace.serial;
+    assert(tab_switches==1 && !strcmp(tab_target,"tab-2") && tab_carousel.touching);
+    ui_swarms_replace(s.tabs,s.tab_count,"tab-2");
+    assert(!s.touch_cancelled && tab_carousel.touching);
+    assert(ht_workspace_refresh(&workspace,first_tab_serial,10));
+    ui_focus_project("b"); ui_project_remove("b");
+    assert(!s.touch_cancelled && tab_carousel.touching);
+    habitat_touch(true,120,233,3420);
+    assert(tab_switches==2 && !strcmp(tab_target,"tab-3") && workspace.serial!=first_tab_serial);
+    ui_workspace_applied("tab-2",11); ui_land_after_reload();
+    assert(s.loading && s.view==TABS && !s.touch_cancelled);
+    ui_swarms_replace(s.tabs,s.tab_count,"tab-2");
+    assert(ht_tab_carousel_index(&tab_carousel)==3 && workspace.phase==HT_WORKSPACE_WAIT_TAB);
+    ui_project_clear_all(); assert(!s.touch_cancelled && tab_carousel.touching);
+    habitat_touch(false,120,233,3500); surface_tick(3800); scene_take();
+    ui_swarms_replace(s.tabs,s.tab_count,"tab-3");
+    assert(ht_workspace_refresh(&workspace,workspace.serial,11));
+    ui_workspace_applied("tab-3",12); ui_land_after_reload();
+    assert(s.view==TABS && !s.loading && workspace.phase==HT_WORKSPACE_IDLE);
+    // A desktop/TUI selection also moves an idle picker, without echoing it.
+    ui_swarms_replace(s.tabs,s.tab_count,"tab-0"); surface_tick(3900); scene_take();
+    assert(ht_tab_carousel_index(&tab_carousel)==0 && tab_switches==2);
+    tap(4100,233,420); assert(s.view==HOME && tab_switches==2 && !starts);
+    // Tapping a visible neighbor previews that exact tab without closing the picker.
     workspace_setup(); dispatch((action_t){.kind=A_TABS}); scene_take();
-    tap(4000,386,233); assert(tab_switches==1 && !strcmp(tab_target,"tab-2") && !starts);
-    // Vertical/out-and-back motion stays in the picker and never opens a tab.
+    tap(4000,80,233); assert(s.view==TABS && tab_switches==1 && !strcmp(tab_target,"tab-0") && !starts);
+    workspace_setup(); dispatch((action_t){.kind=A_TABS}); scene_take();
+    tap(4000,386,233); assert(s.view==TABS && tab_switches==1 && !strcmp(tab_target,"tab-2") && !starts);
+    // Vertical motion is inert; reversing a horizontal drag switches back live.
     workspace_setup(); dispatch((action_t){.kind=A_TABS}); scene_take();
     habitat_touch(true,233,300,4000); habitat_touch(true,233,120,4100);
     habitat_touch(false,233,300,4200); scene_take();
     assert(ht_tab_carousel_index(&tab_carousel)==1 && !tab_switches && !starts && s.view==TABS);
     habitat_touch(true,233,233,4400); habitat_touch(true,120,233,4500);
     habitat_touch(true,233,233,4700); habitat_touch(false,233,233,4900);
-    surface_tick(5200); scene_take(); assert(ht_tab_carousel_index(&tab_carousel)==1 && !tab_switches);
+    surface_tick(5200); scene_take(); assert(ht_tab_carousel_index(&tab_carousel)==1 && tab_switches==2 && !strcmp(tab_target,"tab-1") && s.view==TABS);
     // All 24 tabs remain reachable. Physical left/right is independent of desktop scroll preference.
     workspace_setup(); s.tab_count=24;
     for(int i=4;i<24;i++) {
@@ -1528,7 +1556,7 @@ int main(int argc, char **argv) {
         uint32_t t=6000+(22-wanted)*1000;
         habitat_touch(true,203,233,t); habitat_touch(true,263,233,t+300);
         habitat_touch(false,263,233,t+450); surface_tick(t+700); scene_take();
-        assert(ht_tab_carousel_index(&tab_carousel)==wanted && !tab_switches && !starts);
+        assert(ht_tab_carousel_index(&tab_carousel)==wanted && tab_switches==23-wanted && !starts && s.view==TABS);
     }
     scroll_reversed=false;
     // Changed identities cancel stale contacts; only pane-count changes preserve motion.
@@ -1537,15 +1565,27 @@ int main(int argc, char **argv) {
     assert(!s.touch_cancelled);
     ui_swarms_replace(s.tabs,2,"tab-1");
     habitat_touch(false,233,233,30075); scene_take();
-    assert(!tab_switches && !starts && s.hit_count==3 && ht_tab_carousel_index(&tab_carousel)==0);
+    assert(tab_switches==23 && !starts && s.hit_count==3 && ht_tab_carousel_index(&tab_carousel)==0);
     ui_swarms_replace(NULL,0,NULL); scene_take(); portrait(dir,"tabs-empty");
-    assert(s.hit_count==1 && action_enabled(A_HOME) && !action_enabled(A_TAB));
+    assert(s.view==MESSAGE && !s.loading && workspace.phase==HT_WORKSPACE_IDLE); // removed pending tab fails explicitly
+    dispatch((action_t){.kind=A_TABS}); scene_take();
+    assert(s.hit_count==1 && action_enabled(A_TAB_DONE) && !action_enabled(A_TAB));
     workspace_setup(); s.connected=false; dispatch((action_t){.kind=A_TABS}); scene_take();
     assert(!action_enabled(A_TAB)); tap(32000,233,233); assert(!tab_switches && !starts);
-    // Long names wrap without painting into the rim. The only footer is Back.
+    // Long names wrap without painting into the rim. The only footer is Done.
     workspace_setup(); snprintf(s.tabs[1].name,sizeof s.tabs[1].name,"%s","A workspace with a longer name for device development");
     dispatch((action_t){.kind=A_TABS}); scene_take(); portrait(dir,"tabs-long-name");
+    bool checkmark=false,back_arrow=false;
+    for(int i=0;i<scene.count;i++) {
+        checkmark |= !strcmp(scene.runs[i].text,HT_DONE) && scene.runs[i].font==&ht_done_28;
+        back_arrow |= !strcmp(scene.runs[i].text,"\xe2\x86\x90");
+    }
+    assert(checkmark && !back_arrow && action_enabled(A_TAB_DONE) && !action_enabled(A_HOME));
     tap(33000,233,420); assert(s.view==HOME && !tab_switches && !starts);
+    workspace_setup(); dispatch((action_t){.kind=A_TABS}); scene_take();
+    ht_tab_carousel_reset(&tab_carousel,s.tab_count,2); congestion=true;
+    dispatch((action_t){.kind=A_TAB_DONE});
+    assert(s.view==MESSAGE && !s.loading && workspace.phase==HT_WORKSPACE_IDLE && !tab_switches);
     reset(); s.view=INBOX; dispatch((action_t){.kind=A_NOTICE,.id="off-tab-agent"});
     assert(desktop_opens==1 && !strcmp(opened_agent,"off-tab-agent") && s.view==INBOX);
     assert(!visit.pending && !visit_sends && !starts); // Works with the shipping agent.open protocol.
@@ -1559,8 +1599,10 @@ int main(int argc, char **argv) {
     habitat_touch(true,263,233,2000); habitat_touch(true,203,233,2300); habitat_touch(false,203,233,2450);
     surface_tick(2700); scene_take();
     habitat_touch(true,263,233,3000); habitat_touch(true,203,233,3300); habitat_touch(false,203,233,3450);
-    surface_tick(3700); scene_take(); tap(4000,233,233); // Research. The normal switch receipt still applies.
-    assert(tab_switches==1 && !strcmp(tab_target,"tab-3") && s.loading && s.view==MESSAGE);
+    surface_tick(3700); scene_take();
+    assert(tab_switches==2 && !strcmp(tab_target,"tab-3") && s.loading && s.view==TABS);
+    tap(4000,233,420); // Done waits for the newest tab and its complete roster.
+    assert(tab_switches==2 && s.loading && s.view==MESSAGE);
     uint32_t serial=workspace.serial;
     ui_land_after_reload(); assert(s.loading); // A periodic refresh is not a switch receipt.
     ui_workspace_applied("tab-3",3); ui_land_after_reload(); assert(s.loading);
@@ -2339,11 +2381,12 @@ int main(int argc, char **argv) {
         for(int i=0;i<scene.count;i++) if(strstr(scene.runs[i].text,"Harness") && scene.runs[i].fg==color(HT_THEME_VOICE) &&
                                           scene.runs[i].font==&ht_lv_literata_30.base) green=true;
         assert(green);
-        bool title=false, arrow=false;   // the close pill and "TABS" on top; no ← at the bottom
+        bool title=false, arrow=false, done=false;
         for(int i=0;i<scene.count;i++) { title |= !strcmp(scene.runs[i].text,"T") && scene.runs[i].y==62;
-                                         arrow |= !strcmp(scene.runs[i].text,"\xe2\x86\x90"); }
-        assert(title && !arrow);
-        tap(3000,233,30); assert(s.view==HOME);   // the cross goes back
+                                         arrow |= !strcmp(scene.runs[i].text,"\xe2\x86\x90");
+                                         done |= !strcmp(scene.runs[i].text,HT_DONE) && scene.runs[i].y==400; }
+        assert(title && !arrow && done && action_enabled(A_TAB_DONE) && !action_enabled(A_HOME));
+        tap(3000,233,420); assert(s.view==HOME);
     }
     // The Focus states that say something plain: connecting (the wordmark) and a tab list with no tabs.
     reset(); ht_character_select(&character, HT_CHARACTER_FOCUS); s.connected = false; scene_take();
