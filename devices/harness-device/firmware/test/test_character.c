@@ -254,13 +254,25 @@ static const ht_pet_t *pet_of(const char *engine)
     for (unsigned i = 0; i < ht_pet_count; i++) if (!strcmp(ht_pets[i].engine, engine)) return &ht_pets[i];
     return NULL;
 }
-// The index of the pet's frame whose pixels these are (every frame is in some loop), or -1.
-static int pet_frame(const ht_pet_t *pet, const uint16_t *px)
+// The index of the pet's frame this run's sprite draws (every frame is in some loop), or -1: by pixels for an
+// RGB565 + alpha8 pet, by cells for one that stores cell frames (Muse). Exactly one of frames / cells is set.
+static int pet_frame(const ht_pet_t *pet, const ht_sprite_t *sp)
 {
+    assert(!pet->frames != !pet->cells);
     for (int s = 0; s < HT_PET_STATES; s++)
-        for (int k = 0; k < HT_PET_STEPS; k++)
-            if (pet->frames[pet->loops[s][k].frame].px == px) return pet->loops[s][k].frame;
+        for (int k = 0; k < HT_PET_STEPS; k++) {
+            int fr = pet->loops[s][k].frame;
+            if (pet->cells ? sp->cells == pet->cells[fr].cells : sp->pixels == pet->frames[fr].px) return fr;
+        }
     return -1;
+}
+// Whether row `row` of the pet's frame `fr` has any ink (alpha, or a non-zero palette index).
+static bool pet_row_inked(const ht_pet_t *pet, int fr, int row)
+{
+    int w = pet->w;
+    for (int x = 0; x < w; x++)
+        if (pet->cells ? pet->cells[fr].cells[row * w + x] != 0 : pet->frames[fr].a[row * w + x] != 0) return true;
+    return false;
 }
 // The index of the scene's frame whose cells these are, or -1.
 static int scene_frame(const ht_pet_scene_t *sc, const uint8_t *cells)
@@ -460,7 +472,7 @@ static void focus_face(void)
             // The Claude pet, still (clock 0), centred in the 56 px mark's box: 60 x 45 at its step 0.
             const ht_pet_t *cp = pet_of("claude");
             assert(cp && cp->w == 60 && cp->h == 45);
-            assert(pet_frame(cp, mark->sprite.pixels) == cp->loops[HT_PET_IDLE][0].frame &&
+            assert(pet_frame(cp, &mark->sprite) == cp->loops[HT_PET_IDLE][0].frame &&
                    mark->x == (466 - cp->w) / 2);
             int mark_top = mark->y - (56 - cp->h) / 2;
             if (mark_y < 0) mark_y = mark->y;
@@ -659,17 +671,11 @@ static void focus_face(void)
                     ht_character_face(&scene, &c, &f, 0xffff, layout == 0 ? "Shipped the retry queue." : "");
                     const ht_run_t *mark = &scene.runs[1];
                     if (pet->working_scene && layout == 1 && state != HT_PET_ASKING) continue;   // the scene: below
-                    int fr = pet_frame(pet, mark->sprite.pixels);
+                    int fr = pet_frame(pet, &mark->sprite);
                     assert(fr >= 0);
-                    const ht_icon_t *ic = &pet->frames[fr];
                     int row = 0;
-                    while (row < ic->h) {
-                        bool inked = false;
-                        for (int x = 0; x < ic->w; x++) inked |= ic->a[row * ic->w + x] != 0;
-                        if (inked) break;
-                        row++;
-                    }
-                    assert(row < ic->h && mark->y + row >= HT_ARC_Y + HT_ARC_CELL_HEIGHT);
+                    while (row < pet->h && !pet_row_inked(pet, fr, row)) row++;
+                    assert(row < pet->h && mark->y + row >= HT_ARC_Y + HT_ARC_CELL_HEIGHT);
                 }
         int frame_at[HT_PET_STATES][HT_PET_STEPS];
         for (int state = 0; state < HT_PET_STATES; state++)
@@ -698,7 +704,7 @@ static void focus_face(void)
                     assert(lower->fg == ht_rgb(0x00ff2f));
                     frame_at[state][step] = frame;
                 } else {
-                int frame = pet_frame(pet, mark->sprite.pixels);
+                int frame = pet_frame(pet, &mark->sprite);
                 const ht_pet_step_t *want = &pet->loops[state][step];
                 assert(frame == want->frame && mark->sprite.width == pet->w && mark->sprite.height == pet->h);
                 assert(mark->x == (466 - pet->w) / 2);
@@ -727,6 +733,28 @@ static void focus_face(void)
                          pet->loops[state][step].dy != pet->loops[state][0].dy;
             assert(moves);
         }
+        // Muse's small pet is stored as cell frames (cell 1, one palette, 0 transparent), the others as RGB565 +
+        // alpha8; the mark is a cell sprite or an icon accordingly, centred in the 56 px box either way.
+        assert(!strcmp(eng, "muse") ? pet->cells && !pet->frames : pet->frames && !pet->cells);
+        if (pet->cells) {
+            ht_character_face_t cf = {.recipient = "Payments refactor", .engine = eng, .status = "", .hint = "", .detail = "",
+                .mood = HT_CHARACTER_IDLE, .foreground = 0xffff, .dim = 0x8410, .ink = 0xffff, .clock_ms = 1};
+            ht_scene_t cs; ht_scene_clear(&cs, 0);
+            ht_character_face(&cs, &c, &cf, 0xffff, "");
+            const ht_run_t *cm = &cs.runs[1];
+            int fr = pet_frame(pet, &cm->sprite);
+            assert(fr == pet->loops[HT_PET_IDLE][0].frame && !cm->sprite.pixels && cm->sprite.cells == pet->cells[fr].cells);
+            assert(cm->sprite.cell == 1 && cm->sprite.width == pet->w && cm->sprite.height == pet->h);
+            assert(pet->cells[fr].cols == pet->w && pet->cells[fr].rows == pet->h && !pet->cells[fr].palette[0]);
+            // The place is the icon pets' place: the same mark box (its top is the claude face's, less claude's own
+            // centring and hop), the cell frame centred in it, lifted by its step's hop.
+            const ht_pet_t *cp = pet_of("claude");
+            ht_character_face_t cl = cf; cl.engine = "claude";
+            ht_scene_t cls; ht_scene_clear(&cls, 0);
+            ht_character_face(&cls, &c, &cl, 0xffff, "");
+            int box_top = cls.runs[1].y - (56 - cp->h) / 2 - cp->loops[HT_PET_IDLE][0].dy;
+            assert(cm->x == (466 - pet->w) / 2 && cm->y == box_top + (56 - pet->h) / 2 + pet->loops[HT_PET_IDLE][0].dy);
+        }
         // The working legs change on the next step: 90 ms later is a different frame.
         // (Muse's Jolly waves one loop for every state: no legs, no blink.)
         if (strcmp(eng, "muse")) {
@@ -746,7 +774,7 @@ static void focus_face(void)
             ht_scene_t scene; ht_scene_clear(&scene, 0);
             ht_character_face(&scene, &c, &held[k], 0xffff, "");
             assert(scene.count == 1 + 1 + 1 + 4 + 1 + 2 + 1);
-            assert(pet_frame(pet, scene.runs[1].sprite.pixels) == pet->loops[HT_PET_IDLE][0].frame);
+            assert(pet_frame(pet, &scene.runs[1].sprite) == pet->loops[HT_PET_IDLE][0].frame);
             assert(!ht_focus_pet_next_ms(&held[k], ""));
         }
 

@@ -623,8 +623,9 @@ void ht_focus_face(ht_scene_t *s, const ht_character_face_t *f, uint8_t frame, u
         ht_pet_state_t state = hold ? HT_PET_IDLE : pet_state(f, recap);
         unsigned step = hold ? 0 : (f->clock_ms / pet->step_ms[state]) % HT_PET_STEPS;
         const ht_pet_step_t *p = &pet->loops[state][step];
-        ht_icon(s, (HT_WIDTH - pet->w) / 2, mark_top + (MARK_SIZE - pet->h) / 2 + p->dy,
-                &pet->frames[p->frame]);
+        int px = (HT_WIDTH - pet->w) / 2, py = mark_top + (MARK_SIZE - pet->h) / 2 + p->dy;
+        if (pet->cells) ht_cell_sprite(s, px, py, &pet->cells[p->frame]);
+        else ht_icon(s, px, py, &pet->frames[p->frame]);
     } else if (engine >= 0) ht_icon(s, mark_x, mark_top, &ht_icon_engine56[engine]);
     else no_text(s, rf);
 

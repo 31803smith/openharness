@@ -14,7 +14,9 @@ equalizer bubble, the paper plane) drawn after them: 28 steps of 120 ms, 15 step
 0..4, and 15 steps of 140 ms.
 Muse Code: Jolly, Meta Muse's mascot, cut from Meta's own render and from Meta's waving clip
 (assets/pets/muse, exported by mockup/muse_jolly.py; the look is mockup/muse-jolly.html). The small pet is
-the waving clip, 24 frames cropped to their ink box, one loop for all four states. Its three scenes are
+the waving clip, 24 frames cropped to their ink box, one loop for all four states, stored like the scenes
+(palette-indexed cell frames at cell 1, <= 255 colours, index 0 transparent: a third of the RGB565 + alpha8
+bytes) and drawn with ht_cell_sprite. Its three scenes are
 pack scenes like Codex's, from straight-alpha PNG frames at device scale (cell 1): working (headphones, typing
 at the laptop) 8 steps of 140 ms, listening 12 steps of 140 ms for every mic level 0..4, and sending (the clip's
 throw of a paper plane, the plane and its swoosh an overlay sprite) 13 steps of 166 ms with the last one held.
@@ -761,9 +763,11 @@ PETS = (
     ('codex', 'codex', (XW, XH), (xidle, xworking, xdone, xasking), xrender, XSTEP_MS),
     ('muse', 'muse', MUSE_SIZE, MUSE_STATES, muse_render, (MUSE_REST_MS,) * 4),
 )
+# Pets whose small self is palette-indexed cell frames (ht_pet_t.cells) rather than RGB565 + alpha8 (frames).
+CELL_PETS = ('muse',)
 
 
-def generate_pet(prefix, states, draw):
+def generate_pet(prefix, states, draw, size, cells_out=False):
     frames, index, loops = [], {}, []
     for state in states:
         steps = []
@@ -775,11 +779,20 @@ def generate_pet(prefix, states, draw):
             steps.append((index[key], dy))
         loops.append(steps)
     out, refs = [], []
+    if cells_out:
+        # One palette for the pet's frames; cell_frames de-duplicates again, so the loops follow its order.
+        images = [draw(cells) for cells in frames]
+        grids, palette = quantise_pieces(images)
+        out.append(f'static const uint16_t {prefix}_pal[{len(palette)}] = {{' + ','.join(str(0 if k == 0 else rgb565_panel(c)) for k, c in enumerate(palette)) + '};\n')
+        code, order, n, nbytes = cell_frames(prefix, [(im.width, im.height, g) for im, g in zip(images, grids)], f'{prefix}_pal')
+        out += code
+        return out, n, [[(order[f], dy) for f, dy in steps] for steps in loops], nbytes + len(palette) * 2
     for n, cells in enumerate(frames):
         code, ref = emit(f'{prefix}{n}', draw(cells))
         out.append(code)
         refs.append(ref)
-    return out, refs, loops
+    out.append(f'static const ht_icon_t {prefix}_frames[{len(refs)}] = {{' + ','.join(refs) + '};\n')
+    return out, len(refs), loops, len(refs) * size[0] * size[1] * 3
 
 
 def generate_scene(prefix, loop, size, step_ms, steps, levels):
@@ -833,10 +846,10 @@ def generate():
            '#include "pets.h"\n']
     table, counts, scene_stats = [], [], []
     for engine, prefix, (w, h), states, draw, step_ms in PETS:
-        code, refs, loops = generate_pet(prefix, states, draw)
+        cells_out = engine in CELL_PETS
+        code, n_frames, loops, nbytes = generate_pet(prefix, states, draw, (w, h), cells_out)
         out += code
-        counts.append(len(refs))
-        out.append(f'static const ht_icon_t {prefix}_frames[{len(refs)}] = {{' + ','.join(refs) + '};\n')
+        counts.append((n_frames, nbytes))
         rows = ['{' + ','.join(f'{{{f},{dy}}}' for f, dy in steps) + '}' for steps in loops]
         out.append(f'static const ht_pet_step_t {prefix}_loops[HT_PET_STATES][HT_PET_STEPS] = {{' + ','.join(rows) + '};\n')
         out.append(f'static const uint16_t {prefix}_step_ms[HT_PET_STATES] = {{' + ','.join(map(str, step_ms)) + '};\n')
@@ -857,7 +870,7 @@ def generate():
             out += code
             scene_stats.append((sprefix, n, nbytes))
             refs_to.append('&' + sprefix)
-        table.append(f'{{"{engine}",{w},{h},{prefix}_frames,{prefix}_loops,{prefix}_step_ms,{",".join(refs_to)}}}')
+        table.append(f'{{"{engine}",{w},{h},{"NULL" if cells_out else prefix + "_frames"},{prefix}_loops,{prefix}_step_ms,{",".join(refs_to)},{prefix + "_frames" if cells_out else "NULL"}}}')
     out.append('const ht_pet_t ht_pets[] = {' + ','.join(table) + '};\n')
     out.append(f'const unsigned ht_pet_count = {len(PETS)};\n')
     return ''.join(out), counts, scene_stats
@@ -872,8 +885,8 @@ def main():
             return 1
         return 0
     target.write_text(text)
-    for (engine, _, (w, h), *_), n in zip(PETS, counts):
-        print(f'{engine}: {n} frames, {n * w * h * 3} bytes')
+    for (engine, *_), (n, nbytes) in zip(PETS, counts):
+        print(f'{engine}: {n} frames, {nbytes} bytes')
     for name, n, nbytes in scene_stats:
         print(f'{name}: {n} frames, {nbytes} bytes')
     print(f'wrote {target}')
