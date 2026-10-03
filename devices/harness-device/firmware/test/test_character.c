@@ -263,10 +263,10 @@ static int pet_frame(const ht_pet_t *pet, const uint16_t *px)
     return -1;
 }
 // The index of the scene's frame whose cells these are, or -1.
-static int scene_frame(const ht_pet_scene_t *sc, const uint8_t *cells)
+static int scene_frame(const ht_pet_scene_t *sc, const uint8_t *cells, unsigned levels)
 {
     unsigned n = 0;
-    for (unsigned i = 0; i < sc->steps * HT_PET_SCENE_LEVELS; i++) if (sc->loop[i] >= n) n = sc->loop[i] + 1u;
+    for (unsigned i = 0; i < sc->steps * levels; i++) if (sc->loop[i] >= n) n = sc->loop[i] + 1u;
     for (unsigned k = 0; k < n; k++) if (sc->frames[k].cells == cells) return (int)k;
     return -1;
 }
@@ -688,7 +688,7 @@ static void focus_face(void)
                 const ht_pet_scene_t *ws = state == HT_PET_WORKING ? pet->working_scene : NULL;
                 if (ws) {
                     // THE WORKING SCENE: in the mark's run, centred, the status on the lower arc.
-                    int frame = scene_frame(ws, mark->sprite.cells);
+                    int frame = scene_frame(ws, mark->sprite.cells, 1);
                     assert(frame == ws->loop[(step * pet->step_ms[state] + 1) / ws->step_ms % ws->steps]);
                     assert(mark->sprite.width == ws->w && mark->sprite.height == ws->h && mark->x == (466 - ws->w) / 2 + ws->dx);
                     assert(mark->y == 233 + 4 - ws->h / 2 + ws->dy);
@@ -825,7 +825,7 @@ static void focus_face(void)
                 if (scene.runs[i].sprite.width == cp->w || scene.runs[i].sprite.width == 56) small++;
             }
             assert(big == 1 && !small);
-            assert(scene_frame(ws, scene.runs[1].sprite.cells) == ws->loop[step]);
+            assert(scene_frame(ws, scene.runs[1].sprite.cells, 1) == ws->loop[step]);
             assert(!scene.runs[7].text[0]);
             assert(scene.runs[10].arc == 2 && scene.runs[10].fg == ht_rgb(0x00ff2f) &&
                    !strcmp(scene.runs[10].text, "Coalescing\xe2\x80\xa6 34s") &&
@@ -882,7 +882,7 @@ static void focus_face(void)
                     if (scene.runs[i].font == &ht_wave && scene.runs[i].text[0]) bars++;
                 }
                 assert(icons == 1 && !bars);
-                assert(scene_frame(ls, shown[level][step]) == ls->loop[level * ls->steps + step]);
+                assert(scene_frame(ls, shown[level][step], HT_PET_SCENE_LEVELS) == ls->loop[level * ls->steps + step]);
                 ht_raster(&scene, (ht_rect_t){0, 0, HT_WIDTH, HT_HEIGHT}, full);
                 for (int y = 0; y < HT_HEIGHT; y++) for (int xx = 0; xx < HT_WIDTH; xx++)
                     if (full[y * HT_WIDTH + xx])
