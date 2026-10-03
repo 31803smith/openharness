@@ -157,8 +157,14 @@ function hasCursorPackageEntrypoint(args: string): boolean {
  * or run it through runpy. Require that executable prefix and actual code, never a script argument
  * or a quoted mention. argv[0] is authoritative here: macOS can truncate an absolute `comm` path.
  * Keep the standalone hook's copy in sync. */
+/** macOS `ps` prints argv through vis(3): a newline as `\\012`, a backslash as `\\\\`. Read those back
+ * so a multi-line `-c` source is the source it runs. Linux `ps` prints argv as it is, without them. */
+function unvisArgs(args: string): string {
+  return args.replace(/\\([0-7]{3}|\\)/g, (_, code: string) => code === '\\' ? '\\' : String.fromCharCode(parseInt(code, 8)))
+}
+
 function hermesInlineLauncher(row: Pick<ProcessRow, 'args'>): boolean {
-  const args = row.args.trim()
+  const args = unvisArgs(row.args).trim()
   if (!/^python(?:\d+(?:\.\d+)*)?$/.test(basename(argvPrefix(args)() ?? '').toLowerCase())) return false
   const prefix = /^(?:"[^"]+"|'[^']+'|\S+)(?:\s+-(?:I|E|s|S|u|B|O{1,2}|q))*\s+-c\s+/.exec(args)
   if (!prefix) return false
