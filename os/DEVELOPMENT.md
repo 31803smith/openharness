@@ -5,9 +5,9 @@ boot changes. Reflashing is a release/install test, not the intended way to try
 every interface fix. Keep the development tools on the build/test host; the
 installed OS keeps the same minimal interface.
 
-This plan was recorded on October 3, 2026. Preview 7 and its small bootstrap bundle
-and update channel are published. Its native upgrade from preview 6 passed; earlier
-preview 6 coverage includes upgrades from previews 4 and 5. Remote-launcher argument
+Preview 10, its small update bundle, and the installed system update channel are
+published. Its native upgrade from preview 9 passed; earlier preview 6 coverage
+includes upgrades from previews 4 and 5. Remote-launcher argument
 tests passed but remote display/SSH interaction is still unverified.
 
 ## Next release priorities
@@ -90,6 +90,36 @@ x86 KVM host with its image and matching `manifest.json`:
 python3 os/tests/local_ai_vm.py --iso os/dist/IMAGE.iso --probe local-ai
 python3 os/tests/local_ai_vm.py --iso os/dist/IMAGE.iso --probe nvidia
 ```
+
+The **Harness OS installed footprint assessment** workflow reuses a checksum-verified
+published image in fresh encrypted 1 GiB and 4 GiB Nehalem VMs. It samples the
+default OpenCode workspace, stops the disposable agent to measure the terminal,
+then renders a local Chromium page. Each state settles for 20 seconds before ten
+samples at two-second intervals. Receipts retain MemAvailable-based system usage,
+swap, interval CPU, process PSS/RSS, package metadata and screenshots. Actual
+graphical keyboard checks run after agent shutdown and return from the browser.
+The background update timer is stopped during sampling and restarted afterward.
+
+Dispatch `os-footprint.yml` with `image_run_id`, or use a native x86 KVM host:
+
+```sh
+python3 os/tests/footprint_vm.py --iso os/dist/IMAGE.iso --memory-mib 1024
+python3 os/tests/footprint_vm.py --iso os/dist/IMAGE.iso --memory-mib 4096
+```
+
+[Preview 10 results](https://github.com/autonomous-ai/openharness/actions/runs/37212080839)
+are summarized in the [footprint table](README.md#measured-preview-footprint).
+The two runs passed; test source was `f00ab7429584c982ed7a1b5a23ad82f3d4de579f`.
+Terminal-only median CPU was about 0.75%; the observer and diagnostic login remain
+included. This is one ordered sequence per VM with a software-rendered display,
+not a randomized comparison, physical hardware benchmark or model throughput test.
+
+The inventory records 405 packages. Its largest logical sizes belong to Chromium
+(422 MiB), OpenCode (195 MiB), LLVM (165 MiB), the LTS kernel (156 MiB), and device
+firmware. The installed USB boot/recovery tools examined total about 10.84 MiB
+logical size; that is not a demonstrated saving. Package sizes are uncompressed,
+and missing metadata remains unknown. Retain hardware support and recovery tools
+until a candidate removal has dependency, actual disk-saving and recovery evidence.
 
 The **Harness OS runtime memory assessment** workflow compares Node flags in one
 installed 1 GiB VM. It alternates two default and two candidate rounds, samples
@@ -227,7 +257,7 @@ OS windows use hn's local session storage (`HARNESS_TUI_DESK=off`), so their
 layout and pane references survive reconnects without signing into the cloud.
 This setting is confined to the OS launcher; ordinary hn installs are unchanged.
 
-`Update ready · Super+u` appears in the bottom bar. Super+u opens the keyboard
+The installed system keeps hn's standard status bar. Super+u opens the keyboard
 update action (Ctrl+b, Shift+u remains an alias). Enter applies the prepared
 runtime through a transient user service. An hn-only change reconnects just the
 screen; a CLI change also restarts its supervised service. Failure restores the
