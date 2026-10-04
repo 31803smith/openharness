@@ -1,7 +1,7 @@
 # Install Harness on a ThinkPad
 
 These instructions are for **0.1.0-preview.9**, using a Mac to prepare the USB.
-The USB starts a live session. Installation begins only when you choose **Install**
+The USB starts a live session. Installation begins only when you choose **Install Harness**
 in the installer; it erases the entire selected disk.
 
 ## 1. Prepare
@@ -64,19 +64,20 @@ The exact menu wording varies by model. See Lenovo's
 [boot-menu instructions](https://docs.lenovocdrt.com/ref/bios/startup_menu/).
 If the USB is absent, try another USB port and check that USB boot is enabled.
 
-The USB opens **Connect to Wi-Fi** and **Install without connecting** when offline.
-Choose Wi-Fi and enter its password in the system form to try an agent. Ethernet
+The USB opens a full-page Wi-Fi list with **Install without connecting** always
+visible. Choose a network and enter its password; a successful connection advances
+automatically. Ethernet
 skips this step when already connected. No Harness account is needed.
 
-OpenCode starts with its default model selection. Beside it are **New Harness**
-and **Connect a computer**, for trying multiple agents and computers. Ask the agent
-about Harness, its shortcuts, or something you want to build. The bottom dock keeps
-**Install Harness** visible throughout the trial; **Temporary USB** reminds you
-that work has not yet been saved to an installed system.
+OpenCode starts with its default model selection on the left, beside two real
+terminal panes on the right. **Super+n** starts another harness; **Super+m**
+connects a computer. Ask the agent
+about Harness, its shortcuts, or something you want to build. The footer keeps
+**Install Harness** visible throughout the trial, beside the window list on one row.
 
-Create projects under `~/Projects`. The installer preserves and verifies these
+Create projects under `~/projects`. The installer preserves and verifies these
 saved files, including Git history. Files elsewhere, running processes and agent
-credentials outside Projects are not copied. Save and stop project writes before
+credentials outside projects are not copied. Save and stop project writes before
 installing, or copy important work to another drive.
 
 ### Trying an older Intel Mac
@@ -101,21 +102,21 @@ IDs and driver names, without serial numbers or Wi-Fi passwords.
 ## 5. Install
 
 Choose **Install without connecting** at the network step, click **Install Harness**
-in the bottom dock, press **Super+i**, or ask the agent to open installation.
-F10 focuses the dock; Tab selects a button and Enter activates it. All routes open
+in the footer, press **Super+i**, or ask the agent to open installation.
+F10 focuses Install Harness in the footer; Enter opens it. All routes open
 the same native form, with four fields:
 
-1. **Disk:** press Enter, choose the internal disk by its model and capacity, and
-   press Enter again. The live USB is excluded from the choices.
+1. **Disk:** the first eligible disk is selected. Check its model and capacity.
+   To change it, focus Disk and press Enter. The live USB is excluded.
 2. **Encryption:** enabled initially. Use Space to change it if needed.
-3. **Password:** enter the password for your new system.
+3. **Password:** focused when the form opens; type your new system password.
 4. **Repeat password:** enter it again.
 
 Use Tab or the arrow keys to move between fields. This preview uses a **US keyboard
 layout**, including at disk unlock. Passwords cannot be empty; there is no minimum
 length restriction.
 
-Check the selected disk, then choose **Install** and press Enter. **This immediately
+Check the selected disk, then choose **Install Harness** and press Enter. **This immediately
 erases that disk. There is no second confirmation screen.** Choosing a disk alone
 does not start installation. Esc leaves the picker or cancels the main form.
 
@@ -138,9 +139,9 @@ The password initially protects both the account and, when enabled, the encrypte
 disk. Changing the account password later does not change the disk password.
 There is no cloud account that resets the disk password.
 
-On the empty home screen, press **Enter** to start OpenCode. If there is no network
-connection, the keyboard network picker opens first. Select your Wi-Fi network
-and enter its password there. **Super+w** opens network setup from any
+First boot opens OpenCode on the left and two terminal panes on the right.
+If disconnected, Wi-Fi opens first; you can connect or continue offline.
+Subsequent launches restore your existing work. **Super+w** opens network setup from any
 pane. Ethernet connects automatically when available.
 
 OpenCode is already installed and uses its upstream defaults. Available models
@@ -169,23 +170,29 @@ the next key. A capital letter in a prefix binding means Shift + letter.
 | `sudo systemctl poweroff` | Shut down |
 
 Claude Code, Codex, OpenCode and pi each run in their own pane. Let the agent
-install the tools the project needs. Save work under `~/Projects`.
+install the tools the project needs. Save work under `~/projects`.
 
 ## 8. Updates
 
 A small **Update ready · Super+u** notice appears when a new hn or CLI release
 has downloaded and passed its checks. Press **Super+u**, then Enter to apply it.
 The screen reconnects; your running agents and terminal processes remain.
-Use **R** in Updates to restore the previous runtime if needed.
+Use **r** in Updates to restore the previous runtime if needed.
 
-System updates use **S** in the same screen and ask for your account password.
+System updates use **s** in the same screen and ask for your account password.
 They retain a recovery checkpoint and rebuild the boot image. When the screen
 offers **Restart now**, save your work and press Enter when ready. Downloads do
 not restart the computer, and routine updates do not require another USB flash.
 
-Preview 9 fixes a transient encrypted-disk cleanup failure after installation.
-An installed computer that boots successfully needs no update or reflash for this
-fix. The installed-system feed remains on preview 7.
+Preview 5 through 8 can receive preview 9 through **Super+u**, then **s**.
+It includes the new network page, first-use workspace, lowercase project folders,
+and the fix preventing older public CLI releases from replacing the bundled
+OpenCode compatibility code. Running work is preserved; save before restarting.
+No reinstallation or USB flash is needed for these installed-system changes.
+
+Preview 9 also fixes a transient encrypted-disk cleanup failure in the USB
+installer. A computer that already boots successfully needs no reinstallation
+for that cleanup fix.
 
 Preview 4 needs the 7.2 MB [preview 7 bootstrap bundle](https://github.com/autonomous-ai/openharness/releases/download/os-v0.1.0-preview.7/harness-update-0.1.0-preview.7-47872670a-x86_64.zip)
 once. Verify and extract that bundle, open a terminal in its folder, and run:
@@ -203,7 +210,7 @@ same folder before trying again.
 
 1. Boot with the USB removed. Confirm disk unlock and the Harness home screen.
 2. Connect Wi-Fi, open a terminal, type a command, and exit with Ctrl+D.
-3. Start OpenCode and ask it to build a small website in `~/Projects/hello`, run
+3. Start OpenCode and ask it to build a small website in `~/projects/hello`, run
    its server, and give you the address. Open it with `hn-browser ADDRESS`.
 4. Ask an agent to build and test a command-line program, installing tools as needed.
 5. Switch between Harness and the browser. Lock and unlock the computer.

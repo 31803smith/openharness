@@ -71,10 +71,18 @@ exit 1
 def wait_screen(vm, words, name, timeout=20):
     deadline = time.monotonic() + timeout
     while True:
-        text = screen_text(vm, name)
+        # OCR drops dark text inside the selected network's light highlight.
+        # Read the real focused terminal for input readiness, and retain its
+        # actual framebuffer separately for visual inspection.
+        vm.command(USER_ENV + 'hn capture-pane -p > /tmp/harness-wifi-screen.txt')
+        content = vm.read_file('/tmp/harness-wifi-screen.txt')
+        (vm.folder / (name + '.txt')).write_bytes(content)
+        text = ' '.join(content.decode().lower().split())
         if all(word.lower() in text for word in words):
+            vm.screenshot(name)
             return text
         if time.monotonic() >= deadline:
+            vm.screenshot(name)
             raise AssertionError('Expected screen text not rendered: ' + repr(words) + '; saw: ' + text)
         time.sleep(.25)
 
@@ -90,45 +98,57 @@ def wireless(vm, result):
     vm.command("nmcli -t -f DEVICE,TYPE device | awk -F: '$2 == \"ethernet\" {print $1}' > /run/harness-ethernet; "
                'while read -r dev; do nmcli device disconnect "$dev"; nmcli device set "$dev" managed no; done < /run/harness-ethernet')
     vm.command('! ip route show default | grep -v "dev $(cat /run/harness-station)"')
-    vm.command(USER_ENV + 'hn new-window -n Wi-Fi ' + shlex.quote('hn-os wifi'))
-    wait_screen(vm, ['harness-test'], 'wifi-01-networks')
-    # nmtui lists saved Ethernet profiles even when their device is unmanaged.
-    # The first row is Wired connection 1; select the scanned wireless row.
-    vm.keys('down')
+    form = 'sudo python3 /usr/lib/harness-os/network.py --first-use; result=$?; printf %s "$result" > /tmp/wifi-form-result; exec bash -l'
+    vm.command(USER_ENV + 'hn new-window -n Wi-Fi ' + shlex.quote(form))
+    wait_screen(vm, ['harness-test', 'install without connecting'], 'wifi-01-networks')
+    vm.keys('esc')
+    wait_screen(vm, ['harness-test'], 'wifi-01-escape-keeps-welcome')
+    vm.keys('ctrl', 'c')
+    wait_screen(vm, ['harness-test'], 'wifi-01-interrupt-keeps-welcome')
+    # Wi-Fi is the first selection. A bad password stays recoverable in-page.
     vm.keys('ret')
     wait_screen(vm, ['password'], 'wifi-02-password')
+    vm.type_probe('wrong-wifi-password')
+    vm.keys('ret')
+    wait_screen(vm, ['check the password'], 'wifi-02-password-retry', timeout=50)
+    vm.keys('esc')
+    vm.keys('r')
+    wait_screen(vm, ['harness-test'], 'wifi-02-rescan')
+    vm.keys('ret')
+    wait_screen(vm, ['password'], 'wifi-02-password-again')
     vm.type_probe(PASSWORD)
     text = screen_text(vm, 'wifi-03-password-masked')
     assert PASSWORD not in text, 'Wi-Fi password was visible in the form'
     vm.keys('ret')
-    vm.command('for n in $(seq 1 40); do '
-               'if nmcli -t -f GENERAL.STATE device show "$(cat /run/harness-station)" | grep -q "100"; then exit 0; fi; '
-               'sleep .5; done; exit 1', timeout=30)
+    vm.command('for n in $(seq 1 80); do test -s /tmp/wifi-form-result && '
+               'test "$(cat /tmp/wifi-form-result)" = 0 && exit 0; sleep .5; done; exit 1', timeout=45)
     # A real HTTP response and DNS lookup through the radio, not a mocked state.
     output, _ = vm.command('ip route; resolvectl query harness.test; '
                            'test "$(curl --noproxy "*" -fsS --max-time 10 http://harness.test:8080)" = harness-wifi-success')
     (vm.folder / 'wifi-route-and-dns.txt').write_text(output)
     vm.screenshot('wifi-04-connected')
-    vm.keys('esc')
     vm.command(USER_ENV + 'hn list-panes -a -F "#{pane_current_command}"')
-    result['checks'].append('Actual hn Wi-Fi screen scans a simulated radio, masks WPA2 password, connects with DHCP and resolves/fetches HTTP over wireless with Ethernet disconnected')
+    result['checks'].append('Fullscreen Wi-Fi welcome puts Wi-Fi first, retries a wrong masked password, rescans, and advances automatically after DHCP and resolves/fetches HTTP over wireless with Ethernet disconnected')
+    # Restart NetworkManager too: a radio toggle alone could reuse an in-memory
+    # secret instead of proving the entered password was saved to disk.
+    vm.monitor('set_link', name='hnnet', up=False)
+    vm.command('systemctl restart NetworkManager; nm-online -q --timeout=40', timeout=45)
     # Connection must survive a radio toggle, without another password prompt.
     vm.command('nmcli radio wifi off; sleep 1; nmcli radio wifi on; '
                'for n in $(seq 1 45); do if curl --noproxy "*" -fsS --max-time 2 http://harness.test:8080 | '
                'grep -Fx harness-wifi-success; then exit 0; fi; sleep 1; done; exit 1', timeout=100)
     vm.command('find /etc/NetworkManager/system-connections -name "*.nmconnection" -exec stat -c "%a %U %n" {} \\;')
     result['checks'].append('Wireless reconnects after a radio off/on cycle using its stored profile')
-    # Cancel setup while offline, return to Harness, then reopen it.
+    # The full-page offline action returns an explicit install result; Esc does
+    # not strand a first-time user in an empty shell.
     vm.command('nmcli device disconnect "$(cat /run/harness-station)"')
-    vm.command(USER_ENV + 'hn new-window -n Try ' + shlex.quote('hn-os try'))
-    wait_screen(vm, ['harness-test'], 'wifi-05-trial-offline')
-    vm.keys('esc')
-    wait_screen(vm, ['connect to wi-fi', 'press enter'], 'wifi-06-cancelled')
-    vm.keys('ret')
-    vm.command(USER_ENV + 'systemctl --user is-active --quiet hn-screen')
-    vm.command('! pgrep -u 1000 -x opencode')
-    result['checks'].append('Cancelling offline trial network setup explains how to connect and returns to Harness without launching a disconnected agent')
+    vm.command(USER_ENV + 'hn new-window -n Offline ' + shlex.quote(form.replace('/tmp/wifi-form-result', '/tmp/wifi-offline-result')))
+    wait_screen(vm, ['install without connecting'], 'wifi-05-offline-install')
+    vm.keys('i')
+    vm.command('for n in $(seq 1 40); do test "$(cat /tmp/wifi-offline-result 2>/dev/null)" = 10 && exit 0; sleep .25; done; exit 1')
+    result['checks'].append('First-use Wi-Fi always offers offline installation, and selecting it exits with the native install action')
     vm.command('nmcli connection up ' + SSID, timeout=60)
+    vm.monitor('set_link', name='hnnet', up=True)
     vm.command('while read -r dev; do nmcli device set "$dev" managed yes; nmcli device connect "$dev"; done < /run/harness-ethernet')
 
 
@@ -142,20 +162,24 @@ def sound(vm, result):
         match = re.search(r'Volume: ([0-9.]+)([^\r\n]*)', output)
         assert match, 'No default audio output'
         return float(match.group(1)), '[MUTED]' in match.group(2)
+    def press_volume(key, expected):
+        # labwc starts wpctl asynchronously. Observe completion instead of
+        # assuming it finished within 400 ms during first-agent startup.
+        started = time.monotonic()
+        vm.keys(key)
+        while True:
+            actual = volume()
+            if actual == expected:
+                result.setdefault('audio_key_seconds', {})[key + ('-unmute' if key == 'audiomute' and not expected[1] else '')] = round(time.monotonic() - started, 3)
+                return
+            assert time.monotonic() - started < 5, (key + ' did not reach PipeWire', actual, expected)
+            time.sleep(.1)
     vm.command(USER_ENV + 'wpctl set-volume @DEFAULT_AUDIO_SINK@ 0.5')
     vm.command(USER_ENV + 'wpctl set-mute @DEFAULT_AUDIO_SINK@ 0')
-    vm.keys('volumeup')
-    time.sleep(.4)
-    assert volume() == (.55, False), ('Volume up did not reach PipeWire', volume())
-    vm.keys('volumedown')
-    time.sleep(.4)
-    assert volume() == (.5, False), ('Volume down did not reach PipeWire', volume())
-    vm.keys('audiomute')
-    time.sleep(.4)
-    assert volume() == (.5, True), ('Mute did not reach PipeWire', volume())
-    vm.keys('audiomute')
-    time.sleep(.4)
-    assert volume() == (.5, False), ('Unmute did not reach PipeWire', volume())
+    press_volume('volumeup', (.55, False))
+    press_volume('volumedown', (.5, False))
+    press_volume('audiomute', (.5, True))
+    press_volume('audiomute', (.5, False))
     tone = '''import array, math, wave
 with wave.open('/tmp/harness-tone.wav', 'wb') as output:
     output.setnchannels(2); output.setsampwidth(2); output.setframerate(48000)
@@ -195,8 +219,8 @@ def main():
         vm.command('stty -echo')
         vm.command(USER_ENV + '/usr/lib/harness-os/wait-runtime')
         vm.command(USER_ENV + 'sh -c ' + shlex.quote('for n in $(seq 1 60); do systemctl --user is-active --quiet hn-screen && pgrep -u 1000 -x foot >/dev/null && exit 0; sleep .25; done; exit 1'))
-        sound(vm, result)
         wireless(vm, result)
+        sound(vm, result)
         vm.stop()
         with wave.open(str(folder / 'audio-1.wav'), 'rb') as recording:
             samples = array.array('h', recording.readframes(recording.getnframes()))
