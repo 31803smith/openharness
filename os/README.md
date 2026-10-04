@@ -11,14 +11,16 @@ audience, not its name.
 
 Product names and interface copy follow the [Naming System](../docs/naming-system.md).
 
-**Preview 10:** the USB opens a short network step
-or goes straight into bundled OpenCode when already connected. **Install without
-connecting** opens the same native installer offline. OpenCode starts on the left with two real terminal panes on the right.
-The single green USB footer holds the window list on the left and **Make Harness your OS.
-[ Install Harness ]** on the right. Installed first boot uses the same workspace;
-later launches restore existing work. The installed system keeps hn’s standard status bar. Ctrl+b, then c opens a terminal in a new tab. Saved `~/projects` files are copied
-and verified during installation. The full TUI reference and OS guide are bundled
-for agent questions. **Super+n/t/m/i/w** require no Shift; Ctrl+b bindings still work.
+**Preview 11:** the USB opens the installer directly. Installation works offline.
+After shutdown, remove the USB and boot the installed disk. If disconnected,
+the Wi-Fi page opens first and advances automatically when connected; Ethernet
+skips that step. OpenCode starts on the left with two real terminals on the right.
+There is no trial choice or installation dock.
+
+Later launches restore existing work. The installed system keeps hn’s standard
+status bar. Ctrl+b, then c opens a terminal in a new tab. Projects live under
+`~/projects`. The full TUI reference and OS guide are bundled for agent questions.
+**Super+n/t/m/w** require no Shift; Ctrl+b bindings still work.
 
 The installer selects a disk, focuses Password, and has one full-width
 **Install Harness** action, one row tall and aligned with the fields. Progress shows the Harness wordmark above the current step; encrypted boot shows the
@@ -29,7 +31,7 @@ you choose when to reconnect the screen. Running agents and terminals stay alive
 The update checker records release ancestry so a source-built runtime cannot be
 replaced by an older public CLI with a higher development version number.
 
-[Download preview 10](https://github.com/autonomous-ai/openharness/releases/tag/os-v0.1.0-preview.10)
+[Download preview 11](https://github.com/autonomous-ai/openharness/releases/tag/os-v0.1.0-preview.11)
 · [Mac → USB → ThinkPad installation guide](INSTALL.md)
 · [Standalone HTML/CSS landing page](../website/public/os/README.md)
 · [Development feedback loop and Mac support targets](DEVELOPMENT.md)
@@ -113,7 +115,7 @@ records that check; machine validation is still required afterward.
 There is no publication to
 the normal Harness CLI/TUI update channels.
 
-## Try and install
+## Install
 
 To experiment with the PC image in a Mac window, install QEMU with
 `brew install qemu`, download the ISO and its `manifest.json` into `os/dist/`,
@@ -140,23 +142,12 @@ or full-experience demonstration.
 Write the **whole ISO** to a USB stick using an image writer such as Etcher, then
 boot an x86-64 PC with Secure Boot disabled. TPM can remain enabled. A 32-bit-only
 ThinkPad cannot boot this image. Bundled OpenCode also requires SSE4.2: a Core 2
-machine can reach Harness but is not supported for the bundled agent trial.
+machine can reach Harness but is not supported for the bundled agent.
 The [installation guide](INSTALL.md) covers the
 Mac download, checksum, flashing and ThinkPad boot menu in full.
 
-In the current source, the USB asks for a network connection before opening
-OpenCode. Choose **Install without connecting** to install immediately offline.
-Ethernet skips the network step when already connected. During a trial, click
-**Install Harness**, press **Super+i**, or ask the agent to open installation.
-F10 focuses Install Harness in the footer; Enter opens the form. Use Super+n for another agent or Super+m to connect a computer. The two right
-panes are ordinary terminals.
-
-Saved files under `~/projects`, including Git history, are transferred into the
-installed home and verified by hash. Work elsewhere remains temporary. Running
-processes and agent credentials outside projects are not transferred. Stop writes
-to a project before installing; files changing during transfer are an error.
-Preview 6's older welcome uses Enter to install or T to try and does not transfer
-trial files; use the installation guide shipped with your image.
+The USB opens the installer directly. There is no trial screen or network step
+before installation. It uses the image on the USB and works offline.
 
 The installer uses `me@harness`. Choose **Disk**, leave **Encryption** enabled or
 change it, then enter **Password** and **Repeat password**. **Install immediately
@@ -165,7 +156,7 @@ confirmation screen. The live USB and mounted disks are excluded. Selecting a
 disk alone does not write to it. Passwords must be nonempty; this preview uses a
 US keyboard layout, including at disk unlock.
 
-Completion stays visible until **Shut down** or **Back to Harness** is chosen.
+Completion stays visible until **Shut down** is chosen.
 Remove the USB after shutdown and boot the internal disk. An encrypted install
 shows the Harness logo and **Enter your password**, then enters hn. An unencrypted
 install requires login as `me`. The password initially protects both the account
@@ -177,12 +168,14 @@ and, when enabled, the disk. There is no first-boot account wizard.
 `--config` file, set `username`, `hostname` and `encrypt` in that file instead.
 Ordinary hn on macOS or another Linux distribution does not expose OS installation.
 
-The installed system's first workspace opens OpenCode on the left and two terminal
-panes on the right; later launches restore existing work. Super+n starts New
-Harness, Super+t opens a shell directly, Super+m connects a computer, Super+w
-opens Wi-Fi and Super+l locks the session. These require no Shift or prefix.
-The shared TUI shortcuts still work: Ctrl+b, then Shift+n/t/w for the corresponding
-actions. Ordinary hn on macOS and other Linux distributions retains its usual UI.
+On the installed system's first boot, the existing Wi-Fi page opens when there
+is no connection. Connecting advances automatically to OpenCode on the left and
+two terminal panes on the right. Working Ethernet skips Wi-Fi setup. Later boots
+reconnect to saved Wi-Fi and restore existing work. Super+n starts New Harness,
+Super+t opens a shell directly, Super+m connects a computer, Super+w opens Wi-Fi
+and Super+l locks the session. These require no Shift or prefix. The shared TUI
+shortcuts still work; ordinary hn on macOS and other Linux distributions retains
+its usual UI.
 Recovery remains available through another console or the USB; the owner retains
 normal Linux administrator control.
 
