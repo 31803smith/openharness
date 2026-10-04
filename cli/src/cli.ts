@@ -192,6 +192,10 @@ import { createBinding } from './core/agents/bind.js'
 import { createDiscoveryHandlers } from './core/agents/discovery.js'
 import { createLaunchHelpers } from './core/agents/launch.js'
 import { createCancel } from './core/turns/cancel.js'
+import { createPaneWatcher } from './core/agents/newPane.js'
+import { createAdoption } from './core/agents/adopt.js'
+import { createAgentCreator } from './core/agents/create.js'
+import { createAgentForker } from './core/agents/fork.js'
 import { describeMasterStatus, readStatusFile, runMaster } from './harnessd/master.js'
 import { CORE_EXIT_STOP, CORE_EXIT_UPDATE } from './harnessd/protocol.js'
 import { isLocalSocketName, localSocketPath, type LocalSocketServer } from './lib/localSocket.js'
@@ -384,10 +388,6 @@ const PROXY_BACKEND_TIMEOUT_MS = 20_000
  *  stalled control-plane connection cannot hold it open. */
 const GRID_MINT_TIMEOUT_MS = 10_000
 
-/** How long creating a Model Manager waits for grid to be set up before its workspace asks grid which
- *  grid is this account's. Short: the app gives the whole create 20s, and a first install takes minutes.
- *  Past it the set-up carries on, and the agent's own `harness grid setup` waits for it. */
-const MODEL_MANAGER_GRID_WAIT_MS = 8_000
 
 
 function usage(exitCode = 0): never {
@@ -1579,14 +1579,6 @@ async function restartDaemonForIdentity(): Promise<void> {
   await launch(false)   // prints the status block and exits
 }
 
-/** The pane's session environment: the grid's or the profile's, with the DSH's layered on top. */
-function mergedLaunchEnv(
-  base: Record<string, string> | undefined,
-  dsh: Record<string, string> | undefined,
-): Record<string, string> | undefined {
-  if (!base && !dsh) return undefined
-  return { ...(base ?? {}), ...(dsh ?? {}) }
-}
 
 /** Set by runForeground once the DSH companions exist; a frame projected before that carries none. */
 let activityFrameContextRef: ((s: RegisteredSession) => ActivityFrame | null) | null = null
@@ -3828,536 +3820,60 @@ async function runForeground(session: AuthSession | null): Promise<void> {
    * pass can miss it — retry `triggerHint` a few times with backoff before giving up.
    */
 
-  /**
-   * Watch a pane this daemon just opened until its engine process shows up (ready), dies (failed), or
-   * ten minutes pass. Shared by create and fork: the two open panes the same way and wait the same way.
-   */
-  const watchNewPane = async (engine: AgentEngine, pending: RegisteredSession, spawned: { runtime: TmuxRuntimeRef }, command: string[], installIfMissing: ReturnType<typeof engineInstallRecipe> | undefined, budgetMs = 10 * 60_000): Promise<void> => {
-    const startedAt = Date.now()
-    let delayMs = 50
-    try {
-      while (Date.now() - startedAt < budgetMs) {
-        if (!registry.byAgent(pending.agentId)) return
-        const processIdentity = await resolvePaneEngineProcess(spawned.runtime.paneId, engine)
-        if (processIdentity) {
-          registry.updateProcessIdentity(pending.agentId, processIdentity)
-          const ready = registry.setLaunch(pending.agentId, { state: 'ready' })
-          await clearPaneRemainOnExit(spawned.runtime.paneId)
-          if (ready) announceSession(ready)
-          void agentReconciler.triggerHint(spawned.runtime, engine).catch((error) => {
-            console.warn(`[agent] background bind failed · ${engine} · ${error instanceof Error ? error.message : error}`)
-          })
-          console.log(`[agent] create ready · ${engine} · agent ${pending.agentId} · ${Date.now() - startedAt}ms`)
-          return
-        }
-        const paneState = await tmuxPaneState(spawned.runtime.paneId)
-        if (!paneState) {
-          registry.setTerminalAvailable(pending.agentId, false)
-          announceSession(pending)
-          return
-        }
-        if (paneState.dead) {
-          const installed = await commandAvailableInInteractiveShell(command[0], undefined, installIfMissing)
-          const error = installed ? 'ENGINE_DID_NOT_START' : 'ENGINE_NOT_INSTALLED'
-          const detail = installed
-            ? `${engine} exited before its engine process became ready. See the terminal output for details.`
-            : `${engine} is not installed, or its automatic install failed. See the terminal output for details.`
-          const failed = registry.setLaunch(pending.agentId, { state: 'failed', error, detail })
-          if (failed) announceSession(failed)
-          console.warn(`[agent] create failed · ${engine} · ${detail}`)
-          return
-        }
-        // The engine started and was gone again before it was ever seen (a flag it refused, a
-        // config it could not read): its wrapper has handed the pane to a shell with the engine's
-        // own words on screen. That pane is a terminal, and the row says so — the person reads
-        // the error where it was printed and types the command again, rather than being handed a
-        // "Start failed" tile they cannot type into.
-        if (paneState.engineExit !== null) {
-          // Say what happened before the evidence goes. The pane is about to become an ordinary
-          // terminal and `releaseEngine` rewrites the launch to `ready`, so after this point nothing
-          // anywhere — frame, registry, archive — records that an engine was ever meant to be here
-          // or why it left. openharness#285 was exactly this: opencode printed its help over a flag
-          // it did not know, and the only trace was one line saying the pane had become a terminal.
-          // `describeAgentCreateFailure` was written for this and had no caller.
-          // `dead: true` describes the ENGINE, which is what the diagnosis is about, not the pane —
-          // the pane is alive and about to become a terminal. That is the sentence this state
-          // selects ("started and exited with status N"), and it is the true one here.
-          const captured = await captureTerminal(pending.agentId, 40)
-          console.warn(`[agent] create · ${engine} · agent ${sid(pending.agentId)} · `
-            + describeAgentCreateFailure({
-              state: { dead: true, exitStatus: paneState.engineExit, command: engine },
-              output: summarizePaneOutput(captured ?? ''),
-              engineBin: command[0],
-              shellName: null,
-              processes: [],
-              elapsedMs: Date.now() - startedAt,
-            }))
-          await clearPaneRemainOnExit(spawned.runtime.paneId)
-          // A hook may have bound a conversation while this watcher was awaiting its probe.
-          // Archive the current row, not the pre-hook pending snapshot.
-          const row = registry.byAgent(pending.agentId)
-          if (row?.sessionId) retainExitedSession(row, true)
-          else {
-            const released = registry.releaseEngine(pending.agentId)
-            if (released) announceSession(released)
-          }
-          console.warn(`[agent] create · ${engine} exited (${paneState.engineExit}) before ready · agent ${pending.agentId} kept as a terminal`)
-          return
-        }
-        await new Promise<void>((resolve) => {
-          const timer = setTimeout(resolve, delayMs)
-          timer.unref?.()
-        })
-        delayMs = Math.min(delayMs * 2, 750)
-      }
-      const detail = `${engine} did not expose an engine process within ${Math.round(budgetMs / 60_000)} minutes. The terminal remains available.`
-      const failed = registry.setLaunch(pending.agentId, { state: 'failed', error: 'START_TIMEOUT', detail })
-      if (failed) announceSession(failed)
-      console.warn(`[agent] create timed out · ${engine} · agent ${pending.agentId}`)
-    } catch (error) {
-      console.warn(`[agent] create watch failed · ${engine} · ${error instanceof Error ? error.message : error}`)
-    }
-  }
+  // Watching a pane create or fork just opened until its engine is up, or why not (core/agents/newPane.ts).
+  const watchNewPane = createPaneWatcher({
+    registry,
+    announceSession,
+    triggerHint: (runtime, engine) => agentReconciler.triggerHint(runtime, engine),
+    captureTerminal,
+    retainExitedSession,
+  })
 
-  /**
-   * Whether a conversation Harness did not start can be opened here as a harness: one discovery found
-   * (looked for again if it is new), on this engine, not already a harness, and not open in a running
-   * process — a terminal or the engine's app that still has it would write it too.
-   *
-   * One open in a terminal can be taken over ([takeOver]): the terminal's process is stopped and the
-   * conversation resumes here. Asked without it, the refusal says whether that process is mid-turn,
-   * so the person can choose to wait for the turn to end or stop it now. An app's is never stopped.
-   */
-  const adoptableSession = async (sessionId: string, engine: AgentEngine, takeOver: 'idle' | 'now' | 'wait' | null): Promise<{ ok: true; cwd: string; title: string; owner: SessionOwner | null; busy: boolean; launchArgs: readonly string[] } | { ok: false; error: string; detail: string }> => {
-    const held = (id: string) => !!registry.bySession(id) || stoppedAgents.list().some((s) => s.sessionId === id)
-    if (held(sessionId)) {
-      return { ok: false, error: 'SESSION_IN_HARNESS', detail: 'This conversation is already a harness here.' }
-    }
-    const found = externalSessions.get(sessionId) ?? (await externalSessions.scan(), externalSessions.get(sessionId))
-    if (found && [found.sessionId, ...found.aliases ?? []].some(held)) {
-      return { ok: false, error: 'SESSION_IN_HARNESS', detail: 'This conversation is already a harness here.' }
-    }
-    if (!found) return { ok: false, error: 'SESSION_NOT_FOUND', detail: 'This conversation is no longer on this machine.' }
-    if (found.engine !== engine) return { ok: false, error: 'INVALID_ENGINE', detail: `This is a ${found.engine} conversation.` }
-    // The Codex app keeps a thread in a folder of its own, which people tidy away. Checked before
-    // anything is stopped: a take-over that then cannot open would only have closed it.
-    if (!existsSync(found.cwd)) {
-      return { ok: false, error: 'SESSION_FOLDER_GONE', detail: `The folder it ran in is gone: ${found.cwd}` }
-    }
-    const title = found.title || sessionSearch?.session(sessionId)?.title || ''
-    const launchArgs = found.launchArgs ?? []
-    const owner = await openSessions.owner(sessionId)
-    if (!owner) return { ok: true, cwd: found.cwd, title, owner: null, busy: false, launchArgs }
-    const engineName = engineLabel(engine)
-    // A process in one of Harness's own panes is an agent the daemon is still binding: never stopped.
-    if (owner.harness) return { ok: false, error: 'SESSION_IN_HARNESS', detail: 'This conversation is already a harness here.' }
-    // Started on it, as its arguments say, and perhaps moved on since — or in a pane nobody could check
-    // was not Harness's own: not opened twice, never stopped.
-    if (owner.fromArgs || owner.unverified) {
-      return { ok: false, error: 'SESSION_OPEN_ELSEWHERE', detail: `It may be open in ${engineName} in a terminal. Close it there, then open it here.` }
-    }
-    if (!owner.tty) {
-      return { ok: false, error: 'SESSION_OPEN_ELSEWHERE', detail: `It is open in ${engineName}'s app or an editor. Close it there, then open it here.` }
-    }
-    const busy = await openSessions.busy(owner)
-    if (busy && (takeOver === null || takeOver === 'idle')) {
-      return { ok: false, error: 'SESSION_BUSY_IN_TERMINAL', detail: `${engineName} is working on it in a terminal.` }
-    }
-    if (takeOver === null) {
-      return { ok: false, error: 'SESSION_OPEN_IN_TERMINAL', detail: `It is open in ${engineName} in a terminal. Moving it here quits it there.` }
-    }
-    return { ok: true, cwd: found.cwd, title, owner, busy, launchArgs }
-  }
+  // Opening a conversation Harness did not start, and taking it over from a terminal (core/agents/adopt.ts).
+  const adoption = createAdoption({
+    bySession: (sessionId) => registry.bySession(sessionId),
+    byAgent: (agentId) => registry.byAgent(agentId),
+    stoppedAgents,
+    externalSessions,
+    openSessions,
+    search: sessionSearch,
+  })
+  const adoptableSession = adoption.adoptableSession
+  const takeOverWhenIdle = adoption.takeOverWhenIdle
+  const heldBy = adoption.heldBy
 
-  /**
-   * A conversation taken over when its turn ends (`takeOver: 'wait'`): its pane waits for the
-   * terminal's process to go (engineLaunch `waitForPid`), and this stops that process once the turn
-   * is over. It gives up when the harness does — closed, or Ctrl-C in its pane — and when the person
-   * quits it in the terminal themselves, which is the pane's cue as well.
-   */
-  const takeOverWhenIdle = async (agentId: string, owner: SessionOwner, sessionId: string): Promise<void> => {
-    for (;;) {
-      await new Promise<void>((resolve) => { const timer = setTimeout(resolve, 1_000); timer.unref?.() })
-      if (registry.byAgent(agentId)?.launch?.state !== 'starting' || !processAlive(owner.pid)) return
-      // Moved on in that terminal (`/resume`, `/new`): its turn is another conversation's now, and it
-      // is left alone. The pane still waits for it to quit, and then opens this one.
-      if (await heldBy(sessionId, owner) !== 'same') {
-        console.log(`[agent] take over ${sid(sessionId)} · pid ${owner.pid} moved on · left running`)
-        return
-      }
-      if (await openSessions.busy(owner)) continue
-      const stopped = await stopSessionOwner(owner)
-      console.log(`[agent] take over ${sid(sessionId)} · turn ended · pid ${owner.pid} ${stopped ? 'stopped' : 'did not stop'}`)
-      return
-    }
-  }
+  // Creating an agent (core/agents/create.ts).
+  backend.onCreateAgent = createAgentCreator({
+    tmuxBackend,
+    registry,
+    adoptableSession,
+    heldBy,
+    takeOverWhenIdle,
+    watchNewPane,
+    announceSession,
+    attachDsh,
+    prepareApiTools,
+    hookPort,
+    hooksDisabled: env.DISABLE_HOOK_INSTALL,
+    gridLaunchMachine,
+    terminalHintMachineName,
+    blocksFolder: (cwd) => backend.purgeAgentService?.blocksFolder(cwd),
+    gridSetup: () => backend.ensureGrid,
+    privateGridName: () => backend.privateGridName(),
+  })
 
-  /**
-   * Who holds [sessionId] now, against the [owner] seen when the person chose: `same` (that process,
-   * still a terminal's, by hard evidence, not one of Harness's own), `free` (nobody), or `other`.
-   * Asked again right before anything is stopped: the terminal may have moved to other work since.
-   */
-  const heldBy = async (sessionId: string, owner: SessionOwner): Promise<'same' | 'free' | 'other'> => {
-    const now = await openSessions.owner(sessionId)
-    if (!now) return 'free'
-    return now.pid === owner.pid && !!now.tty && !now.fromArgs && !now.harness && !now.unverified ? 'same' : 'other'
-  }
-
-  backend.onCreateAgent = async ({ engine, cwd, bypassPermission, permissionMode, grid, codexHome, dsh, prompt, name, agent, resumeSessionId, takeOver }) => {
-    if (!tmuxBackend) return { ok: false, error: 'TMUX_UNAVAILABLE' }
-    // A conversation Harness did not start opens in its own folder, under its own title — taken over
-    // from the terminal that has it, when asked to.
-    let owner: SessionOwner | null = null
-    let ownerBusy = false
-    let resumeArgs: readonly string[] = []
-    if (resumeSessionId) {
-      const adopted = await adoptableSession(resumeSessionId, engine, takeOver ?? null)
-      if (!adopted.ok) return adopted
-      cwd = adopted.cwd
-      name = name ?? (adopted.title || null)
-      owner = adopted.owner
-      ownerBusy = adopted.busy
-      resumeArgs = adopted.launchArgs
-    }
-    if (backend.purgeAgentService?.blocksFolder(cwd)) return { ok: false, error: 'WORKTREE_BUSY' }
-    try {
-      if (!statSync(cwd).isDirectory()) return { ok: false, error: 'CWD_NOT_FOUND' }
-    } catch {
-      return { ok: false, error: 'CWD_NOT_FOUND' }
-    }
-    // A harness can pin its permission mode (`dshPinnedPermissionMode`): the Grid harness starts model
-    // servers, which Codex's sandbox would start without a GPU. Pinned before anything reads the mode,
-    // and recorded on the row like a chosen one, so a relaunch keeps it.
-    const pinnedDsh = dsh ? installedDsh(dsh) : null
-    const pinnedMode = pinnedDsh ? dshPinnedPermissionMode(pinnedDsh.manifest) : null
-    if (pinnedMode && permissionModeFlags(engine, pinnedMode)) {
-      permissionMode = pinnedMode
-      bypassPermission = permissionModeApproves(pinnedMode)
-    }
-    // An engine too old for the flag this permission mode launches it with prints its help and
-    // exits; the wrapper then hands the pane to a shell, and what the person gets is a terminal
-    // full of help text with nothing anywhere saying why (openharness#285, opencode without
-    // `--auto`). Refuse before opening a pane — this is a launch somebody is waiting on, and Ask
-    // works today. Codex has been checked this way since it gained `--approve-for-me`; every other
-    // engine with a permission flag was not, and carried the same failure.
-    const refusal = await refusePermissionFlagIfUnsupported(engine, { permissionMode, bypassPermission })
-    if (refusal) {
-      console.warn(`[agent] create refused · ${engine} · ${refusal.detail}`)
-      return { ok: false, ...refusal }
-    }
-    // Harness-created sessions are easy to distinguish from a user's organic tmux sessions while
-    // retaining the engine and a collision-resistant creation suffix for diagnostics. Computed
-    // before the grid block because a file-configured engine keys its config directory on it.
-    // The `harness-` prefix is also discovery's whitelist (see `isHarnessSession` /
-    // `TmuxBackend.inventory()`) — every pane outside it is invisible to the daemon.
-    const label = buildHarnessSessionLabel(engine)
-    // Prepare the harness workspace, then bind its session context to the selected engine.
-    // Missing packages or invalid runtimes refuse the launch before the agent is started.
-    let dshEnv: Record<string, string> | undefined
-    let dshArgs: string[] = []
-    /** A DSH's own name ("Blender"), which the agent is named after instead of its engine. */
-    let dshLabel: string | undefined
-    /** What the harness is told about the signed-in account (its private grid), not left to guess. */
-    let dshAccount: DshAccount = {}
-    if (dsh) {
-      const installed = installedDsh(dsh)
-      if (!installed) return { ok: false, error: 'INVALID_DSH', detail: `${dsh} is not installed on this machine` }
-      if (installed.manifest.kind === 'viewer') return { ok: false, error: 'INVALID_DSH', detail: `${dsh} is a viewer package, not an agent` }
-      const refusal = incompatibleHarnessEngine(dsh, installed.manifest, engine)
-      if (refusal) {
-        return { ok: false, error: 'INVALID_DSH', detail: refusal }
-      }
-      if (!(await tmuxSupportsSessionEnv())) {
-        const detail = `this machine's tmux is older than ${TMUX_SESSION_ENV_MIN.major}.${TMUX_SESSION_ENV_MIN.minor}, `
-          + `which is the first version that can give a new session its own environment — so ${installed.manifest.name} `
-          + `could not tell ${engine} which harness it is. Upgrade tmux.`
-        console.warn(`[agent] create ${dsh} refused · ${detail}`)
-        return { ok: false, error: 'TMUX_TOO_OLD_FOR_DSH', detail }
-      }
-      // The Model Manager is grid in use, however it was made (the Store, New Harness, `harness new`, the
-      // models picker): grid is set up before the workspace asks it which grid is this account's.
-      const ensureGrid = backend.ensureGrid
-      if (installed.id === MODEL_MANAGER_ID && ensureGrid) {
-        const setUp = await setUpWithin(() => ensureGrid({ ownGrid: true }), MODEL_MANAGER_GRID_WAIT_MS)
-        if (setUp === 'pending') console.log(`[dsh] ${dsh} · grid is still being set up; the agent waits for it with \`harness grid setup\``)
-      }
-      try {
-        dshAccount = { privateGrid: await backend.privateGridName().catch(() => null) }
-        // Asked BEFORE the template goes in: afterwards every folder has content.
-        // Not there yet is empty; unreadable is not — trust is only ever granted on evidence.
-        const emptyBefore = await readdir(cwd).then((names) => names.length === 0,
-          (error: NodeJS.ErrnoException) => error.code === 'ENOENT')
-        const materialized = await materializeWorkspace(installed, cwd, dshAccount, engine)
-        for (const warning of materialized.warnings) console.warn(`[dsh] ${dsh} materialize · ${warning}`)
-        console.log(`[dsh] ${dsh} materialized ${cwd} · created ${materialized.created.length} · kept ${materialized.kept.length}`)
-        // The template just went into an EMPTY folder: everything in it is the harness's, and Claude Code
-        // need not ask. Laid into a folder that already held something — a clone, the person's own repo —
-        // it proves nothing about the rest, so trust stays the person's call (lib/claudeTrust.ts).
-        if (emptyBefore && materialized.created.some((item) => item.startsWith('template'))) {
-          try {
-            if (engine === 'claude') preTrustClaudeProject(cwd)
-            if (engine === 'codex') preTrustCodexProject(cwd)
-          } catch (error) { console.warn(`[dsh] pre-trust ${cwd} · ${error instanceof Error ? error.message : error}`) }
-        }
-      } catch (error) {
-        const detail = `could not prepare the workspace for ${dsh} · ${error instanceof Error ? error.message : error}`
-        console.warn(`[agent] create ${dsh} refused · ${detail}`)
-        return { ok: false, error: 'DSH_MATERIALIZE_FAILED', detail }
-      }
-      const prepared = harnessLaunchOrRefusal(() => prepareHarnessLaunch(installed, cwd, engine, label, dshAccount, null))
-      if (!prepared.ok) return prepared
-      dshEnv = prepared.launch.env
-      dshArgs = prepared.launch.args
-      dshLabel = installed.manifest.name
-    }
-    // A grid is the user's answer to "where should this run", so every way of not honouring it is a
-    // refusal rather than a fallback — an agent silently started on the engine's own login spends the
-    // wrong account and looks identical to one that worked.
-    let gridLaunch: { env: Record<string, string>; args: string[]; webSearch: GridWebSearchStatus } | undefined
-    if (grid) {
-      const built = buildGridEngineLaunch(engine, grid, gridLaunchMachine())
-      if (!built.ok) {
-        console.warn(`[agent] create ${engine} refused · ${built.detail}`)
-        return { ok: false, error: built.error, detail: built.detail }
-      }
-      if (!(await tmuxSupportsSessionEnv())) {
-        const detail = `this machine's tmux is older than `
-          + `${TMUX_SESSION_ENV_MIN.major}.${TMUX_SESSION_ENV_MIN.minor}, which is the first version that can `
-          + `give a new session its own environment — so ${engine} could not have been pointed at grid `
-          + `${grid.networkName}. Upgrade tmux, or create this agent without a grid selected.`
-        console.warn(`[agent] create ${engine} refused · ${detail}`)
-        return { ok: false, error: 'TMUX_TOO_OLD_FOR_GRID', detail }
-      }
-      gridLaunch = { env: { ...built.launch.env }, args: built.launch.args, webSearch: built.launch.webSearch }
-      // An engine whose provider lives in a file gets a directory this daemon owns, never the
-      // user's own dotfiles. The label is unique per creation, so two agents never share one.
-      if (built.launch.configDir) {
-        const { envVar, files, pointAt, links } = built.launch.configDir
-        try {
-          const dir = await writeGridConfigDir(label, files, links)
-          // Pi is handed the directory; OpenCode's OPENCODE_CONFIG wants the file inside it.
-          gridLaunch.env[envVar] = pointAt ? join(dir, pointAt) : dir
-        } catch (error) {
-          const detail = `could not write ${engine}'s grid configuration · ${error instanceof Error ? error.message : error}`
-          console.warn(`[agent] create ${engine} refused · ${detail}`)
-          return { ok: false, error: 'GRID_CONFIG_FAILED', detail }
-        }
-      }
-      // Named in the log because the pane itself gives nothing away: the engine looks exactly like a
-      // normally launched one. The key is never printed.
-      console.log(describeGridLaunch(engine, grid, built.launch.webSearch))
-    }
-    // A Codex agent pointed at a profile OTHER than this machine's default reads hooks.json from
-    // THAT folder, not the one `harness login` already installed into — without this, such an agent
-    // fires no hook at all (no SessionStart/UserPromptSubmit/Stop) and never streams a single event.
-    // Idempotent, so paying this on every create against an already-set-up profile is free.
-    if (codexHome && !env.DISABLE_HOOK_INSTALL) installCodexHooks(hookPort, codexHome)
-    // OpenCode may have upgraded from 1.x to 2.x while this daemon was running. Its new TUI must
-    // not discover our old server plugin; the cached version probe changes with the executable.
-    if (engine === 'opencode' && !env.DISABLE_HOOK_INSTALL) installOpencodePlugin(hookPort)
-    // Do not start a second interactive login shell merely to ask whether the engine is installed.
-    // The pane's own shell performs the same check before exec, and installs only when necessary.
-    // This removes ~1s of shell startup from the click-to-terminal critical path.
-    const installIfMissing = enginePathOverride(engine) ? undefined : engineInstallRecipe(engine)
-    // Clearing the vendor credentials this launch does NOT set is part of pointing an agent at a
-    // grid, not an extra. An engine chooses its provider from whatever it can see, and an inherited
-    // key wins on its own terms — OpenCode picked Anthropic over a grid it had been handed, and said
-    // only `invalid x-api-key`. Nothing is cleared when no grid is in play: an agent on its own login
-    // is supposed to use exactly these variables.
-    const clearEnv = [...(gridLaunch ? gridConflictingEnvToClear(gridLaunch) : []), ...harnessEnvToClear(dshEnv)]
-    // The named agent takes the same argv slot on every relaunch (`buildLaunchOverrides` appends it
-    // from the row's `agent`, after the grid's and the DSH's argv, exactly as here). The engine was
-    // checked for a contract at the wire (AGENT_UNSUPPORTED, opencode v2 included), so this cannot throw.
-    const extraArgs = [...(gridLaunch?.args ?? []), ...dshArgs, ...(agent ? namedAgentArgs(engine, agent, opencodeMajorVersion()) : []), ...resumeArgs]
-    // The first prompt is a launch option only — never part of `extraArgs`, which the registry row
-    // carries into a relaunch (engineLaunch.ts, `firstPrompt`).
-    // Stopped mid-turn, the resumed conversation is told to carry on — by an engine that can open
-    // with a message; any other resumes where it stopped and waits.
-    const waitFor = owner && takeOver === 'wait' && ownerBusy ? owner : null
-    const firstPrompt = prompt ?? (owner && !waitFor && ownerBusy && supportsFirstPrompt(engine) ? 'continue' : null)
-    const launchOptions = { bypassPermission, ...(permissionMode ? { permissionMode } : {}), extraArgs: extraArgs.length ? extraArgs : undefined, installIfMissing, clearEnv, cwd, harnessNode: dsh ? true : undefined, ...(firstPrompt ? { firstPrompt } : {}), ...(resumeSessionId ? { resumeSessionId } : {}), ...(waitFor ? { waitForPid: { pid: waitFor.pid, name: engineLabel(engine) } } : {}), terminalHint: { machineName: terminalHintMachineName() } }
-    const command = buildEngineCommandArgv(engine, launchOptions)
-    const argv = buildEngineLaunchArgv(engine, launchOptions)
-    // The terminal's process goes last, once nothing here can refuse or fail the launch — the command
-    // is built — stopped now, or, to wait for its turn, left running for the pane to wait on.
-    if (owner && !waitFor && resumeSessionId) {
-      const held = await heldBy(resumeSessionId, owner)
-      if (held === 'other') {
-        return { ok: false, error: 'SESSION_OPEN_ELSEWHERE', detail: 'It moved to another process just now. Close it there, then open it here.' }
-      }
-      // Quit in its terminal meanwhile: it is free, and nothing is stopped.
-      if (held === 'same' && !await stopSessionOwner(owner)) {
-        return { ok: false, error: 'SESSION_STOP_FAILED', detail: 'The terminal that has it did not quit. Close it there, then open it here.' }
-      }
-      if (held === 'same') console.log(`[agent] take over ${sid(resumeSessionId)} · pid ${owner.pid} stopped${ownerBusy ? ' mid-turn' : ''}`)
-    }
-    // A tmux route is enough to stream its screen. Register it before looking for a process so both
-    // loopback and relayed Desktop clients can attach while the login shell/installer is still busy.
-    // `tmuxBackend` exists whenever the CONFIG lists tmux — it is never a probe of the binary, so a
-    // daemon that cannot resolve `tmux` at all (a login context whose PATH lacks Homebrew's bin, the
-    // usual shape after a reboot) is reported as `TMUX_UNAVAILABLE` too, distinctly from a tmux that
-    // answered and refused (`SPAWN_FAILED`) — see createAgentPane.ts. Registration itself is retried
-    // there: a stale registry entry from a previous tmux-server generation occasionally collides with
-    // a freshly-minted pane id, and that collision clears on its own on the very next pane.
-    prepareApiTools(cwd, engine)
-    // Mutually exclusive with a grid (backendSocket.ts refuses the two together): a chosen Codex
-    // profile becomes the new session's CODEX_HOME, the same `-e` mechanism a grid's own env rides.
-    const result = await createAndRegisterPane({
-      tmuxBackend,
-      registry,
-      engine,
-      cwd,
-      sessionLabel: label,
-      argv,
-      env: freshHarnessEnvironment(engine, mergedLaunchEnv(gridLaunch?.env ?? (codexHome ? { CODEX_HOME: codexHome } : undefined), dshEnv), !!grid || !!resumeSessionId,
-        permissionMode ?? (bypassPermission ? DEFAULT_HARNESS_PERMISSION : 'ask')),
-      grid: grid ? { baseUrl: grid.baseUrl, model: grid.model ?? null } : null,
-      gridLaunchRecord: grid && gridLaunch ? { override: grid, webSearch: gridLaunch.webSearch } : null,
-      codexHome,
-      dsh,
-      dshRuntime: dsh ? label : null,
-      agent,
-      bypassPermission,
-      permissionMode,
-      defaultName: name,
-      label: dshLabel,
-    })
-    if (!result.ok) return { ok: false, error: result.error, detail: result.detail }
-    const { spawned, pending } = result
-    // A terminal is ready the moment its pane is: there is no engine process to wait for, and the
-    // shell exiting is the person closing it — so `remain-on-exit` comes off now, and the pane going
-    // away is what removes the row (reconciler `onRemoved`), exactly as for an engine that quit.
-    if (isTerminalEngine(engine)) {
-      await clearPaneRemainOnExit(spawned.runtime.paneId)
-      const ready = registry.setLaunch(pending.agentId, { state: 'ready' }) ?? pending
-      announceSession(ready)
-      console.log(`[agent] create terminal open · agent ${pending.agentId}`)
-      return { ok: true, session: ready }
-    }
-    announceSession(pending)
-    if (pending.dsh) attachDsh(pending)
-
-    // A pane waiting out another terminal's turn may wait as long as that turn takes.
-    void watchNewPane(engine, pending, spawned, command, installIfMissing, waitFor ? 24 * 60 * 60_000 : undefined)
-    if (waitFor && resumeSessionId) void takeOverWhenIdle(pending.agentId, waitFor, resumeSessionId)
-    console.log(`[agent] create pane open · ${engine} · agent ${pending.agentId}`)
-    return { ok: true, session: pending }
-  }
-
-  /**
-   * Fork an agent (`agent_fork`): open a NEW pane whose engine starts with everything the source's
-   * session has — `claude --resume <id> --fork-session`, `codex fork <id>` — or, for an engine that
-   * cannot fork but takes a first prompt, a handoff message composed from what this daemon remembers
-   * of the source (lib/forkAgent.ts). Same folder, same harness, same permission mode, same named
-   * agent; a grid agent is refused rather than half-copied. The source is not touched — it is not even
-   * paused — which is why it has to be IDLE: a fork taken mid-turn is a transcript cut in half.
-   */
-  backend.onForkAgent = async ({ agentId, name, prompt }) => {
-    if (!tmuxBackend) return { ok: false, error: 'TMUX_UNAVAILABLE' }
-    const source = registry.byAgent(agentId)
-    if (!source) return { ok: false, error: 'AGENT_NOT_FOUND' }
-    const sourceName = projectDisplayName(source)
-    if (!source.cwd) return { ok: false, error: 'CWD_NOT_FOUND', detail: `${sourceName} has no working folder on record.` }
-    try {
-      if (!statSync(source.cwd).isDirectory()) return { ok: false, error: 'CWD_NOT_FOUND' }
-    } catch {
-      return { ok: false, error: 'CWD_NOT_FOUND' }
-    }
-    if (source.gridLaunch || source.grid) {
-      return { ok: false, error: 'FORK_ON_GRID_UNSUPPORTED', detail: `${sourceName} runs on a grid; forking a grid agent is not supported.` }
-    }
-    if (source.sessionId && mirror.isBusy(source.sessionId)) {
-      return { ok: false, error: 'AGENT_BUSY', detail: `${sourceName} is in the middle of a turn. Wait for it to finish, then fork.` }
-    }
-    const engine = source.engine
-    const memory = {
-      asks: source.sessionId ? mirror.recentAsks(source.sessionId) : [],
-      recaps: source.sessionId ? mirror.recent(source.sessionId, 5).map((t) => t.recap || t.text) : [],
-      lastAnswer: source.sessionId ? mirror.lastFullText(source.sessionId) : undefined,
-    }
-    const plan = planFork({ engine, sessionId: source.sessionId, name: sourceName, cwd: source.cwd }, memory, prompt)
-    if (!plan.ok) return { ok: false, error: plan.error, detail: plan.detail }
-
-    const label = buildHarnessSessionLabel(engine)
-    // Fork the source's saved harness context. Workspace templates and init are not run again.
-    let dshEnv: Record<string, string> | undefined
-    let dshArgs: string[] = []
-    let dshLabel: string | undefined
-    if (source.dsh) {
-      const installed = installedDsh(source.dsh)
-      if (!installed) return { ok: false, error: 'INVALID_DSH', detail: `${source.dsh} is no longer installed on this machine` }
-      // Narrowed above; a closure would lose that, so the checked values are named here.
-      const cwd = source.cwd
-      const sourceKey = forkRuntimeKey({ cwd, agentId: source.agentId, dshRuntime: source.dshRuntime })
-      const prepared = harnessLaunchOrRefusal(() => prepareHarnessLaunch(installed, cwd, engine, label,
-        { privateGrid: backend.gridName() }, sourceKey))
-      if (!prepared.ok) return prepared
-      dshEnv = prepared.launch.env
-      dshArgs = prepared.launch.args
-      dshLabel = installed.manifest.name
-    }
-    const installIfMissing = enginePathOverride(engine) ? undefined : engineInstallRecipe(engine)
-    // Same guard as a relaunch (`buildLaunchOverrides`): an opencode agent recorded on v1 forks on v2
-    // as a general session rather than handing the v2 TUI an `--agent` it exits on.
-    const forkMajor = opencodeMajorVersion()
-    const extraArgs = [...dshArgs, ...(source.agent && supportsNamedAgent(engine, forkMajor) ? namedAgentArgs(engine, source.agent, forkMajor) : [])]
-    const firstPrompt = plan.level === 'native' ? (prompt ?? undefined) : plan.firstPrompt
-    const launchOptions = {
-      clearEnv: harnessEnvToClear(dshEnv),
-      bypassPermission: source.bypassPermission ?? false,
-      ...(source.permissionMode ? { permissionMode: source.permissionMode } : {}),
-      extraArgs: extraArgs.length ? extraArgs : undefined,
-      installIfMissing,
-      cwd: source.cwd,
-      harnessNode: source.dsh ? true : undefined,
-      ...(plan.level === 'native' ? { forkSessionId: plan.forkSessionId } : {}),
-      ...(firstPrompt ? { firstPrompt } : {}),
-    }
-    // Same refusal as create: the clone inherits the source's permission mode, and an engine that
-    // has since been downgraded would hand back a pane of help text instead of a harness.
-    const forkRefusal = await refusePermissionFlagIfUnsupported(engine, launchOptions)
-    if (forkRefusal) {
-      console.warn(`[agent] fork refused · ${engine} · ${forkRefusal.detail}`)
-      return { ok: false, ...forkRefusal }
-    }
-    prepareApiTools(source.cwd, engine)
-    const command = buildEngineCommandArgv(engine, launchOptions)
-    const argv = buildEngineLaunchArgv(engine, launchOptions)
-    const result = await createAndRegisterPane({
-      tmuxBackend,
-      registry,
-      engine,
-      cwd: source.cwd,
-      sessionLabel: label,
-      argv,
-      env: mergedLaunchEnv(source.codexHome ? { CODEX_HOME: source.codexHome } : undefined, dshEnv),
-      grid: null,
-      gridLaunchRecord: null,
-      codexHome: source.codexHome ?? null,
-      dshRuntime: source.dsh ? label : null,
-      dsh: source.dsh ?? null,
-      agent: source.agent ?? null,
-      bypassPermission: source.bypassPermission ?? false,
-      permissionMode: source.permissionMode ?? null,
-      defaultName: name ?? forkName(sourceName),
-      label: dshLabel,
-      // The session being forked from, so a Change agent right after the fork reads exactly that conversation.
-      forkedFrom: {
-        agentId: source.agentId, name: sourceName,
-        ...(source.sessionId ? { sessionId: source.sessionId, ...(source.transcriptPath ? { transcriptPath: source.transcriptPath } : {}) } : {}),
-      },
-    })
-    if (!result.ok) return { ok: false, error: result.error, detail: result.detail }
-    const { spawned, pending } = result
-    // The new tile starts with the source's last recap on it, the way a native fork's pane starts with
-    // the source's transcript: memory in both places, not one. Settled when the engine names its session.
-    if (source.sessionId) pendingForkInherit.set(pending.agentId, source.sessionId)
-    announceSession(pending)
-    if (pending.dsh) attachDsh(pending)
-    void watchNewPane(engine, pending, spawned, command, installIfMissing)
-    console.log(`[agent] fork pane open · ${engine} · ${plan.level} · ${source.agentId} → ${pending.agentId}`)
-    return { ok: true, session: pending, level: plan.level }
-  }
+  // Forking an agent (core/agents/fork.ts).
+  backend.onForkAgent = createAgentForker({
+    tmuxBackend,
+    registry,
+    mirror,
+    pendingForkInherit,
+    watchNewPane,
+    announceSession,
+    attachDsh,
+    prepareApiTools,
+    gridName: () => backend.gridName(),
+  })
 
   /**
    * The dependencies a pane-process swap needs, for both callers that do one.
