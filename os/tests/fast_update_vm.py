@@ -31,6 +31,19 @@ def wait_text(vm, text, name, status_bar=False):
 
 
 def exercise(vm, fixture, host_url):
+    # Observe the actual curses event and hit targets without changing mouse
+    # modes, coordinates or dispatch. This runs only in the disposable guest;
+    # restore the packaged module before the separate system-channel checks.
+    source_path = '/usr/lib/harness-os/live_update.py'
+    original = vm.read_file(source_path).decode()
+    marker = '                _, x, y, _, buttons = curses.getmouse()\n'
+    assert original.count(marker) == 1
+    traced = original.replace(marker, marker +
+        "                with open('/tmp/harness-update-mouse.jsonl', 'a') as trace:\n" +
+        "                    trace.write(json.dumps(dict(x=x, y=y, buttons=buttons, targets=targets)) + '\\n')\n")
+    put(vm, '/tmp/live-update-observed.py', traced)
+    put(vm, '/tmp/live-update-packaged.py', original)
+    vm.command('sudo install -m 755 /tmp/live-update-observed.py ' + source_path)
     vm.command('sudo nmcli networking on')
     vm.command('nm-online -q --timeout=30', timeout=35)
     vm.command('mkdir -p /tmp/fast-updates')
@@ -72,8 +85,10 @@ def exercise(vm, fixture, host_url):
     vm.command('hn show-options -gv status-right > /tmp/fast-footer.txt')
     footer = vm.read_file('/tmp/fast-footer.txt').decode()
     assert 'local_machine' in footer and '%H:%M' in footer and '@harness-update' not in footer, footer
-    vm.keys('meta_l', 'u')
-    wait_text(vm, 'an update is ready', 'fast-01-ready')
+    # Opening the command screen permits inspection without starting an update.
+    # The OS shortcut itself is the user's request to apply it immediately.
+    vm.command("hn new-window -n Updates '/usr/bin/harness updates'")
+    wait_text(vm, 'update available', 'fast-01-ready')
     vm.keys('esc')
     # Closing the shell is asynchronous. The OS shortcut reuses a named Updates
     # window, so reopening before its removal can select the closing window and
@@ -104,15 +119,28 @@ assert (root/'heartbeat').stat().st_mtime_ns != before
                    ' ~/projects/session-probe/input && exit 0; sleep .1; done; exit 1')
         vm.screenshot(name + '-accepted-input')
 
-    def activate(expect_failure=False):
-        vm.keys('meta_l', 'u')
-        # After a failed activation the same screen offers a retry.
-        wait_text(vm, 'system updates', 'fast-02-update-action')
-        vm.keys('ret')
+    def activate(expect_failure=False, mouse=False):
+        if mouse:
+            vm.command("hn select-window -t Updates || hn new-window -n Updates '/usr/bin/harness updates'")
+            wait_text(vm, 'update available', 'fast-02-update-action')
+            vm.click_word('fast-02-click-update', 'Update')
+        else:
+            vm.keys('meta_l', 'u')
         condition = ('grep -q ' + shlex.quote('"status": "failed"') + ' ' + state + '/transaction.json' if expect_failure else
                      'test ! -e ' + state + '/ready.json && test -s ' + state + '/applied.json')
-        vm.command('for n in $(seq 1 120); do ' + condition + ' && systemctl --user is-active --quiet hn-screen && exit 0; sleep .5; done; '
-                   'sudo journalctl _UID=1000 --no-pager; exit 1', timeout=90)
+        try:
+            vm.command('for n in $(seq 1 120); do ' + condition + ' && systemctl --user is-active --quiet hn-screen && exit 0; sleep .5; done; '
+                       'sudo journalctl _UID=1000 --no-pager; exit 1', timeout=90)
+        finally:
+            if mouse:
+                vm.command('touch /tmp/harness-update-mouse.jsonl')
+                observed = vm.read_file('/tmp/harness-update-mouse.jsonl')
+                (vm.folder / 'update-mouse-events.log').write_bytes(observed)
+        if mouse:
+            events = [json.loads(line) for line in observed.splitlines()]
+            assert any(event['y'] == row and left <= event['x'] < right and action == 'update'
+                       for event in events for row, left, right, action in event['targets']), \
+                'The actual curses mouse event did not reach the Update hit target'
 
     # A real systemd start failure for the new binary must restore the old
     # selection and layout. The fault is a private guest-only unit override.
@@ -126,18 +154,18 @@ assert (root/'heartbeat').stat().st_mtime_ns != before
     checks.append('A real new-screen start failure restores the previous binary and visible tabs while the same agent and terminal remain alive')
     vm.command('rm ~/.config/systemd/user/hn-screen.service.d/fixture.conf; systemctl --user daemon-reload')
 
-    activate()
+    activate(mouse=True)
     vm.command('hn --version | grep -F "999.0.1"')
     vm.command('test "$(systemctl --user show harness-daemon -p MainPID --value)" = "$(cat /tmp/fast-original-daemon)"')
     alive('hn-update')
-    checks.append('Super+U and Enter activate the real new hn binary; daemon PID, live OpenCode, terminal PID, keyboard input and boot ID survive')
+    checks.append('Clicking Update activates the real new hn binary with no confirmation; daemon PID, live OpenCode, terminal PID, keyboard input and boot ID survive')
     # Add a CLI release through the same channel, independently of hn's version.
     vm.command('harness updates check --feeds /tmp/fast-updates/feeds-both.json', timeout=90)
     activate()
     vm.command('test "$(harness version)" = 999.0.1')
     vm.command('test "$(systemctl --user show harness-daemon -p MainPID --value)" != "$(cat /tmp/fast-original-daemon)"')
     alive('cli-update')
-    checks.append('A separate CLI release restarts its supervised service while the same OpenCode and terminal processes remain alive')
+    checks.append('Super+u alone activates a separate CLI release while the same OpenCode and terminal processes remain alive')
     vm.command('systemd-run --user --collect --unit=harness-test-rollback /usr/bin/python3 /usr/lib/harness-os/live_update.py rollback')
     vm.command('for n in $(seq 1 120); do test "$(harness version)" != 999.0.1 && '
                'systemctl --user is-active --quiet hn-screen && exit 0; sleep .5; done; exit 1', timeout=90)
@@ -146,6 +174,7 @@ assert (root/'heartbeat').stat().st_mtime_ns != before
     output, _ = vm.command('harness updates status; systemctl --user status harness-update.timer --no-pager; '
                            'sudo journalctl _UID=1000 --no-pager')
     (vm.folder / 'fast-updates.log').write_text(output)
+    vm.command('sudo install -m 755 /tmp/live-update-packaged.py ' + source_path)
     receipt = {'status': 'passed', 'fixture': json.loads((fixture / 'fixture.json').read_text()), 'checks': checks}
     (vm.folder / 'fast-update-receipt.json').write_text(json.dumps(receipt, indent=2) + '\n')
     return receipt

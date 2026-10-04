@@ -102,12 +102,14 @@ def main():
             from fast_update_vm import exercise
             receipt['fast_updates'] = exercise(vm, args.fast_fixture, url)
             from release_update_vm import exercise as release_exercise
-            receipt['system_channel'] = release_exercise(vm, manifest)
+            receipt['system_channel'] = release_exercise(vm, manifest, config)
             vm.command('sync')
             vm.stop()
             vm.start(live=False)
             vm.login_installed(config)
             vm.command('test ! -e /run/harness-os-restart-required; test -s ~/projects/update-survivor/keep.txt')
+            from release_update_vm import finish_after_reboot
+            receipt['system_channel']['checks'].append(finish_after_reboot(vm))
             receipt['system_channel']['reboot_keyboard'] = check_graphical_keyboard(vm, 'system-channel-reboot')
             receipt['checks'].append('The OS-channel update boots its rebuilt encrypted image and accepts keyboard input')
         receipt['status'] = 'passed'
@@ -116,7 +118,12 @@ def main():
         receipt['error'] = str(error)
         try:
             vm.screenshot('failure')
-            output, _ = vm.command('sudo journalctl _UID=1000 --no-pager; '
+            # Collect diagnostics after the failed assertion. The actual update
+            # test cleared credentials; never block its error path on a prompt.
+            vm.command('printf %s ' + shlex.quote(config['password'] + '\n') + ' | sudo -S -v')
+            output, _ = vm.command('sudo -n journalctl _UID=1000 --no-pager; '
+                'sudo -n cat /var/lib/harness-os/runtime-updates/*/receipt.json; '
+                'tail -n 100 /var/log/pacman.log; hn capture-pane -p -S -200 -t Updates; '
                 'cat ~/.local/state/harness-os/updates/*.json; hn list-windows -a; hn list-panes -a; '
                 'ps -u 1000 -o pid,ppid,args --width 200', timeout=30, check=False)
             (folder / 'update-diagnostics.log').write_text(output)

@@ -11,7 +11,7 @@ audience, not its name.
 
 Product names and interface copy follow the [Naming System](../docs/naming-system.md).
 
-**Preview 11:** the USB opens the installer directly. Installation works offline.
+**Preview 12:** the USB opens the installer directly. Installation works offline.
 After shutdown, remove the USB and boot the installed disk. If disconnected,
 the Wi-Fi page opens first and advances automatically when connected; Ethernet
 skips that step. OpenCode starts on the left with two real terminals on the right.
@@ -26,12 +26,13 @@ The installer selects a disk, focuses Password, and has one full-width
 **Install Harness** action, one row tall and aligned with the fields. Progress shows the Harness wordmark above the current step; encrypted boot shows the
 Harness wordmark and a masked password prompt.
 Both the live and installed system use `me@harness`.
-`Super+u` opens Updates. Frequent hn/CLI releases download in the background;
-you choose when to reconnect the screen. Running agents and terminals stay alive.
+`Super+u` starts the update. Frequent hn/CLI releases download in the background;
+the shortcut or clickable **Update** button applies available updates without
+a confirmation or password prompt. Running agents and terminals stay alive.
 The update checker records release ancestry so a source-built runtime cannot be
 replaced by an older public CLI with a higher development version number.
 
-[Download preview 11](https://github.com/autonomous-ai/openharness/releases/tag/os-v0.1.0-preview.11)
+[Download preview 12](https://github.com/autonomous-ai/openharness/releases/tag/os-v0.1.0-preview.12)
 · [Mac → USB → ThinkPad installation guide](INSTALL.md)
 · [Standalone HTML/CSS landing page](../website/public/os/README.md)
 · [Development feedback loop and Mac support targets](DEVELOPMENT.md)
@@ -182,11 +183,19 @@ normal Linux administrator control.
 ## Updates and recovery
 
 The installed system prepares hn/CLI releases automatically and keeps hn's standard
-status bar. `Super+u` opens Updates; Enter activates an available runtime and
-reconnects the screen without a computer reboot. **r** restores the previous
-runtime. System updates use **s**, ask for the account password, retain a
-checkpoint and offer a restart when ready. Neither channel automatically
-interrupts working agents. See [update development](DEVELOPMENT.md#fast-hn-updates).
+status bar. **Super+u** checks and applies available updates. The **Update** button
+in `harness updates` is also clickable. Neither path asks for confirmation or a
+password. Running agents and terminals stay alive; a runtime update reconnects
+the screen without rebooting the computer.
+
+System updates keep a recovery checkpoint. When one needs a restart, the screen
+says **Updated. Restart when ready.** Its default action is **Done**; restarting
+is always deliberate. After that reboot, the same update request finishes any
+remaining hn/CLI release against the new OS base. Later background checks return
+to downloading only. See [update development](DEVELOPMENT.md#fast-hn-updates).
+
+Earlier previews retain their existing controls until this update is installed:
+**Super+u**, then **s**, then the account password. No new USB flash is needed.
 
 Preview 4 needs the matching bootstrap bundle from the
 [preview 5 release](https://github.com/autonomous-ai/openharness/releases/tag/os-v0.1.0-preview.5)
@@ -242,9 +251,10 @@ owner. System guidance for agents lives at `/usr/share/harness-os/AGENTS.md`.
 1. Installer input/disk safety tests, shell/Python/XML/JSON syntax, workflow lint.
 2. Build a real ISO; check checksums, package inventory and configuration in its
    actual SquashFS filesystem.
-3. Boot the ISO under BIOS and UEFI; verify hn is visible and Chromium is absent
-   until requested. Test browser toggle, clipboard, terminal input, reconnect,
-   last-pane behavior and frontend restart without terminating agent work.
+3. Boot the ISO under BIOS and UEFI; verify the installer opens directly and no
+   agent or browser starts. On the installed disk, test browser focus and keyboard
+   routing, clipboard, terminal input, reconnect, last-pane behavior and screen
+   restart without terminating agent work.
 4. Operate the real installer form on a guest terminal: disk picker, encryption
    toggle, masked passwords, Back/Esc, a single explicit Install action and persistent completion.
    Install from the offline image to disposable VM disks, encrypted and plain;
