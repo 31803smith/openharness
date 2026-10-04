@@ -187,6 +187,11 @@ import { createAgyBackstop } from './core/turns/agyBackstop.js'
 import { createIngest } from './core/transcripts/ingest.js'
 import { createTurnHooks } from './core/turns/turnHooks.js'
 import { createAttach } from './core/transcripts/attach.js'
+import { createForgetSession } from './core/agents/forget.js'
+import { createBinding } from './core/agents/bind.js'
+import { createDiscoveryHandlers } from './core/agents/discovery.js'
+import { createLaunchHelpers } from './core/agents/launch.js'
+import { createCancel } from './core/turns/cancel.js'
 import { describeMasterStatus, readStatusFile, runMaster } from './harnessd/master.js'
 import { CORE_EXIT_STOP, CORE_EXIT_UPDATE } from './harnessd/protocol.js'
 import { isLocalSocketName, localSocketPath, type LocalSocketServer } from './lib/localSocket.js'
@@ -384,14 +389,6 @@ const GRID_MINT_TIMEOUT_MS = 10_000
  *  Past it the set-up carries on, and the agent's own `harness grid setup` waits for it. */
 const MODEL_MANAGER_GRID_WAIT_MS = 8_000
 
-/** Between session-binding attempts for a process whose engine store is not resolvable yet. */
-const REPAIR_RETRY_MS = 60_000
-/** A NEW process is waiting for a session that is about to appear. Muse makes
- *  this concrete — its session is only claimable once the user has typed, because a file with no turn in
- *  it cannot be told apart from the ones muse opens for itself. Backing off a full minute there costs the
- *  FIRST message: the pane answers while web and device show nothing. So keep sweeping for a while first,
- *  then settle into the slow rhythm for processes that will never resolve. */
-const REPAIR_EAGER_ATTEMPTS = 24   // ≈2 min at the 5s sweep
 
 function usage(exitCode = 0): never {
   console.log(`harness v${VERSION} — connect this computer to your machine
@@ -1610,13 +1607,6 @@ function primaryTerminalLabel(session: RegisteredSession): string {
   return runtime ? terminalRuntimeLabel(runtime) : 'dormant'
 }
 
-/** Birth time of a transcript in ms, or 0 when it cannot be read (treated as "not newer than the agent"). */
-async function statBirthMs(path: string): Promise<number> {
-  const st = await stat(path).catch(() => null)
-  if (!st) return 0
-  const birth = st.birthtimeMs || st.ctimeMs || st.mtimeMs
-  return Number.isFinite(birth) ? birth : 0
-}
 
 /** The daemon body: hooks + watcher + process discovery + backend socket. */
 async function runForeground(session: AuthSession | null): Promise<void> {
@@ -2525,53 +2515,29 @@ async function runForeground(session: AuthSession | null): Promise<void> {
     cursorTaskHooks.enqueue(sessionId, { toolUseId, input: toolInput }, normalizer)
   }
 
-  /** Release a mutable session binding, or remove the process-owned agent everywhere. */
-  const forgetSession = (
-    id: string,
-    opts: { force?: boolean; keepAgent?: boolean; agentId?: string } = {},
-  ): void => {
-    const doomed = registry.resolve(id)
-    const sessionId = doomed?.sessionId || id
-    // Clients key on the AGENT id. Normally it is read off the entry, but an
-    // agent already removed from the registry cannot be looked up — and
-    // announcing its sessionId instead is silently useless: the app takes
-    // payload.agentId verbatim, matches nothing, and leaves the dead row on
-    // screen. Callers who know the id pass it.
-    const announceId = doomed?.agentId ?? opts.agentId ?? sessionId
-
-    console.log(opts.keepAgent
-      ? `[agent] ${sid(announceId)} released session ${sid(sessionId)}`
-      : `[agent] ${sid(announceId)} forgotten`)
-
-    if (!opts.keepAgent && doomed) stoppedAgents.save(doomed)
-    if (opts.keepAgent) registry.unbindSession(sessionId)
-    else if (doomed) registry.removeAgent(doomed.agentId)
-    else registry.remove(sessionId)
-    syncRecapPool()
-    normalizers.forget(sessionId)
-    turnStartedAt.delete(sessionId)
-    neverFoldedHistory.delete(sessionId)
-    // Both sets are per-session and must die with it: left behind they grow without bound in a daemon
-    // that runs for days, and a session forgotten then re-registered under the same id would inherit a
-    // stale "already replayed" and lose a first turn it was entitled to.
-    replayedFirstTurn.delete(sessionId)
-    clearAgyIdleWatch(sessionId)
-    cursorDiscovery.remove(sessionId)
-    cursorSubagents.forget(sessionId)
-    void removeCursorPendingTasks(env.ADAPTER_DATA_DIR, sessionId)
-    runtimeProfiles.forget(sessionId)
-    void watcher.removeSession(sessionId)
-    stopHeartbeat(sessionId)
-    backend.swarmPromptScopes.forget(doomed?.agentId ?? sessionId)
-    input.forget(doomed?.agentId ?? sessionId)
-    deviceInput.forget(doomed?.agentId ?? sessionId)
-    if (!opts.keepAgent) detachDsh(announceId)
-    mirror.forget(sessionId) // aborts any in-flight recap + clears busy; KEEPS the persisted summary
-    if (opts.keepAgent) return
-    backend.send({ type: 'agent_deleted', payload: { agentId: announceId, retained: !!doomed } }) // web tab
-    backend.sendCommander({ type: 'agent_deleted', payload: { agentId: announceId } })
-
-  }
+  // Release a session's binding, or remove a process-owned agent everywhere (core/agents/forget.ts).
+  const forgetSession = createForgetSession({
+    registry,
+    stoppedAgents,
+    syncRecapPool,
+    normalizers,
+    turnStartedAt,
+    neverFoldedHistory,
+    replayedFirstTurn,
+    clearAgyIdleWatch,
+    cursorDiscovery,
+    cursorSubagents,
+    runtimeProfiles,
+    watcher,
+    stopHeartbeat,
+    teams: backend.swarmPromptScopes,
+    input,
+    deviceInput,
+    detachDsh,
+    mirror,
+    clients: backend,
+    dataDir: env.ADAPTER_DATA_DIR,
+  })
 
   const retainExitedSession = createRetainExitedSession({
     stoppedAgents,
@@ -2587,255 +2553,46 @@ async function runForeground(session: AuthSession | null): Promise<void> {
     warn: (message, error) => console.warn(message, error),
   })
 
-  type RegisteredMeta = {
-    isNew: boolean
-    evicted: string | null
-    rebound: string | null
-    orphaned?: { agentId: string; sessionId: string } | null
-    hookEvent?: string
-  }
 
 
-  /**
-   * Forks whose engine session has not reported in yet, agentId → the SOURCE's sessionId. A fork's tile
-   * should open with the source's last recap on it, the way its pane opens with the source's transcript
-   * — but the mirror keys by session, and the fork's session id is the engine's to name, minutes later
-   * over a hook. Settled the moment it binds, below.
-   */
-  const pendingForkInherit = new Map<string, string>()
+  // Binding a session to its agent, and a running process to its session (core/agents/bind.ts).
+  const binding = createBinding({
+    registry,
+    mirror,
+    forgetSession,
+    clients: backend,
+    attachSession,
+    announceSession,
+    stoppedAgents,
+    syncRecapPool,
+    teams: backend.swarmPromptScopes,
+    input,
+    deviceInput,
+    homes: { copilot: env.COPILOT_HOME, grok: env.GROK_HOME, agy: env.AGY_HOME },
+  })
+  const pendingForkInherit = binding.pendingForkInherit
+  const handleRegistered = binding.handleRegistered
+  const bindObservedAgent = binding.bindObservedAgent
 
-  const handleRegistered = async (entry: RegisteredSession, meta: RegisteredMeta): Promise<void> => {
-    const forkSource = pendingForkInherit.get(entry.agentId)
-    if (forkSource && entry.sessionId) {
-      pendingForkInherit.delete(entry.agentId)
-      mirror.inheritSummary(forkSource, entry.sessionId)
-    }
-    if (meta.rebound) {
-      registry.inheritName(meta.rebound, entry.sessionId)
-      mirror.inheritSummary(meta.rebound, entry.sessionId)
-      forgetSession(meta.rebound, { force: true, keepAgent: true })
-      backend.send({ type: 'session_reset', payload: { staleSessionId: meta.rebound } })
-      console.log(`[agent] ${sid(entry.agentId)} rebound ${sid(meta.rebound)} → ${sid(entry.sessionId)}`)
-    } else if (meta.evicted) {
-
-      forgetSession(meta.evicted, { force: true })
-    }
-    // The agent this bind emptied out — `claude --resume` in a second pane, with
-    // the first one's engine already gone. The registry dropped it; without this
-    // the app kept showing it until someone hit Reload machines by hand, and
-    // opening it landed on TERMINAL FROZEN because it has nothing left to open.
-    //
-    // Not part of the chain above: a rebound bind can orphan an agent too, so
-    // this has to be asked independently of which branch ran.
-    if (meta.orphaned) {
-      forgetSession(meta.orphaned.agentId, {
-        force: true,
-        agentId: meta.orphaned.agentId,
-      })
-    }
-
-    // agy is excluded for the same reason as cursor, arriving by a different road: it has no
-    // session-start event at all. The closest thing is `PreInvocation`, which fires before EVERY model
-    // round-trip — four to seven times in one measured turn — and each one re-folded the transcript and
-    // re-emitted `turn_started` for a turn already open (measured: two turn_started, one turn_ended).
-    // Its first bind is covered by `meta.isNew`, and registry derives the transcript path from the
-    // conversation id, so nothing here depends on a later announcement carrying it.
-    // Copilot joins cursor and agy for a third reason: it announces the SAME turn twice. Its
-    // `userPromptSubmitted` and `sessionStart` hooks both register (measured 2.5s apart, and in that
-    // order — sessionStart fires AFTER the first prompt), so treating the second as a reset re-folded
-    // the transcript and emitted a second `turn_started` for one exchange.
-    const reset = meta.isNew
-      || (entry.engine !== 'cursor' && entry.engine !== 'agy' && entry.engine !== 'copilot'
-        && meta.hookEvent === 'SessionStart')
-    // Deliberately NOT gated on `meta.isNew`. `isNew` is false in exactly the case this is meant to catch:
-    // a session announced once BEFORE its transcript exists and registered again when the file appears —
-    // the second announcement is the only one that can carry the path, and it reports `isNew=false`
-    // (measured: `[hooks] 019fff7f SessionStart · engine=codex · isNew=false`, whose whole first turn was
-    // then folded away as history and never reached web or device).
-    //
-    // `statBirthMs >= registeredAt` is what actually separates the two cases. Measured on one machine,
-    // same claude session, transcript birth relative to each timestamp:
-    //
-    //             first turn      resumed (`claude --continue`)
-    //   registeredAt   +18.1s          -81.5s      ← separates cleanly
-    //   boundAt         -0.5s          -81.6s      ← negative for BOTH; useless as a test
-    //
-    // so the birth-vs-`registeredAt` comparison stays, and comparing against `boundAt` instead — the
-    // obvious-looking alternative, since `boundAt` is when this session was bound — does not work: the
-    // transcript is created a moment BEFORE the hook binds it.
-    //
-    // And only while the file is new (`transcriptIsFirstTurn`): a long session's transcript was born after
-    // its agent too, and after a daemon restart its next SessionStart replayed the whole history live.
-    const bornAfterAgent = transcriptIsFirstTurn(
-      entry,
-      entry.transcriptPath ? await statBirthMs(entry.transcriptPath) : 0,
-      { rebound: !!meta.rebound, now: Date.now() },
-    )
-    const attached = await attachSession(entry, reset, entry.engine === 'cursor', bornAfterAgent)
-    if (!attached) {
-      registry.unbindSession(entry.sessionId)
-      announceSession(entry)
-      return
-    }
-    const confirmed = registry.byAgent(entry.agentId)
-    if (confirmed?.sessionId === entry.sessionId) {
-      stoppedAgents.save(confirmed)
-      if (confirmed.resumeOnly) stoppedAgents.finishResume(confirmed.agentId)
-    }
-    syncRecapPool()
-    if (!meta.isNew) return
-    registry.inheritName(entry.agentId, entry.sessionId)
-    announceSession(entry)
-    backend.send({
-      type: 'session_synced',
-      payload: {
-        sessionId: entry.sessionId,
-        agentId: entry.agentId,
-        title: projectDisplayName(entry),
-        createdAt: new Date(entry.boundAt ?? Date.now()).toISOString(),
-      },
-    })
-  }
-
-  const lastRepairAttempt = new Map<string, number>()
-  const repairAttempts = new Map<string, number>()
-  const bindObservedAgent = async (observed: DiscoveredTerminalAgent): Promise<void> => {
-    const agent = registry.byProcess(observed.engine, observed.processIdentity)
-    if (!agent) return
-
-    // Copilot can change session WITHOUT changing process: `/resume` inside the CLI opens another one,
-    // and the pane then shows a conversation the daemon is not streaming. Every other engine here
-    // starts a new process for that, which is why this path used to stop at `agent.sessionId`.
-    //
-    // The switch leaves exactly one trace — the `inuse.<pid>.lock` Copilot takes on the new session
-    // directory. It writes nothing to the transcript and fires no hook until the next prompt.
-    if (agent.resumeOnly && agent.launch && agent.launch.state !== 'ready') return
-    if (agent.sessionId) {
-      if (observed.engine === 'copilot') {
-        const current = await copilotSessionForPid(env.COPILOT_HOME, observed.processIdentity.pid)
-        if (!current || current === agent.sessionId || isRecentlyDeleted(current)) return
-        const transcript = await findCopilotTranscript(env.COPILOT_HOME, current)
-        console.log(`[discovery] ${sid(agent.agentId)} switched copilot session ${sid(agent.sessionId)} → ${sid(current)} (/resume)`)
-        const rotated = registry.register({
-          engine: 'copilot',
-          sessionId: current,
-          transcriptPath: transcript ?? undefined,
-          cwd: observed.cwd,
-          source: 'copilot-resume',
-          runtimes: observed.runtimes,
-          primaryRuntimeKey: observed.primaryRuntimeKey,
-          processIdentity: observed.processIdentity,
-          hookEvent: 'CopilotResume',
-        })
-        if (rotated?.isNew) await handleRegistered(rotated.entry, rotated)
-        return
-      }
-      // Claude can also change session WITHOUT any hook firing: a long conversation's transcript
-      // rolls over to a new file on its own (compaction/a resume chain), and if the turn that follows
-      // lands on a pooled/"spare" worker process rather than one spawned fresh in the pane, no
-      // SessionStart/UserPromptSubmit ever reaches us for it — the agent is left bound to a transcript
-      // that has gone quiet forever while the real conversation continues one file over. Checked on
-      // the same cadence this reconciler already re-observes every live process, so it costs nothing
-      // extra to ask.
-      if (observed.engine === 'claude' && agent.transcriptPath) {
-        const continuation = await claudeContinuation(agent.transcriptPath)
-        if (!continuation || continuation.sessionId === agent.sessionId
-          || registry.has(continuation.sessionId) || isRecentlyDeleted(continuation.sessionId)) return
-        console.log(`[discovery] ${sid(agent.agentId)} claude session continued ${sid(agent.sessionId)} → ${sid(continuation.sessionId)}`)
-        const rotated = registry.register({
-          engine: 'claude',
-          sessionId: continuation.sessionId,
-          transcriptPath: continuation.transcriptPath,
-          cwd: observed.cwd,
-          source: 'claude-continuation',
-          runtimes: observed.runtimes,
-          primaryRuntimeKey: observed.primaryRuntimeKey,
-          processIdentity: observed.processIdentity,
-          hookEvent: 'ClaudeContinuation',
-        })
-        if (rotated?.isNew) await handleRegistered(rotated.entry, rotated)
-        return
-      }
-      return
-    }
-
-    let sessionId = observed.resumeSessionId
-    let transcriptPath: string | undefined
-    let hermesHome: string | undefined
-    let source = 'terminal-resume'
-    if (sessionId) {
-      if (isRecentlyDeleted(sessionId)) return
-      const owner = registry.bySession(sessionId)
-      if (owner && owner.agentId !== agent.agentId) {
-        const observedStarted = Date.parse(observed.processIdentity.startMarker)
-        const ownerStarted = Date.parse(owner.processIdentity?.startMarker ?? '')
-        if (Number.isFinite(ownerStarted) && (!Number.isFinite(observedStarted) || observedStarted <= ownerStarted)) return
-      }
-      transcriptPath = observed.engine === 'cursor'
-        ? await findCursorTranscript(cursorDataDir(), sessionId) ?? undefined
-        : observed.engine === 'grok'
-          ? await findGrokTranscript(env.GROK_HOME, observed.cwd, sessionId) ?? undefined
-          : observed.engine === 'agy'
-            ? await findAgyTranscript(env.AGY_HOME, sessionId) ?? undefined
-            : observed.engine === 'copilot'
-              ? await findCopilotTranscript(env.COPILOT_HOME, sessionId) ?? undefined
-              : observed.engine === 'claude' || observed.engine === 'codex'
-                ? await findResumedTranscript(observed.engine, sessionId, { codexHome: agent.codexHome ?? undefined }) ?? undefined
-                : undefined
-      // The registry refuses a claude/codex session without its file, so a resume of a transcript this
-      // machine does not have is not a session — the hook that follows the user's next prompt will say.
-      if ((observed.engine === 'cursor' || observed.engine === 'grok' || observed.engine === 'claude' || observed.engine === 'codex')
-        && !transcriptPath) return
-    } else {
-      const attempts = repairAttempts.get(agent.agentId) ?? 0
-      const lastAttempt = lastRepairAttempt.get(agent.agentId) ?? 0
-      if (attempts >= REPAIR_EAGER_ATTEMPTS && Date.now() - lastAttempt < REPAIR_RETRY_MS) return
-      lastRepairAttempt.set(agent.agentId, Date.now())
-      repairAttempts.set(agent.agentId, attempts + 1)
-      const startedAtMs = Date.parse(observed.processIdentity.startMarker)
-      if (!Number.isFinite(startedAtMs)) return
-      // agy cannot be found by directory — its repair reads the presence lock the process holds open.
-      //
-      const found = await findLiveSession(observed.engine, observed.cwd, startedAtMs, {
-        bornOnly: true,
-        pid: observed.processIdentity.pid,
-        codexHome: agent.codexHome ?? undefined,
-      })
-      if (!found || registry.has(found.sessionId) || isRecentlyDeleted(found.sessionId)) return
-      sessionId = found.sessionId
-      transcriptPath = found.transcriptPath
-      // Which Hermes home the repair found it in, so the row starts life reading the right store
-      // rather than looking it up again on its first poll.
-      hermesHome = found.hermesHome
-      source = 'process-repair'
-    }
-
-    const previousOwner = registry.bySession(sessionId)
-    const result = registry.register({
-      engine: observed.engine,
-      sessionId,
-      transcriptPath,
-      ...(hermesHome ? { hermesHome } : {}),
-      cwd: observed.cwd,
-      source,
-      runtimes: observed.runtimes,
-      primaryRuntimeKey: observed.primaryRuntimeKey,
-      processIdentity: observed.processIdentity,
-      hookEvent: source === 'terminal-resume' ? 'TerminalResumeDiscovery' : 'ProcessRepair',
-    })
-    if (!result || !result.isNew) return
-    if (previousOwner && previousOwner.agentId !== result.entry.agentId) {
-      backend.swarmPromptScopes.forget(previousOwner.agentId)
-      input.forget(previousOwner.agentId)
-      deviceInput.forget(previousOwner.agentId)
-      announceSession(previousOwner)
-    }
-    lastRepairAttempt.delete(agent.agentId)
-    repairAttempts.delete(agent.agentId)
-    await handleRegistered(result.entry, result)
-    console.log(`[discovery] bound ${observed.engine} session ${sid(result.entry.sessionId)} via ${observed.primaryRuntimeKey}`)
-  }
-
+  // What the reconciler's scans mean for the registry (core/agents/discovery.ts).
+  const discovery = createDiscoveryHandlers({
+    registry,
+    attachDsh,
+    forgetSession,
+    announceSession,
+    bindObservedAgent,
+    syncRecapPool,
+    attachSession,
+    invalidateTerminalControl,
+    teams: backend.swarmPromptScopes,
+    input,
+    deviceInput,
+    questionWatcher,
+    stopHeartbeat,
+    retainExitedSession,
+    stoppedAgents,
+    restoreDegraded: () => restoreDegraded,
+  })
   const agentReconciler = new TerminalAgentReconciler({
     // The hook server starts before restore. Its early SessionStart hints must not run a full
     // discovery scan over rows whose panes have not been recreated yet (and archive those rows).
@@ -2844,179 +2601,7 @@ async function runForeground(session: AuthSession | null): Promise<void> {
     backends: terminalBackends,
     backendOrder: terminalConfig.backends,
     transaction: (apply) => registry.transaction(apply),
-    onDiscovered: async (observed) => {
-      const launching = observed.runtimes
-        .map((runtime) => registry.byRuntimeEngine(runtime, observed.engine))
-        .find((entry) => entry?.launch?.state !== 'ready')
-      const opened = registry.openProcessAgent({
-        engine: observed.engine,
-        runtimes: observed.runtimes,
-        primaryRuntimeKey: observed.primaryRuntimeKey,
-        cwd: observed.cwd,
-        processIdentity: observed.processIdentity,
-        gateway: observed.gateway,
-        grid: observed.grid,
-        codexHome: observed.codexHome,
-        dsh: observed.dsh,
-      })
-      if (!opened) return
-      if (opened.entry.dsh) attachDsh(opened.entry)
-      if (opened.evicted) {
-        console.log(`[discovery] ${observed.primaryRuntimeKey} replaced ${sid(opened.evicted.agentId)}`)
-        // ⚠️ THE REGISTRY ALREADY DROPPED IT; NOBODY HAD TOLD THE CLIENTS. That
-        // is the whole bug behind "two sessions, one of them frozen": resuming
-        // an engine in a pane another agent owned takes the pane away, and an
-        // agent with no pane can never be opened again — but the app kept the
-        // row until someone hit Reload machines by hand, and opening it landed
-        // on TERMINAL FROZEN. This is the same call the hook path already makes
-        // for the same situation (see onRegistered below).
-        forgetSession(opened.evicted.sessionId || opened.evicted.agentId, {
-          force: true,
-          agentId: opened.evicted.agentId,
-        })
-      }
-
-      if (opened.isNew || launching) {
-        console.log(`[discovery] ${sid(opened.entry.agentId)} opened · engine=${observed.engine} · terminal=${observed.primaryRuntimeKey}`)
-        announceSession(opened.entry)
-      }
-      await bindObservedAgent(observed)
-    },
-    onObserved: async (observed, current) => {
-      const wasDormant = !current.active
-      // Read BEFORE the update, because the update is what overwrites it. `undefined` means the probe
-      // could not look, which never counts as a move — see `probeGridAssignment`'s three answers.
-      const gridMoved = observed.grid !== undefined
-        && !sameGridAssignment(current.grid ?? null, observed.grid)
-      const wasLaunching = current.launch?.state !== undefined && current.launch.state !== 'ready'
-      // Somebody typed an engine into a terminal. The row becomes that engine's agent — same id,
-      // same pane — and from here on is handled exactly like one the app launched: bound by its
-      // hooks, watched for turns, listed on the dial. `adopted` makes the announce below
-      // unconditional, since the engine changing is the one fact the app must not miss.
-      const adopted = isTerminalEngine(current.engine) && !isTerminalEngine(observed.engine)
-        ? registry.adoptEngine(current.agentId, observed.engine, observed.processIdentity)
-        : null
-      if (adopted) console.log(`[discovery] ${sid(current.agentId)} terminal → ${observed.engine} · ${observed.primaryRuntimeKey}`)
-      registry.updateRuntimes(current.agentId, observed.runtimes, observed.primaryRuntimeKey)
-      registry.updateProcessIdentity(current.agentId, observed.processIdentity, observed.gateway, observed.grid)
-      // The live argv is the truth about the bypass flag, and this is the one place every running
-      // agent passes through — so a row written before the flag was persisted at all (or by a build
-      // that did not yet) learns it here, before any pane recreation ever needs it.
-      // `observed.engine`, not `current.engine`: for a terminal that just adopted one, the row's
-      // engine was `terminal` a line ago, which has no bypass flag and would read every launch as "no".
-      registry.setBypassPermission(current.agentId, bypassPermissionActive(observed.engine, observed.args))
-      // And the exact MODE, fill-only: a row that recorded one at create is authoritative, and one
-      // that never did (adopted from a terminal, written by an older build, created by a path that
-      // passes no mode) learns it from the same argv — so its restart brings back
-      // `--dangerously-skip-permissions`, not the auto mode `bypassPermission` alone would pick.
-      if (!current.permissionMode) {
-        const mode = permissionModeFromArgv(observed.engine, observed.args)
-        if (mode) registry.setPermissionMode(current.agentId, mode)
-      }
-      // Same idea for a Codex profile: a row that never learned which CODEX_HOME its process runs
-      // under learns it from the process, before the hook path validates a transcript against it.
-      // Fill-only — a profile the row already knows is never re-derived.
-      if (observed.codexHome && !current.codexHome) registry.setCodexHome(current.agentId, observed.codexHome)
-      // …and a Hermes home the same way, when the process names one. A row that learns it here never
-      // has to look its session up store by store (openharness#191).
-      if (observed.hermesHome && !current.hermesHome) registry.setHermesHome(current.agentId, observed.hermesHome)
-      // And the DSH: a row minted by discovery (or written before the field existed) learns it from
-      // the process's own `HARNESS_DSH`, and gets its viewer and verdict watch from here on.
-      if (observed.dsh && !current.dsh) registry.setDsh(current.agentId, observed.dsh)
-      const withDsh = registry.byAgent(current.agentId)
-      if (withDsh?.dsh) attachDsh(withDsh)
-      // This live process, in this row's own pane, is what "started" means — for a resumed row as
-      // much as any other. A resume used to be held back here until its `SessionStart` hook landed,
-      // on the grounds that only the hook proves WHICH conversation reopened. Two things were wrong
-      // with that. The hook does not always come: measured on machine-remote-1, both resume-only
-      // codex rows carried `lastHookAt: 0` while every fresh launch beside them had hooked, and one
-      // of them sat at "Starting" for 19 hours over a pane its owner could type in — re-attached and
-      // re-announced every 5s for the whole time, because `wasLaunching` stays true for a row that
-      // nothing will ever mark ready (openharness#189). And nothing was actually protected by the
-      // wait: the wrong-conversation guard in `registry.register` keys on `lastHookAt`, not on this
-      // launch state, so it stays armed until the first hook whatever is written here.
-      if (wasLaunching) registry.setLaunch(current.agentId, { state: 'ready' })
-      await bindObservedAgent(observed)
-      if (wasDormant || wasLaunching || adopted) {
-        const active = registry.byAgent(current.agentId)
-        if (!active) return
-        if (!active.sessionId) {
-          syncRecapPool()
-          announceSession(active)
-          return
-        }
-        // Not awaited: the attach reads this agent's whole history, and this callback runs inside the
-        // reconcile pass whose completion is what publishes `discoveryReady`. One agent's slow store
-        // must not hold the pass — or, at boot, the app. The tracker runs a few of these at a time.
-        void attachSession(active).then((attached) => {
-          if (!attached) {
-            registry.setActive(active.agentId, false)
-            return
-          }
-          syncRecapPool()
-          announceSession(active)
-        }).catch((err) => {
-          console.error(`[discovery] ${sid(active.agentId)} attach failed:`, err instanceof Error ? err.message : err)
-        })
-        return
-      }
-      // An agent that was already awake changed grid under us. Nobody was told: this branch wrote the
-      // new assignment into the registry and stopped, so the app went on drawing the old one until
-      // its own 60s reconciliation tick happened to notice — a minute of an agent's header naming a
-      // grid it had left. The retarget path has always announced (it is the same fact, arriving by a
-      // different door); this is the door an engine's own `exec` comes through, which is what an
-      // install-then-launch does the moment the install finishes.
-      if (!gridMoved) return
-      const refreshed = registry.byAgent(current.agentId)
-      if (refreshed) announceSession(refreshed)
-    },
-    onDormant: async (agent, reason) => {
-      if (!agent.active) return
-      invalidateTerminalControl(agent.agentId)
-      backend.swarmPromptScopes.forget(agent.agentId)
-      input.forget(agent.agentId)
-      deviceInput.forget(agent.agentId)
-      if (agent.sessionId) {
-        questionWatcher.stop(agent.sessionId)
-        stopHeartbeat(agent.sessionId)
-      }
-      // Preserve the conversation's public identity and give the surviving shell its own row.
-      // A starting install is not an exited engine; strict uncertain starts keep their reservation.
-      if (agent.resumeOnly && agent.launch?.state === 'failed') {
-        const pane = await tmuxPaneState(agent.tmuxPane)
-        // An unconfirmed install/startup can still be about to launch the engine. Do not
-        // turn its live shell into permission to start another one.
-        if (!pane || (!pane.dead && pane.engineExit == null)) return
-      }
-      if (agent.launch?.state !== 'starting') {
-        retainExitedSession(agent, true)
-        if (agent.resumeOnly) stoppedAgents.finishResume(agent.agentId)
-        console.log(`[discovery] ${sid(agent.agentId)} retained · ${reason}`)
-        return
-      }
-      registry.setActive(agent.agentId, false)
-      console.log(`[discovery] ${sid(agent.agentId)} dormant · ${reason}`)
-      announceSession(agent)
-    },
-    onRemoved: (agent, reason) => {
-      // A pane absent because RESTORE never ran is not a pane the person closed. Retiring it here
-      // would archive a row whose tmux pane was simply never rebuilt, and the person would have to
-      // Open each one by hand; keeping it dormant leaves the next daemon — the fixed one — something
-      // to restore.
-      if (restoreDegraded) {
-        console.log(`[discovery] ${sid(agent.agentId)} kept · restore did not run this boot · ${reason}`)
-        registry.setActive(agent.agentId, false)
-        announceSession(agent)
-        return
-      }
-      console.log(`[discovery] ${sid(agent.agentId)} removed · ${reason}`)
-      forgetSession(agent.agentId, { force: true })
-    },
-    onTerminalAvailability: (agent, available) => {
-      const changed = registry.terminalAvailable(agent.agentId) !== available
-      registry.setTerminalAvailable(agent.agentId, available)
-      if (available && changed) announceSession(agent)
-    },
+    ...discovery,
     onProbeStatus: (status) => {
       discoveryReady = status.ready
       discoveryError = status.error
@@ -3989,83 +3574,19 @@ async function runForeground(session: AuthSession | null): Promise<void> {
       return prepareHarnessLaunch(installed, workspace, engine, runtimeKey, { privateGrid: backend.gridName() }, null)
     },
   }
-  // Whatever the source (the row itself, or a grid override the desktop just sent), the agent's DSH,
-  // workspace and named agent come from the row: a retarget must not silently drop the harness the
-  // agent is, or bring a pane opened as `harness-compute` back as a general session.
-  // An agent on a saved API's model relaunches with that API's endpoint and key as saved now, so a key
-  // pasted since takes effect, and a removed API is refused rather than kept on its old key.
-  const relaunchOverrides = async (session: RegisteredSession, source: LaunchSource = session): Promise<LaunchOverridesResult> => {
-    prepareApiTools(session.cwd, session.engine)
-    let gridLaunch = source.gridLaunch ?? null
-    if (gridLaunch && isApiLaunch(gridLaunch)) {
-      try {
-        gridLaunch = refreshApiLaunch(savedApis, gridLaunch)
-      } catch (error) {
-        return {
-          ok: false,
-          error: 'API_UNAVAILABLE',
-          detail: error instanceof ApiConnectionError ? error.message : `${gridLaunch.networkName} could not be read from saved APIs.`,
-        }
-      }
-    }
-    return buildLaunchOverrides(launchOverridesDeps, session.engine, { dsh: session.dsh ?? null, dshRuntime: session.dshRuntime ?? null, cwd: session.cwd, agent: session.agent ?? null, ...source, gridLaunch }, session.agentId)
-  }
-
-  /**
-   * A restart or a post-reboot restore rebuilds the ROW's own launch, and the machine may decide
-   * differently about web search this time than it did when the row was written (an administrator
-   * pinned `/etc/hermes` since, or unpinned it). The override is the row's already; what is
-   * refreshed is the decision, so the frame describes the pane that actually came up. Retarget
-   * does not go through here — its override is new, and it records the pair itself once the move
-   * has succeeded.
-   */
-  const refreshGridWebSearch = (agentId: string, overrides: LaunchOverrides): void => {
-    if (overrides.gridLaunchRecord) registry.setGridLaunch(agentId, overrides.gridLaunchRecord)
-  }
-
-  /**
-   * The permission this relaunch can actually ask for. Nobody is waiting on a restart, a retarget, a
-   * restore or a resume, so an engine that no longer takes the row's flag costs it the mode, not the
-   * harness — the alternative is a pane of help text, or no pane at all (openharness#285).
-   *
-   * The row is NOT rewritten. `permissionMode` is the person's recorded choice and `setPermissionMode`
-   * is fill-only for that reason; an engine put back the way it was gets Auto again on the next
-   * relaunch, with nobody having to ask for it twice. The row stops CLAIMING the mode on its own:
-   * discovery re-derives `bypassPermission` from the live argv on every pass (`setBypassPermission`
-   * above), so a launch without the flag reads as one within a reconcile.
-   *
-   * ⚠️ DECLARED BEFORE THE RESTORE PASS, and it has to stay there. `restoreAgents` runs during
-   * start-up and calls `buildLaunch` for every pane it rebuilds, which asks this — and a `const`
-   * declared further down the function is still in its dead zone then, so the daemon died on boot
-   * with `Cannot access 'downgradedPermission' before initialization` on any machine that had a
-   * pane to restore. Everything it needs is imported; it closes over nothing local.
-   */
-  const downgradedPermission = async (
-    session: RegisteredSession,
-    bypassPermission: boolean,
-    what: string,
-  ): Promise<{ permissionMode?: string | null; bypassPermission?: boolean }> => {
-    const { choice, droppedFlag } = await dropPermissionFlagIfUnsupported(session.engine, {
-      permissionMode: session.permissionMode ?? null,
-      bypassPermission,
-    })
-    if (droppedFlag) {
-      console.warn(`[agent] ${what} ${sid(session.agentId)} · ${session.engine} does not take ${droppedFlag}`
-        + ` · starting in Ask · update ${session.engine} to get ${session.permissionMode ?? 'Auto'} back`)
-    }
-    return choice
-  }
-
-  const prepareSessionResume = (session: RegisteredSession): void => {
-    const repair = prepareCodexResume(session)
-    if (repair.repairedItems) {
-      // The rollout we tail was just shrunk in place. Move the tail to the repaired length now, before
-      // the resumed engine appends, or the watcher would read the whole repaired history as new lines
-      // and the live normalizer would replay the conversation into web/device. See Watcher.setTail.
-      if (repair.repairedBytes !== undefined) watcher.setTail(session.sessionId, repair.repairedBytes)
-      console.log(`[resume] repaired ${repair.repairedItems} Codex reasoning items · backup: ${repair.backupPath}`)
-    }
-  }
+  // What a relaunch needs to bring a pane back (core/agents/launch.ts). Declared before the restore
+  // pass below, which calls these for every pane it rebuilds.
+  const launchHelpers = createLaunchHelpers({
+    prepareApiTools,
+    savedApis,
+    launchOverridesDeps,
+    setGridLaunch: (agentId, launch) => registry.setGridLaunch(agentId, launch),
+    setTail: (sessionId, offset) => watcher.setTail(sessionId, offset),
+  })
+  const relaunchOverrides = launchHelpers.relaunchOverrides
+  const refreshGridWebSearch = launchHelpers.refreshGridWebSearch
+  const downgradedPermission = launchHelpers.downgradedPermission
+  const prepareSessionResume = launchHelpers.prepareSessionResume
 
   // Rows that drifted out of their project folder while `register` still took the hook's cwd on
   // every prompt are put back BEFORE anything relaunches them: restore below `cd`s into `entry.cwd`,
@@ -4284,22 +3805,17 @@ async function runForeground(session: AuthSession | null): Promise<void> {
     setVoiceRouterDeviceConnected(connected)
   }
 
-  // Web cancel (C-c) interrupts the turn — claude writes no end_turn line to close it, so stop the
-  // heartbeat and mark the turn closed here (mirrors the hosted runtime stopping its heartbeat on cancel). We do
-  // NOT emit turn_ended: the web clears its own dots on cancel, and a turn_ended would fire a device
-  // recap for a killed turn. The next real prompt reopens a fresh turn.
-  const cancelAgent = (id: string, confirmed = false): Promise<boolean> => {
-    const record = registry.resolve(id)
-    const sessionId = record?.sessionId ?? id
-    normalizers.closeTurns(sessionId)
-    cursorSubagents.forget(sessionId)
-    const cancelled = confirmed ? input.cancelConfirmed(record?.agentId ?? sessionId) : (input.cancel(record?.agentId ?? sessionId), Promise.resolve(true))
-    autonomousDeviceService?.turnEnded(record?.agentId ?? sessionId, true)
-    stopHeartbeat(sessionId)
-    questionWatcher.stop(sessionId)
-    mirror.cancel(sessionId) // close the device's "Working…" tile (bare done, no recap) — a cancel emits no turn_ended
-    return cancelled
-  }
+  // Cancelling a turn (core/turns/cancel.ts).
+  const cancelAgent = createCancel({
+    resolve: (id) => registry.resolve(id),
+    normalizers,
+    cursorSubagents,
+    input,
+    device: () => autonomousDeviceService,
+    stopHeartbeat,
+    questionWatcher,
+    mirror,
+  })
   backend.onCancel = id => { void cancelAgent(id) }
 
   /**
