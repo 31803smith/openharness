@@ -100,10 +100,8 @@ import { sessionCheckpoints } from './lib/sessionCheckpoint.js'
 import { repairClaudeCwd } from './lib/cwdRepair.js'
 import { stoppedAgents } from './lib/stoppedAgents.js'
 import { prepareAgentHandoff } from './lib/agentHandoff.js'
-import { SessionSearchIndex, folderWords, type SearchSource } from './lib/sessionSearch/indexer.js'
 import { ExternalSessions, OpenSessions } from './lib/sessionSearch/external.js'
 import { externalProviders } from './lib/sessionSearch/externals/index.js'
-import { SessionSearchStore } from './lib/sessionSearch/store.js'
 import { SESSION_SEARCH_FILE, searchCommand } from './lib/sessionSearch/command.js'
 import { sweepWorktrees } from './lib/worktreeSweep.js'
 import { nameBranchAfterSession } from './lib/branchNaming.js'
@@ -112,13 +110,8 @@ import { type LaunchOverridesDeps } from './lib/launchOverrides.js'
 import { buildHarnessSessionLabel } from './lib/harnessSessionLabel.js'
 import { adoptLegacyHarnessSessions, listTmuxPanes } from './lib/tmuxAgentDiscovery.js'
 import { installedDsh } from './dsh/installed.js'
-import { dshVerdictPath, dshViewerName } from './dsh/manifest.js'
-import { catalogEntry } from './dsh/catalog.js'
 import { removeDsh } from './dsh/install.js'
 import { prepareHarnessLaunch } from './dsh/runtime.js'
-import { DshViewerManager } from './dsh/viewer.js'
-import { ViewerLedger } from './dsh/viewerLedger.js'
-import { DshVerdictWatcher, type DshVerdict } from './dsh/verdict.js'
 import { dshCommand, dshUsage } from './dsh/command.js'
 import { ApiConnections } from './lib/apiConnections.js'
 import { rememberSavedApis } from './lib/apiModels.js'
@@ -173,6 +166,10 @@ import { createAgentLifecycle } from './core/agents/lifecycle.js'
 import { createAgentClosing } from './core/agents/close.js'
 import { createEngineHooks, installEngineHooks } from './core/engines/hooks.js'
 import { createCursorTaskHooks } from './core/engines/cursorTasks.js'
+import { databaseHistory } from './core/transcripts/databaseHistory.js'
+import { createCoreApi, emptyPorts } from './core/api.js'
+import { startSearch } from './services/search.js'
+import { startViewers } from './services/viewers.js'
 import { describeMasterStatus, readStatusFile, runMaster } from './harnessd/master.js'
 import { CORE_EXIT_STOP, CORE_EXIT_UPDATE } from './harnessd/protocol.js'
 import { isLocalSocketName, localSocketPath, type LocalSocketServer } from './lib/localSocket.js'
@@ -189,7 +186,6 @@ import { WindowVisit } from './cable/windowVisit.js'
 import { WindowForm } from './cable/windowForm.js'
 import { RemoteRelayPool } from './lib/remoteRelay.js'
 import { TERMINAL_BINARY_VERSION } from './lib/terminalBinary.js'
-import { type LiveEvent } from './lib/normalize.js'
 import { TeamError } from './teams/model.js'
 import { routeVoiceTask, setVoiceRouterDeviceConnected, setVoiceRouterSessions, shutdownVoiceRouter, type RouterAgent } from './lib/voiceRouter.js'
 import { E2eeStore, identitySpent, peekIdentityPub } from './lib/e2ee/store.js'
@@ -216,16 +212,8 @@ import { type ActivityFrame } from './lib/turnActivity.js'
 import { CursorTranscriptDiscovery } from './engines/cursor/discovery.js'
 import { cursorDataDir } from './engines/cursor/home.js'
 import { loadCursorPendingTasks } from './engines/cursor/pendingTasks.js'
-import { readOpencodeMessages } from './engines/opencode/reader.js'
 import { opencodeMajorVersion } from './engines/opencode/version.js'
-import { opencodeMessagesToEvents } from './engines/opencode/normalizer.js'
-import { readKiloMessages } from './engines/kilo/reader.js'
-import { kiloMessagesToEvents } from './engines/kilo/normalizer.js'
-import { readHermesMessages } from './engines/hermes/reader.js'
 import { hermesDbForSession } from './lib/hermesHome.js'
-import { readDevinMessages } from './engines/devin/reader.js'
-import { hermesMessagesToEvents } from './engines/hermes/normalizer.js'
-import { devinMessagesToEvents } from './engines/devin/normalizer.js'
 import { agentFrame, lastActivityAt, type AgentFrame } from './lib/agentFrame.js'
 import { agentTokenUsage } from './lib/agentTokenUsage.js'
 import { DeviceResultJournal } from './lib/autonomous-device/resultJournal.js'
@@ -1765,89 +1753,32 @@ async function runForeground(session: AuthSession | null): Promise<void> {
   agentTokenUsage.onChanged = agentEvents.onTokenUsageChanged
   const announceSession = agentEvents.announceSession
 
-  // ── Domain-specific harness companions ──────────────────────────────────────────────────────────
-  // A DSH agent has two things beside its pane that the daemon owns for as long as the agent exists:
-  // its viewer server (a URL the desktop shows in a pane next to the terminal) and a watch on the
-  // verdict file its scripts write. Both are keyed on the agent, attached wherever an agent with a
-  // `dsh` comes into being (create, restore, discovery) and detached where it is forgotten.
-  const dshFrames = new Map<string, { viewerUrl: string | null; verdict: DshVerdict | null }>()
-  const dshFrameFor = (agentId: string): { viewerUrl: string | null; verdict: DshVerdict | null } => {
-    let state = dshFrames.get(agentId)
-    if (!state) { state = { viewerUrl: null, verdict: null }; dshFrames.set(agentId, state) }
-    return state
-  }
-  const dshFrameContext = (s: RegisteredSession): AgentDshContext | null => {
-    if (!s.dsh) return null
-    const state = dshFrames.get(s.agentId)
-    const installed = installedDsh(s.dsh)
-    return {
-      // The current id, so a face drawn by id survives a rename the agent predates.
-      id: installed?.id ?? s.dsh,
-      name: installed?.manifest.name ?? catalogEntry(s.dsh)?.name ?? null,
-      viewerUrl: state?.viewerUrl ?? null,
-      // The pane beside the terminal says what it is, so the harness's name is not printed twice.
-      viewerName: installed ? dshViewerName(installed.manifest, (id) => installedDsh(id)?.manifest.name ?? catalogEntry(id)?.name) : null,
-      verdict: state?.verdict ?? null,
-    }
-  }
-  dshFrameContextRef = dshFrameContext
-  // A companion's news (a viewer URL, a verdict) is pushed on the agent's frame — but only once
-  // the agent's terminal is attached. During a daemon start the viewer is often up before the
-  // pane is re-attached, and a frame with no terminal reads to the desktop as "agent gone": it
-  // closed the tiles of every harness agent on every restart (seen 2026-09-15, three times). The
-  // attach's own sync carries whatever arrived first.
-  const syncCompanion = (agentId: string): void => {
-    const session = registry.byAgent(agentId)
-    if (session && registry.terminalAvailable(agentId)) syncSession(session)
-  }
-  // Viewers an earlier daemon started and never stopped (crash, force quit, SIGKILL) are still running
-  // and still polling; stop them BEFORE this daemon starts its own, or they accumulate a generation per
-  // restart. Only pids whose live start time matches what that daemon recorded are touched.
-  const viewerLedger = new ViewerLedger({ log: (line) => console.log(line) })
-  viewerLedger.reapOrphans()
-  const dshViewers = new DshViewerManager({
-    onUrl: (agentId, url) => {
-      dshFrameFor(agentId).viewerUrl = url
+  // Conversations on this machine that Harness did not start, found where each engine keeps them so
+  // Cmd-P can find them and open one here; and which sessions a process has open right now. Harness's
+  // own byproducts (recaps run in its data folder) are never among them.
+  const externalEngines = externalProviders()
+  const externalSessions = new ExternalSessions({ providers: externalEngines, excluded: [env.ADAPTER_DATA_DIR], log: (line) => console.warn(line) })
+  const openSessions = new OpenSessions({ providers: externalEngines, log: (line) => console.warn(line) })
+  // The core's side of the boundary its services stand on, and the ports it reaches them through (core/api.ts).
+  const coreApi = createCoreApi({
+    dataDir: env.ADAPTER_DATA_DIR,
+    registry,
+    stoppedAgents,
+    databaseHistory,
+    externalSessions,
+    openSessions,
+    syncSession,
+    viewerChanged: (agentId) => {
       backendRef?.viewerForwarder.refresh(agentId)
       backendRef?.interactiveViewers.refresh(agentId)
-      syncCompanion(agentId)
     },
-    log: (line) => console.log(line),
-    ledger: viewerLedger,
   })
-  const dshVerdicts = new DshVerdictWatcher({
-    onChange: (agentId, verdict) => {
-      dshFrameFor(agentId).verdict = verdict
-      // The verdict's artifact is what the viewer should show, when it names one.
-      dshViewers.setVerdictArtifact(agentId, verdict?.artifact ?? null)
-      syncCompanion(agentId)
-    },
-    log: (line) => console.log(line),
-  })
-  const dshWarned = new Set<string>()
-  /** Idempotent: safe to call on every observation of the agent. */
-  const attachDsh = (s: RegisteredSession): void => {
-    if (!s.dsh || !s.cwd) return
-    const installed = installedDsh(s.dsh)
-    if (!installed) {
-      if (!dshWarned.has(s.dsh)) {
-        dshWarned.add(s.dsh)
-        console.warn(`[dsh] ${s.dsh} is not installed on this machine · agent ${sid(s.agentId)} runs as plain ${s.engine} (no viewer, no verdict)`)
-      }
-      return
-    }
-    dshVerdicts.watch(s.agentId, join(s.cwd, dshVerdictPath(installed.manifest)))
-    if (installed.manifest.viewer) {
-      void dshViewers.start(s.agentId, installed, s.cwd).catch((error) => {
-        console.warn(`[dsh] ${s.dsh} viewer failed to start · ${error instanceof Error ? error.message : error}`)
-      })
-    }
-  }
-  const detachDsh = (agentId: string): void => {
-    dshVerdicts.unwatch(agentId)
-    void dshViewers.stop(agentId)
-    dshFrames.delete(agentId)
-  }
+  const ports = emptyPorts()
+  // The DSH companions: each harness agent's viewer and verdict watch (services/viewers.ts).
+  startViewers(coreApi, ports)
+  dshFrameContextRef = (s) => ports.viewers?.frameContext(s) ?? null
+  const attachDsh = (s: RegisteredSession): void => ports.viewers?.attach(s)
+  const detachDsh = (agentId: string): void => ports.viewers?.detach(agentId)
 
   // A worktree branch Harness made up at Start takes its session's name once it has one
   // (lib/branchNaming.ts). Each agent is looked at once per daemon; the git reads are the cost.
@@ -1927,7 +1858,7 @@ async function runForeground(session: AuthSession | null): Promise<void> {
   // Nothing is answered until start-up is done (see the end of this function).
   backend.holdRequests()
   daemonBoot.openRequests = () => backend.openRequests()
-  backend.viewerTargetProvider = (agentId) => dshViewers.forwardingUrl(agentId)
+  backend.viewerTargetProvider = (agentId) => ports.viewers?.forwardingUrl(agentId) ?? null
 
   ensureBundledCoreHarnesses()
 
@@ -2244,18 +2175,6 @@ async function runForeground(session: AuthSession | null): Promise<void> {
   backend.recentProvider = recaps.recent
   backend.recentAsksProvider = recaps.recentAsks
 
-  // The engines that keep a conversation in a database instead of a transcript file, read through
-  // the same readers and replay normalizers as `session_get`.
-  const databaseHistory = (s: RegisteredSession): (() => Promise<readonly LiveEvent[]>) | undefined => {
-    switch (s.engine) {
-      case 'opencode': return async () => opencodeMessagesToEvents(await readOpencodeMessages(join(env.OPENCODE_DATA_DIR, 'opencode.db'), s.sessionId))
-      case 'kilo': return async () => kiloMessagesToEvents(await readKiloMessages(join(env.KILO_DATA_DIR, 'kilo.db'), s.sessionId))
-      case 'devin': return async () => devinMessagesToEvents(await readDevinMessages(join(env.DEVIN_HOME, 'sessions.db'), s.sessionId))
-      case 'hermes': return async () => hermesMessagesToEvents(await readHermesMessages(await hermesDbForSession(s), s.sessionId))
-      default: return undefined
-    }
-  }
-
   // "Change agent": the desktop asks for the structured handoff file (lib/agentHandoff.ts) before it
   // closes the old engine; the new one is then told to read it.
   // Built ONCE: its discovery keeps "one search per agent" across requests.
@@ -2276,66 +2195,9 @@ async function runForeground(session: AuthSession | null): Promise<void> {
   })
   backend.handoffProvider = (req) => prepareAgentHandoff(handoffDeps, req)
 
-  // Session search: every turn of every conversation on this machine, live and stopped, indexed from
-  // its transcript and searched by `session_search` (lib/sessionSearch/). Nothing leaves the machine
-  // but the hits for a query. A Node without `node:sqlite` has no index; the RPC then says so.
-  // Conversations on this machine that Harness did not start, found where each engine keeps them so
-  // Cmd-P can find them and open one here; and which sessions a process has open right now. Harness's
-  // own byproducts (recaps run in its data folder) are never among them.
-  const externalEngines = externalProviders()
-  const externalSessions = new ExternalSessions({ providers: externalEngines, excluded: [env.ADAPTER_DATA_DIR], log: (line) => console.warn(line) })
-  const openSessions = new OpenSessions({ providers: externalEngines, log: (line) => console.warn(line) })
-  const sessionSearch = (() => {
-    try {
-      const store = SessionSearchStore.open(join(env.ADAPTER_DATA_DIR, SESSION_SEARCH_FILE))
-      if (!store) {
-        console.warn('[search] node:sqlite is not available on this Node — session search is off')
-        return null
-      }
-      const index = new SessionSearchIndex({
-        store,
-        sources: () => {
-          const own = [...registry.list(), ...stoppedAgents.list()]
-          const sources = own.flatMap((s): SearchSource[] => {
-            const readHistory = s.transcriptPath ? undefined : databaseHistory(s)
-            if (!s.sessionId || (!s.transcriptPath && !readHistory)) return []
-            return [{
-              agentId: s.agentId,
-              sessionId: s.sessionId,
-              engine: s.engine,
-              transcriptPath: s.transcriptPath || null,
-              header: [projectDisplayName(s), s.title, folderWords(s.cwd)].filter(Boolean).join(' · '),
-              // Conversation stamps only: the row's `touchedAt` includes discovery bookkeeping.
-              changedAt: Math.max(s.lastTranscriptAt || 0, s.lastHookAt || 0) || s.boundAt || s.registeredAt || 0,
-              readHistory,
-            }]
-          })
-          // Conversations Harness did not start — any Harness agent's, earlier ones included, are not.
-          const known = store.ownedSessionIds()
-          for (const s of own) if (s.sessionId) known.add(s.sessionId)
-          for (const e of externalSessions.list()) {
-            // A conversation Harness holds under any of its ids is Harness's.
-            if (known.has(e.sessionId) || e.aliases?.some((id) => known.has(id)) || (!e.transcriptPath && !e.readHistory)) continue
-            sources.push({
-              agentId: '', sessionId: e.sessionId, engine: e.engine, transcriptPath: e.transcriptPath,
-              header: '', changedAt: e.mtime, external: { cwd: e.cwd, origin: e.origin, title: e.title },
-              ...(e.readHistory ? { readHistory: e.readHistory } : {}),
-            })
-          }
-          return sources
-        },
-        agents: () => [...registry.list(), ...stoppedAgents.list()].map((s) => s.agentId),
-        discover: () => externalSessions.scan(),
-        openSessions,
-        log: (line) => console.log(line),
-      })
-      index.start()
-      return index
-    } catch (error) {
-      console.error('[search] could not open the session index:', error instanceof Error ? error.message : error)
-      return null
-    }
-  })()
+  // Session search (services/search.ts).
+  startSearch(coreApi, ports)
+  const sessionSearch = ports.search
   backend.sessionSearchProvider = sessionSearch ? (query, options) => sessionSearch.search(query, options) : null
   backend.sessionTailProvider = sessionSearch ? (sessionId, options) => sessionSearch.tail(sessionId, options) : null
 
@@ -2363,7 +2225,7 @@ async function runForeground(session: AuthSession | null): Promise<void> {
     return session ? runtimeProfiles.modelsForSession(session) : Promise.resolve([])
   }
   backend.runtimeProfileProvider = (session) => runtimeProfiles.selectedModel(session)
-  backend.dshFrameProvider = dshFrameContext
+  backend.dshFrameProvider = (s) => ports.viewers?.frameContext(s) ?? null
   backend.onDshRemove = (id) => removeDsh(id)
   // `harness remote` names the tile it was typed in by its tmux pane; the registry knows whose it is.
   backend.onTerminalHandoff = (tmuxPane) => registry.advertised()
@@ -3872,8 +3734,7 @@ async function runForeground(session: AuthSession | null): Promise<void> {
     codexActivity.close()
     shutdownVoiceRouter()
     // The new daemon starts its own viewers for the agents it restores; ours must not hold the ports.
-    await dshViewers.stopAll()
-    await dshVerdicts.stop()
+    await ports.viewers?.stop()
     autonomousDeviceDirect?.stop()
     await backend.stop() // graceful WS close → releases the Redis machine-owner claim
     await new Promise((r) => setTimeout(r, 1000)) // grace before the same-machine reclaim
@@ -3985,8 +3846,7 @@ async function runForeground(session: AuthSession | null): Promise<void> {
     await localSocket?.close()
     codexActivity.close()
     shutdownVoiceRouter()
-    await dshViewers.stopAll()
-    await dshVerdicts.stop()
+    await ports.viewers?.stop()
     autonomousDeviceDirect?.stop()
     await backend.stop()
     try { if (readPid() === process.pid) rmSync(PID_FILE, { force: true }) } catch { /* ignore */ }
