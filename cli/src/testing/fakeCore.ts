@@ -13,8 +13,10 @@ export function fakeCore(over: Overrides = {}): CoreApi {
     dataDir: over.dataDir ?? '/data',
     agents: {
       all: vi.fn(() => []),
+      live: vi.fn(() => []),
       displayName: vi.fn(() => ''),
       byAgent: vi.fn(() => undefined),
+      advertised: vi.fn(() => []),
       terminalAvailable: vi.fn(() => false),
       sync: vi.fn(),
       ...over.agents,
@@ -25,6 +27,7 @@ export function fakeCore(over: Overrides = {}): CoreApi {
       open: { known: vi.fn(() => new Map()), fresh: vi.fn(async () => new Map()) },
       ...over.external,
     },
-    clients: { viewerChanged: vi.fn(), ...over.clients },
+    account: { mintGridName: vi.fn(async () => null), accessToken: vi.fn(async () => 'token'), ...over.account },
+    clients: { viewerChanged: vi.fn(), gridNamed: vi.fn(), ...over.clients },
   }
 }
