@@ -55,7 +55,7 @@ import { registry, projectDisplayName, sessionDisplayTitle, validTranscriptPath,
 import { engineSessionTitle } from './lib/sessionTitle.js'
 import { installAmpPlugin, installCodexHooks, installCommandCodeHooks, installCursorHooks, installDevinHooks, installGrokHooks, installAgyHooks, installCopilotHooks, installHermesHooks, installKiloPlugin, installOpencodePlugin, installPiExtension, installSessionHooks } from './lib/hooks.js'
 import { PID_FILE, daemonPort, isAlive, isDaemonRunning, readPid } from './lib/daemonState.js'
-import { clearSafeModeMarker, readSafeModeMarker, runBootHandoff, safeModeDisposition, safeModeStatusBody, writeSafeModeMarker } from './lib/daemonSafeMode.js'
+import { clearSafeModeMarker, readSafeModeMarker, runBootHandoff, safeModeDisposition, safeModeStatusBody, SafeModeRequest, writeSafeModeMarker } from './lib/daemonSafeMode.js'
 import { awakeTimeout } from './lib/sleepAware.js'
 import {
   BIND_WAIT_MS, connectFailure, defaultLaunchDeps, removePidFileIf, waitForBind, waitForReady,
@@ -172,6 +172,9 @@ import {
 } from './lib/terminalTypes.js'
 import { Watcher, type HistoryEvent, type LineEvent, type RewrittenEvent, type TailHold } from './watcher/watcher.js'
 import { chooseHookAgent, startHookServer } from './hookServer.js'
+import { connectToMaster } from './harnessd/coreLink.js'
+import { describeMasterStatus, readStatusFile, runMaster } from './harnessd/master.js'
+import { CORE_EXIT_STOP, CORE_EXIT_UPDATE } from './harnessd/protocol.js'
 import { isLocalSocketName, localSocketPath, type LocalSocketServer } from './lib/localSocket.js'
 import { legacyDaemonStatus, localDaemonStatus, saveDaemonPort } from './lib/daemonEndpoint.js'
 import { commandBarService } from './lib/commandBar.js'
@@ -287,6 +290,8 @@ const STOP_HOOK_GRACE_MS = 1_500
 
 // Daemon stdout/stderr. Capped at LOG_MAX_BYTES — see prepareLogFile/trimLogFile in lib/log.ts.
 const LOG_FILE = join(env.ADAPTER_DATA_DIR, 'harness.log')
+/** What harnessd's master last said about itself, for `harness status` when no core answers. */
+const HARNESSD_STATUS_FILE = join(env.ADAPTER_DATA_DIR, 'harnessd-status.json')
 // Pre-rename name. Adopted (renamed, keeping the inode) the first time a daemon opens the log, so a
 // machine that updates mid-run keeps its history instead of stranding it in a file nobody tails.
 // The log has had three names; this slot holds the OLDEST. The middle one (`machine.log`) is adopted
@@ -532,6 +537,10 @@ function spawnDaemonChild(extraEnv: Record<string, string>): ReturnType<typeof s
  * exists — hence the indirection: `applyStagedUpdate` is `bootHandoff` until the body has built
  * everything `restartForUpdate` tears down, and is swapped for it at that one line.
  */
+/** This process's channel to a harnessd master, when one started it (see harnessd/coreLink.ts).
+ *  Inert otherwise: a daemon run on its own claims its pid file and hands off updates itself. */
+const coreLink = connectToMaster()
+
 const daemonBoot: {
   updater: Poller | null
   tuiUpdater: Poller | null
@@ -545,7 +554,9 @@ const daemonBoot: {
   safeMode: string | null
   handingOff: boolean
   applyStagedUpdate: (version: string) => void | Promise<void>
-} = { updater: null, tuiUpdater: null, hookServer: null, localSocket: null, markNotReady: null, safeMode: null, handingOff: false, applyStagedUpdate: bootHandoff }
+  /** Opens the request gate of a start-up that did not finish, so its clients are answered (safe mode). */
+  openRequests: (() => void) | null
+} = { updater: null, tuiUpdater: null, hookServer: null, localSocket: null, markNotReady: null, safeMode: null, handingOff: false, applyStagedUpdate: bootHandoff, openRequests: null }
 
 /**
  * Hand the machine to a newer build without finishing start-up.
@@ -564,6 +575,14 @@ function bootHandoff(version: string): void {
   if (daemonBoot.handingOff) return
   daemonBoot.handingOff = true
   daemonBoot.tuiUpdater?.stop()
+  if (coreLink.supervised) {
+    // The master starts the new bundle the moment this exits, and rolls it back if it does not stay
+    // up; a successor spawned from here would be a daemon outside its supervision.
+    console.log(`[update] ${VERSION} → ${version} staged during start-up — handing back to harnessd`)
+    try { daemonBoot.hookServer?.close() } catch { /* already gone */ }
+    try { daemonBoot.localSocket?.closeSync() } catch { /* already gone */ }
+    process.exit(CORE_EXIT_UPDATE)
+  }
   runBootHandoff(VERSION, version, {
     // The hook port has no fallback: a successor that cannot bind it is a daemon that does not come up.
     closeServer: () => {
@@ -1391,7 +1410,8 @@ async function downloadCanaryStage(entry: UpdateEntry, dir: string, log: (m: str
   const cliBuf = await downloadVerified(entry.cli)
   const notifyBuf = await downloadVerified(entry.notify)
   if (!canary(cliBuf, dir)) { log(`  ✗ the new build failed its self-check — keeping v${VERSION}`); return false }
-  stage(dir, cliBuf, notifyBuf)
+  // Asked for by name, so a version this machine once rolled back is installed and no longer rejected.
+  stage(dir, cliBuf, notifyBuf, entry.version)
   confirmUpdate(dir) // canary passed + bytes already verified ⇒ drop the .prev backups
   return true
 }
@@ -1670,6 +1690,10 @@ async function runForeground(session: AuthSession | null): Promise<void> {
     intervalMs: env.ADAPTER_UPDATE_CHECK_MS,
     slotSecond: env.ADAPTER_UPDATE_SLOT_SEC,
   })
+
+  // harnessd's master saw this core crash again and again: start nothing that could do it again. The
+  // updaters above keep running, so a published fix still lands (`enterSafeMode`).
+  if (process.env.HARNESSD_SAFE_MODE) throw new SafeModeRequest(process.env.HARNESSD_SAFE_MODE)
 
   const savedApis = new ApiConnections(env.ADAPTER_DATA_DIR)
   // Before any agent is probed: one already running on a saved API's model reports that model.
@@ -2078,6 +2102,9 @@ async function runForeground(session: AuthSession | null): Promise<void> {
     })
   }, computerId(), autonomousEnv)
   backendRef = backend
+  // Nothing is answered until start-up is done (see the end of this function).
+  backend.holdRequests()
+  daemonBoot.openRequests = () => backend.openRequests()
   backend.viewerTargetProvider = (agentId) => dshViewers.forwardingUrl(agentId)
 
   ensureBundledCoreHarnesses()
@@ -2123,6 +2150,7 @@ async function runForeground(session: AuthSession | null): Promise<void> {
       log: gridLog,
     }, { ownGrid, signedInThisRun }),
   })
+
   backend.ensureGrid = (request) => gridAccess.ensure(request)
   // Offline, for every list read: is there a `grid` here holding a sign-in? What decides whether the
   // picker offers local and shared models or a Set up row.
@@ -4305,8 +4333,16 @@ async function runForeground(session: AuthSession | null): Promise<void> {
       deviceTransportConnected: backend.hasCommander(),
       deviceE2eeConnected: backend.deviceE2eeConnected(),
       uptimeSec: Math.round((Date.now() - startedAt) / 1000),
-      pid: process.pid,
+      // The daemon as everything outside knows it: the pid file's pid, which `harness stop` signals
+      // and the desktop app judges the owner of. Under a master that is the master's. A core's pid
+      // changes with every restart, and macOS counts a core as its master's, so an app judging the
+      // core would read a daemon started from tmux or ssh as "owned by node" and restart it on sight.
+      pid: coreLink.masterPid ?? process.pid,
+      corePid: process.pid,
       startedAt,
+      // The master keeping this core running, when one is: how often it has restarted it, and why the
+      // last one ended. Null for a core run on its own.
+      harnessd: coreLink.supervised ? { masterPid: coreLink.masterPid, ...coreLink.status() } : null,
       // True for the few hundred ms between an update being staged and this server closing for the
       // handoff. Informational: nothing should build readiness on a field the server stops serving.
       restarting,
@@ -4379,7 +4415,13 @@ async function runForeground(session: AuthSession | null): Promise<void> {
   // that LOST the port to a sibling still left a file naming itself, a corpse, over the winner. A
   // process that is running AND holds the port is the only honest author of its own pid; that claim
   // is also the signal `harness start` and the update handoff wait on to know the bind succeeded.
-  try { writeFileSync(PID_FILE, String(process.pid) + '\n') } catch { /* best effort */ }
+  // Under harnessd the master claims it, for itself, when this core says it is bound.
+  if (coreLink.supervised) {
+    coreLink.bound(hookPort)
+    coreLink.startHeartbeat()
+  } else {
+    try { writeFileSync(PID_FILE, String(process.pid) + '\n') } catch { /* best effort */ }
+  }
   // The one thing a handoff that happens before start-up finishes has to release: the port has no
   // fallback, so a successor that cannot bind it is a daemon that does not come up (see bootHandoff).
   daemonBoot.hookServer = hookServer
@@ -6370,10 +6412,11 @@ async function runForeground(session: AuthSession | null): Promise<void> {
   // Keep the log file under its cap. This daemon writes it through an inherited stdout fd, so a size
   // check on a timer is the only place that can see it grow — `prepareLogFile` at spawn time alone
   // would let a long-lived, chatty daemon run unbounded between restarts.
-  const logTrimTimer = setInterval(() => {
+  // A core run by harnessd leaves this to its master, which outlives it (harnessd/master.ts).
+  const logTrimTimer = coreLink.supervised ? undefined : setInterval(() => {
     if (trimLogFile(LOG_FILE)) console.log(`[log] ${tildify(LOG_FILE)} hit its size cap — dropped the oldest half`)
   }, LOG_CHECK_INTERVAL_MS)
-  logTrimTimer.unref?.() // never hold the event loop open for log upkeep
+  logTrimTimer?.unref?.() // never hold the event loop open for log upkeep
 
   // Signed out, the backend is not dialed at all. The socket would only meet a missing session and back
   // off forever, one log line at a time; a sign-in RESTARTS this process with the session in hand
@@ -6441,6 +6484,12 @@ async function runForeground(session: AuthSession | null): Promise<void> {
     await backend.stop() // graceful WS close → releases the Redis machine-owner claim
     await new Promise((r) => setTimeout(r, 1000)) // grace before the same-machine reclaim
 
+    if (coreLink.supervised) {
+      // Everything above is released; the master starts the new bundle as soon as this exits and
+      // rolls back to the .prev bytes if it does not come up and stay up (harnessd/supervisor.ts).
+      console.log(`[update] handing ${newVersion} to harnessd`)
+      process.exit(CORE_EXIT_UPDATE)
+    }
     const sinceOffset = existsSync(LOG_FILE) ? statSync(LOG_FILE).size : 0
     const child = spawnDaemonChild({ ADAPTER_UPDATED_TO: newVersion })
     handoffChild = child
@@ -6500,6 +6549,9 @@ async function runForeground(session: AuthSession | null): Promise<void> {
     handoffChild = null
   })
 
+  /** Stopping for good — removed from the account, or connected from elsewhere: tell harnessd's master,
+   *  which restarts any other exit (harnessd/protocol.ts). */
+  const forGood = (reason: string): boolean => reason === 'revoked' || reason === 'busy'
   const shutdown = async (signal: string): Promise<void> => {
     console.log(`\n[cli] ${signal} — shutting down`)
     // Mid-handoff everything below has already been torn down once, and the daemon that matters is
@@ -6546,10 +6598,13 @@ async function runForeground(session: AuthSession | null): Promise<void> {
     autonomousDeviceDirect?.stop()
     await backend.stop()
     try { if (readPid() === process.pid) rmSync(PID_FILE, { force: true }) } catch { /* ignore */ }
-    process.exit(0)
+    process.exit(coreLink.supervised && forGood(signal) ? CORE_EXIT_STOP : 0)
   }
   process.on('SIGINT', () => void shutdown('SIGINT'))
   process.on('SIGTERM', () => void shutdown('SIGTERM'))
+  // A core whose master is gone stops, so nothing is left holding the port for a master that is not
+  // there to restart it.
+  coreLink.onMasterGone(() => void shutdown('the harnessd master is gone'))
   process.on('exit', () => { shutdownVoiceRouter() })
 
   // A machine revocation or invalid SSO refresh ends this adapter session permanently.
@@ -6858,6 +6913,15 @@ async function runForeground(session: AuthSession | null): Promise<void> {
 
   if (env.CABLE_DISABLE) console.log('[cable] disabled (CABLE_DISABLE=true) — the serial port is left alone')
   else cable.start()
+  // Last: every handler is wired and the restored agents are confirmed, so requests that arrived while
+  // starting — a client reconnecting the moment the port answered, the backend's first frames — are
+  // answered now, in order, by the handlers meant to answer them (see BackendSocket.openRequests).
+  // Only the end-to-end harness sets this: a start-up that hangs after binding, for the master's deadline.
+  if (process.env.HARNESSD_TEST_HOLD_READY === '1') await new Promise<never>(() => {})
+  backend.openRequests()
+  daemonBoot.openRequests = null
+  coreLink.ready()
+  console.log('[cli] ready')
 }
 
 // ── info block ───────────────────────────────────────────────────────────────────────────────────
@@ -7021,7 +7085,10 @@ async function spawnDaemon(session: AuthSession | null, runtimeNode: string | nu
   const logFd = openSync(LOG_FILE, 'a')
   // The daemon starts on the managed runtime straight away rather than inheriting this process's
   // interpreter and waiting for some later restart to adopt it.
-  const child = spawn(runtimeNode ?? process.execPath, [SCRIPT_PATH, '__run'], {
+  // harnessd: a master that keeps the daemon's core running (harnessd/supervisor.ts). HARNESS_NO_MASTER=1
+  // starts the core on its own, as before, for a machine where the master itself is in question.
+  const entry = process.env.HARNESS_NO_MASTER === '1' ? '__run' : '__harnessd'
+  const child = spawn(runtimeNode ?? process.execPath, [SCRIPT_PATH, entry], {
     detached: true,
     env: { ...process.env },
     stdio: ['ignore', logFd, logFd],
@@ -7949,6 +8016,8 @@ async function status(): Promise<void> {
   // A daemon whose start-up failed is alive and answering, but nothing on this machine works. Say so
   // in the one line a person reads, rather than leaving it looking like an ordinary slow start.
   const safeMode = alive ? readSafeModeMarker(env.ADAPTER_DATA_DIR, isAlive) : null
+  // A core that cannot answer — restarting, starting, crash-looping — is described by its master.
+  const master = alive && daemonStatus == null ? describeMasterStatus(readStatusFile(HARNESSD_STATUS_FILE, pid)) : null
   printInfoBlock({
     // The backend link is the daemon's own business, so `status` is where it is read — `start` no
     // longer waits to see it, and a daemon with no backend is still serving every local agent.
@@ -7956,6 +8025,8 @@ async function status(): Promise<void> {
     // and `machine: not signed in` in place of the whole block hid a running daemon and its agents.
     status: !alive
       ? '○ stopped'
+      : master
+        ? master
       : safeMode
         ? `◍ safe mode · start-up failed on v${safeMode.version} — waiting for a fixed build (${safeMode.error.split('\n')[0]})`
       : !signedIn
@@ -8085,7 +8156,7 @@ const onError = (err: unknown): never => {
  * `harness status` say what happened. `harness stop` still works throughout — it kills by pid.
  */
 const enterSafeMode = (err: unknown): void => {
-  const disposition = safeModeDisposition(err, { selfPid: process.pid, readPid, isAlive })
+  const disposition = safeModeDisposition(err, { selfPid: process.pid, masterPid: coreLink.masterPid, readPid, isAlive })
   if (!disposition.stay) {
     console.error(`[safe-mode] not staying up — ${disposition.reason}`)
     onError(err)
@@ -8097,6 +8168,8 @@ const enterSafeMode = (err: unknown): void => {
   writeSafeModeMarker(env.ADAPTER_DATA_DIR, { pid: process.pid, version: VERSION, at: Date.now(), error: detail })
   daemonBoot.safeMode = disposition.reason
   daemonBoot.markNotReady?.(disposition.reason)
+  // Requests queued behind a start-up that will not finish are answered now, by whatever is wired.
+  daemonBoot.openRequests?.()
 
   const leave = (why: string, code: number): never => {
     clearSafeModeMarker(env.ADAPTER_DATA_DIR)
@@ -8106,6 +8179,13 @@ const enterSafeMode = (err: unknown): void => {
   }
   process.on('SIGINT', () => leave('SIGINT — leaving safe mode', 0))
   process.on('SIGTERM', () => leave('SIGTERM — leaving safe mode', 0))
+  // Up, though not ready: the master must neither give up waiting for a bind nor take it for hung,
+  // or the updater that can fix this build would never get its chance. It hears why, and rolls back an
+  // update whose first core ends up here.
+  coreLink.bound(daemonPort())
+  coreLink.ready(disposition.reason)
+  coreLink.startHeartbeat()
+  coreLink.onMasterGone(() => leave('the harnessd master is gone — leaving safe mode', 0))
 
   // The bound control port is a ref'd handle and holds the loop on its own. Without one — the bind
   // itself was what failed, or we never got that far — take the port for the status alone, so the app
@@ -8179,6 +8259,18 @@ switch (cmd) {
   case 'join':
     console.error('`harness join` has been removed. Run `harness login`, then `harness start`.')
     process.exit(1)
+  case '__harnessd': // internal: the master `harness start` launches; it runs and supervises `__run`
+    runMaster({
+      nodePath: process.execPath,
+      execArgv: process.execArgv,
+      scriptPath: SCRIPT_PATH,
+      pidFile: PID_FILE,
+      statusFile: HARNESSD_STATUS_FILE,
+      logFile: LOG_FILE,
+      restoreUpdate: () => restoreUpdate(env.ADAPTER_CLI_DIR),
+      confirmUpdate: () => confirmUpdate(env.ADAPTER_CLI_DIR),
+    })
+    break
   case '__run': // internal: the detached daemon child reads the durable SSO session — or runs without one
     // NOT `onError`: a daemon that dies here can never be updated. See `enterSafeMode`.
     runForeground(readAuthSession()).catch(enterSafeMode)
