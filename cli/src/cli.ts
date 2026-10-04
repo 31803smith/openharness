@@ -173,6 +173,9 @@ import {
 import { Watcher, type HistoryEvent, type LineEvent, type RewrittenEvent, type TailHold } from './watcher/watcher.js'
 import { chooseHookAgent, startHookServer } from './hookServer.js'
 import { connectToMaster } from './harnessd/coreLink.js'
+import { createTerminalControl } from './core/terminals/control.js'
+import { createAgentEvents } from './core/agents/events.js'
+import { createSessionNormalizers } from './core/transcripts/normalizers.js'
 import { describeMasterStatus, readStatusFile, runMaster } from './harnessd/master.js'
 import { CORE_EXIT_STOP, CORE_EXIT_UPDATE } from './harnessd/protocol.js'
 import { isLocalSocketName, localSocketPath, type LocalSocketServer } from './lib/localSocket.js'
@@ -1800,102 +1803,18 @@ async function runForeground(session: AuthSession | null): Promise<void> {
     })
   }
 
-  const terminalSession = (target: string): RegisteredSession | undefined => registry.resolve(target)
-  const controlLeases = new Map<string, { lease: Awaited<ReturnType<typeof terminals.acquireLease>> & { state: 'succeeded' }; expiresAt: number }>()
-  const pinnedControls = new Set<string>()
-  const invalidControls = new Set<string>()
-  const CONTROL_LEASE_IDLE_MS = 15_000
-  const leasedTerminal = async (session: RegisteredSession): Promise<Extract<Awaited<ReturnType<typeof terminals.acquireLease>>, { state: 'succeeded' }> | null> => {
-    const pinned = pinnedControls.has(session.agentId)
-    if (pinned && invalidControls.has(session.agentId)) return null
-    const current = controlLeases.get(session.agentId)
-    if (current && (pinned || current.expiresAt > Date.now())) {
-      if (!await terminals.validateLease(current.lease.value, session)) {
-        controlLeases.delete(session.agentId)
-        if (pinned) invalidControls.add(session.agentId)
-        return null
-      }
-      current.expiresAt = Date.now() + CONTROL_LEASE_IDLE_MS
-      return current.lease
-    }
-    controlLeases.delete(session.agentId)
-    const acquired = await terminals.acquireLease(session)
-    if (acquired.state !== 'succeeded') return null
-    const value = { lease: acquired, expiresAt: Date.now() + CONTROL_LEASE_IDLE_MS }
-    controlLeases.set(session.agentId, value)
-    return acquired
-  }
-  const pinTerminalControl = (target: string): (() => void) | null => {
-    const session = terminalSession(target)
-    if (!session || pinnedControls.has(session.agentId)) return null
-    pinnedControls.add(session.agentId)
-    invalidControls.delete(session.agentId)
-    return () => {
-      pinnedControls.delete(session.agentId)
-      invalidControls.delete(session.agentId)
-      controlLeases.delete(session.agentId)
-    }
-  }
-  const invalidateTerminalControl = (agentId: string): void => {
-    controlLeases.delete(agentId)
-    if (pinnedControls.has(agentId)) invalidControls.add(agentId)
-  }
-  const captureTerminal = async (target: string, historyLines?: number): Promise<string | null> => {
-    const session = terminalSession(target)
-    if (!session) return null
-    const pinned = pinnedControls.has(session.agentId)
-    if (pinned && invalidControls.has(session.agentId)) return null
-    let activeLease = controlLeases.get(session.agentId)
-    if (activeLease && !pinned && activeLease.expiresAt <= Date.now()) {
-      controlLeases.delete(session.agentId)
-      activeLease = undefined
-    }
-    const leased = activeLease || pinned ? await leasedTerminal(session) : null
-    if ((activeLease || pinned) && !leased) return null
-    const result = leased
-      ? await terminals.captureLease(leased.value, { historyLines })
-      : await terminals.capture(session, { historyLines })
-    return result.state === 'succeeded' ? result.value : null
-  }
-  const terminalActionSucceeded = (result: Awaited<ReturnType<typeof terminals.submitText>>): boolean =>
-    result.state === 'succeeded'
-  const submitTerminalAction = async (target: string, text: string): Promise<TerminalActionResult> => {
-    const session = terminalSession(target)
-    if (!session) return terminalActionNotStarted('terminal agent is unavailable')
-    const lease = await leasedTerminal(session)
-    if (!lease) return terminalActionNotStarted('terminal control lease is unavailable or changed')
-    const result = pinnedControls.has(session.agentId)
-      ? await terminals.submitTextLease(lease.value, text)
-      : await terminals.submitTextForLease(session, lease.value, text)
-    if (result.state !== 'succeeded' && pinnedControls.has(session.agentId)) invalidateTerminalControl(session.agentId)
-    return result
-  }
-  const submitTerminal = async (target: string, text: string): Promise<boolean> => {
-    return terminalActionSucceeded(await submitTerminalAction(target, text))
-  }
-  const typeTerminal = async (target: string, text: string): Promise<boolean> => {
-    const session = terminalSession(target)
-    if (!session) return false
-    const lease = await leasedTerminal(session)
-    if (!lease) return false
-    const succeeded = terminalActionSucceeded(await terminals.typeLiteralLease(lease.value, text))
-    if (!succeeded && pinnedControls.has(session.agentId)) invalidateTerminalControl(session.agentId)
-    return succeeded
-  }
-  const keyTerminalAction = async (target: string, key: string): Promise<TerminalActionResult> => {
-    const session = terminalSession(target)
-    if (!session) return terminalActionNotStarted('terminal session is unavailable')
-    const lease = await leasedTerminal(session)
-    if (!lease) return terminalActionNotStarted('terminal control lease is unavailable or changed')
-    const result = await terminals.sendLegacyKeyLease(lease.value, key)
-    if (result.state !== 'succeeded' && pinnedControls.has(session.agentId)) invalidateTerminalControl(session.agentId)
-    return result
-  }
-  const keyTerminal = async (target: string, key: string): Promise<boolean> => {
-    return terminalActionSucceeded(await keyTerminalAction(target, key))
-  }
-  const validateTerminal = async (session: RegisteredSession): Promise<boolean> =>
-    (await terminals.validate(session)).state === 'alive'
+  // Reading and writing panes through control leases (core/terminals/control.ts).
+  const terminalControl = createTerminalControl({ resolve: (target) => registry.resolve(target), terminals })
+  const pinnedControls = terminalControl.pinnedControls
+  const pinTerminalControl = terminalControl.pinTerminalControl
+  const invalidateTerminalControl = terminalControl.invalidateTerminalControl
+  const captureTerminal = terminalControl.captureTerminal
+  const submitTerminalAction = terminalControl.submitTerminalAction
+  const submitTerminal = terminalControl.submitTerminal
+  const typeTerminal = terminalControl.typeTerminal
+  const keyTerminalAction = terminalControl.keyTerminalAction
+  const keyTerminal = terminalControl.keyTerminal
+  const validateTerminal = terminalControl.validateTerminal
   // Persisted records are not trusted blindly. The process reconciler below adopts a matching live
   // runtime, replaces it immediately when PID/start-marker changed, and requires two successful misses
   // before removing it. Probe errors leave the registry untouched.
@@ -1909,39 +1828,19 @@ async function runForeground(session: AuthSession | null): Promise<void> {
   // NB: hooks are installed AFTER the hook server binds (below), with the port it actually got — the
   // server may fall back to a free port if env.PORT is taken, and the hooks must point at the real one.
 
-  const syncSession = createSessionSync({
+  // Telling the app and the dial about agents (core/agents/events.ts). The socket is read when each
+  // frame goes out: until it exists, frames are dropped, and start-up announces every agent again.
+  const agentEvents = createAgentEvents({
+    sink: () => backendRef,
     terminalAvailable: (agentId) => registry.terminalAvailable(agentId),
+    resolve: (target) => registry.resolve(target),
+    stopped: (agentId) => stoppedAgents.get(agentId),
     project: (s) => projectFrame(s, runtimeProfiles.selectedModel(s)),
-    send: (frame) => backendRef?.send(frame),
-    sendCommander: (frame) => backendRef?.sendCommander(frame),
-    warn: (err) => console.error('[cli] announceSession failed:', err instanceof Error ? err.message : err),
   })
-  const announceRename = (s: RegisteredSession, opts: { device?: boolean } = {}): void => {
-    if (isTerminalEngine(s.engine)) opts = { ...opts, device: false }
-    const name = projectDisplayName(s)
-    backendRef?.send({ type: 'agent_renamed', payload: { agentId: s.agentId, name, engine: s.engine } })
-    if (opts.device !== false) backendRef?.sendCommander({ type: 'agent_renamed', payload: { agentId: s.agentId, name, engine: s.engine } })
-  }
-  agentTokenUsage.onChanged = (target) => {
-    const current = registry.resolve(target.agentId)
-    if (current?.sessionId === target.sessionId && current.engine === target.engine) {
-      if (registry.terminalAvailable(current.agentId)) syncSession(current, { device: false })
-      return
-    }
-    try {
-      const saved = stoppedAgents.get(target.agentId)
-      if (saved?.sessionId === target.sessionId && saved.engine === target.engine) {
-        void backendRef?.publishStoppedAgent(saved).catch(() => {})
-      }
-    } catch { /* A concurrently removed archive has nothing to update. */ }
-  }
-  // New process observations, session bindings, runtime-profile changes, reconnects and periodic
-  // reconciliation refresh web and device from the same authoritative snapshot. Device agent_synced is
-  // idempotent and can upsert a sessionless tile, so re-announcing at bind is both safe and necessary.
-  const announceSession = (s: RegisteredSession, opts: { device?: boolean } = {}): void => {
-    syncSession(s, opts)
-    announceRename(s, opts)
-  }
+  const syncSession = agentEvents.syncSession
+  const announceRename = agentEvents.announceRename
+  agentTokenUsage.onChanged = agentEvents.onTokenUsageChanged
+  const announceSession = agentEvents.announceSession
 
   // ── Domain-specific harness companions ──────────────────────────────────────────────────────────
   // A DSH agent has two things beside its pane that the daemon owns for as long as the agent exists:
@@ -2254,12 +2153,13 @@ async function runForeground(session: AuthSession | null): Promise<void> {
     void agentReconciler.trigger()
   }
 
-  // Per-session web turn-lifecycle state; the device mirror keeps its own state + recap.
-  const turnStates = new Map<string, TurnState>()
-  const codexNormalizers = new Map<string, CodexNormalizer>()
-  const cursorNormalizers = new Map<string, CursorNormalizer>()
-  const opencodeReaders = new Map<string, OpencodeReader>()
-  const kiloReaders = new Map<string, KiloReader>()
+  // Each session's engine state, in one table (core/transcripts/normalizers.ts).
+  const normalizers = createSessionNormalizers()
+  const turnStates = normalizers.turnStates
+  const codexNormalizers = normalizers.codexNormalizers
+  const cursorNormalizers = normalizers.cursorNormalizers
+  const opencodeReaders = normalizers.opencodeReaders
+  const kiloReaders = normalizers.kiloReaders
   /**
    * Sessions that attached before their transcript existed, so nothing was folded and nothing has ever
    * been streamed for them.
@@ -2283,32 +2183,17 @@ async function runForeground(session: AuthSession | null): Promise<void> {
    * time.
    */
   const replayedFirstTurn = new Set<string>()
-  const piNormalizers = new Map<string, PiNormalizer>()
-  const museNormalizers = new Map<string, MuseNormalizer>()
-  const ampNormalizers = new Map<string, AmpNormalizer>()
-  const grokNormalizers = new Map<string, GrokNormalizer>()
-  const agyNormalizers = new Map<string, AgyNormalizer>()
-  const copilotNormalizers = new Map<string, CopilotNormalizer>()
-  const hermesReaders = new Map<string, HermesReader>()
-  const devinReaders = new Map<string, DevinReader>()
-  const commandcodeNormalizers = new Map<string, CommandCodeNormalizer>()
-  /** Whether this session's engine state says a turn is open right now, whichever engine it is. */
-  const sessionTurnState = (sessionId: string): boolean | undefined =>
-    turnStates.get(sessionId)?.turnOpen
-      ?? codexNormalizers.get(sessionId)?.turnOpen
-      ?? cursorNormalizers.get(sessionId)?.turnOpen
-      ?? opencodeReaders.get(sessionId)?.turnOpen
-      ?? kiloReaders.get(sessionId)?.turnOpen
-      ?? piNormalizers.get(sessionId)?.turnOpen
-      ?? museNormalizers.get(sessionId)?.turnOpen
-      ?? ampNormalizers.get(sessionId)?.turnOpen
-      ?? grokNormalizers.get(sessionId)?.turnOpen
-      ?? agyNormalizers.get(sessionId)?.turnOpen
-      ?? copilotNormalizers.get(sessionId)?.turnOpen
-      ?? hermesReaders.get(sessionId)?.turnOpen
-      ?? devinReaders.get(sessionId)?.turnOpen
-      ?? commandcodeNormalizers.get(sessionId)?.turnOpen
-  const sessionTurnOpen = (sessionId: string): boolean => sessionTurnState(sessionId) ?? false
+  const piNormalizers = normalizers.piNormalizers
+  const museNormalizers = normalizers.museNormalizers
+  const ampNormalizers = normalizers.ampNormalizers
+  const grokNormalizers = normalizers.grokNormalizers
+  const agyNormalizers = normalizers.agyNormalizers
+  const copilotNormalizers = normalizers.copilotNormalizers
+  const hermesReaders = normalizers.hermesReaders
+  const devinReaders = normalizers.devinReaders
+  const commandcodeNormalizers = normalizers.commandcodeNormalizers
+  const sessionTurnState = normalizers.sessionTurnState
+  const sessionTurnOpen = normalizers.sessionTurnOpen
   const watcher = new Watcher()
   const codexActivity = new CodexActivityReader()
   const runtimeActivity = new RuntimeActivityReader({
@@ -2415,22 +2300,7 @@ async function runForeground(session: AuthSession | null): Promise<void> {
     handover: { hold: TailHold | null; next: number | null } = { hold: null, next: null },
   ): Promise<boolean> => {
     if (!await validateTerminal(session)) return false
-    if (!reset && (
-      turnStates.has(session.sessionId)
-      || codexNormalizers.has(session.sessionId)
-      || cursorNormalizers.has(session.sessionId)
-      || opencodeReaders.has(session.sessionId)
-      || kiloReaders.has(session.sessionId)
-      || piNormalizers.has(session.sessionId)
-      || museNormalizers.has(session.sessionId)
-      || ampNormalizers.has(session.sessionId)
-      || grokNormalizers.has(session.sessionId)
-      || agyNormalizers.has(session.sessionId)
-      || copilotNormalizers.has(session.sessionId)
-      || hermesReaders.has(session.sessionId)
-      || devinReaders.has(session.sessionId)
-      || commandcodeNormalizers.has(session.sessionId)
-    )) {
+    if (!reset && normalizers.hasState(session.sessionId)) {
       if (session.transcriptPath) {
         const unseen = neverFoldedHistory.delete(session.sessionId)
         await watcher.addSession(
@@ -3320,31 +3190,14 @@ async function runForeground(session: AuthSession | null): Promise<void> {
     else if (doomed) registry.removeAgent(doomed.agentId)
     else registry.remove(sessionId)
     syncRecapPool()
-    turnStates.delete(sessionId)
+    normalizers.forget(sessionId)
     turnStartedAt.delete(sessionId)
-    codexNormalizers.delete(sessionId)
-    cursorNormalizers.delete(sessionId)
-    opencodeReaders.get(sessionId)?.stop()
-    opencodeReaders.delete(sessionId)
-    kiloReaders.get(sessionId)?.stop()
-    kiloReaders.delete(sessionId)
     neverFoldedHistory.delete(sessionId)
     // Both sets are per-session and must die with it: left behind they grow without bound in a daemon
     // that runs for days, and a session forgotten then re-registered under the same id would inherit a
     // stale "already replayed" and lose a first turn it was entitled to.
     replayedFirstTurn.delete(sessionId)
-    piNormalizers.delete(sessionId)
-    museNormalizers.delete(sessionId)
-    ampNormalizers.delete(sessionId)
-    grokNormalizers.delete(sessionId)
-    agyNormalizers.delete(sessionId)
-    copilotNormalizers.delete(sessionId)
     clearAgyIdleWatch(sessionId)
-    hermesReaders.get(sessionId)?.stop()
-    hermesReaders.delete(sessionId)
-    devinReaders.get(sessionId)?.stop()
-    devinReaders.delete(sessionId)
-    commandcodeNormalizers.delete(sessionId)
     cursorDiscovery.remove(sessionId)
     cursorSubagents.forget(sessionId)
     void removeCursorPendingTasks(env.ADAPTER_DATA_DIR, sessionId)
@@ -5329,20 +5182,7 @@ async function runForeground(session: AuthSession | null): Promise<void> {
   const cancelAgent = (id: string, confirmed = false): Promise<boolean> => {
     const record = registry.resolve(id)
     const sessionId = record?.sessionId ?? id
-    const st = turnStates.get(sessionId)
-    if (st) st.turnOpen = false
-    codexNormalizers.get(sessionId)?.closeTurn()
-    cursorNormalizers.get(sessionId)?.closeTurn()
-    opencodeReaders.get(sessionId)?.closeTurn()
-    piNormalizers.get(sessionId)?.closeTurn()
-    museNormalizers.get(sessionId)?.closeTurn()
-    ampNormalizers.get(sessionId)?.closeTurn()
-    grokNormalizers.get(sessionId)?.closeTurn()
-    agyNormalizers.get(sessionId)?.closeTurn()
-    copilotNormalizers.get(sessionId)?.closeTurn()
-    hermesReaders.get(sessionId)?.closeTurn()
-    devinReaders.get(sessionId)?.closeTurn()
-    commandcodeNormalizers.get(sessionId)?.closeTurn()
+    normalizers.closeTurns(sessionId)
     cursorSubagents.forget(sessionId)
     const cancelled = confirmed ? input.cancelConfirmed(record?.agentId ?? sessionId) : (input.cancel(record?.agentId ?? sessionId), Promise.resolve(true))
     autonomousDeviceService?.turnEnded(record?.agentId ?? sessionId, true)
@@ -6461,9 +6301,7 @@ async function runForeground(session: AuthSession | null): Promise<void> {
     for (const t of heartbeats.values()) clearInterval(t)
     heartbeats.clear()
     cursorSubagents.stop()
-    for (const r of opencodeReaders.values()) r.stop()
-    for (const r of hermesReaders.values()) r.stop()
-    for (const r of devinReaders.values()) r.stop()
+    normalizers.stopPollers()
     await cursorDiscovery.stop()
     await watcher.stop()
     // Fully release the FIXED hook port BEFORE the child binds (no fallback → EADDRINUSE otherwise).
@@ -6581,9 +6419,7 @@ async function runForeground(session: AuthSession | null): Promise<void> {
     for (const t of heartbeats.values()) clearInterval(t)
     heartbeats.clear()
     cursorSubagents.stop()
-    for (const r of opencodeReaders.values()) r.stop()
-    for (const r of hermesReaders.values()) r.stop()
-    for (const r of devinReaders.values()) r.stop()
+    normalizers.stopPollers()
     await cursorDiscovery.stop()
     await watcher.stop()
     shareRelay.close()
