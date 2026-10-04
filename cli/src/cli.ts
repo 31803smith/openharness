@@ -183,6 +183,10 @@ import { createLastTurnReader } from './core/transcripts/lastTurn.js'
 import { createRecaps } from './core/turns/recaps.js'
 import { createHeartbeats } from './core/turns/heartbeats.js'
 import { createEventFunnel } from './core/turns/funnel.js'
+import { createAgyBackstop } from './core/turns/agyBackstop.js'
+import { createIngest } from './core/transcripts/ingest.js'
+import { createTurnHooks } from './core/turns/turnHooks.js'
+import { createAttach } from './core/transcripts/attach.js'
 import { describeMasterStatus, readStatusFile, runMaster } from './harnessd/master.js'
 import { CORE_EXIT_STOP, CORE_EXIT_UPDATE } from './harnessd/protocol.js'
 import { isLocalSocketName, localSocketPath, type LocalSocketServer } from './lib/localSocket.js'
@@ -291,12 +295,6 @@ import {
   prepareLogFile, trimLogFile, LOG_CHECK_INTERVAL_MS,
 } from './lib/log.js'
 
-// Claude's Stop hook fires when the agent finishes, but the transcript can lag a moment behind
-// (docs: "the transcript file may lag behind the in-memory conversation"). Acting immediately races
-// that flush → an empty recap + a premature close. So the Stop hook is a DELAYED fallback: poll, and
-// only if the turn is still open after this grace + a re-poll do we force-close (by then the assistant
-// text is on disk, so the natural close usually wins and the recap isn't empty).
-const STOP_HOOK_GRACE_MS = 1_500
 
 // Daemon stdout/stderr. Capped at LOG_MAX_BYTES — see prepareLogFile/trimLogFile in lib/log.ts.
 const LOG_FILE = join(env.ADAPTER_DATA_DIR, 'harness.log')
@@ -2167,29 +2165,6 @@ async function runForeground(session: AuthSession | null): Promise<void> {
   const cursorNormalizers = normalizers.cursorNormalizers
   const opencodeReaders = normalizers.opencodeReaders
   const kiloReaders = normalizers.kiloReaders
-  /**
-   * Sessions that attached before their transcript existed, so nothing was folded and nothing has ever
-   * been streamed for them.
-   *
-   * `bornAfterAgent` was supposed to cover this and does not always fire — measured on pi, whose agent is
-   * discovered the instant the engine starts but whose session file only materialises once the first
-   * answer is written: the re-attach that finally brought the path tailed from the file's END, so the
-   * entire first turn — prompt, tools and answer — was read as history and never reached web or device.
-   * A session that folded NOTHING can replay its whole file live without double-showing anything, which
-   * is the one case where starting at byte 0 is unambiguously right.
-   */
-  const neverFoldedHistory = new Set<string>()
-  /**
-   * Sessions whose first turn has already been replayed live by an attach, or whose transcript an attach
-   * has already folded.
-   *
-   * NOT the same question as `neverFoldedHistory` above, which is why they stay two sets: that one asks
-   * "where should the watcher start reading?", this one asks "has this session's file already been
-   * emitted?". A `reset` attach (`meta.isNew` or a repeat `SessionStart`) re-enters the folding branch for
-   * a session that may already have streamed, and without this the whole transcript would go out a second
-   * time.
-   */
-  const replayedFirstTurn = new Set<string>()
   const piNormalizers = normalizers.piNormalizers
   const museNormalizers = normalizers.museNormalizers
   const ampNormalizers = normalizers.ampNormalizers
@@ -2251,336 +2226,30 @@ async function runForeground(session: AuthSession | null): Promise<void> {
     })
   })
 
-  const attachSessionNow = async (
-    session: RegisteredSession,
-    reset = false,
-    replayCursorFromStart = false,
-    /**
-     * Tail the transcript from byte 0 instead of from its current end.
-     *
-     * The watcher normally starts at the end, because a session is registered the moment the engine
-     * starts and the file is empty — end and start are the same place. That stops being true when an
-     * agent exists BEFORE its session: the user types their first message in the terminal, THAT is what
-     * makes the engine open a session, and by the time the hook binds it the prompt (and the first of the
-     * answer) is already on disk. Starting at the end skipped it, so the web showed neither the message
-     * nor the response. Only ever set for a session that was born after its agent — a resumed one keeps
-     * tailing from the end, since its history belongs to `session_get`, not to the live stream.
-     */
-    replayFromStart = false,
-    /** A tail being taken over (see `attachSession`): the hold on it, and where the read that replaces
-     *  its normalizer stopped — the byte the tail resumes from. */
-    handover: { hold: TailHold | null; next: number | null } = { hold: null, next: null },
-  ): Promise<boolean> => {
-    if (!await validateTerminal(session)) return false
-    if (!reset && normalizers.hasState(session.sessionId)) {
-      if (session.transcriptPath) {
-        const unseen = neverFoldedHistory.delete(session.sessionId)
-        await watcher.addSession(
-          { ...session, transcriptPath: session.transcriptPath },
-          { fromStart: replayFromStart || unseen || (session.engine === 'cursor' && replayCursorFromStart) },
-        )
-      }
-      else if (session.engine === 'cursor') await cursorDiscovery.add(session.sessionId)
-      console.log(`[agent] ${sid(session.agentId)} re-attached · engine=${session.engine} · terminal=${primaryTerminalLabel(session)} · session=${sid(session.sessionId)}`)
-      return true
-    }
-    const initialEvents: LiveEvent[] = []
-    // Folding the transcript in below is deliberately silent — old turns must never replay live. But
-    // when the history ENDS mid-turn the turn is still running, and dropping its `turn_started` costs
-    // the whole turn: CommanderMirror.onTurnEnded returns early while turnOpen is false, so the close
-    // that follows produces no recap and no `done`. Keep the last start and replay exactly that one.
-    //
-    // The exception is a transcript BORN AFTER its agent — the file is then the live first turn rather
-    // than history, and swallowing it loses the whole thing without a trace. `replayLive` routes the same
-    // fold to `initialEvents`, which is emitted below. Cursor has always done this for its own discovery
-    // path; the flag simply makes it available to every engine.
-    const replayLive = (replayFromStart && !replayedFirstTurn.has(session.sessionId))
-      || (session.engine === 'cursor' && replayCursorFromStart)
-    const historyEvents: LiveEvent[] = []
-    let historyTurnOpen = false
-    const observe = autonomousDeviceService?.needsTranscript(session.agentId, session.sessionId, session.engine)
-      ? (line: string): void => autonomousDeviceService?.observeTranscript(session.agentId, session.sessionId, session.engine, line)
-      : undefined
-    // Returns `turnOpen` rather than assigning it: every engine folds exactly once, and a second call
-    // quietly overwriting the first is the kind of mistake a returned value makes impossible to write.
-    const take = (out: { history: LiveEvent[]; live: LiveEvent[]; turnOpen: boolean }): boolean => {
-      // One at a time, not `push(...arr)`: spreading passes every element as a separate argument and Node
-      // throws RangeError somewhere past 100k of them. Real transcripts are nowhere near that (measured:
-      // 1194 events out of a 25.6 MB rollout) — but the per-line spread this replaced had no ceiling at
-      // all, and re-introducing one for no gain would be a poor trade.
-      for (const event of out.history) historyEvents.push(event)
-      for (const event of out.live) initialEvents.push(event)
-      return out.turnOpen
-    }
-    // Claude Code and Codex read their transcript from the END: the last turn, plus the few older records
-    // the chips and a continuing /goal still need — never the whole conversation, which on a long session
-    // cost the daemon more memory than it has (lib/attachTranscript.ts). Their normalizers exist before
-    // the read because they fold as the records stream in. The other engines still fold everything.
-    const codexNormalizer = session.engine === 'codex'
-      ? new CodexNormalizer('live', codexSubagentResolverFor(session.codexHome))
-      : null
-    const claudeState = session.engine === 'claude' ? newTurnState() : null
-    const fields = (line: string): readonly RuntimeField[] => runtimeProfiles.transcriptFields(session, line)
-    const fromEndFold = codexNormalizer
-      ? { rules: codexAttachRules(fields), ingest: (line: string) => codexNormalizer.ingest(line), turnOpen: () => codexNormalizer.turnOpen }
-      : claudeState
-        ? { rules: claudeAttachRules(fields), ingest: (line: string) => lineToEvents(line, claudeState), turnOpen: () => claudeState.turnOpen }
-        : null
-    let fromEnd: AttachRead | null = null
-    // A reset keeps the normalizer it meant to replace when its read failed, or outlasted the hold on the
-    // tail — which then let go, and delivery went back to that normalizer: it has seen every record since,
-    // this one has not.
-    const keepLiveNormalizer = (why: string): boolean => {
-      console.warn(`[agent] ${sid(session.agentId)} kept its live normalizer · the re-read ${why}`)
-      handover.hold?.release()
-      handover.next = null
-      return true
-    }
-    if (session.transcriptPath && fromEndFold) {
-      // A session already being tailed — a reset — is re-read while its old normalizer is still the one
-      // being fed: hold its tail, so the read stops exactly where delivery stopped and delivery resumes,
-      // into the new normalizer, from where the read stopped (released by `attachSession`).
-      handover.hold = await watcher.hold(session.sessionId, session.transcriptPath)
-      // Lines a held tail already delivered were seen live; replaying them live again would repeat them.
-      const live = replayLive && handover.hold === null
-      const stream = new TranscriptFold(fromEndFold.ingest, fromEndFold.turnOpen, live)
-      const profile = runtimeProfiles.beginHydrate(session)
-      const read = await attachTranscript(session.transcriptPath, fromEndFold.rules, {
-        // Ids named for this window cannot repeat ones another fold of the session sent.
-        start: (span) => {
-          const prefix = `${span.turnFrom.toString(36)}-`
-          if (codexNormalizer) codexNormalizer.thinkingPrefix = `thinking-codex-${prefix}`
-          if (claudeState) claudeState.thinkingPrefix = `thinking-live-${prefix}`
-        },
-        profile: (line) => profile.ingest(line),
-        fold: (line) => stream.push(line),
-        observe,
-      }, { fromStart: live, end: handover.hold?.offset })
-      if (handover.hold && (read.failed || handover.hold.expired)) {
-        return keepLiveNormalizer(read.failed ? 'could not read the transcript' : 'outlasted its hold on the tail')
-      }
-      profile.commit()
-      fromEnd = read
-      handover.next = read.next
-      historyTurnOpen = take(stream.finish())
-      console.log(`[agent] ${sid(session.agentId)} read the transcript from its end · turn @${read.turnFrom} · profile @${read.profileFrom} · ${read.end} bytes${handover.hold ? ' · took over its tail' : ''}`)
-    }
-    const lines = session.transcriptPath && !fromEnd ? await tailFile(session.transcriptPath, Infinity) : []
-    if (!fromEnd) {
-      if (observe) for (const line of lines) observe(line)
-      runtimeProfiles.hydrate(session, lines)
-    }
-    await runtimeProfiles.ingestConfig(session, true)
-    // From here to the release in `attachSession` nothing is awaited for a held tail, so the hold cannot
-    // expire between installing the new normalizer and handing it the tail.
-    if (handover.hold?.expired) return keepLiveNormalizer('outlasted its hold on the tail')
-    const fold = (ingest: (line: string) => LiveEvent[], turnOpenAfter: () => boolean): boolean =>
-      take(foldTranscript(ingest, lines, turnOpenAfter, { live: replayLive }))
-    if (codexNormalizer) {
-      // Hydrate state silently; never replay history live — except a turn left open, below.
-      if (!fromEnd) historyTurnOpen = fold((line) => codexNormalizer.ingest(line), () => codexNormalizer.turnOpen)
-      codexNormalizers.set(session.sessionId, codexNormalizer)
-    } else if (session.engine === 'cursor') {
-      const normalizer = new CursorNormalizer('live', session.sessionId)
-      historyTurnOpen = fold((line) => normalizer.ingest(line), () => normalizer.turnOpen)
-      cursorNormalizers.set(session.sessionId, normalizer)
-      const capture = await captureTerminal(session.agentId, 100)
-      if (capture) runtimeProfiles.ingestPane(session, capture, true)
-    } else if (session.engine === 'opencode') {
-      // OpenCode has no transcript file — poll its SQLite DB. The reader hydrates silently, then
-      // streams new activity into emitSessionEvents (the same funnel the file engines use).
-      const reader = new OpencodeReader({
-        dbPath: OPENCODE_DB,
-        sessionId: session.sessionId,
-        onEvents: (events) => emitSessionEvents(session.sessionId, events),
-        onFatal: (err) => console.warn(`[opencode] ${sid(session.sessionId)} ${err.message}`),
-      })
-      opencodeReaders.set(session.sessionId, reader)
-      await reader.start()
-      // The composer footer is the ONLY place OpenCode names its model and reasoning level, so
-      // without this a freshly opened agent showed empty chips until the five-minute reconcile came
-      // round — which is exactly how long it looked broken for.
-      const ocPane = await captureTerminal(session.agentId, 100)
-      if (ocPane) runtimeProfiles.ingestPane(session, ocPane, true)
-    } else if (session.engine === 'kilo') {
-      // Kilo is opencode's fork and keeps the same store shape, so it is polled the same way — but from
-      // its OWN db and through its own reader, so the two can diverge without one breaking the other.
-      const reader = new KiloReader({
-        dbPath: KILO_DB,
-        sessionId: session.sessionId,
-        onEvents: (events) => emitSessionEvents(session.sessionId, events),
-        onFatal: (err) => console.warn(`[kilo] ${sid(session.sessionId)} ${err.message}`),
-      })
-      kiloReaders.set(session.sessionId, reader)
-      await reader.start()
-    } else if (session.engine === 'muse') {
-      // Same JSONL tail as claude/pi; only the record shape differs.
-      const normalizer = new MuseNormalizer()
-      historyTurnOpen = fold((line) => normalizer.ingest(line), () => normalizer.turnOpen)
-      museNormalizers.set(session.sessionId, normalizer)
-    } else if (session.engine === 'amp') {
-      // A JSONL tail like claude/muse — except the file is written by the adapter's own Amp plugin,
-      // because Amp is the one engine that keeps no conversation on disk.
-      const normalizer = new AmpNormalizer()
-      historyTurnOpen = fold((line) => normalizer.ingest(line), () => normalizer.turnOpen)
-      ampNormalizers.set(session.sessionId, normalizer)
-    } else if (session.engine === 'grok') {
-      const normalizer = new GrokNormalizer()
-      historyTurnOpen = fold((line) => normalizer.ingest(line), () => normalizer.turnOpen)
-      grokNormalizers.set(session.sessionId, normalizer)
-      const capture = await captureTerminal(session.agentId, 60)
-      if (capture) runtimeProfiles.ingestPane(session, capture, true)
-    } else if (session.engine === 'agy') {
-      // A JSONL tail like claude/grok. agy announces its model only in the hook payload and its pane
-      // footer, so the pane is read once on attach to fill the chip before the first turn.
-      const normalizer = new AgyNormalizer()
-      historyTurnOpen = fold((line) => normalizer.ingest(line), () => normalizer.turnOpen)
-      agyNormalizers.set(session.sessionId, normalizer)
-      const capture = await captureTerminal(session.agentId, 60)
-      if (capture) runtimeProfiles.ingestPane(session, capture, true)
-      // agy's transcript has no end-of-turn record - only its Stop hook does - so a fold of a FINISHED
-      // conversation still reports the last turn as open, and after a daemon restart nothing is ever
-      // coming to close it. The pane is the one place the answer exists; ask it.
-      if (historyTurnOpen && capture && agyPaneIdle(capture)) {
-        normalizer.closeTurn()
-        historyTurnOpen = false
-      }
-    } else if (session.engine === 'copilot') {
-      // A JSONL tail like claude/agy. Its turn lifecycle comes from the agentStop hook, not the file —
-      // which is exactly why a fold cannot be trusted on its own: `copilot --resume` replays a finished
-      // conversation, the fold opens a turn on its last `user.message`, and no hook is coming to close
-      // it. Ask the records where the last activity actually ended.
-      const normalizer = new CopilotNormalizer()
-      historyTurnOpen = fold((line) => normalizer.ingest(line), () => normalizer.turnOpen)
-      copilotNormalizers.set(session.sessionId, normalizer)
-      if (historyTurnOpen && !copilotHistoryTurnOpen(lines)) {
-        normalizer.closeTurn()
-        historyTurnOpen = false
-      }
-    } else if (session.engine === 'pi') {
-      const normalizer = new PiNormalizer('live')
-      // Hydrate state silently; never replay history live — except a turn left open, below.
-      historyTurnOpen = fold((line) => normalizer.ingest(line), () => normalizer.turnOpen)
-      piNormalizers.set(session.sessionId, normalizer)
-    } else if (session.engine === 'hermes') {
-      // Hermes has no transcript file — poll its SQLite store, like opencode.
-      const reader = new HermesReader({
-        dbPath: await hermesDbForSession(session),
-        sessionId: session.sessionId,
-        onEvents: (events) => emitSessionEvents(session.sessionId, events),
-        onFatal: (err) => console.warn(`[hermes] ${sid(session.sessionId)} ${err.message}`),
-      })
-      hermesReaders.set(session.sessionId, reader)
-      await reader.start()
-    } else if (session.engine === 'devin') {
-      // Devin has no transcript file either — poll its SQLite store, like hermes/opencode.
-      const reader = new DevinReader({
-        dbPath: DEVIN_DB,
-        devinHome: env.DEVIN_HOME,
-        sessionId: session.sessionId,
-        onEvents: (events) => emitSessionEvents(session.sessionId, events),
-        // Devin has no StopFailure: a turn that dies on a provider error writes no assistant row and
-        // fires no Stop hook, so surface the failure and close the turn ourselves — otherwise the web
-        // sits on the typing indicator forever.
-        onTurnAborted: (message) => {
-          announceTurnAborted(session.sessionId, 'devin', message)
-          emitSessionEvents(session.sessionId, [{ type: 'turn_ended', payload: {} }])
-        },
-        onFatal: (err) => console.warn(`[devin] ${sid(session.sessionId)} ${err.message}`),
-      })
-      devinReaders.set(session.sessionId, reader)
-      await reader.start()
-      // Devin's model/effort exist ONLY in its pane footer, so read it now. Without this the chip stayed
-      // on Auto until the 5-minute reconcile happened to run — the attach itself said nothing about it.
-      const devinPane = await captureTerminal(session.agentId, 60)
-      if (devinPane) runtimeProfiles.ingestPane(session, devinPane, true)
-    } else if (session.engine === 'commandcode') {
-      const normalizer = new CommandCodeNormalizer('live')
-      // Hydrate state silently; never replay history live — except a turn left open, below.
-      historyTurnOpen = fold((line) => normalizer.ingest(line), () => normalizer.turnOpen)
-      commandcodeNormalizers.set(session.sessionId, normalizer)
-    } else {
-      const state = claudeState ?? newTurnState()
-      if (!fromEnd) historyTurnOpen = fold((line) => lineToEvents(line, state), () => state.turnOpen)
-      turnStates.set(session.sessionId, state)
-    }
-    if (session.transcriptPath) {
-      neverFoldedHistory.delete(session.sessionId)
-      // Deliberately NOT `fromStart`, even when the caller asked for it: this branch has just folded the
-      // file into the normalizer above, so replaying it from byte 0 emits every line a second time.
-      // Measured: a claude turn opened, closed after 44ms and opened again, because the fold replayed the
-      // open turn and the watcher then re-read the same bytes. `fromStart` belongs to the re-attach path,
-      // which folds nothing. A transcript read from its end hands the tail the exact byte it stopped at.
-      // A held tail is already this session's, and resumes from there when the hold is released.
-      if (!handover.hold || !watcher.tails(session.sessionId, session.transcriptPath)) {
-        await watcher.addSession({ ...session, transcriptPath: session.transcriptPath }, fromEnd ? { fromOffset: fromEnd.next } : {})
-      }
-    } else if (session.engine === 'cursor') {
-      await cursorDiscovery.add(session.sessionId)
-    } else {
-      // No transcript to fold: whatever this session writes later is its FIRST content, so the re-attach
-      // that brings the path must read the file whole rather than from its end.
-      neverFoldedHistory.add(session.sessionId)
-    }
-    // Marked on the FOLD, not on the emission. A live fold that happened to produce nothing — the file
-    // was still empty when this attach ran — would otherwise leave the session unmarked, and the next
-    // `reset` attach (claude fires `SessionStart` on compact, which resets) would fold the by-then
-    // complete transcript and emit it live on top of everything the watcher had already streamed. That
-    // is the same duplicate-turn class this whole change exists to remove.
-    // Any fold of a transcript with content counts too: the watcher now tails it from the end, so a later
-    // replay could only send history out again as if it were live.
-    if (replayLive || lines.length || fromEnd?.content) replayedFirstTurn.add(session.sessionId)
-    if (initialEvents.length) {
-      emitSessionEvents(session.sessionId, initialEvents)
-      console.log(`[agent] ${sid(session.agentId)} replayed the first turn its transcript already held · ${initialEvents.length} events`)
-    }
-    console.log(`[agent] ${sid(session.agentId)} attached · engine=${session.engine} · terminal=${primaryTerminalLabel(session)} · session=${sid(session.sessionId)} · lines=${fromEnd ? fromEnd.records : lines.length}`)
-    // A first prompt that lands while this attach is running is already in the transcript we just
-    // folded, so its turn_started was consumed as history and the live turn would end up untracked.
-    // Replay that one event, after the attach log, so the recovery is visible in order.
-    if (historyTurnOpen) {
-      const opened = historyEvents.findLast((event) => event.type === 'turn_started')
-      if (opened) {
-        console.log(`[agent] ${sid(session.agentId)} resumed the turn already open at attach`)
-        emitSessionEvents(session.sessionId, [opened], { resumed: true })
-      }
-    }
-    // Watch this pane for a question from ATTACH, not only from the next turn_started.
-    //
-    // A turn-scoped start assumes the agent exists before its turn does, and for some engines it does not:
-    // OpenCode registers itself when its FIRST message creates the session, i.e. the turn is already
-    // running by the time the daemon knows the agent — so its question opened and nothing announced it
-    // (measured: the dialog sat on the pane, the device saw nothing). Command Code has the mirror problem,
-    // asking AFTER the turn ends. The watcher is idempotent, no-ops without a device, and dies with the
-    // session, so starting it early costs nothing.
-    if (pollsQuestions(session.engine)) questionWatcher.start(session.sessionId)
-    return true
-  }
-
-  /** One attach per session, a few sessions at a time, and a record of what is being read — see lib/attachTracker. */
-  const attaches = new AttachTracker<AgentEngine>({
+  // Following a session: its history read into its engine's normalizer, then its tail
+  // (core/transcripts/attach.ts).
+  const attach = createAttach({
+    validateTerminal,
+    normalizers,
+    watcher,
+    cursorDiscovery,
+    device: () => autonomousDeviceService,
+    runtimeProfiles,
+    captureTerminal,
+    emit: (sessionId, events, opts) => emitSessionEvents(sessionId, events, opts),
+    announceTurnAborted,
+    // Built further down: read when an attach starts watching a pane, never now.
+    questionWatcher: { start: (sessionId) => questionWatcher.start(sessionId) },
+    terminalLabel: primaryTerminalLabel,
+    dbs: { opencode: OPENCODE_DB, kilo: KILO_DB, devin: DEVIN_DB },
+    devinHome: env.DEVIN_HOME,
+    hermesDb: (s) => hermesDbForSession(s),
     concurrency: ATTACH_CONCURRENCY,
-    onSlow: (session, elapsedMs) => console.warn(
-      `[agent] ${sid(session.agentId)} attach still running · engine=${session.engine} · session=${sid(session.sessionId)} · ${Math.round(elapsedMs / 1000)}s`,
-    ),
   })
-  const attachSession = (
-    session: RegisteredSession,
-    reset = false,
-    replayCursorFromStart = false,
-    replayFromStart = false,
-  ): Promise<boolean> =>
-    attaches.attach(session, reset, async () => {
-      // A tail an attach holds (a Claude Code or Codex reset, see attachSessionNow) is released only
-      // here, after the whole attach — the new normalizer installed and any open turn said to be open —
-      // so delivery resumes into it, in order. Released on every exit, however the attach ends.
-      const handover = { hold: null as TailHold | null, next: null as number | null }
-      try {
-        return await attachSessionNow(session, reset, replayCursorFromStart, replayFromStart, handover)
-      } finally {
-        handover.hold?.release(handover.next)
-      }
-    })
+  const attaches = attach.attaches
+  const attachSession = attach.attachSession
+  const neverFoldedHistory = attach.neverFoldedHistory
+  const replayedFirstTurn = attach.replayedFirstTurn
   // Everything the core writes into a pane, and the device's pane lock (core/input.ts).
   const inputs = createInput({
     resolve: (id) => registry.resolve(id),
@@ -2605,53 +2274,16 @@ async function runForeground(session: AuthSession | null): Promise<void> {
   const input = inputs.input
   const deviceInput = inputs.deviceInput
 
-  /**
-   * agy only: close a turn whose final `Stop` never came.
-   *
-   * agy reports `fullyIdle: false` when it pauses for sub-agents, and normally sends one more Stop with
-   * `fullyIdle: true` once they report — measured, and that is the path a healthy turn takes. But one
-   * measured run completed its sub-agents, wrote its summary, and sent nothing further; the turn stayed
-   * open with no recap. The pane is the only other place the answer exists (`? for shortcuts` idle vs
-   * `esc to cancel` busy), so a waiting Stop arms a bounded poll of it.
-   *
-   * Bounded on purpose: it stops after AGY_IDLE_WATCH_MAX checks (~10 min) rather than polling a pane
-   * forever, and any real Stop clears it first.
-   */
-  const AGY_IDLE_WATCH_MS = 15_000
-  const AGY_IDLE_WATCH_MAX = 40
-  const agyIdleWatch = new Map<string, { timer: NodeJS.Timeout; checks: number }>()
-
-  const clearAgyIdleWatch = (sessionId: string): void => {
-    const watch = agyIdleWatch.get(sessionId)
-    if (!watch) return
-    clearTimeout(watch.timer)
-    agyIdleWatch.delete(sessionId)
-  }
-
-  const armAgyIdleWatch = (sessionId: string): void => {
-    const checks = agyIdleWatch.get(sessionId)?.checks ?? 0
-    clearAgyIdleWatch(sessionId)
-    if (checks >= AGY_IDLE_WATCH_MAX) return
-    const timer = setTimeout(() => {
-      void (async () => {
-        agyIdleWatch.delete(sessionId)
-        const normalizer = agyNormalizers.get(sessionId)
-        if (!normalizer?.turnOpen) return
-        const entry = registry.bySession(sessionId)
-        if (!entry) return
-        const capture = await captureTerminal(entry.agentId, 60)
-        if (!capture || !agyPaneIdle(capture)) { armAgyIdleWatch(sessionId); return }
-        await watcher.pollSession(sessionId)
-        if (!normalizer.turnOpen) return
-        console.log(`[turn] ${sid(sessionId)} closed by the agy idle backstop · no final Stop arrived`)
-        emitSessionEvents(sessionId, normalizer.closeTurn())
-      })().catch((err) => {
-        console.error('[agy] idle backstop failed:', err instanceof Error ? err.message : err)
-      })
-    }, AGY_IDLE_WATCH_MS)
-    timer.unref?.()
-    agyIdleWatch.set(sessionId, { timer, checks: checks + 1 })
-  }
+  // agy's turn closed from its pane when its final Stop never comes (core/turns/agyBackstop.ts).
+  const agyBackstop = createAgyBackstop({
+    agyNormalizers,
+    bySession: (sessionId) => registry.bySession(sessionId),
+    captureTerminal,
+    drain: (sessionId) => watcher.pollSession(sessionId),
+    emit: (sessionId, events) => emitSessionEvents(sessionId, events),
+  })
+  const clearAgyIdleWatch = agyBackstop.clearAgyIdleWatch
+  const armAgyIdleWatch = agyBackstop.armAgyIdleWatch
 
   const acquireTerminalControl = inputs.acquireTerminalControl
   // Questions an agent asks the person: shown on the dial and the window, answered from anywhere
@@ -3556,6 +3188,20 @@ async function runForeground(session: AuthSession | null): Promise<void> {
   }
 
 
+  const turnHooks = createTurnHooks({
+    resolve: (id) => registry.resolve(id),
+    normalizers,
+    emit: (sessionId, events) => emitSessionEvents(sessionId, events),
+    drain: (sessionId) => watcher.pollSession(sessionId),
+    onCursorTaskStart,
+    cursorTaskHooks,
+    cursorSubagents,
+    announceTurnAborted,
+    armAgyIdleWatch,
+    clearAgyIdleWatch,
+    mirror,
+    dataDir: env.ADAPTER_DATA_DIR,
+  })
   const { server: hookServer, port: hookPort, localSocket } = await startHookServer(daemonPort(), {
     onCommandBar: commandBarService,
     onAutonomousDeviceRequest: async (method, target, body) => {
@@ -3643,176 +3289,10 @@ async function runForeground(session: AuthSession | null): Promise<void> {
     onRegistered: handleRegistered,
     onPromptSubmitted: (id, text) => backend.swarmPromptScopes.started(id, text, 'hook', registry.byAgent(id)?.engine),
     onSessionEnd,
-    // Command Code's PreToolUse — the one live "a turn is running" signal this engine has. Without it the
-    // adapter only learned of a turn from Stop, and emitted turn_started+turn_ended in the same
-    // millisecond, so the device tile jumped from idle straight to the recap with no working state.
-    onTurnStart: ({ sessionId }) => {
-      const session = registry.resolve(sessionId)
-      if (!session || session.engine !== 'commandcode') return
-      const normalizer = commandcodeNormalizers.get(sessionId)
-      if (!normalizer) return
-      emitSessionEvents(sessionId, normalizer.openTurn())   // no-op after the turn's first tool call
-    },
-    onToolStart: ({ sessionId, toolUseId, toolName, input: toolInput }) => {
-      if (toolName === 'Task') onCursorTaskStart(sessionId, toolUseId, toolInput)
-    },
-    onTurnStop: ({ sessionId, status }) => {
-      const session = registry.resolve(sessionId)
-      if (!session) return
-      if (session.engine === 'cursor') {
-        void (async () => {
-          await cursorTaskHooks.wait(sessionId)
-          await watcher.pollSession(sessionId)
-          const normalizer = cursorNormalizers.get(sessionId)
-          if (!normalizer) return
-          cursorSubagents.closeParent(sessionId, status === 'error')
-          const closing = normalizer.closeTurn()
-          emitSessionEvents(sessionId, closing)
-          // Cursor can fail a turn BEFORE it writes anything to the transcript — observed as a Stop hook
-          // with status=error 2.4s after beforeSubmitPrompt, with no transcript file discovered and no
-          // rows to read. The normalizer never opened a turn, so closeTurn() returns nothing, so nothing
-          // reaches the device: the tile just sits on the previous recap forever while the user waits.
-          //
-          // Every other engine already routes its failures through announceTurnAborted (codex, devin,
-          // commandcode); cursor was the one that stayed silent. Announce only when the close produced no
-          // events — if there WAS output, the `done` event above already tells the device the turn ended.
-          if (status === 'error' && closing.length === 0) {
-            announceTurnAborted(sessionId, 'cursor', 'Cursor ended the turn with an error before producing any output')
-          }
-          setTimeout(() => void removeCursorPendingTasks(env.ADAPTER_DATA_DIR, sessionId), 2_500)
-        })().catch((err) => {
-          console.error('[cursor] stop hook failed:', err instanceof Error ? err.message : err)
-        })
-        return
-      }
-      // claude: authoritative turn-close from the Stop/StopFailure hook. Drain any un-read JSONL FIRST
-      // (may emit the real turn_ended → st.turnOpen already false); only force-close if still open. A
-      // later real end_turn line is then a no-op (lineToEvents guards on state.turnOpen). This closes
-      // the B1/B2 cases (max_tokens/refusal/API-error/wedged tool) the JSONL parse would otherwise miss.
-      // Command Code has no UserPromptSubmit and commits records per turn, so Stop is its authoritative
-      // close: drain the transcript first (the natural close usually wins), then force-close what's left.
-      if (session.engine === 'commandcode') {
-        void (async () => {
-          await watcher.pollSession(sessionId)
-          const normalizer = commandcodeNormalizers.get(sessionId)
-          if (!normalizer?.turnOpen) return
-          await new Promise((r) => setTimeout(r, STOP_HOOK_GRACE_MS))
-          await watcher.pollSession(sessionId)
-          if (!normalizer.turnOpen) return
-          normalizer.closeTurn()
-          console.log(`[turn] ${sid(sessionId)} force-closed by Stop hook (after grace)`)
-          emitSessionEvents(sessionId, [{ type: 'turn_ended', payload: {} }])
-        })().catch((err) => {
-          console.error('[hooks] commandcode stop hook failed:', err instanceof Error ? err.message : err)
-        })
-        return
-      }
-      // Devin: same deal, except the un-read history is in SQLite rather than a file, so the drain is the
-      // reader's own poll. Its rows only land once the model round-trip commits, so the grace matters.
-      if (session.engine === 'devin') {
-        void (async () => {
-          const reader = devinReaders.get(sessionId)
-          if (!reader?.turnOpen) return
-          await new Promise((r) => setTimeout(r, STOP_HOOK_GRACE_MS))
-          if (!reader.turnOpen) return
-          reader.closeTurn()
-          console.log(`[turn] ${sid(sessionId)} force-closed by Stop hook (after grace)`)
-          emitSessionEvents(sessionId, [{ type: 'turn_ended', payload: {} }])
-        })().catch((err) => {
-          console.error('[hooks] devin stop hook failed:', err instanceof Error ? err.message : err)
-        })
-        return
-      }
-      // Copilot's agentStop hook is the turn boundary: its own `assistant.turn_end` records mark model
-      // round-trips, several per exchange. Drain first so the closing text is on the wire, then close.
-      if (session.engine === 'copilot') {
-        void (async () => {
-          await watcher.pollSession(sessionId)
-          const normalizer = copilotNormalizers.get(sessionId)
-          if (!normalizer?.turnOpen) return
-          await new Promise((r) => setTimeout(r, STOP_HOOK_GRACE_MS))
-          await watcher.pollSession(sessionId)
-          if (!normalizer.turnOpen) return
-          if (status === 'error') {
-            announceTurnAborted(sessionId, 'copilot', 'Copilot ended the turn early')
-            emitSessionEvents(sessionId, normalizer.abortTurn())
-            return
-          }
-          console.log(`[turn] ${sid(sessionId)} closed by copilot agentStop hook (after grace)`)
-          emitSessionEvents(sessionId, normalizer.closeTurn())
-        })().catch((err) => {
-          console.error('[hooks] copilot stop hook failed:', err instanceof Error ? err.message : err)
-        })
-        return
-      }
-      // agy's Stop hook is the ONLY turn boundary it has. Nothing in the transcript says a turn ended:
-      // a backgrounded step is written `status: RUNNING` and, the file being append-only, stays that way
-      // forever. Drain first so the closing prose is on the wire before turn_ended, then force-close.
-      if (session.engine === 'agy') {
-        // `waiting` = agy's loop stopped only because it is standing by for its sub-agents. The turn is
-        // NOT over, so nothing closes here — but the run that proved this necessary also finished its
-        // sub-agents and then never sent another Stop, so a backstop watches the pane instead.
-        if (status === 'waiting') {
-          armAgyIdleWatch(sessionId)
-          return
-        }
-        clearAgyIdleWatch(sessionId)
-        void (async () => {
-          await watcher.pollSession(sessionId)
-          const normalizer = agyNormalizers.get(sessionId)
-          if (!normalizer?.turnOpen) return
-          await new Promise((r) => setTimeout(r, STOP_HOOK_GRACE_MS))
-          await watcher.pollSession(sessionId)
-          if (!normalizer.turnOpen) return
-          if (status === 'error') {
-            announceTurnAborted(sessionId, 'agy', 'agy ended the turn early')
-            emitSessionEvents(sessionId, normalizer.abortTurn())
-            return
-          }
-          console.log(`[turn] ${sid(sessionId)} closed by agy Stop hook (after grace)`)
-          emitSessionEvents(sessionId, normalizer.closeTurn())
-        })().catch((err) => {
-          console.error('[hooks] agy stop hook failed:', err instanceof Error ? err.message : err)
-        })
-        return
-      }
-      if (session.engine === 'grok') {
-        void (async () => {
-          await watcher.pollSession(sessionId)
-          const normalizer = grokNormalizers.get(sessionId)
-          if (status === 'error') {
-            announceTurnAborted(sessionId, 'grok', 'Grok ended the turn with an error')
-            emitSessionEvents(sessionId, normalizer?.abortTurn() ?? [])
-          }
-        })().catch((err) => {
-          console.error('[hooks] grok StopFailure hook failed:', err instanceof Error ? err.message : err)
-        })
-        return
-      }
-      if (session.engine !== 'claude') return
-      void (async () => {
-        await watcher.pollSession(sessionId)
-        // A Stop hook is the one precise "the engine stopped writing" signal we get. When the mirror is
-        // HOLDING a turn-end for finished async sub-agents, this is what tells it the wrap-up message is
-        // on disk — without it the recap fires on its settle timer and can beat claude's closing summary
-        // to the punch (measured: recap at 10:18:41, wrap-up written at 10:18:44).
-        mirror.noteEngineStopped(sessionId)
-        if (!turnStates.get(sessionId)?.turnOpen) return // natural JSONL close already won → nothing to do
-        // Still open: the transcript may just be lagging the Stop hook. Wait, re-poll, and only force-close
-        // if it STILL hasn't closed — a genuinely wedged turn, whose assistant text is on disk by now.
-        await new Promise((r) => setTimeout(r, STOP_HOOK_GRACE_MS))
-        await watcher.pollSession(sessionId)
-        const st = turnStates.get(sessionId)
-        if (st?.turnOpen) {
-          st.turnOpen = false
-          st.pendingTools.clear()
-          console.log(`[turn] ${sid(sessionId)} force-closed by ${status === 'error' ? 'StopFailure' : 'Stop'} hook (after grace)`)
-          emitSessionEvents(sessionId, [{ type: 'turn_ended', payload: {} }])
-        }
-      })().catch((err) => {
-        console.error('[hooks] claude stop hook failed:', err instanceof Error ? err.message : err)
-      })
-    },
+    // What the engines' own hooks say about a turn (core/turns/turnHooks.ts).
+    onTurnStart: turnHooks.onTurnStart,
+    onToolStart: turnHooks.onToolStart,
+    onTurnStop: turnHooks.onTurnStop,
     // `harness pair <code>` → run CPace toward the waiting browser; map the result to an HTTP outcome.
     onPair: async (code) => {
       const r = await backend.pair(code)
@@ -4452,116 +3932,19 @@ async function runForeground(session: AuthSession | null): Promise<void> {
   backend.setDashboardPort(hookPort) // surfaced to the web (e2e_status) so it can link here to approve
   console.log(`[cli] local dashboard → http://127.0.0.1:${hookPort}`)
 
-  // JSONL watcher → normalize each appended line → stream up. ONE lineToEvents pass feeds BOTH
-  // audiences: web (send, ServerEvents) and device (mirror.ingest → curated commander_event cards).
-  /** One transcript line through its engine's normalizer. The events, not yet emitted — the two
-   *  callers below differ only in what they know about the line's age. */
-  const ingestLine = (evt: LineEvent): ReturnType<CursorNormalizer['ingest']> | null => {
-    if (!registry.has(evt.sessionId)) return null // scope to terminal-registered sessions
-    const session = registry.bySession(evt.sessionId)
-    if (!session || session.engine !== evt.engine) return null
-    agentTokenUsage.changed(session)
-    if (autonomousDeviceService?.needsTranscript(session.agentId, evt.sessionId, session.engine)) {
-      autonomousDeviceService.observeTranscript(session.agentId, evt.sessionId, session.engine, evt.text)
-    }
-    runtimeProfiles.ingest(session, evt.text)
-    let events
-    if (session.engine === 'codex') {
-      let normalizer = codexNormalizers.get(evt.sessionId)
-      if (!normalizer) { normalizer = new CodexNormalizer('live', codexSubagentResolverFor(session.codexHome)); codexNormalizers.set(evt.sessionId, normalizer) }
-      events = normalizer.ingest(evt.text)
-      // Codex rides its failure ON task_complete, so the turn closes by itself — but with no text and
-      // no reason, which reads as "the agent answered nothing". Announce the reason ahead of the
-      // turn_ended that `events` carries.
-      const taskError = codexTaskError(evt.text)
-      if (taskError !== null) announceTurnAborted(evt.sessionId, 'codex', taskError)
-    } else if (session.engine === 'cursor') {
-      let normalizer = cursorNormalizers.get(evt.sessionId)
-      if (!normalizer) {
-        normalizer = new CursorNormalizer('live', evt.sessionId)
-        cursorNormalizers.set(evt.sessionId, normalizer)
-      }
-      events = normalizer.ingest(evt.text)
-    } else if (session.engine === 'muse') {
-      let normalizer = museNormalizers.get(evt.sessionId)
-      if (!normalizer) { normalizer = new MuseNormalizer(); museNormalizers.set(evt.sessionId, normalizer) }
-      events = normalizer.ingest(evt.text)
-    } else if (session.engine === 'amp') {
-      let normalizer = ampNormalizers.get(evt.sessionId)
-      if (!normalizer) { normalizer = new AmpNormalizer(); ampNormalizers.set(evt.sessionId, normalizer) }
-      events = normalizer.ingest(evt.text)
-    } else if (session.engine === 'grok') {
-      let normalizer = grokNormalizers.get(evt.sessionId)
-      if (!normalizer) { normalizer = new GrokNormalizer(); grokNormalizers.set(evt.sessionId, normalizer) }
-      events = normalizer.ingest(evt.text)
-    } else if (session.engine === 'agy') {
-      let normalizer = agyNormalizers.get(evt.sessionId)
-      if (!normalizer) { normalizer = new AgyNormalizer(); agyNormalizers.set(evt.sessionId, normalizer) }
-      events = normalizer.ingest(evt.text)
-    } else if (session.engine === 'copilot') {
-      let normalizer = copilotNormalizers.get(evt.sessionId)
-      if (!normalizer) { normalizer = new CopilotNormalizer(); copilotNormalizers.set(evt.sessionId, normalizer) }
-      events = normalizer.ingest(evt.text)
-    } else if (session.engine === 'pi') {
-      let normalizer = piNormalizers.get(evt.sessionId)
-      if (!normalizer) { normalizer = new PiNormalizer('live'); piNormalizers.set(evt.sessionId, normalizer) }
-      events = normalizer.ingest(evt.text)
-    } else if (session.engine === 'commandcode') {
-      let normalizer = commandcodeNormalizers.get(evt.sessionId)
-      if (!normalizer) { normalizer = new CommandCodeNormalizer('live'); commandcodeNormalizers.set(evt.sessionId, normalizer) }
-      events = normalizer.ingest(evt.text)
-      // Command Code fires no Stop hook for a failed turn: this record IS the notification. `ingest`
-      // already closed the turn (its turn_ended is in `events`, emitted just below) — announce the
-      // reason first so the web/device show the error ahead of the turn closing.
-      const runError = commandCodeRunError(evt.text)
-      if (runError !== null) {
-        announceTurnAborted(evt.sessionId, 'commandcode', runError, commandCodeRunErrorSummary(runError))
-      }
-    } else {
-      let st = turnStates.get(evt.sessionId)
-      if (!st) { st = newTurnState(); turnStates.set(evt.sessionId, st) }
-      events = lineToEvents(evt.text, st)
-    }
-    return events
-    return events
-  }
-  watcher.on('line', (evt: LineEvent) => {
-    // This runs from a void-discarded async read, so a throw here would be an unhandledRejection. A
-    // single malformed line must never take the daemon down — contain it per line and move on.
-    try {
-      const events = ingestLine(evt)
-      if (events) emitSessionEvents(evt.sessionId, events)
-    } catch (err) {
-      console.error(`[cli] line handler error (session ${evt.sessionId}):`, err instanceof Error ? err.message : err)
-    }
+  // Each transcript line, through its engine's normalizer, into the funnel (core/transcripts/ingest.ts).
+  const ingest = createIngest({
+    has: (sessionId) => registry.has(sessionId),
+    bySession: (sessionId) => registry.bySession(sessionId),
+    tokenUsage: agentTokenUsage,
+    device: () => autonomousDeviceService,
+    runtimeProfiles,
+    normalizers,
+    announceTurnAborted,
+    emit: (sessionId, events, opts) => emitSessionEvents(sessionId, events, opts),
+    attachSession: (session, reset) => attachSession(session, reset),
   })
-  // A transcript catch-up is history, including an unfinished last turn.
-  // Its content still streams, but only fresh events or live inspection can
-  // establish Working; replay cannot create a new completion notification.
-  // A transcript rewritten in place with too much history to replay: its tail already starts at the new
-  // end, and the session is attached again, from that end, so its turn state is rebuilt from the file.
-  watcher.on('rewritten', (event: RewrittenEvent) => {
-    const session = registry.bySession(event.sessionId)
-    if (!session || session.transcriptPath !== event.transcriptPath) return
-    console.log(`[watcher] ${sid(event.sessionId)} transcript rewritten in place — attaching it again from its end`)
-    void attachSession(session, true).catch((err) => console.error(`[cli] re-attach after rewrite failed (session ${sid(event.sessionId)}):`, err instanceof Error ? err.message : err))
-  })
-  watcher.on('history', (batch: HistoryEvent) => {
-    try {
-      type Events = ReturnType<CursorNormalizer['ingest']>
-      const all: Events = []
-      for (const evt of batch.lines) {
-        const events = ingestLine(evt)
-        if (events) all.push(...events)
-      }
-      if (!all.length) return
-      // Every line in this batch was already on disk. An unclosed last turn
-      // is not a fresh prompt; live runtime inspection can establish activity.
-      emitSessionEvents(batch.sessionId, all, { replay: true })
-    } catch (err) {
-      console.error(`[cli] history handler error (session ${batch.sessionId}):`, err instanceof Error ? err.message : err)
-    }
-  })
+  ingest.wireWatcher(watcher)
   // Nothing re-attaches the registry's agents here. Every one of them is dormant from the moment the
   // registry loads (see the `setActive(false)` transaction at the top of this function), and the first
   // reconcile pass is what reactivates each one it finds a live process for — and attaches it, in the
