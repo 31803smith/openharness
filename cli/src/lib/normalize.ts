@@ -755,6 +755,9 @@ export interface TurnState {
   /** tool_use ids started but not yet resolved by a tool_result. */
   pendingTools: Set<string>
   thinkingCounter: number
+  /** Before the counter in a live thinking id. A fold that starts mid-transcript names its window here
+   *  (lib/attachTranscript.ts), so its ids cannot repeat ones another fold of the same session sent. */
+  thinkingPrefix?: string
 }
 
 export function newTurnState(): TurnState {
@@ -788,6 +791,37 @@ export function foldTranscript(
     history: opts.live ? [] : folded,
     live: opts.live ? folded : [],
     turnOpen: !opts.live && turnOpenAfter(),
+  }
+}
+
+/**
+ * `foldTranscript` one record at a time, for a transcript streamed in rather than loaded
+ * (lib/attachTranscript.ts). History keeps only its last `turn_started` — the one event an attach ever
+ * replays from it — so folding a long turn holds nothing but that.
+ */
+export class TranscriptFold {
+  private lastStarted: LiveEvent | null = null
+  private readonly folded: LiveEvent[] = []
+
+  constructor(
+    private readonly ingest: (line: string) => LiveEvent[],
+    private readonly turnOpenAfter: () => boolean,
+    private readonly live: boolean,
+  ) {}
+
+  push(line: string): void {
+    for (const event of this.ingest(line)) {
+      if (this.live) this.folded.push(event)
+      else if (event.type === 'turn_started') this.lastStarted = event
+    }
+  }
+
+  finish(): { history: LiveEvent[]; live: LiveEvent[]; turnOpen: boolean } {
+    return {
+      history: this.lastStarted ? [this.lastStarted] : [],
+      live: this.folded,
+      turnOpen: !this.live && this.turnOpenAfter(),
+    }
   }
 }
 
@@ -855,7 +889,7 @@ export function lineToEvents(rawLine: string, state: TurnState): LiveEvent[] {
 
   // assistant
   const before = events.length
-  events.push(...assistantEvents(msg, state.toolIdToName, 'thinking-live-', state.thinkingCounter))
+  events.push(...assistantEvents(msg, state.toolIdToName, state.thinkingPrefix ?? 'thinking-live-', state.thinkingCounter))
   state.thinkingCounter += events.slice(before).filter((e) => e.type === 'thinking_delta').length
   for (const e of events) {
     if (e.type === 'tool_start') state.pendingTools.add(e.payload.id)
@@ -867,4 +901,56 @@ export function lineToEvents(rawLine: string, state: TurnState): LiveEvent[] {
     events.push({ type: 'turn_ended', payload: {} })
   }
   return events
+}
+
+function parseRecord(rawLine: string): Record<string, unknown> | null {
+  if (!rawLine.trim()) return null
+  try {
+    const raw = JSON.parse(rawLine) as unknown
+    return raw && typeof raw === 'object' ? raw as Record<string, unknown> : null
+  } catch { return null }
+}
+
+/**
+ * The record `lineToEvents` opens a turn on — a real user prompt — decided from the record alone, as
+ * `lineToEvents` decides it whatever came before. Attaching reads a transcript backward to the last
+ * one of these and folds only from there (lib/attachTranscript.ts): every turn-scoped piece of
+ * `TurnState` is reset by it, so the fold from here ends exactly where the whole-history fold does.
+ */
+export function startsClaudeTurn(rawLine: string): boolean {
+  const raw = parseRecord(rawLine)
+  if (!raw || compactEventFromRaw(raw) || taskNotificationEvent(raw)) return false
+  const msg = transformLine(raw)
+  if (!msg?.message || msg.type !== 'user' || isInterruptLine(msg)) return false
+  return realUserText(msg) !== null
+}
+
+/**
+ * The tool calls a Claude record makes (`defines`) and the earlier calls whose results it carries
+ * (`references`), decided along `lineToEvents`' own branches. A result names its tool from the call
+ * `lineToEvents` saw earlier, so an attach that starts mid-transcript reaches back for the calls its
+ * turn's results answer (lib/attachTranscript.ts).
+ */
+export function claudeToolLinks(rawLine: string): { defines: string[]; references: string[] } {
+  const raw = parseRecord(rawLine)
+  if (!raw || compactEventFromRaw(raw) || taskNotificationEvent(raw)) return { defines: [], references: [] }
+  const msg = transformLine(raw)
+  if (!msg?.message) return { defines: [], references: [] }
+  if (msg.type === 'assistant') {
+    return { defines: msg.message.content.filter((block) => block.type === 'tool_use').map((block) => block.id || ''), references: [] }
+  }
+  if (isInterruptLine(msg) || realUserText(msg) !== null) return { defines: [], references: [] }
+  return { defines: [], references: msg.message.content.filter((block) => block.type === 'tool_result').map((block) => block.tool_use_id || '') }
+}
+
+/** `tailFileUntil` selector for `lastTurnTextFromRawLines`: stop on the prompt it resets on, keep the
+ *  assistant records it reads after that, and drop everything else it ignores — so a recap reads the
+ *  last turn's text instead of the whole conversation. */
+export function selectClaudeRecapLine(line: string): 'keep' | 'skip' | 'stop' {
+  const raw = parseRecord(line)
+  if (!raw || compactEventFromRaw(raw) !== undefined) return 'skip'
+  const msg = transformLine(raw)
+  if (!msg?.message) return 'skip'
+  if (realUserText(msg) !== null) return 'stop'
+  return msg.type === 'assistant' ? 'keep' : 'skip'
 }
