@@ -74,7 +74,7 @@ import { ensureHarnessGrid, type EnsureStatus } from './lib/gridEnsure.js'
 import { passThroughToGridLogout } from './lib/gridLogout.js'
 import { warnIfGridSignInRemains } from './lib/gridCredentials.js'
 import { observeMachineList } from './lib/gridModels.js'
-import { managedGridPath } from './lib/gridExec.js'
+import { gridExec, managedGridPath } from './lib/gridExec.js'
 import { ENGINE_CLI_COMMANDS, ENGINES, PROCESS_ENGINES, enginePathOverride } from './lib/engineBin.js'
 import { isTerminalEngine } from './engines/types.js'
 import { engineInstallRecipe } from './lib/engineInstall.js'
@@ -375,6 +375,8 @@ Grid (the fleet of AI engines the \`grid\` CLI serves — needs \`grid\` on PATH
   harness grid logout [flags]  sign out of your grid — the whole of \`grid logout\`, which stops what
                                this box is serving BEFORE deleting anything. Flags go straight to it:
                                --force signs out over a serve child it could not confirm stopped
+  harness grid env <grid>      print <grid>'s relay address and key as shell exports, for
+                               eval "$(harness grid env <grid>)" — through the harness's own \`grid\`
 
 ${dshUsage()}
 
@@ -1182,6 +1184,27 @@ async function gridLogoutCommand(args: string[]): Promise<void> {
   // `grid` as a clean sign-out.
   if (outcome.ran === false) console.error(`\n  ✗ ${outcome.message}\n`)
   process.exitCode = outcome.exitCode
+}
+
+/**
+ * `harness grid env <grid>` — `grid --remote info <grid> --env` through the harness's own `grid`, so a
+ * shell can `eval` a grid's relay address and key with no `grid` of its own on PATH, or an older one
+ * that refuses a resting grid. The Models view's Jev pane builds its copy-paste request on it.
+ *
+ * A passthrough like `grid logout`: the exports, the refusals and the exit code are `grid`'s. The key
+ * goes to this process's stdout only — the explicit disclosure `info --env` exists for — never a log.
+ */
+async function gridEnvCommand(grid: string | undefined): Promise<void> {
+  if (!grid?.trim() || grid.startsWith('-')) {
+    console.error('Usage: harness grid env <grid>')
+    process.exitCode = 2
+    return
+  }
+  const result = await gridExec(['--remote', 'info', grid, '--env'])
+  if (result.stdout) process.stdout.write(result.stdout)
+  if (result.stderr) process.stderr.write(result.stderr)
+  if (result.code === 'GRID_CLI_MISSING') console.error(`\n  ✗ ${result.message}\n`)
+  process.exitCode = result.exitCode
 }
 
 /**
@@ -5597,6 +5620,7 @@ switch (cmd) {
     // token goes: filtering by value instead would eat an option's *value* the day `grid logout`
     // takes one, forwarding the flag with nothing behind it.
     else if (args[0] === 'logout') gridLogoutCommand(withoutFirst(rest, 'logout')).catch(onError)
+    else if (args[0] === 'env') gridEnvCommand(args[1]).catch(onError)
     else { console.error(`Unknown command: grid ${args[0] ?? ''}`); usage(1) }
     break
   case 'dsh':
