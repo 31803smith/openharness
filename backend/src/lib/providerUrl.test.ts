@@ -46,7 +46,6 @@ describe('isBlockedAddress', () => {
   })
 })
 
-
 describe('providerFetch DNS callback', () => {
   // Select the all-address overload used by the guarded connection lookup.
   const lookupAll: (hostname: string, options: LookupAllOptions) => Promise<LookupAddress[]> = dnsLookup
