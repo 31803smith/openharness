@@ -15,6 +15,7 @@ import '../core/dsh_catalog.dart' show DshEntry;
 import '../core/models.dart' show Agent, kUntitledPane;
 import '../clipboard/native_clipboard.dart';
 import '../shared/theme/app_theme.dart' as grid;
+import '../shared/theme/appearance_prefs_store.dart';
 // `hide TerminalKey`: this file's own shortcut-label class, unused here, collides with xterm's
 // `TerminalKey` (needed for the local image-drop Ctrl+V nudge — see `_dropImage`).
 import '../shortcuts/app_shortcuts.dart' hide TerminalKey;
@@ -57,6 +58,7 @@ class PaneGrid extends StatelessWidget {
     this.onSplitPane,
     this.soloFocused = false,
     this.companionViewer,
+    this.companionConversation,
     this.devicesViewer,
     this.devicesConversation,
   });
@@ -75,6 +77,7 @@ class PaneGrid extends StatelessWidget {
 
   /// The built-in companion DSH viewer; its agent uses the ordinary terminal.
   final WidgetBuilder? companionViewer;
+  final WidgetBuilder? companionConversation;
   final WidgetBuilder? devicesViewer;
   final WidgetBuilder? devicesConversation;
 
@@ -93,6 +96,7 @@ class PaneGrid extends StatelessWidget {
             onSplitPane: onSplitPane,
             soloFocused: soloFocused,
             companionViewer: companionViewer,
+            companionConversation: companionConversation,
             devicesViewer: devicesViewer,
             devicesConversation: devicesConversation,
           );
@@ -112,6 +116,7 @@ class PaneGrid extends StatelessWidget {
           onOpenModels: onOpenModels,
           onSplitPane: onSplitPane,
           companionViewer: companionViewer,
+          companionConversation: companionConversation,
           devicesViewer: devicesViewer,
           devicesConversation: devicesConversation,
         );
@@ -264,6 +269,7 @@ class _SwarmCanvas extends StatefulWidget {
     this.onSplitPane,
     this.soloFocused = false,
     this.companionViewer,
+    this.companionConversation,
     this.devicesViewer,
     this.devicesConversation,
   });
@@ -275,6 +281,7 @@ class _SwarmCanvas extends StatefulWidget {
   final void Function(int paneId, PaneResizeAxis axis)? onSplitPane;
   final bool soloFocused;
   final WidgetBuilder? companionViewer;
+  final WidgetBuilder? companionConversation;
   final WidgetBuilder? devicesViewer;
   final WidgetBuilder? devicesConversation;
   @override
@@ -517,6 +524,15 @@ class _SwarmCanvasState extends State<_SwarmCanvas> {
     );
   }
 
+  /// How [count] panes of the active tab are laid out in [viewport].
+  _SwarmGeometry _geometry(int count, Size viewport) => _SwarmGeometry(
+    count: count,
+    viewport: viewport,
+    preset: widget.notifier.presetFor(count),
+    minimum: _MinTile.of(),
+    sizes: widget.notifier.activeSwarm.paneSizes,
+  );
+
   @override
   Widget build(BuildContext context) {
     TerminalFontScope.watch(context);
@@ -533,20 +549,21 @@ class _SwarmCanvasState extends State<_SwarmCanvas> {
           for (final pane in app.panes)
             if (_shownZoom == null || pane.id == _shownZoom) pane,
         ];
-        final layout = _SwarmGeometry(
-          count: visible.length,
-          viewport: constraints.biggest,
-          preset: app.presetFor(visible.length),
-          minimum: _MinTile.of(),
-          sizes: app.activeSwarm.paneSizes,
-        );
-        if (_shownZoom == null) {
-          app.activeSwarm.arranged = layout.arrangement;
-          app.activeSwarm.arrangedKey = layout.key;
+        final layout = _geometry(visible.length, constraints.biggest);
+        // Solo draws one pane of a desk that is still there: the desk is what
+        // gets recorded, so a split made on a phone has something to divide.
+        final desk = _shownZoom == null
+            ? layout
+            : widget.soloFocused && app.zoomedPaneId == null
+            ? _geometry(app.panes.length, constraints.biggest)
+            : null;
+        if (desk != null) {
+          app.activeSwarm.arranged = desk.arrangement;
+          app.activeSwarm.arrangedKey = desk.key;
           final minimum = _MinTile.of();
           app.activeSwarm.arrangedMinimum = Size(
-            (minimum.width + kPaneGap) / (layout.width + kPaneGap),
-            (minimum.height + kPaneGap) / (layout.height + kPaneGap),
+            (minimum.width + kPaneGap) / (desk.width + kPaneGap),
+            (minimum.height + kPaneGap) / (desk.height + kPaneGap),
           );
         }
         if (layout.columns != null) app.gridColumns = layout.columns;
@@ -620,6 +637,8 @@ class _SwarmCanvasState extends State<_SwarmCanvas> {
                                     onSplitPane: widget.onSplitPane,
                                     solo: widget.soloFocused,
                                     companionViewer: widget.companionViewer,
+                                    companionConversation:
+                                        widget.companionConversation,
                                     devicesViewer: widget.devicesViewer,
                                     devicesConversation:
                                         widget.devicesConversation,
@@ -1224,6 +1243,7 @@ class _PaneCell extends StatelessWidget {
     this.onSplitPane,
     this.solo = false,
     this.companionViewer,
+    this.companionConversation,
     this.devicesViewer,
     this.devicesConversation,
   });
@@ -1237,6 +1257,7 @@ class _PaneCell extends StatelessWidget {
   onOpenModels;
   final void Function(int paneId, PaneResizeAxis axis)? onSplitPane;
   final WidgetBuilder? companionViewer;
+  final WidgetBuilder? companionConversation;
   final WidgetBuilder? devicesViewer;
   final WidgetBuilder? devicesConversation;
 
@@ -1251,22 +1272,28 @@ class _PaneCell extends StatelessWidget {
   Widget build(BuildContext context) {
     TerminalFontScope.watch(context);
     return RepaintBoundary(
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          if (visible) pane.lastViewSize = constraints.biggest;
-          return _build(context);
-        },
+      child: ValueListenableBuilder<AppearancePrefs>(
+        valueListenable: appearancePrefsStore,
+        builder: (context, prefs, _) => LayoutBuilder(
+          builder: (context, constraints) {
+            if (visible) pane.lastViewSize = constraints.biggest;
+            return _build(context, prefs);
+          },
+        ),
       ),
     );
   }
 
-  Widget _build(BuildContext context) {
+  Widget _build(BuildContext context, AppearancePrefs prefs) {
     grid.AppTheme.watch(context);
     final focused = visible && notifier.isPaneFocused(pane.id);
     final remote = notifier.stateOf(pane.machineId)?.isLocalMachine == false;
     // Keep the selected harness's terminal and viewers clear, including while
     // a menu owns input. This changes paint, never the keyboard's destination.
-    final dimmed = !_single && !notifier.isPaneEmphasized(pane);
+    final dimmed =
+        prefs.shadeInactivePanes &&
+        !_single &&
+        !notifier.isPaneEmphasized(pane);
     final agentId = pane.agentId;
     final blocked =
         agentId != null &&
@@ -1385,6 +1412,14 @@ class _PaneCell extends StatelessWidget {
                                       tab.isDevices && tab.panes.contains(pane),
                                 )
                           ? devicesConversation!(context)
+                          : pane.agentId == null &&
+                                companionConversation != null &&
+                                notifier.swarms.any(
+                                  (tab) =>
+                                      tab.isCompanions &&
+                                      tab.panes.contains(pane),
+                                )
+                          ? companionConversation!(context)
                           : _PaneContent(
                               notifier: notifier,
                               pane: pane,

@@ -48,6 +48,7 @@ class WsRequestFailure implements Exception {
     required this.responseType,
     required this.code,
     this.detail,
+    this.payload = const {},
   });
 
   /// The frame that carried the refusal — `agent_create_result`, say.
@@ -59,6 +60,10 @@ class WsRequestFailure implements Exception {
   /// The underlying cause behind the code, when the peer sends one — the tmux message behind
   /// SPAWN_FAILED. Already reads as a sentence; prefer it to anything rewritten from [code].
   final String? detail;
+
+  /// Additional reply fields needed to handle a refusal, such as the activity
+  /// that made an idle Close unsafe. These must survive the error boundary.
+  final Map<String, dynamic> payload;
 
   @override
   String toString() => detail == null || detail!.isEmpty
@@ -552,6 +557,7 @@ class WsConn {
             responseType: message['type'] as String? ?? 'unknown_result',
             code: '${payload['error']}',
             detail: detail is String && detail.isNotEmpty ? detail : null,
+            payload: Map.unmodifiable(payload),
           ),
         );
       } else {
@@ -582,6 +588,9 @@ class WsConn {
     // File paths and media contents are user data, not frame diagnostics.
     'agent_read_file',
     'agent_read_file_result',
+    // Conversation-derived: file names and the project folder.
+    'agent_handoff_prepare',
+    'agent_handoff_prepare_result',
     'project_preview',
     'project_preview_result',
     'git_project_info',

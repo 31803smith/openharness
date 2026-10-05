@@ -37,13 +37,15 @@ export interface StopAgentOptions {
   beforeStop?(session: RegisteredSession): Promise<void>
   /** Retain native history before exit, then include anything the engine flushed while exiting. */
   checkpoint?(session: RegisteredSession, phase: 'before' | 'after'): Promise<void>
+  /** Fresh proof that an unbound chat has never started and its composer is empty. */
+  confirmUnusedConversation?(session: RegisteredSession): Promise<boolean>
 }
 
 // Hooks rebuild registry objects. Compare stable values, never JavaScript object
 // identity or property ordering, while retaining the exact PID-reuse guard.
-const runtimeIdentity = (entry: RegisteredSession | undefined) => entry ? JSON.stringify([
-  entry.engine, entry.registeredAt, entry.processIdentity?.pid,
-  entry.processIdentity?.executable, entry.processIdentity?.startMarker,
+const runtimeIdentity = (entry: RegisteredSession | undefined, withProcess = true) => entry ? JSON.stringify([
+  entry.engine, entry.registeredAt,
+  ...(withProcess ? [entry.processIdentity?.pid, entry.processIdentity?.executable, entry.processIdentity?.startMarker] : []),
   entry.runtimes.map(terminalRouteKey).sort(),
 ]) : null
 
@@ -58,11 +60,16 @@ export function createStopAgentService(deps: StopAgentServiceDeps) {
     const job = Promise.resolve().then(async () => {
       const live = registry.resolve(sessionId)
       if (!live) return
-      const identity = runtimeIdentity(live)
+      // A row still starting has no process yet, and the one it gains while this stop runs is the engine
+      // it launched, not a replacement. Comparing it refused every Stop pressed on a starting agent with
+      // "Harness changed… Try stopping again" (e2e/races.e2e.ts). The process is still checked exactly
+      // before it is signalled; a row with no process at all is retired with its pane.
+      const starting = !live.processIdentity
+      const identity = runtimeIdentity(live, !starting)
       const conversation = live.sessionId
       const sameTarget = () => {
         const current = registry.resolve(sessionId)
-        return runtimeIdentity(current) === identity && (!conversation || current!.sessionId === conversation)
+        return runtimeIdentity(current, !starting) === identity && (!conversation || current!.sessionId === conversation)
       }
       const captured = await captureResumeIdentity({ ...live })
       // Discovery or a hook may have updated this row while reading the native store.
@@ -85,7 +92,8 @@ export function createStopAgentService(deps: StopAgentServiceDeps) {
       try {
         markDeleted(sessionId)
         if (s.sessionId) markDeleted(s.sessionId)
-        await stopSharedCodexSession(s, () => sameTarget() && options.current?.() !== false)
+        await stopSharedCodexSession(s, () => sameTarget() && options.current?.() !== false,
+          undefined, options.confirmUnusedConversation)
         // Keep the terminal alive while the engine handles SIGTERM and flushes
         // its native store. Killing tmux in parallel can deliver SIGHUP first.
         const termination = await (isTerminalEngine(s.engine) ? Promise.resolve('gone' as const)

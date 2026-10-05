@@ -10,6 +10,7 @@ import '../models/api_connections_controller.dart'
 import '../models/local_model.dart';
 import '../models/model_search_catalog.dart';
 import '../core/dsh_catalog.dart';
+import '../store/experimental_harnesses.dart';
 import '../core/machine_resources.dart';
 import '../core/models.dart'
     show Agent, ConnectionStatus, GridModels, GridModel;
@@ -90,6 +91,7 @@ class SwarmSearchController extends ChangeNotifier {
     }
     _refresh();
     app.addListener(_refresh);
+    app.experimentalFeatures.addListener(_refresh);
     projects?.addListener(_refresh);
     models?.addListener(_modelsChanged);
     app.gridPictures.addListener(_modelChoicesChanged);
@@ -248,6 +250,10 @@ class SwarmSearchController extends ChangeNotifier {
       ? models!.catalogHeading
       : section.label;
 
+  /// A Jev (System One) model's row: nothing to Use, its pane says how to call it.
+  bool isJevRow(SwarmDestination? row) =>
+      models?.entries[row?.modelId]?.isJev == true;
+
   String? modelRowAction(SwarmDestination row) {
     final entry = models?.entries[row.modelId];
     if (entry == null) return null;
@@ -255,6 +261,14 @@ class SwarmSearchController extends ChangeNotifier {
         ? 'Use'
         : canGetModel(row)
         ? 'Get'
+        : canStartJev(row)
+        ? 'Start'
+        // A Jev model on a grid: Enter copies how to call it — a resting grid wakes on that call,
+        // so its rest is the pane's to say, not the row's.
+        : entry.isJev &&
+              entry.gridModel != null &&
+              entry.gridModel!.unavailable == null
+        ? 'Copy'
         : null;
   }
 
@@ -397,16 +411,46 @@ class SwarmSearchController extends ChangeNotifier {
     if (!canGetModel(row)) return null;
     final entry = models!.entries[row.modelId]!;
     final owner = entry.controller!;
+    // A Jev model's Get is the whole of it — download, an engine new enough to serve it, and the model
+    // on the grid — since nothing else would ever start one.
     await owner.control(
       entry.local!,
-      owner.supportsDownload ? 'download' : 'start',
+      entry.isJev || !owner.supportsDownload ? 'start' : 'download',
     );
     return owner.error;
+  }
+
+  /// A Jev model of yours that is downloaded and not running: Start runs it on your grid, beside the
+  /// models already there.
+  bool canStartJev(SwarmDestination? row) {
+    if (!isModelMode) return false;
+    final entry = models?.entries[row?.modelId];
+    final local = entry?.local, owner = entry?.controller;
+    return entry != null &&
+        entry.isJev &&
+        local != null &&
+        owner != null &&
+        local.downloaded &&
+        !local.running &&
+        local.canStart &&
+        owner.operationFor(local)?.active != true &&
+        owner.inventoryAvailable &&
+        !owner.busy &&
+        owner.machine?.connectionStatus == ConnectionStatus.connected &&
+        owner.machine?.needsLink == false;
+  }
+
+  Future<String?> startJev(SwarmDestination row) async {
+    if (!canStartJev(row)) return null;
+    final entry = models!.entries[row.modelId]!;
+    await entry.controller!.control(entry.local!, 'start');
+    return entry.controller!.error;
   }
 
   String? modelUseReason(SwarmDestination? row) {
     final entry = models?.entries[row?.modelId];
     if (entry == null || canSelectModel(row)) return null;
+    if (entry.isJev) return 'Jev model';
     if (modelSelectionEngine == null) return 'No active harness';
     if (entry.subscription case final subscription?) {
       if (subscription['engine'] != modelSelectionEngine) {
@@ -462,12 +506,10 @@ class SwarmSearchController extends ChangeNotifier {
   /// Open Harness filters by latest activity; commands and splits keep relevance order.
   final bool activityFirst;
 
-  /// When this opening began: the list's ages are measured from it.
-  final DateTime openedAt = DateTime.now();
   final _activity = <String, DateTime?>{};
 
   /// A row's last activity as it was when this opening first listed it. The
-  /// list keeps the order and ages it opened with while agents work on:
+  /// list keeps its activity snapshot and order while agents work on:
   /// rows moving under the cursor as someone arrowed through them was the
   /// confusing part. The next opening reads activity afresh.
   DateTime? activityOf(SwarmDestination row) =>
@@ -534,7 +576,10 @@ class SwarmSearchController extends ChangeNotifier {
       }
     }
     final offered = entry?.gridModel;
-    if (offered == null || offered.unavailable != null) return null;
+    // A Jev model answers decisions, not a harness's turns: there is nothing to run on it.
+    if (offered == null || offered.unavailable != null || offered.decision) {
+      return null;
+    }
     for (final section in _modelChoices!.sections) {
       if (section.name != offered.grid && !(section.own && entry!.own)) {
         continue;
@@ -592,6 +637,7 @@ class SwarmSearchController extends ChangeNotifier {
     return model != null &&
         owner != null &&
         entry!.own &&
+        !entry.isJev &&
         model.downloaded &&
         !model.running &&
         model.canStart &&
@@ -624,10 +670,11 @@ class SwarmSearchController extends ChangeNotifier {
   /// running on that machine is stopped first ([otherRunningModel]): it runs one at a time.
   bool canGetModelForUse(SwarmDestination? row) =>
       canGetModel(row) &&
+      !models!.entries[row!.modelId]!.isJev &&
       modelSelectionEngine != null &&
       _modelChoices?.reachable == true &&
       _modelChoices?.canRunLocally(modelSelectionEngine) == true &&
-      models!.entries[row!.modelId]!.own;
+      models!.entries[row.modelId]!.own;
 
   /// Another model of yours running on [row]'s machine — the one to stop before [row]'s can run.
   LocalModel? otherRunningModel(SwarmDestination? row) {
@@ -1377,6 +1424,10 @@ class SwarmSearchController extends ChangeNotifier {
       ? 'Use'
       : canGetModel(row)
       ? 'Get'
+      : canStartJev(row)
+      ? 'Start'
+      : isJevRow(row) && models!.entries[row!.modelId]!.gridModel != null
+      ? 'Copy request'
       : row?.isModel == true
       ? 'Unavailable'
       : setupLayout && row?.isMachine == true
@@ -1502,9 +1553,11 @@ class SwarmSearchController extends ChangeNotifier {
 
   bool _refreshStore() {
     final entries = {
-      for (final machine in app.machineStates.values)
-        for (final entry in machine.dsh.byId.values)
-          if (!entry.isViewerPackage) entry.id: entry,
+      for (final entry in storeVisibleHarnesses(
+        app.machineStates.values.expand((machine) => machine.dsh.byId.values),
+        app.experimentalFeatures,
+      ))
+        if (!entry.isViewerPackage) entry.id: entry,
     };
     if (mapEquals(entries, _storeEntries)) return false;
     _storeEntries = entries;
@@ -2136,6 +2189,11 @@ class SwarmSearchController extends ChangeNotifier {
     if (destination.isModel &&
         !canSelectModel(destination) &&
         !canGetModel(destination)) {
+      // A Jev model has nothing to Use: clicking one shows its pane, which says how to call it.
+      if (isJevRow(destination)) {
+        final index = rows.indexWhere((row) => row.id == destination.id);
+        if (index >= 0 && index != cursor) move(index - cursor);
+      }
       return null;
     }
     if (setupLayout && (destination.isMachine || destination.isModel)) {
@@ -2322,6 +2380,7 @@ class SwarmSearchController extends ChangeNotifier {
     _modelUseTimer?.cancel();
     if (_modelUseWait?.isCompleted == false) _modelUseWait!.complete();
     app.removeListener(_refresh);
+    app.experimentalFeatures.removeListener(_refresh);
     projects?.removeListener(_refresh);
     models?.removeListener(_modelsChanged);
     app.gridPictures.removeListener(_modelChoicesChanged);

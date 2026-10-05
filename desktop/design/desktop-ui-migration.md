@@ -548,6 +548,15 @@ unmerged.
 
 ### Experimental Devices DSH, 2026-10-01
 
+- Devices navigation now uses a transparent miniature of the orange Harness
+  hardware in both Flutter and AppKit. The shared 20 pt identity artwork keeps
+  its color across themes; labels, focus, disabled opacity and experimental
+  gating stay with the existing controls. Native button renders were reviewed
+  in [dark](../../docs/research/2026-10-01-devices/devices-icon-dark.png) and
+  [light](../../docs/research/2026-10-01-devices/devices-icon-light.png) appearances.
+  Ten existing navigation/typography tests, 4,352 native titlebar checks,
+  scoped analysis and the icon audit pass. The asset notes retain its imagegen
+  prompt and reference-photo provenance.
 - Devices is an account-scoped experiment, off by default. After the server
   acknowledges opt-in, navigation reads Search → Devices → Harness Store in
   AppKit and Flutter. Clicking Devices opens the bundled `autonomous/devices`
@@ -639,3 +648,33 @@ unmerged.
   remains unverified. macOS per-process GPU and restricted driver counters display —. Token totals
   and breakdowns currently come from Claude, Codex and OpenCode ledgers; other engines show missing
   metrics explicitly. See the Harness Monitor README for definitions and research references.
+
+### Experimental Store workspaces, 2026-10-02
+
+- Devices and Companions now appear in Store discovery, categories and search only after the
+  current account enables their respective experiments. Live disabling, account changes and
+  server availability remove them, including open product pages and stale actions. This
+  supersedes the earlier unconditional Store hiding; the public daemon catalog stays unchanged.
+- Their Open action reuses the existing workspace without offering package installation,
+  updates or removal. Companions reserves the 70/30 viewer/chat layout while its collection or
+  conversation is unavailable, then attaches the ordinary terminal in the same slot.
+- **201 targeted tests** and changed-file analysis passed. Synthetic real-font renders were
+  inspected for [Devices](../../docs/research/2026-10-02-experimental-store/devices-dark.png)
+  and [Companions](../../docs/research/2026-10-02-experimental-store/companions-dark.png), plus
+  [Devices at 200% text](../../docs/research/2026-10-02-experimental-store/devices-light-large-text.png)
+  and [Companions at 200% text](../../docs/research/2026-10-02-experimental-store/companions-light-large-text.png)
+  in a narrow light window. These widget renders do not establish native VoiceOver or physical
+  IME behavior. The installed desktop app was not replaced.
+
+### Companion memory recovery, 2026-10-03
+
+- A learning notice can open the existing companion terminal from Memories.
+  The action waits while opening, supports explicit retry, preserves the DSH
+  split and ignores stale owner/companion callbacks. Learn and Recall stay as set.
+- [Native fixture renders](../../docs/research/2026-10-03-memory-recovery.md)
+  cover waiting, failed resume and recovery; light/dark narrow VM renders use
+  200% text. The complete native recovery journey and synthetic key delivery
+  passed. The final native run also observed foreground focus; both cases passed.
+  Earlier foreground failures remain documented, with no established cause or
+  production focus fix. Physical AppKit input and VoiceOver remain unverified;
+  no installed app or real companion was changed.

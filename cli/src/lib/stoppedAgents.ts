@@ -39,6 +39,16 @@ export class StoppedAgentStore {
     }
   }
 
+  /** The id of every saved record, readable or not (`list()` skips an unreadable one). No folder yet → none; any other error throws. */
+  ids(): string[] {
+    try {
+      return readdirSync(this.directory).filter(name => name.endsWith('.json')).map(name => name.slice(0, -5))
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []
+      throw error
+    }
+  }
+
   list(): RegisteredSession[] {
     try {
       secureStateDirectory(this.directory, false)
@@ -196,6 +206,15 @@ export class StoppedAgentStore {
   private syncDirectory(): void {
     const fd = openSync(this.directory, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW)
     try { fsyncSync(fd) } finally { closeSync(fd) }
+  }
+
+  /** Permanent deletion is separate from Stop, which always retains this record. */
+  remove(agentId: string): void {
+    if (!SAFE_ID.test(agentId)) throw new Error('Invalid stopped harness identity.')
+    if (!this.get(agentId)) return
+    unlinkSync(join(this.directory, `${agentId}.json`))
+    this.forgetCatalogRecord(agentId)
+    this.syncDirectory()
   }
 
   /** Suppress archives whose identity or conversation is already running. */

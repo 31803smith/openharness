@@ -6,6 +6,7 @@ import { homedir, tmpdir } from 'os'
 import { join } from 'path'
 import { fileURLToPath } from 'url'
 import { AGENT_OPENED_THROTTLE_MS, BackendSocket, compactRuntimePickerModels, deviceAgentListItem, deviceAgentRow, grokHistoryPage } from './backendSocket.js'
+import { ServiceUnavailableError } from './core/serviceHost.js'
 import { AuthSessionError, type AuthSessionManager } from './lib/authSession.js'
 import { WS_IDLE_DEADLINE_MS as IDLE_DEADLINE_MS } from './lib/wsLiveness.js'
 import { TerminalStreamManager } from './lib/terminalStreamManager.js'
@@ -14,13 +15,13 @@ import { decodeTerminalLocal, TerminalBinaryKind } from './lib/terminalBinary.js
 import { registry, type RegisteredSession } from './lib/registry.js'
 import { stoppedAgents } from './lib/stoppedAgents.js'
 import { AgentStopError } from './lib/stopAgentService.js'
+import type { PurgeAgentService } from './lib/purgeAgentService.js'
 import * as mediaPreview from './lib/mediaPreview.js'
 import * as gitProject from './lib/gitProject.js'
 import * as machineResources from './lib/machineResources.js'
 import * as projectFolder from './lib/projectFolder.js'
 import * as claudeTrust from './lib/claudeTrust.js'
 import * as projectPreview from './lib/projectPreview.js'
-import * as storeCatalog from './dsh/catalog.js'
 import * as opencodeVersion from './engines/opencode/version.js'
 import { randomUUID } from 'node:crypto'
 import { fakeGridAnswers, installFakeGrid, type FakeGrid } from './lib/__fixtures__/fakeGrid.js'
@@ -136,6 +137,48 @@ describe('safe session close RPC', () => {
     expect(frames.some(f => f.type === 'agent_close_result')).toBe(false)
     finish({ closed: true })
     await vi.waitFor(() => expect(frames.find(f => f.type === 'agent_close_result')?.payload).toMatchObject({ requestId: 'closing', closed: true }))
+    await socket.stop()
+  })
+})
+
+describe('reviewed permanent deletion RPCs', () => {
+  afterEach(() => vi.restoreAllMocks())
+  it.each(['agent_purge', 'agent_worktree_delete'])('%s requires an owner, explicit identity and a review token', async type => {
+    const socket = new BackendSocket('fixture')
+    const internals = socket as any, frames: any[] = []
+    socket.registerLocalClient('local:purge', { sendFrame: frame => { frames.push(frame); return true }, sendBinary: () => true })
+    const request = vi.fn(async () => ({ reviewId: 'review', sessionBytes: 4096 }))
+    socket.purgeAgentService = { busy: () => false, request, worktreeRequest: request } as unknown as PurgeAgentService
+    const payload = { requestId: 'delete', agentId: 'selected', sessionId: 'history', createdAt: 1234, mode: 'inspect' }
+    expect(encryptDownFrame(type)).toBe(true)
+    expect(encryptRpcResult(type + '_result')).toBe(true)
+    await internals.dispatchDown({ type, payload }, 'remote')
+    expect(request).not.toHaveBeenCalled()
+    const role = vi.spyOn(internals.e2ee, 'sessionRole').mockReturnValue('device')
+    vi.spyOn(internals.e2ee, 'unwrapDown').mockReturnValue({ type, payload })
+    vi.spyOn(internals.e2ee, 'wrapRpcReply').mockReturnValue({ type: type + '_result', payload: { __e2e: 'sealed' } })
+    const sealed = { type, payload: { __e2e: { v: 1, k: 'p', n: 1, ct: 'fixture' } } }
+    await internals.dispatchDown(sealed, 'remote')
+    expect(request).not.toHaveBeenCalled()
+    role.mockReturnValue('web')
+    await internals.dispatchDown(sealed, 'remote')
+    expect(request).toHaveBeenCalledOnce()
+    request.mockClear()
+    for (const invalid of [{ ...payload, sessionId: undefined }, { ...payload, createdAt: '1234' }, { ...payload, mode: 'delete' }]) {
+      await internals.dispatchDown({ type, payload: invalid }, 'local:purge', 'local')
+    }
+    expect(request).not.toHaveBeenCalled()
+    expect(frames.filter(f => f.payload.error === 'INVALID_DELETE_REQUEST')).toHaveLength(3)
+    await internals.dispatchDown({ type, payload: { ...payload, mode: 'delete', reviewId: 'review', path: '/reviewed', discardChanges: true } }, 'local:purge', 'local')
+    expect(request).toHaveBeenCalledWith(expect.objectContaining({ reviewId: 'review', path: '/reviewed', discardChanges: true }))
+    request.mockClear()
+    await internals.dispatchDown({ type, payload: { ...payload, mode: 'describe' } }, 'local:purge', 'local')
+    expect(request).toHaveBeenCalledTimes(type === 'agent_worktree_delete' ? 1 : 0)
+    request.mockClear()
+    await internals.dispatchDown({ type, payload: { ...payload, mode: 'delete', reviewId: 'review', choices: { sessionData: false, worktreeData: 'yes' } } }, 'local:purge', 'local')
+    expect(request).not.toHaveBeenCalled()
+    await internals.dispatchDown({ type, payload: { ...payload, includeWorktree: true, choices: { sessionData: false, worktreeData: true } } }, 'local:purge', 'local')
+    expect(request).toHaveBeenCalledWith(expect.objectContaining({ includeWorktree: true, choices: { sessionData: false, worktreeData: true } }))
     await socket.stop()
   })
 })
@@ -763,73 +806,69 @@ describe('BackendSocket outbound queue', () => {
     await socket.stop()
   })
 
-  it('answers session_search from the index, sealed to the requester', async () => {
+  it('hands a request a service declared to the service router with who asked, and seals its answer to the requester', async () => {
     const socket = new BackendSocket('token')
-    const asked: Array<[string, number | undefined]> = []
-    socket.sessionSearchProvider = (query, options) => {
-      asked.push([query, options.limit])
-      return { hits: [], indexed: 3, pending: 0, tookMs: 1 }
+    const routed: Array<{ type: string; payload: Record<string, unknown>; asker: unknown }> = []
+    socket.serviceRouter = (type, payload, asker, reply) => {
+      routed.push({ type, payload, asker })
+      if (type !== 'session_search') return false
+      reply({ hits: [], indexed: 3, pending: 0, ready: true, tookMs: 1 })
+      return true
     }
     socket.connect()
     const ws = wsMock.instances[0]
     ws.open()
     const unwrap = vi.spyOn(socket.e2ee, 'unwrapDown')
     vi.spyOn(socket.e2ee, 'hasSession').mockReturnValue(true)
-    const wrapReply = vi.spyOn(socket.e2ee, 'wrapRpcReply').mockReturnValue({
-      type: 'session_search_result', payload: { __e2e: { v: 1, k: 's', n: 1, ct: 'ciphertext' } },
-    })
+    const role = vi.spyOn(socket.e2ee, 'sessionRole').mockReturnValue('web')
+    const wrapReply = vi.spyOn(socket.e2ee, 'wrapRpcReply').mockImplementation((_connId, type) => ({
+      type, payload: { __e2e: { v: 1, k: 's', n: 1, ct: 'ciphertext' } },
+    }))
     const envelope = { __e2e: { v: 1, k: 's', n: 1, ct: 'ciphertext' } }
-    unwrap.mockReturnValueOnce({ type: 'session_search', payload: { requestId: 's-1', query: 'dial scroll', limit: 12 } })
-    ws.message({ t: 'down', connId: 'web-1', frame: { type: 'session_search', payload: envelope } })
-    await vi.waitFor(() => {
-      expect(wrapReply).toHaveBeenCalledWith('web-1', 'session_search_result', 's-1', { hits: [], indexed: 3, pending: 0, tookMs: 1 })
-    })
-    expect(asked).toEqual([['dial scroll', 12]])
+    const ask = (type: string, payload: Record<string, unknown>) => {
+      unwrap.mockReturnValueOnce({ type, payload })
+      ws.message({ t: 'down', connId: 'web-1', frame: { type, payload: envelope } })
+    }
 
-    // A machine whose Node has no node:sqlite says so rather than going silent.
-    socket.sessionSearchProvider = null
-    unwrap.mockReturnValueOnce({ type: 'session_search', payload: { requestId: 's-2', query: 'dial' } })
-    ws.message({ t: 'down', connId: 'web-1', frame: { type: 'session_search', payload: envelope } })
+    // The owner's paired app, over the relay: sealed back to it, under its own request id.
+    ask('session_search', { requestId: 's-1', query: 'dial scroll', limit: 12 })
     await vi.waitFor(() => {
-      expect(wrapReply).toHaveBeenCalledWith('web-1', 'session_search_result', 's-2', { error: 'SEARCH_UNAVAILABLE' })
+      expect(wrapReply).toHaveBeenCalledWith('web-1', 'session_search_result', 's-1', { hits: [], indexed: 3, pending: 0, ready: true, tookMs: 1 })
     })
+    expect(routed[0]).toEqual({ type: 'session_search', payload: { requestId: 's-1', query: 'dial scroll', limit: 12 }, asker: { local: false, owner: true } })
+
+    // A device's session may not act as the owner, and the service is told so.
+    role.mockReturnValue('device')
+    ask('session_search', { requestId: 's-2', query: 'dial' })
+    await vi.waitFor(() => expect(routed).toHaveLength(2))
+    expect(routed[1].asker).toEqual({ local: false, owner: false })
+
+    // A type no service declared is the socket's own: an unknown one is refused at once, in the clear,
+    // as a reply that carries nothing is.
+    role.mockReturnValue('web')
+    ask('nobody_answers', { requestId: 'n-1' })
+    await vi.waitFor(() => expect(parseSent(ws)).toContainEqual({ t: 'up', frame: { type: 'nobody_answers_result', payload: { requestId: 'n-1', error: 'UNSUPPORTED' } } }))
+    expect(routed.at(-1)?.type).toBe('nobody_answers')
+
+    // A process on this machine asks as itself, and as the owner.
+    const frames: Array<Record<string, unknown>> = []
+    socket.registerLocalClient('local:app', { sendFrame: (frame) => { frames.push(frame as Record<string, unknown>); return true }, sendBinary: () => true })
+    socket.handleLocalFrame('local:app', { type: 'session_search', payload: { requestId: 'l-1', query: 'dial' } })
+    await vi.waitFor(() => expect(frames).toContainEqual(expect.objectContaining({ type: 'session_search_result' })))
+    expect(routed.at(-1)?.asker).toEqual({ local: true, owner: true })
     await socket.stop()
   })
 
-  it('answers session_tail from the index, sealed to the requester, and says what it cannot', async () => {
+  it('answers a request whose service is unavailable SERVICE_UNAVAILABLE, retryable, and goes on', async () => {
     const socket = new BackendSocket('token')
-    const asked: Array<[string, number | undefined, number | undefined]> = []
-    const tail = { sessionId: 'sess-1', rows: [{ turn: 4, at: 1, ask: 'fix the dial', answer: 'Done.', tools: '' }], hasMore: true, total: 5, lastAt: 1 }
-    socket.sessionTailProvider = async (sessionId, options) => {
-      asked.push([sessionId, options.beforeTurn, options.maxChars])
-      return sessionId === 'sess-1' ? tail : null
-    }
-    socket.connect()
-    const ws = wsMock.instances[0]
-    ws.open()
-    const unwrap = vi.spyOn(socket.e2ee, 'unwrapDown')
-    vi.spyOn(socket.e2ee, 'hasSession').mockReturnValue(true)
-    const wrapReply = vi.spyOn(socket.e2ee, 'wrapRpcReply').mockReturnValue({
-      type: 'session_tail_result', payload: { __e2e: { v: 1, k: 's', n: 1, ct: 'ciphertext' } },
-    })
-    const envelope = { __e2e: { v: 1, k: 's', n: 1, ct: 'ciphertext' } }
-    const ask = (payload: Record<string, unknown>) => {
-      unwrap.mockReturnValueOnce({ type: 'session_tail', payload })
-      ws.message({ t: 'down', connId: 'web-1', frame: { type: 'session_tail', payload: envelope } })
-    }
-    ask({ requestId: 't-1', sessionId: 'sess-1', beforeTurn: 9, maxChars: 8000 })
-    await vi.waitFor(() => expect(wrapReply).toHaveBeenCalledWith('web-1', 'session_tail_result', 't-1', tail))
-    // Only whole numbers page; anything else asks for the last rows.
-    ask({ requestId: 't-2', sessionId: 'sess-1', beforeTurn: '9', maxChars: 1.5 })
-    await vi.waitFor(() => expect(asked).toHaveLength(2))
-    expect(asked).toEqual([['sess-1', 9, 8000], ['sess-1', undefined, undefined]])
-    ask({ requestId: 't-3', sessionId: 'nope' })
-    await vi.waitFor(() => expect(wrapReply).toHaveBeenCalledWith('web-1', 'session_tail_result', 't-3', { error: 'NOT_INDEXED', sessionId: 'nope' }))
-    ask({ requestId: 't-4' })
-    await vi.waitFor(() => expect(wrapReply).toHaveBeenCalledWith('web-1', 'session_tail_result', 't-4', { error: 'BAD_SESSION' }))
-    socket.sessionTailProvider = null
-    ask({ requestId: 't-5', sessionId: 'sess-1' })
-    await vi.waitFor(() => expect(wrapReply).toHaveBeenCalledWith('web-1', 'session_tail_result', 't-5', { error: 'SEARCH_UNAVAILABLE' }))
+    // A slot that reaches a service through its port, whose fallback is to fail (core/serviceHost.ts).
+    socket.hostThemeSink = () => { throw new ServiceUnavailableError('models', new Error('disk I/O error')) }
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const frames: Array<Record<string, unknown>> = []
+    socket.registerLocalClient('local:app', { sendFrame: (frame) => { frames.push(frame as Record<string, unknown>); return true }, sendBinary: () => true })
+    socket.handleLocalFrame('local:app', { type: 'theme_set', payload: { requestId: 't-1', foreground: '#ffffff', background: '#000000' } })
+    await vi.waitFor(() => expect(frames).toContainEqual({ type: 'theme_set_result', payload: { requestId: 't-1', error: 'SERVICE_UNAVAILABLE', service: 'models', retryable: true } }))
+    expect(warn).toHaveBeenCalledWith('[backend] theme_set: the models service is unavailable')
     await socket.stop()
   })
 
@@ -1326,44 +1365,23 @@ describe('BackendSocket outbound queue', () => {
     await socket.stop()
   })
 
-  it('dsh_remove uninstalls through the daemon and refuses a malformed id', async () => {
-    const socket = new BackendSocket('token')
-    const frames: Array<Record<string, unknown>> = []
-    socket.registerLocalClient('local:store', { sendFrame: (frame) => { frames.push(frame); return true }, sendBinary: () => true })
-    const removed: string[] = []
-    socket.onDshRemove = (id) => { removed.push(id); return id === 'autonomous/marp' ? { ok: true } : { ok: false, error: 'NOT_INSTALLED', detail: `${id} is not installed` } }
-
-    socket.handleLocalFrame('local:store', { type: 'dsh_remove', payload: { requestId: 'rm-1', id: 'autonomous/marp' } })
-    socket.handleLocalFrame('local:store', { type: 'dsh_remove', payload: { requestId: 'rm-2', id: 'autonomous/none' } })
-    socket.handleLocalFrame('local:store', { type: 'dsh_remove', payload: { requestId: 'rm-3', id: '../../etc' } })
-
-    await vi.waitFor(() => expect(frames.filter((f) => f.type === 'dsh_remove_result')).toHaveLength(3))
-    const results = frames.filter((f) => f.type === 'dsh_remove_result').map((f) => f.payload as Record<string, unknown>)
-    expect(results).toEqual([
-      expect.objectContaining({ requestId: 'rm-1', ok: true, id: 'autonomous/marp' }),
-      expect.objectContaining({ requestId: 'rm-2', error: 'NOT_INSTALLED' }),
-      expect.objectContaining({ requestId: 'rm-3', error: 'INVALID_DSH' }),
-    ])
-    expect(removed).toEqual(['autonomous/marp', 'autonomous/none'])
-    await socket.unregisterLocalClient('local:store')
-    await socket.stop()
-  })
-
-  it('serves live catalog entries without making unrelated RPCs wait for catalog I/O', async () => {
-    let finish!: (entries: Awaited<ReturnType<typeof storeCatalog.refreshDshRegistry>>) => void
-    vi.spyOn(storeCatalog, 'refreshDshRegistry').mockImplementation(() => new Promise(resolve => { finish = resolve }))
+  it('never holds a connection\'s next request for a service still answering one', async () => {
     const socket = new BackendSocket('token')
     socket.runtimeModelsProvider = async () => []
+    let answerCatalog!: (result: Record<string, unknown>) => void
+    socket.serviceRouter = (type, _payload, _asker, reply) => {
+      if (type !== 'dsh_list') return false
+      answerCatalog = reply
+      return true
+    }
     const frames: Array<Record<string, unknown>> = []
     socket.registerLocalClient('local:catalog', { sendFrame: frame => { frames.push(frame); return true }, sendBinary: () => true })
     socket.handleLocalFrame('local:catalog', { type: 'dsh_list', payload: { requestId: 'catalog' } })
     socket.handleLocalFrame('local:catalog', { type: 'models_list', payload: { requestId: 'models' } })
     await vi.waitFor(() => expect(frames.some(frame => frame.type === 'models_list_result')).toBe(true))
     expect(frames.some(frame => frame.type === 'dsh_list_result')).toBe(false)
-    finish([{ id: 'acme/published-today', name: 'Published today', engine: 'claude', repo: 'https://example.test/project', tier: 2, viewerUse: 'acme/viewer' }])
-    await vi.waitFor(() => expect(frames).toContainEqual({
-      type: 'dsh_list_result', payload: { requestId: 'catalog', dsh: [expect.objectContaining({ id: 'acme/published-today', installed: false, viewerUse: 'acme/viewer' })] },
-    }))
+    answerCatalog({ dsh: [] })
+    await vi.waitFor(() => expect(frames).toContainEqual({ type: 'dsh_list_result', payload: { requestId: 'catalog', dsh: [] } }))
     await socket.unregisterLocalClient('local:catalog')
     await socket.stop()
   })
@@ -3075,6 +3093,39 @@ describe('machine_meta carries the grid name without clobbering it on rename', (
     expect(removed).toBe(0)
     await plain.stop()
   })
+
+  it('keeps running when the removed key is ANOTHER key under this machine id (an earlier install it waits behind)', async () => {
+    // A reinstall that kept the computer id finds its machine id held by the old install's key
+    // (device_conflict). Removing that key makes the backend send `machine_revoked` to the machine id —
+    // which this daemon now answers for. That removal is what lets this key register, not a sign-out.
+    const socket = new BackendSocket('token')
+    const seen: string[] = []
+    socket.isOwnDeviceKey = (pub) => pub === 'MINE'
+    socket.onDeviceRemoved = (pub) => { seen.push(`removed:${pub}`) }
+    socket.onRevoked = () => { seen.push('revoked') }
+    socket.onDeviceKeysChanged = () => { seen.push('reread') }
+    socket.connect()
+    const ws = wsMock.instances.at(-1)!
+    ws.open()
+    ws.message({ t: 'down', connId: '', frame: { type: 'machine_revoked', payload: { reason: 'device_removed', pub: 'OLD_INSTALL' } } })
+    await vi.waitFor(() => expect(seen).toEqual(['reread']))
+    // Still linked: a later frame for its OWN key signs it out as before.
+    ws.message({ t: 'down', connId: '', frame: { type: 'machine_revoked', payload: { reason: 'device_removed', pub: 'MINE' } } })
+    await vi.waitFor(() => expect(seen).toEqual(['reread', 'removed:MINE', 'revoked']))
+    await socket.stop()
+
+    // A plain revoke (the machine deleted) still ends the sign-in whatever the key.
+    const plain = new BackendSocket('token')
+    let revoked = 0
+    plain.isOwnDeviceKey = () => false
+    plain.onRevoked = () => { revoked += 1 }
+    plain.connect()
+    const ws2 = wsMock.instances.at(-1)!
+    ws2.open()
+    ws2.message({ t: 'down', connId: '', frame: { type: 'machine_revoked', payload: {} } })
+    await vi.waitFor(() => expect(revoked).toBe(1))
+    await plain.stop()
+  })
 })
 
 /** The read-only hardware line for the run-a-harness-compute dialog, answered next to `grid_models_list`. */
@@ -3359,23 +3410,23 @@ describe('relay down-frames are default-deny: sealed, or the backend\'s own', ()
     expect(onMessage).not.toHaveBeenCalled()
   })
 
-  it.each([...STRICT_DOWN_TYPES])('refuses a plaintext %s from the relay with E2EE_REQUIRED', async (type) => {
+  it.each([...STRICT_DOWN_TYPES])('refuses a plaintext %s from the relay with E2EE_REQUIRED, before any service hears it', async (type) => {
     const { socket, replies, dispatch } = harness()
-    const onDshInstall = vi.fn(async () => ({ ok: true }) as never)
-    socket.onDshInstall = onDshInstall
+    const serviceRouter = vi.fn(() => true)
+    socket.serviceRouter = serviceRouter
     socket.onCancel = vi.fn()
     await dispatch({ type, payload: { requestId: 'r', url: 'https://example.invalid/evil.git', agentId: 'a1' } }, 'web-1')
-    expect(onDshInstall).not.toHaveBeenCalled()
+    expect(serviceRouter).not.toHaveBeenCalled()
     expect(socket.onCancel).not.toHaveBeenCalled()
     expect(replies).toEqual([{ connId: 'web-1', type, payload: { error: 'E2EE_REQUIRED' } }])
   })
 
-  it('runs a sealed dsh_install from a paired client', async () => {
+  it('hands a sealed dsh_install from a paired client to the service that answers it', async () => {
     const { socket, dispatch } = harness()
-    const onDshInstall = vi.fn(async () => ({ ok: true }) as never)
-    socket.onDshInstall = onDshInstall
+    const serviceRouter = vi.fn(() => true)
+    socket.serviceRouter = serviceRouter
     await dispatch(sealedDown(socket, 'web-1', 'dsh_install', { requestId: 'r', id: 'acme/some-dsh' }).frame, 'web-1')
-    expect(onDshInstall).toHaveBeenCalledWith(expect.objectContaining({ id: 'acme/some-dsh' }), expect.any(Function))
+    expect(serviceRouter).toHaveBeenCalledWith('dsh_install', expect.objectContaining({ id: 'acme/some-dsh' }), { local: false, owner: expect.any(Boolean) }, expect.any(Function))
   })
 
   it('refuses a plaintext RPC even from the backend itself (connId \'\'), which would read the reply', async () => {
