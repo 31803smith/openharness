@@ -49,7 +49,7 @@ class TtyPrimaryButton extends StatefulWidget {
 
   final String label;
 
-  /// Drawn before [label], in its ink — Pair computer's QR.
+  /// Drawn before [label], in its ink — Connect computer's QR.
   final IconData? icon;
 
   /// Null draws it disabled.

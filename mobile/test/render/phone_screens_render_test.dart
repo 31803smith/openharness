@@ -374,7 +374,7 @@ void main() {
     scanCamera: const SizedBox(),
   );
 
-  /// Pair computer, then the camera's "Can’t scan?": the other ways to sign in, in a sheet.
+  /// Connect computer, then the camera's "Can’t scan?": the other ways to sign in, in a sheet.
   Future<void> otherWays(WidgetTester tester) async {
     await tester.tap(find.byKey(const ValueKey('set-up-scan')));
     await tester.pump(const Duration(milliseconds: 300));

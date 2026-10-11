@@ -15,39 +15,49 @@ import 'scan_to_connect.dart' show kAddPhoneWhere;
 /// file — the Mac's, Linux's, the command line's.
 const kDesktopDownloadUrl = 'https://harness.autonomous.ai/desktop';
 
+/// Where everything on Connect your computer starts, from either side: wider than the terminal's
+/// [Tty.origin], since the page is read, top to bottom, not scanned.
+const double _gutter = 20;
+
 /// **Connect your computer** — the page a phone with no computer stands on: signed out (the first
 /// screen, `phone_welcome.dart`), signed in to an account with none (`connect_computer.dart`), and
-/// Computers ▸ Set up another computer. One button, what it takes, and the way for somebody who has
-/// no Harness on the computer yet ([GetHarnessPage]).
+/// Computers ▸ Set up another computer. What Harness on a phone is for, one button, and the steps on
+/// the computer — the first with the way for somebody who has no Harness there yet ([GetHarnessPage]).
 ///
 /// ```
 /// harness▌                         (⚙ once signed in: Settings)
-///           Connect your computer
-///   Drive Claude Code and Codex from your phone.
-///   [status]
-///          [ ⊞  Pair computer ]
 ///
-/// HOW IT WORKS
-/// [1] Open Add Phone on your computer
-///     Mac: Harness menu · Linux: Ctrl+Shift+P
-/// [2] Scan its code
-/// [3] You’re connected
-///     End-to-end encrypted.
+/// Your agents                      (from Computers: Set up another computer)
+/// in your pocket.
+/// See every session on your machines. Answer your agents from anywhere.
+/// [status]
+/// [ ⊞  Connect computer              ]
 ///
-///        No Harness yet? Get it ›
+/// ① Open Harness on your computer
+/// │ Don’t have it? Get it ›
+/// ② Click Add Phone                (signed in: Sign in on your computer)
+/// │ Mac: Harness menu
+/// │ Linux: Ctrl+Shift+P → add phone
+/// ③ Scan the QR code               (signed in: Not showing up? Click Add Phone)
 /// ```
+///
+/// ⚠️ **One edge (owner, 2026-10-11).** Everything starts at [_gutter] — the wordmark, the words,
+/// the button (the page's width) and the steps' numbers. The title, a 300-wide button and "No
+/// Harness yet? Get it ›" used to be centred over steps that started at the edge, and the page read
+/// as stepping in and out. The words are the desktop's, cut down (`setup_tour.dart`, "Your agents
+/// in your pocket."): the page used to say "Harness" without ever saying what it was.
 ///
 /// Nothing else on it, signed out: the other ways to sign in are the camera's "Can’t scan?", where
 /// a computer with no code or a phone with no camera finds out it needs them, and the sample is
 /// Get it's, for somebody waiting on the computer (owner, 2026-10-09).
 ///
 /// Short on purpose (owner, 2026-10-08): a line under a step only where the step cannot be done
-/// without it — where Add Phone is, which account.
+/// without it — where to get Harness, where Add Phone is, which account.
 ///
 /// ⚠️ **One button, after Orca's (owner, 2026-10-08).** The first screen used to ask "Is Harness on
 /// your computer?" — Yes to the camera, Not yet to a page of download rows, steps and a second scan —
 /// beside Google and Apple: six ways on before anything was explained. Somebody who has Harness
-/// presses Pair computer; somebody who has not follows Get it, and comes back to the same button.
+/// presses Connect computer; somebody who has not follows Get it, and comes back to the same button.
 class SetUpComputerPage extends StatelessWidget {
   const SetUpComputerPage({
     super.key,
@@ -61,7 +71,7 @@ class SetUpComputerPage extends StatelessWidget {
     this.scanStatus,
   });
 
-  /// Pair computer: the camera, for the code the computer's Add Phone shows — it pairs this phone
+  /// Connect computer: the camera, for the code the computer's Add Phone shows — it pairs this phone
   /// with it (and, signed out, signs it in).
   final VoidCallback onScan;
 
@@ -87,133 +97,130 @@ class SetUpComputerPage extends StatelessWidget {
   /// (`PhoneSettingsButton`) once signed in.
   final Widget? topTrailing;
 
-  /// What the last scan came to — pairing, or why it did not — right under Pair computer, the
+  /// What the last scan came to — pairing, or why it did not — right under Connect computer, the
   /// button that started it.
   final Widget? scanStatus;
 
-  /// The steps, signed out: open Add Phone (and where it is), scan its code. Signed in: sign in on
-  /// the computer with the same account — it then turns up by itself, with no code — and Add Phone,
-  /// and where it is, for one that does not.
+  /// The steps after the first (Harness on the computer, with Get it). Signed out: Add Phone, and
+  /// where it is, then its code. Signed in: sign in on the computer with the same account — it then
+  /// turns up by itself, with no code — and Add Phone, and where it is, for one that does not.
   ///
   /// ⚠️ **Where Add Phone is is said either way.** Signed in, it was left out as needed only for the
   /// scan — and that is exactly when it is needed: a computer whose account already has this phone
   /// does not open Add Phone by itself, and one slow to read the phone's key does not turn up.
-  ({String title, String? note}) get _firstStep => switch (account) {
-    null => (title: 'Open Add Phone on your computer', note: kAddPhoneWhere),
-    _ when watching => (
-      title: 'Sign in on your computer',
-      note: 'With the same account.',
-    ),
-    // From Computers nothing above names the account.
-    final account => (
-      title: 'Sign in on your computer',
-      note: 'With $account.',
-    ),
+  List<({String title, String? note})> get _nextSteps => switch (account) {
+    null => const [
+      (title: 'Click Add Phone', note: kAddPhoneWhere),
+      (title: 'Scan the QR code', note: null),
+    ],
+    final account => [
+      (
+        title: 'Sign in on your computer',
+        // From Computers nothing above names the account.
+        note: watching ? 'With the same account.' : 'With $account.',
+      ),
+      (title: 'Not showing up? Click Add Phone', note: kAddPhoneWhere),
+    ],
   };
-
-  ({String title, String? note}) get _secondStep => account == null
-      ? (title: 'Scan its code', note: null)
-      : (title: 'Not showing up? Scan its code', note: kAddPhoneWhere);
 
   @override
   Widget build(BuildContext context) {
     AppTheme.watch(context);
-    final tty = Tty.of(context);
-    final faint = tty.style(color: tty.faint, size: TtySize.meta);
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        // One row whatever is in it: the back button's height, so the page starts at the same place
-        // with a back or the wordmark, a trailing control or none.
-        SizedBox(
-          height: 44,
-          child: Row(
-            children: [
-              if (onBack case final onBack?)
-                TtyBackButton(onPressed: onBack)
-              else
-                const Padding(
-                  padding: EdgeInsets.only(left: Tty.origin),
-                  child: _Wordmark(),
-                ),
-              const Spacer(),
-              ?topTrailing,
-            ],
-          ),
-        ),
-        Expanded(
-          child: ListView(
-            padding: const EdgeInsets.fromLTRB(Tty.origin, 32, Tty.origin, 28),
-            children: [
-              const _Hero(
-                title: 'Connect your computer',
-                body: 'Drive Claude Code and Codex from your phone.',
+    final next = _nextSteps;
+    // A tablet's width would stretch the button across the screen: a phone's column, centred.
+    return Center(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 480),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            // One row whatever is in it: the back button's height, so the page starts at the same
+            // place with a back or the wordmark, a trailing control or none.
+            SizedBox(
+              height: 44,
+              child: Row(
+                children: [
+                  if (onBack case final onBack?)
+                    // Its chevron sits at the terminal's origin: over to the page's edge.
+                    Padding(
+                      padding: const EdgeInsets.only(
+                        left: _gutter - Tty.origin,
+                      ),
+                      child: TtyBackButton(onPressed: onBack),
+                    )
+                  else
+                    const Padding(
+                      padding: EdgeInsets.only(left: _gutter),
+                      child: _Wordmark(),
+                    ),
+                  const Spacer(),
+                  ?topTrailing,
+                ],
               ),
-              if (status case final status?) ...[
-                const SizedBox(height: 18),
-                status,
-              ],
-              const SizedBox(height: 26),
-              Center(
-                child: ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 300),
-                  child: TtyPrimaryButton(
+            ),
+            Expanded(
+              child: ListView(
+                padding: const EdgeInsets.fromLTRB(_gutter, 36, _gutter, 28),
+                children: [
+                  // From Computers the agents are on this phone already: the page is the row that
+                  // was pressed.
+                  if (onBack == null)
+                    const _Hero(
+                      title: 'Your agents\nin your pocket.',
+                      body:
+                          'See every session on your machines. '
+                          'Answer your agents from anywhere.',
+                      start: true,
+                    )
+                  else
+                    const _Hero(title: 'Set up another computer', start: true),
+                  if (status case final status?) ...[
+                    const SizedBox(height: 18),
+                    status,
+                  ],
+                  const SizedBox(height: 28),
+                  TtyPrimaryButton(
                     key: const ValueKey('set-up-scan'),
                     icon: LucideIcons.qrCode300,
-                    label: 'Pair computer',
+                    label: 'Connect computer',
                     onPressed: onScan,
                   ),
-                ),
+                  if (scanStatus case final scanStatus?) ...[
+                    const SizedBox(height: 10),
+                    scanStatus,
+                  ],
+                  const SizedBox(height: 36),
+                  // Get it where Harness is first said: it used to be a line of its own under the
+                  // steps, centred, for a question the first step raises.
+                  _HowItWorksRow(
+                    number: 1,
+                    title: 'Open Harness on your computer',
+                    link: _StepLink(
+                      key: const ValueKey('set-up-get-it'),
+                      lead: 'Don’t have it? ',
+                      action: 'Get it ›',
+                      onTap: onGetIt,
+                    ),
+                  ),
+                  for (final (i, step) in next.indexed)
+                    _HowItWorksRow(
+                      number: i + 2,
+                      title: step.title,
+                      note: step.note,
+                      last: i == next.length - 1,
+                    ),
+                ],
               ),
-              if (scanStatus case final scanStatus?) ...[
-                const SizedBox(height: 10),
-                scanStatus,
-              ],
-              const SizedBox(height: 40),
-              Text(
-                'HOW IT WORKS',
-                style: faint.copyWith(
-                  fontSize: 11.5,
-                  letterSpacing: 1.1,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-              const SizedBox(height: 4),
-              _HowItWorksRow(
-                number: 1,
-                title: _firstStep.title,
-                note: _firstStep.note,
-              ),
-              _HowItWorksRow(
-                number: 2,
-                title: _secondStep.title,
-                note: _secondStep.note,
-              ),
-              const _HowItWorksRow(
-                number: 3,
-                title: 'You’re connected',
-                note: 'End-to-end encrypted.',
-                last: true,
-              ),
-              const SizedBox(height: 24),
-              Center(
-                child: _TextLink(
-                  key: const ValueKey('set-up-get-it'),
-                  lead: 'No Harness yet? ',
-                  action: 'Get it ›',
-                  onTap: onGetIt,
-                ),
-              ),
-            ],
-          ),
+            ),
+          ],
         ),
-      ],
+      ),
     );
   }
 }
 
 /// **Get it** — Harness onto the computer, from the phone: the download page's address, to type
-/// into the computer's browser (a phone cannot install it), then back to Pair computer.
+/// into the computer's browser (a phone cannot install it), then back to Connect computer.
 ///
 /// ```
 /// ‹
@@ -223,7 +230,7 @@ class SetUpComputerPage extends StatelessWidget {
 ///   └───────────────────────────────────┘
 ///
 ///                   ⋮
-///        Installed? Pair computer ›          ← the foot of the screen: after the computer
+///        Installed? Connect computer ›       ← the foot of the screen: after the computer
 ///      Try the sample while you wait
 /// ```
 ///
@@ -244,7 +251,7 @@ class GetHarnessPage extends StatelessWidget {
 
   final VoidCallback onBack;
 
-  /// "Pair computer ›": the camera, the same as the button on [SetUpComputerPage].
+  /// "Connect computer ›": the camera, the same as the button on [SetUpComputerPage].
   final VoidCallback onPair;
 
   /// The offline sample — what Harness is like, for somebody waiting on the computer to install.
@@ -327,7 +334,7 @@ class GetHarnessPage extends StatelessWidget {
                           child: _TextLink(
                             key: const ValueKey('get-it-pair'),
                             lead: 'Installed? ',
-                            action: 'Pair computer ›',
+                            action: 'Connect computer ›',
                             onTap: onPair,
                           ),
                         ),
@@ -352,31 +359,38 @@ class GetHarnessPage extends StatelessWidget {
   }
 }
 
-/// A page's title and the sentence under it, when it has one, centred.
+/// A page's title and the sentence under it, when it has one: centred, or from the page's edge
+/// ([start]) — larger there, where it is the page's headline (Connect your computer).
 class _Hero extends StatelessWidget {
-  const _Hero({required this.title, this.body});
+  const _Hero({required this.title, this.body, this.start = false});
 
   final String title;
   final String? body;
+  final bool start;
 
   @override
   Widget build(BuildContext context) {
     final tty = Tty.of(context);
+    final align = start ? TextAlign.start : TextAlign.center;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Text(
           title,
-          textAlign: TextAlign.center,
-          style: tty
-              .style(size: 24, weight: FontWeight.w600)
-              .copyWith(height: 1.25, letterSpacing: -0.4),
+          textAlign: align,
+          style: start
+              ? tty
+                    .style(size: 28, weight: FontWeight.w700)
+                    .copyWith(height: 1.2, letterSpacing: -0.8)
+              : tty
+                    .style(size: 24, weight: FontWeight.w600)
+                    .copyWith(height: 1.25, letterSpacing: -0.4),
         ),
         if (body case final body?) ...[
           const SizedBox(height: 12),
           Text(
             body,
-            textAlign: TextAlign.center,
+            textAlign: align,
             style: tty.style(color: tty.faint, size: 14).copyWith(height: 1.55),
           ),
         ],
@@ -407,74 +421,100 @@ class _Wordmark extends StatelessWidget {
   }
 }
 
-/// One row of HOW IT WORKS: its number in a raised square, what to do, and a quieter line under it
-/// when one is needed — a rule between rows.
+/// One step: its number in a ring, a thread down to the next one's, what to do, and under it a
+/// quieter line when one is needed — or a link ([link]: Get it).
 class _HowItWorksRow extends StatelessWidget {
   const _HowItWorksRow({
     required this.number,
     required this.title,
     this.note,
+    this.link,
     this.last = false,
   });
 
   final int number;
   final String title;
   final String? note;
+  final Widget? link;
   final bool last;
+
+  static const double _ring = 24;
+
+  /// Round a note, and a link: the same, so the steps stand the same distance apart either way.
+  static const EdgeInsets noteInsets = EdgeInsets.only(top: 2, bottom: 6);
 
   @override
   Widget build(BuildContext context) {
     final tty = Tty.of(context);
-    return Container(
-      padding: const EdgeInsets.symmetric(vertical: 14),
-      decoration: BoxDecoration(
-        border: last
-            ? null
-            : Border(bottom: BorderSide(color: tty.dim.withValues(alpha: 0.6))),
-      ),
+    final line = tty.dim.withValues(alpha: 0.6);
+    // As tall as its words and the space under them, so the thread runs through that space to the
+    // next ring.
+    return IntrinsicHeight(
       child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Container(
-            width: 28,
-            height: 28,
-            alignment: Alignment.center,
-            decoration: BoxDecoration(
-              color: ttyRaised(tty),
-              borderRadius: BorderRadius.circular(6),
-            ),
-            child: Text(
-              '$number',
-              style: tty.style(color: tty.faint, size: TtySize.meta),
+          SizedBox(
+            width: _ring,
+            child: Column(
+              children: [
+                Container(
+                  width: _ring,
+                  height: _ring,
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    border: Border.all(color: line),
+                  ),
+                  child: Text(
+                    '$number',
+                    style: tty.style(color: tty.faint, size: TtySize.meta),
+                  ),
+                ),
+                if (!last)
+                  Expanded(
+                    child: Container(
+                      width: 1,
+                      margin: const EdgeInsets.symmetric(vertical: 6),
+                      color: line,
+                    ),
+                  ),
+              ],
             ),
           ),
           const SizedBox(width: 14),
           Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                // Centred on the number's square while it is one line; wraps under itself after.
-                ConstrainedBox(
-                  constraints: const BoxConstraints(minHeight: 28),
-                  child: Align(
-                    alignment: Alignment.centerLeft,
-                    child: Text(
-                      title,
-                      style: tty.style(
-                        size: TtySize.row,
-                        weight: FontWeight.w600,
+            child: Padding(
+              padding: EdgeInsets.only(bottom: last ? 0 : 16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Centred on the ring while it is one line; wraps under itself after.
+                  ConstrainedBox(
+                    constraints: const BoxConstraints(minHeight: _ring),
+                    child: Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        title,
+                        style: tty.style(
+                          size: TtySize.row,
+                          weight: FontWeight.w600,
+                        ),
                       ),
                     ),
                   ),
-                ),
-                if (note case final note?)
-                  Text(
-                    note,
-                    style: tty
-                        .style(color: tty.faint, size: TtySize.meta)
-                        .copyWith(height: 1.45),
-                  ),
-              ],
+                  if (note case final note?)
+                    Padding(
+                      padding: noteInsets,
+                      child: Text(
+                        note,
+                        style: tty
+                            .style(color: tty.faint, size: TtySize.meta)
+                            .copyWith(height: 1.45),
+                      ),
+                    ),
+                  ?link,
+                ],
+              ),
             ),
           ),
         ],
@@ -483,9 +523,63 @@ class _HowItWorksRow extends StatelessWidget {
   }
 }
 
-/// A small centred link: faint words, and the part that acts in the terminal's green — "No Harness
-/// yet? Get it ›", "Pair computer ›". With no [lead] at all the whole link is the
-/// faint words ("Try the sample while you wait").
+/// A step's link, where its note would be — "Don’t have it? Get it ›": faint words, and the part
+/// that acts in the terminal's green. All of it acts, with the space round it: one line of small
+/// words is little to hit.
+class _StepLink extends StatelessWidget {
+  const _StepLink({
+    super.key,
+    required this.lead,
+    required this.action,
+    required this.onTap,
+  });
+
+  final String lead;
+  final String action;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final tty = Tty.of(context);
+    return Semantics(
+      button: true,
+      label: '$lead$action',
+      excludeSemantics: true,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: () {
+          HapticFeedback.selectionClick();
+          onTap();
+        },
+        child: Padding(
+          padding: _HowItWorksRow.noteInsets.copyWith(right: 16),
+          child: Text.rich(
+            TextSpan(
+              children: [
+                TextSpan(text: lead),
+                TextSpan(
+                  text: action,
+                  style: tty.style(
+                    color: tty.green,
+                    size: TtySize.meta,
+                    weight: FontWeight.w600,
+                  ),
+                ),
+              ],
+            ),
+            style: tty
+                .style(color: tty.faint, size: TtySize.meta)
+                .copyWith(height: 1.45),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// A small centred link: faint words, and the part that acts in the terminal's green — "Installed?
+/// Connect computer ›". With no [lead] at all the whole link is the faint words ("Try the sample
+/// while you wait").
 class _TextLink extends StatelessWidget {
   const _TextLink({
     super.key,

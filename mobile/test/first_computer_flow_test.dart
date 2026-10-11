@@ -66,7 +66,7 @@ void main() {
     }
 
     await settle();
-    expect(find.text('Connect your computer'), findsOneWidget);
+    expect(find.text('Your agents\nin your pocket.'), findsOneWidget);
     expect(find.text('Waiting for your computer…'), findsOneWidget);
 
     // It appears — awake, and waiting for its phone password.

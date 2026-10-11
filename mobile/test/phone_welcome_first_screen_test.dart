@@ -12,7 +12,7 @@ import 'package:harness_mobile/phone/welcome/scan_to_connect.dart';
 import 'package:harness_mobile/phone/welcome/set_up_computer.dart';
 import 'package:harness_mobile/state/app_state.dart';
 
-/// The first screen: Connect your computer — one button, Pair computer, that scans the code the
+/// The first screen: Connect your computer — one button, Connect computer, that scans the code the
 /// desktop app shows; Get it behind it for a computer with no Harness yet; and the other ways to sign
 /// in behind the camera's "Can’t scan?".
 void main() {
@@ -120,13 +120,13 @@ void main() {
     tester,
   ) async {
     await pump(tester, onTrySample: (_) async => null);
-    expect(find.text('Connect your computer'), findsOneWidget);
-    expect(find.text('Pair computer'), findsOneWidget);
+    expect(find.text('Your agents\nin your pocket.'), findsOneWidget);
+    expect(find.text('Connect computer'), findsOneWidget);
     for (final line in [
-      'Open Add Phone on your computer',
+      'Open Harness on your computer',
+      'Click Add Phone',
       kAddPhoneWhere,
-      'Scan its code',
-      'You’re connected',
+      'Scan the QR code',
     ]) {
       expect(find.text(line), findsOneWidget, reason: line);
     }
@@ -139,7 +139,7 @@ void main() {
   });
 
   testWidgets(
-    'Get it: the download page, sent to the computer, then back to Pair computer',
+    'Get it: the download page, sent to the computer, then back to Connect computer',
     (tester) async {
       String? shared;
       tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
@@ -183,7 +183,7 @@ void main() {
       expect(find.byType(GetHarnessPage), findsOneWidget);
       await tester.tap(find.bySemanticsLabel('Back'));
       await tester.pump();
-      expect(find.text('Connect your computer'), findsOneWidget);
+      expect(find.text('Your agents\nin your pocket.'), findsOneWidget);
     },
   );
 

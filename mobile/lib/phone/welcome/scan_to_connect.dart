@@ -15,13 +15,14 @@ import '../tty.dart';
 import '../tty_controls.dart';
 import 'connect_code.dart';
 
-/// Where Add Phone… is on the computer, for somebody who has never opened it — Connect your
-/// computer's first step (`set_up_computer.dart`). The Mac keeps it in the Harness menu; the desktop
-/// app's Linux menu strip has no row for it, so there it is the command palette's
-/// (`navigation.commands`, Ctrl+Shift+P, finds the "Add phone" command).
-const kAddPhoneWhere = 'Mac: Harness menu · Linux: Ctrl+Shift+P, “add phone”';
+/// Where Add Phone… is on the computer, for somebody who has never opened it — under Connect your
+/// computer's "Click Add Phone" (`set_up_computer.dart`). The Mac keeps it in the Harness menu; the
+/// desktop app's Linux menu strip has no row for it, so there it is the command palette's
+/// (`navigation.commands`, Ctrl+Shift+P, finds the "Add phone" command). A line each: one line
+/// wrapped in the middle of the Linux half.
+const kAddPhoneWhere = 'Mac: Harness menu\nLinux: Ctrl+Shift+P → add phone';
 
-/// **Pair computer**: the camera, reading the code the desktop app shows in Add Phone
+/// **Connect computer**: the camera, reading the code the desktop app shows in Add Phone
 /// ([ConnectCode]). The scan signs the phone in; [signingIn] says so while it does.
 ///
 /// ```
@@ -36,9 +37,9 @@ const kAddPhoneWhere = 'Mac: Harness menu · Linux: Ctrl+Shift+P, “add phone�
 ///
 /// ⚠️ **Only the scan here (owner, 2026-10-08).** What has to happen on the computer first — get
 /// Harness, open it, sign in, open Add Phone, and where that is — is the page this one is opened
-/// from (`set_up_computer.dart`, Connect your computer), and so is the line on encryption: the camera
-/// at the top and its title are the page. Centred in the room left, the camera had put every word at
-/// the foot of the screen under an empty band.
+/// from (`set_up_computer.dart`, Connect your computer): the camera at the top and its title are the
+/// page. Centred in the room left, the camera had put every word at the foot of the screen under an
+/// empty band.
 ///
 /// The camera runs only while this page is up. A code that is not ours is ignored, so a stray QR
 /// in frame does nothing. A camera refused says where to turn it on, with a link to this app's

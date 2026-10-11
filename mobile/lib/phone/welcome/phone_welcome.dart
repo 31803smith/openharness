@@ -18,18 +18,19 @@ import 'set_up_computer.dart';
 import 'sign_in_provider_button.dart';
 
 /// The phone's first screen, signed out: Connect your computer ([SetUpComputerPage]) — one button,
-/// Pair computer, and Get it for somebody with no Harness on the computer yet ([GetHarnessPage]).
+/// Connect computer, and Get it for somebody with no Harness on the computer yet ([GetHarnessPage]).
 ///
 /// ```
 /// harness▌
-///           Connect your computer
-///          [ ⊞  Pair computer ]       → the camera → Can’t scan? Sign in another way (a sheet)
-/// HOW IT WORKS  1 Open Add Phone…  2 Scan its code  3 You’re connected
-///        No Harness yet? Get it ›     → Get it → Installed? Pair computer ›
+/// Your agents in your pocket.
+/// [ ⊞  Connect computer ]           → the camera → Can’t scan? Sign in another way (a sheet)
+/// ① Open Harness on your computer
+///   Don’t have it? Get it ›         → Get it → Installed? Connect computer ›
 ///                                              Try the sample while you wait
+/// ② Click Add Phone  ③ Scan the QR code
 /// ```
 ///
-/// **Pair computer** scans the code the desktop app shows ([ScanToConnectPage]), and the scan signs
+/// **Connect computer** scans the code the desktop app shows ([ScanToConnectPage]), and the scan signs
 /// the phone in: the QR carries a one-time code the computer's own sign-in minted
 /// ([AppNotifier.signInWithScan]). A QR without one — an older computer — or one that has expired
 /// names the account instead: the email is filled in and its code sent, so signing in is the four
@@ -86,7 +87,7 @@ class _PhoneWelcomeState extends State<PhoneWelcome> {
   /// Between a scan and the session it signs in: the scan page says so.
   bool _signingInWithScan = false;
 
-  /// Where the camera was opened from — Pair computer on the first screen, or on Get it — and so
+  /// Where the camera was opened from — Connect computer on the first screen, or on Get it — and so
   /// where back from it goes ([_backFrom]).
   _Step _scanFrom = _Step.hello;
 

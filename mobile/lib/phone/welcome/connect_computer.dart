@@ -22,18 +22,19 @@ import 'set_up_computer.dart';
 ///
 /// ```
 /// harness▌                                      ⚙
-///           Connect your computer
-///   Drive Claude Code and Codex from your phone.
-/// [| Signed in as ada@… Waiting for your computer…]
-/// Not you? Sign out
-///          [ ⊞  Pair computer ]
-/// HOW IT WORKS
-/// [1] Sign in on your computer
-///     With the same account.
-/// [2] Not showing up? Scan its code
-///     Mac: Harness menu · Linux: Ctrl+Shift+P, “add phone”
-/// [3] You’re connected
-///        No Harness yet? Get it ›     (and the sample, while it installs)
+/// Your agents
+/// in your pocket.
+/// See every session on your machines. Answer your agents from anywhere.
+/// [| Waiting for your computer…                 ]
+/// ada@gmail.com · Not you? Sign out
+/// [ ⊞  Connect computer                         ]
+/// ① Open Harness on your computer
+/// │ Don’t have it? Get it ›           (and the sample, while it installs)
+/// ② Sign in on your computer
+/// │ With the same account.
+/// ③ Not showing up? Click Add Phone
+///   Mac: Harness menu
+///   Linux: Ctrl+Shift+P → add phone
 /// ```
 ///
 /// It replaces a page of its own — an email of the steps, a Terminal/Mac tab, four commands to
@@ -110,7 +111,7 @@ class _ConnectComputerPageState extends State<ConnectComputerPage> {
   }
 
   /// "No Harness on your computer yet? Get it ›": the download sent to the computer, over this
-  /// page, and its "Pair computer ›" back to this page's scan. One at a time.
+  /// page, and its "Connect computer ›" back to this page's scan. One at a time.
   void _openGetIt() {
     if (_getIt != null) return;
     final route = phoneRoute(
@@ -422,7 +423,8 @@ class _AccountLine extends StatelessWidget {
                   ),
                 ],
               ),
-              textAlign: TextAlign.center,
+              // From the page's edge, with everything else on it (`set_up_computer.dart`).
+              textAlign: TextAlign.start,
               style: tty.style(color: tty.faint, size: TtySize.meta),
             ),
           ),

@@ -107,7 +107,7 @@ void main() {
   ) async {
     await pump(tester);
     expect(find.byType(SetUpComputerPage), findsOneWidget);
-    expect(find.text('Connect your computer'), findsOneWidget);
+    expect(find.text('Set up another computer'), findsOneWidget);
     expect(find.text('Waiting for your computer…'), findsOneWidget);
     // The sample is Get it's, for somebody waiting on the computer to install — not this page's.
     expect(find.byKey(const ValueKey('get-it-sample')), findsNothing);
@@ -132,7 +132,7 @@ void main() {
     tester.widget<ScanToConnectPage>(find.byType(ScanToConnectPage)).onBack();
     await tester.pumpAndSettle();
     expect(find.byType(ScanToConnectPage), findsNothing);
-    expect(find.text('Connect your computer'), findsOneWidget);
+    expect(find.text('Set up another computer'), findsOneWidget);
     expect(backs, isEmpty);
     await unmount(tester);
   });

@@ -6,7 +6,7 @@ import 'package:harness_mobile/main.dart' as app;
 
 /// A first-time user's walk through the real app on a fresh simulator, a screenshot at each
 /// step: the welcome, Get it and its sample (hints, answering a question, Find, New with a task,
-/// the menu), leaving it, and the way in — Pair computer, then the other ways and email.
+/// the menu), leaving it, and the way in — Connect computer, then the other ways and email.
 ///
 /// Signed out on a clean install, so nothing here can reach a real account or a real machine: the
 /// sample is offline by construction (`lib/demo/`).
@@ -41,7 +41,7 @@ void main() {
     }
 
     await app.main();
-    await waitFor(find.text('Connect your computer'));
+    await waitFor(find.text('Your agents\nin your pocket.'));
     await shot('welcome');
 
     // The sample, from Get it: no account, no computer.
@@ -112,7 +112,7 @@ void main() {
     await wait(800);
     await shot('back-to-welcome');
 
-    // The way in: Pair computer scans the code the desktop app shows; without one, the camera's
+    // The way in: Connect computer scans the code the desktop app shows; without one, the camera's
     // "Can’t scan?" has the accounts and email.
     await tester.tap(find.byKey(const ValueKey('set-up-scan')));
     await wait(1500);

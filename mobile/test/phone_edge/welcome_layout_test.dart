@@ -54,7 +54,7 @@ void main() {
       final app = edgeApp(noMachines: true);
       addTearDown(app.dispose);
       await pump(tester, welcome(app), scale, brightness);
-      expect(find.text('Connect your computer'), findsOneWidget);
+      expect(find.text('Your agents\nin your pocket.'), findsOneWidget);
       await tester.drag(find.byType(ListView), const Offset(0, -2000));
       await frames(tester);
     });

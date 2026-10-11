@@ -96,7 +96,7 @@ void main() {
       return (app: app, sent: sent, scans: scans);
     }
 
-    /// Pair computer, then the camera's "Can’t scan?" sheet, then its email.
+    /// Connect computer, then the camera's "Can’t scan?" sheet, then its email.
     Future<void> toEmail(WidgetTester tester) async {
       await tester.tap(find.byKey(const ValueKey('set-up-scan')));
       await frames(tester);
@@ -153,7 +153,7 @@ void main() {
       expect(find.text('Scan the code on your computer'), findsOneWidget);
       await tester.binding.handlePopRoute();
       await frames(tester);
-      expect(find.text('Connect your computer'), findsOneWidget);
+      expect(find.text('Your agents\nin your pocket.'), findsOneWidget);
       await close(tester, app);
     });
 
@@ -171,7 +171,7 @@ void main() {
       await close(tester, app);
     });
 
-    testWidgets('Get it first, then Pair computer from there, then back', (
+    testWidgets('Get it first, then Connect computer from there, then back', (
       tester,
     ) async {
       final (:app, sent: _, scans: _) = await welcome(tester);
@@ -186,7 +186,7 @@ void main() {
       expect(find.text('Open this on your computer'), findsOneWidget);
       await tester.tap(find.bySemanticsLabel(RegExp('Back')).first);
       await frames(tester);
-      expect(find.text('Connect your computer'), findsOneWidget);
+      expect(find.text('Your agents\nin your pocket.'), findsOneWidget);
       await close(tester, app);
     });
 
@@ -309,7 +309,7 @@ void main() {
         ),
       );
       await frames(tester);
-      expect(find.text('Connect your computer'), findsOneWidget);
+      expect(find.text('Your agents\nin your pocket.'), findsOneWidget);
       // Not watching: nothing says it is waiting for the computer.
       expect(find.text('Waiting for your computer…'), findsNothing);
       expect(find.text('Email me the setup link'), findsNothing);
