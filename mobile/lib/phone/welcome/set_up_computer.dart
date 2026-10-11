@@ -212,21 +212,27 @@ class SetUpComputerPage extends StatelessWidget {
   }
 }
 
-/// **Get it** — Harness onto the computer, from the phone: the download page, sent to the computer
-/// (a phone cannot install it), then back to Pair computer.
+/// **Get it** — Harness onto the computer, from the phone: the download page's address, to type
+/// into the computer's browser (a phone cannot install it), then back to Pair computer.
 ///
 /// ```
 /// ‹
-///      Get Harness on your computer
-///          For Mac and Linux.
-///      [ ⇪  Send to my computer ]
-///   or open harness.autonomous.ai/desktop on it
-///   ─────────────────────────────────────
-///        Installed? Pair computer ›
+///       Open this on your computer
+///   ┌───────────────────────────────────┐
+///   │   harness.autonomous.ai/desktop ⇪ │
+///   └───────────────────────────────────┘
+///
+///                   ⋮
+///        Installed? Pair computer ›          ← the foot of the screen: after the computer
 ///      Try the sample while you wait
 /// ```
 ///
-/// The page sends the website, not a file: it offers each computer its own download (Mac, Linux,
+/// ⚠️ **The address is the page (owner, 2026-10-11).** It used to lead with "Send to my computer" —
+/// the share sheet — over the address in small print, and somebody new did not know whom to send it
+/// to. Typed, the address works on any computer. The share sheet is behind the address itself, for
+/// AirDrop to a Mac beside you.
+///
+/// The page gives the website, not a file: it offers each computer its own download (Mac, Linux,
 /// the command line), which a phone cannot tell apart.
 class GetHarnessPage extends StatelessWidget {
   const GetHarnessPage({
@@ -245,9 +251,9 @@ class GetHarnessPage extends StatelessWidget {
   final VoidCallback? onTrySample;
 
   /// The share sheet with the download page: AirDrop to the Mac beside you, or Messages or email to
-  /// yourself, opened on the computer. Anchored to the button for iPad, where the sheet is a popover.
-  Future<void> _sendLink(BuildContext button) async {
-    final box = button.findRenderObject() as RenderBox?;
+  /// yourself, opened on the computer. Anchored to the address for iPad, where the sheet is a popover.
+  Future<void> _sendLink(BuildContext address) async {
+    final box = address.findRenderObject() as RenderBox?;
     final origin = box == null || !box.attached
         ? null
         : box.localToGlobal(Offset.zero) & box.size;
@@ -260,16 +266,13 @@ class GetHarnessPage extends StatelessWidget {
         ),
       );
     } catch (_) {
-      // No share sheet came up: the address under the button is the way on, and the button can be
-      // pressed again.
+      // No share sheet came up: the address is still there to type, and can be pressed again.
     }
   }
 
   @override
   Widget build(BuildContext context) {
     AppTheme.watch(context);
-    final tty = Tty.of(context);
-    final faint = tty.style(color: tty.faint, size: TtySize.meta);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -278,64 +281,70 @@ class GetHarnessPage extends StatelessWidget {
           child: TtyBackButton(onPressed: onBack),
         ),
         Expanded(
-          child: ListView(
-            padding: const EdgeInsets.fromLTRB(Tty.origin, 32, Tty.origin, 28),
-            children: [
-              const _Hero(
-                title: 'Get Harness on your computer',
-                body: 'For Mac and Linux.',
-              ),
-              const SizedBox(height: 26),
-              Center(
-                child: ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 300),
-                  child: Builder(
-                    builder: (button) => _SolidButton(
-                      key: const ValueKey('get-it-send'),
-                      icon: LucideIcons.share300,
-                      label: 'Send to my computer',
-                      onPressed: () => unawaited(_sendLink(button)),
+          // The links at the foot of the screen, apart from the address: they are for after the
+          // computer, not now. A short screen scrolls instead.
+          child: LayoutBuilder(
+            builder: (context, box) => SingleChildScrollView(
+              child: ConstrainedBox(
+                constraints: BoxConstraints(
+                  minHeight: box.hasBoundedHeight ? box.maxHeight : 0,
+                ),
+                child: IntrinsicHeight(
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(
+                      Tty.origin,
+                      32,
+                      Tty.origin,
+                      20,
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        // The title says what to do and where, the address what: no sentence
+                        // between them. "Get Harness" was the link here, and is in the address.
+                        const _Hero(title: 'Open this on your computer'),
+                        const SizedBox(height: 24),
+                        Center(
+                          child: ConstrainedBox(
+                            constraints: const BoxConstraints(maxWidth: 360),
+                            child: Builder(
+                              builder: (address) => _AddressCard(
+                                key: const ValueKey('get-it-send'),
+                                address: kDesktopDownloadUrl.replaceFirst(
+                                  'https://',
+                                  '',
+                                ),
+                                onPressed: () => unawaited(_sendLink(address)),
+                              ),
+                            ),
+                          ),
+                        ),
+                        const Spacer(),
+                        const SizedBox(height: 36),
+                        // Nothing about signing in there: the desktop app asks for it itself, and
+                        // opens Add Phone by itself once it is.
+                        Center(
+                          child: _TextLink(
+                            key: const ValueKey('get-it-pair'),
+                            lead: 'Installed? ',
+                            action: 'Pair computer ›',
+                            onTap: onPair,
+                          ),
+                        ),
+                        if (onTrySample case final onTrySample?)
+                          Center(
+                            child: _TextLink(
+                              key: const ValueKey('get-it-sample'),
+                              action: 'Try the sample while you wait',
+                              onTap: onTrySample,
+                            ),
+                          ),
+                      ],
                     ),
                   ),
                 ),
               ),
-              const SizedBox(height: 12),
-              Text.rich(
-                TextSpan(
-                  children: [
-                    const TextSpan(text: 'or open '),
-                    TextSpan(
-                      text: kDesktopDownloadUrl.replaceFirst('https://', ''),
-                      style: tty.style(size: TtySize.meta),
-                    ),
-                    const TextSpan(text: ' on it'),
-                  ],
-                ),
-                textAlign: TextAlign.center,
-                style: faint,
-              ),
-              const SizedBox(height: 40),
-              Container(height: 1, color: tty.dim.withValues(alpha: 0.6)),
-              const SizedBox(height: 20),
-              // Nothing about signing in there: the desktop app asks for it itself, and opens Add
-              // Phone by itself once it is.
-              Center(
-                child: _TextLink(
-                  key: const ValueKey('get-it-pair'),
-                  lead: 'Installed? ',
-                  action: 'Pair computer ›',
-                  onTap: onPair,
-                ),
-              ),
-              if (onTrySample case final onTrySample?)
-                Center(
-                  child: _TextLink(
-                    key: const ValueKey('get-it-sample'),
-                    action: 'Try the sample while you wait',
-                    onTap: onTrySample,
-                  ),
-                ),
-            ],
+            ),
           ),
         ),
       ],
@@ -343,12 +352,12 @@ class GetHarnessPage extends StatelessWidget {
   }
 }
 
-/// A page's title and the sentence under it, centred.
+/// A page's title and the sentence under it, when it has one, centred.
 class _Hero extends StatelessWidget {
-  const _Hero({required this.title, required this.body});
+  const _Hero({required this.title, this.body});
 
   final String title;
-  final String body;
+  final String? body;
 
   @override
   Widget build(BuildContext context) {
@@ -363,12 +372,14 @@ class _Hero extends StatelessWidget {
               .style(size: 24, weight: FontWeight.w600)
               .copyWith(height: 1.25, letterSpacing: -0.4),
         ),
-        const SizedBox(height: 12),
-        Text(
-          body,
-          textAlign: TextAlign.center,
-          style: tty.style(color: tty.faint, size: 14).copyWith(height: 1.55),
-        ),
+        if (body case final body?) ...[
+          const SizedBox(height: 12),
+          Text(
+            body,
+            textAlign: TextAlign.center,
+            style: tty.style(color: tty.faint, size: 14).copyWith(height: 1.55),
+          ),
+        ],
       ],
     );
   }
@@ -531,36 +542,37 @@ class _TextLink extends StatelessWidget {
   }
 }
 
-/// [TtyPrimaryButton]'s shape in the terminal's ink rather than its green: a page's one action when
-/// it is not the scan — Send to my computer.
-class _SolidButton extends StatefulWidget {
-  const _SolidButton({
+/// The download page's address, big enough to read off the phone and type on the computer: the
+/// page's one thing. Pressed, the share sheet — AirDrop to the Mac beside you, or a message to
+/// yourself — which the icon at its right says.
+class _AddressCard extends StatefulWidget {
+  const _AddressCard({
     super.key,
-    required this.icon,
-    required this.label,
+    required this.address,
     required this.onPressed,
   });
 
-  final IconData icon;
-  final String label;
+  /// Without the scheme: what is typed.
+  final String address;
   final VoidCallback onPressed;
 
+  static const double _iconSize = 18;
+  static const double _iconGap = 10;
+
   @override
-  State<_SolidButton> createState() => _SolidButtonState();
+  State<_AddressCard> createState() => _AddressCardState();
 }
 
-class _SolidButtonState extends State<_SolidButton> {
+class _AddressCardState extends State<_AddressCard> {
   bool _down = false;
 
   @override
   Widget build(BuildContext context) {
     final tty = Tty.of(context);
-    final fill = _down
-        ? Color.alphaBlend(Colors.black.withValues(alpha: 0.14), tty.text)
-        : tty.text;
+    final raised = ttyRaised(tty);
     return Semantics(
       button: true,
-      label: widget.label,
+      label: '${widget.address}, Send link',
       excludeSemantics: true,
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
@@ -568,37 +580,41 @@ class _SolidButtonState extends State<_SolidButton> {
         onTapCancel: () => setState(() => _down = false),
         onTapUp: (_) => setState(() => _down = false),
         onTap: () {
-          HapticFeedback.lightImpact();
+          HapticFeedback.selectionClick();
           widget.onPressed();
         },
         child: Container(
-          constraints: const BoxConstraints(minHeight: TtyPrimaryButton.height),
-          padding: const EdgeInsets.symmetric(
-            horizontal: Tty.origin,
-            vertical: 10,
-          ),
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 20),
           decoration: BoxDecoration(
-            color: fill,
-            borderRadius: BorderRadius.circular(6),
+            color: _down
+                ? Color.alphaBlend(tty.text.withValues(alpha: 0.06), raised)
+                : raised,
+            border: Border.all(color: tty.dim.withValues(alpha: 0.6)),
+            borderRadius: BorderRadius.circular(10),
           ),
-          alignment: Alignment.center,
           child: Row(
-            mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(widget.icon, size: 20, color: tty.ground),
-              const SizedBox(width: 10),
-              Flexible(
-                child: Text(
-                  widget.label,
-                  maxLines: 1,
-                  softWrap: false,
-                  overflow: TextOverflow.ellipsis,
-                  style: tty.style(
-                    color: tty.ground,
-                    weight: FontWeight.w600,
-                    size: TtySize.title,
+              // The icon's width on the left too, so the address sits in the middle of the card.
+              const SizedBox(
+                width: _AddressCard._iconSize + _AddressCard._iconGap,
+              ),
+              // One line on any phone: a narrow one shrinks it rather than breaking the address.
+              Expanded(
+                child: FittedBox(
+                  fit: BoxFit.scaleDown,
+                  child: Text(
+                    widget.address,
+                    maxLines: 1,
+                    softWrap: false,
+                    style: tty.style(size: 17, weight: FontWeight.w600),
                   ),
                 ),
+              ),
+              const SizedBox(width: _AddressCard._iconGap),
+              Icon(
+                LucideIcons.share300,
+                size: _AddressCard._iconSize,
+                color: tty.faint,
               ),
             ],
           ),

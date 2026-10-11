@@ -10,6 +10,7 @@ import 'package:harness_mobile/phone/welcome/phone_boot.dart';
 import 'package:harness_mobile/phone/welcome/phone_welcome.dart';
 import 'package:harness_mobile/phone/welcome/pick_up_page.dart';
 import 'package:harness_mobile/phone/welcome/scan_to_connect.dart';
+import 'package:harness_mobile/phone/welcome/set_up_computer.dart';
 import 'package:harness_mobile/phone/welcome/unlock_computer.dart';
 import 'package:harness_mobile/state/app_state.dart';
 
@@ -96,8 +97,14 @@ void main() {
       await pump(tester, welcome(app), scale, brightness);
       await tapInView(tester, find.byKey(const ValueKey('set-up-get-it')));
       await frames(tester);
-      expect(find.text('Get Harness on your computer'), findsOneWidget);
-      await tester.drag(find.byType(ListView), const Offset(0, -2000));
+      expect(find.text('Open this on your computer'), findsOneWidget);
+      await tester.drag(
+        find.descendant(
+          of: find.byType(GetHarnessPage),
+          matching: find.byType(SingleChildScrollView),
+        ),
+        const Offset(0, -2000),
+      );
       await frames(tester);
     });
   });

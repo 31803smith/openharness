@@ -159,8 +159,7 @@ void main() {
       await tester.tap(find.byKey(const ValueKey('set-up-get-it')));
       await tester.pump();
       expect(find.byType(GetHarnessPage), findsOneWidget);
-      expect(find.text('Get Harness on your computer'), findsOneWidget);
-      expect(find.text('For Mac and Linux.'), findsOneWidget);
+      expect(find.text('Open this on your computer'), findsOneWidget);
       expect(
         find.textContaining('harness.autonomous.ai/desktop'),
         findsOneWidget,
