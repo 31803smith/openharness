@@ -35,10 +35,11 @@ const double _gutter = 20;
 ///
 /// ① Open Harness on your computer
 /// │ Don’t have it? Get it ›
-/// ② Click Add Phone                (signed in: Sign in on your computer)
-/// │ Mac: Harness menu
-/// │ Linux: Ctrl+Shift+P → add phone
-/// ③ Scan the QR code               (signed in: Not showing up? Click Add Phone)
+/// ② Sign in on your computer
+/// │ With ada@gmail.com.             (signed in only: which account)
+/// ③ Click Add Phone
+///   Mac: Harness menu
+///   Linux: Ctrl+Shift+P → add phone
 /// ```
 ///
 /// ⚠️ **One edge (owner, 2026-10-11).** Everything starts at [_gutter] — the wordmark, the words,
@@ -101,27 +102,17 @@ class SetUpComputerPage extends StatelessWidget {
   /// button that started it.
   final Widget? scanStatus;
 
-  /// The steps after the first (Harness on the computer, with Get it). Signed out: Add Phone, and
-  /// where it is, then its code. Signed in: sign in on the computer with the same account — it then
-  /// turns up by itself, with no code — and Add Phone, and where it is, for one that does not.
-  ///
-  /// ⚠️ **Where Add Phone is is said either way.** Signed in, it was left out as needed only for the
-  /// scan — and that is exactly when it is needed: a computer whose account already has this phone
-  /// does not open Add Phone by itself, and one slow to read the phone's key does not turn up.
-  List<({String title, String? note})> get _nextSteps => switch (account) {
-    null => const [
-      (title: 'Click Add Phone', note: kAddPhoneWhere),
-      (title: 'Scan the QR code', note: null),
-    ],
-    final account => [
-      (
-        title: 'Sign in on your computer',
-        // From Computers nothing above names the account.
-        note: watching ? 'With the same account.' : 'With $account.',
-      ),
-      (title: 'Not showing up? Click Add Phone', note: kAddPhoneWhere),
-    ],
-  };
+  /// The steps after the first (Harness on the computer, with Get it) — [_stepsAfterOpening], the
+  /// same signed in or out; only the line under signing in differs: none signed out, the account
+  /// signed in.
+  List<({String title, String? note})> get _nextSteps =>
+      _stepsAfterOpening(switch (account) {
+        null => null,
+        // At home the line over the button names the account already.
+        _ when watching => 'With the same account.',
+        // From Computers nothing above names it.
+        final account => 'With $account.',
+      });
 
   @override
   Widget build(BuildContext context) {
@@ -194,7 +185,7 @@ class SetUpComputerPage extends StatelessWidget {
                   // steps, centred, for a question the first step raises.
                   _HowItWorksRow(
                     number: 1,
-                    title: 'Open Harness on your computer',
+                    title: _openHarness,
                     link: _StepLink(
                       key: const ValueKey('set-up-get-it'),
                       lead: 'Don’t have it? ',
@@ -224,20 +215,29 @@ class SetUpComputerPage extends StatelessWidget {
 ///
 /// ```
 /// ‹
-///       Open this on your computer
-///   ┌───────────────────────────────────┐
-///   │   harness.autonomous.ai/desktop ⇪ │
-///   └───────────────────────────────────┘
+/// Get Harness
+/// on your computer
+/// In your computer’s browser, go to:
+/// ┌───────────────────────────────────┐
+/// │   harness.autonomous.ai/desktop ⇪ │
+/// └───────────────────────────────────┘
+/// Or tap to send it with AirDrop or Messages.
 ///
-///                   ⋮
-///        Installed? Connect computer ›       ← the foot of the screen: after the computer
-///      Try the sample while you wait
+/// ⋮
+/// Installed? Connect computer ›         ← the foot of the screen: after the computer
+/// Try the sample while you wait
 /// ```
 ///
 /// ⚠️ **The address is the page (owner, 2026-10-11).** It used to lead with "Send to my computer" —
 /// the share sheet — over the address in small print, and somebody new did not know whom to send it
 /// to. Typed, the address works on any computer. The share sheet is behind the address itself, for
 /// AirDrop to a Mac beside you.
+///
+/// ⚠️ **But said, not left to be worked out (owner, 2026-10-12).** The title was "Open this on your
+/// computer", with nothing between it and the address: it named neither what "this" was for nor
+/// what to open it in, and somebody new read the address as a link to tap here. The title now says
+/// what the page is for — Get it's own words — the line under it where, and a line under the
+/// address what its glyph does, which nothing said either.
 ///
 /// The page gives the website, not a file: it offers each computer its own download (Mac, Linux,
 /// the command line), which a phone cannot tell apart.
@@ -280,41 +280,59 @@ class GetHarnessPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     AppTheme.watch(context);
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Align(
-          alignment: Alignment.centerLeft,
-          child: TtyBackButton(onPressed: onBack),
-        ),
-        Expanded(
-          // The links at the foot of the screen, apart from the address: they are for after the
-          // computer, not now. A short screen scrolls instead.
-          child: LayoutBuilder(
-            builder: (context, box) => SingleChildScrollView(
-              child: ConstrainedBox(
-                constraints: BoxConstraints(
-                  minHeight: box.hasBoundedHeight ? box.maxHeight : 0,
-                ),
-                child: IntrinsicHeight(
-                  child: Padding(
-                    padding: const EdgeInsets.fromLTRB(
-                      Tty.origin,
-                      32,
-                      Tty.origin,
-                      20,
+    final tty = Tty.of(context);
+    // What a tap on the address brings up, by its names here: there is no AirDrop off Apple.
+    final shareHint = Theme.of(context).platform == TargetPlatform.iOS
+        ? 'Or tap to send it with AirDrop or Messages.'
+        : 'Or tap to send it to yourself.';
+    // ⚠️ **One edge, the page it is opened from's (owner, 2026-10-12).** Connect your computer
+    // starts everything at [_gutter] — its title, the button across the page, the steps — and this
+    // page, centred at the terminal's origin, read as a different app one tap in. The same edge,
+    // the same headline, the address across the page as the button is, and a tablet's phone column.
+    return Center(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 480),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Align(
+              alignment: Alignment.centerLeft,
+              // Its chevron sits at the terminal's origin: over to the page's edge, as on Connect
+              // your computer.
+              child: Padding(
+                padding: const EdgeInsets.only(left: _gutter - Tty.origin),
+                child: TtyBackButton(onPressed: onBack),
+              ),
+            ),
+            Expanded(
+              // The links at the foot of the screen, apart from the address: they are for after the
+              // computer, not now. A short screen scrolls instead.
+              child: LayoutBuilder(
+                builder: (context, box) => SingleChildScrollView(
+                  child: ConstrainedBox(
+                    constraints: BoxConstraints(
+                      minHeight: box.hasBoundedHeight ? box.maxHeight : 0,
                     ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        // The title says what to do and where, the address what: no sentence
-                        // between them. "Get Harness" was the link here, and is in the address.
-                        const _Hero(title: 'Open this on your computer'),
-                        const SizedBox(height: 24),
-                        Center(
-                          child: ConstrainedBox(
-                            constraints: const BoxConstraints(maxWidth: 360),
-                            child: Builder(
+                    child: IntrinsicHeight(
+                      child: Padding(
+                        padding: const EdgeInsets.fromLTRB(
+                          _gutter,
+                          36,
+                          _gutter,
+                          20,
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            // What the page is for, in Get it's words; then where the address
+                            // goes. Broken by hand, as the first screen's title is.
+                            const _Hero(
+                              title: 'Get Harness\non your computer',
+                              body: 'In your computer’s browser, go to:',
+                              start: true,
+                            ),
+                            const SizedBox(height: 28),
+                            Builder(
                               builder: (address) => _AddressCard(
                                 key: const ValueKey('get-it-send'),
                                 address: kDesktopDownloadUrl.replaceFirst(
@@ -324,37 +342,41 @@ class GetHarnessPage extends StatelessWidget {
                                 onPressed: () => unawaited(_sendLink(address)),
                               ),
                             ),
-                          ),
-                        ),
-                        const Spacer(),
-                        const SizedBox(height: 36),
-                        // Nothing about signing in there: the desktop app asks for it itself, and
-                        // opens Add Phone by itself once it is.
-                        Center(
-                          child: _TextLink(
-                            key: const ValueKey('get-it-pair'),
-                            lead: 'Installed? ',
-                            action: 'Connect computer ›',
-                            onTap: onPair,
-                          ),
-                        ),
-                        if (onTrySample case final onTrySample?)
-                          Center(
-                            child: _TextLink(
-                              key: const ValueKey('get-it-sample'),
-                              action: 'Try the sample while you wait',
-                              onTap: onTrySample,
+                            const SizedBox(height: 10),
+                            Text(
+                              shareHint,
+                              key: const ValueKey('get-it-share-hint'),
+                              style: tty
+                                  .style(color: tty.faint, size: TtySize.meta)
+                                  .copyWith(height: 1.45),
                             ),
-                          ),
-                      ],
+                            const Spacer(),
+                            const SizedBox(height: 36),
+                            // Nothing about signing in there: the desktop app asks for it itself,
+                            // and opens Add Phone by itself once it is.
+                            _TextLink(
+                              key: const ValueKey('get-it-pair'),
+                              lead: 'Installed? ',
+                              action: 'Connect computer ›',
+                              onTap: onPair,
+                            ),
+                            if (onTrySample case final onTrySample?)
+                              _TextLink(
+                                key: const ValueKey('get-it-sample'),
+                                action: 'Try the sample while you wait',
+                                onTap: onTrySample,
+                              ),
+                          ],
+                        ),
+                      ),
                     ),
                   ),
                 ),
               ),
             ),
-          ),
+          ],
         ),
-      ],
+      ),
     );
   }
 }
@@ -416,6 +438,60 @@ class _Wordmark extends StatelessWidget {
           margin: const EdgeInsets.only(left: 2),
           color: tty.green,
         ),
+      ],
+    );
+  }
+}
+
+/// The first step on the computer, signed in or out.
+const _openHarness = 'Open Harness on your computer';
+
+/// The steps after [_openHarness]: sign in on the computer, then Add Phone and where it is.
+///
+/// ⚠️ **One set, wherever they are shown (owner, 2026-10-12)** — the first screen, Set up another
+/// computer, and Connect computer's camera from Computers. They used to be two: signed out "Click
+/// Add Phone ③ Scan the QR code", signed in "Sign in on your computer ③ Not showing up? Click Add
+/// Phone" — one button on one page, and steps that changed under it, and on the camera "Not showing
+/// up?" was asked of somebody already scanning. Both halves hold either way: Add Phone asks a
+/// computer that is not signed in to sign in before it shows a code, and a computer that turns up
+/// by itself is paired just as well by its code. The scan is the button above the steps, and the
+/// camera's own title, so it is not a step of its own.
+///
+/// [signIn]: under signing in, which account — the phone's, when it has one to name. Null signed
+/// out, where the scan signs the phone in to whichever account the computer has.
+List<({String title, String? note})> _stepsAfterOpening(String? signIn) => [
+  (title: 'Sign in on your computer', note: signIn),
+  (title: 'Click Add Phone', note: kAddPhoneWhere),
+];
+
+/// The steps on the computer under Connect computer's camera, opened from Computers — where the
+/// page it came from says none of them ([ScanToConnectPage.steps]).
+///
+/// Set up another computer's own steps, word for word, so the two pages say one thing; without its
+/// Get it, which is that page's — Connect computer is for a computer that has Harness, and the row
+/// for one that has not is right under the button.
+class ComputerSteps extends StatelessWidget {
+  const ComputerSteps({super.key, required this.account});
+
+  /// This phone's account, named in the sign-in step.
+  final String? account;
+
+  @override
+  Widget build(BuildContext context) {
+    final account = this.account;
+    final next = _stepsAfterOpening(account == null ? null : 'With $account.');
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        const _HowItWorksRow(number: 1, title: _openHarness),
+        for (final (i, step) in next.indexed)
+          _HowItWorksRow(
+            number: i + 2,
+            title: step.title,
+            note: step.note,
+            last: i == next.length - 1,
+          ),
       ],
     );
   }
@@ -577,9 +653,10 @@ class _StepLink extends StatelessWidget {
   }
 }
 
-/// A small centred link: faint words, and the part that acts in the terminal's green — "Installed?
-/// Connect computer ›". With no [lead] at all the whole link is the faint words ("Try the sample
-/// while you wait").
+/// A small link from the page's edge: faint words, and the part that acts in the terminal's green —
+/// "Installed? Connect computer ›". With no [lead] at all the whole link is the faint words ("Try
+/// the sample while you wait"). Its touch room is round the words, but not before them: the words
+/// start on the edge everything else does.
 class _TextLink extends StatelessWidget {
   const _TextLink({
     super.key,
@@ -609,7 +686,7 @@ class _TextLink extends StatelessWidget {
         child: ConstrainedBox(
           constraints: const BoxConstraints(minHeight: 44),
           child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
+            padding: const EdgeInsets.fromLTRB(0, 10, 8, 10),
             child: Text.rich(
               TextSpan(
                 children: [
@@ -626,7 +703,7 @@ class _TextLink extends StatelessWidget {
                   ),
                 ],
               ),
-              textAlign: TextAlign.center,
+              textAlign: TextAlign.start,
               style: tty.style(color: tty.faint, size: TtySize.meta),
             ),
           ),

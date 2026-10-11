@@ -183,7 +183,7 @@ void main() {
       // Back from the camera is Get it, where it was opened, and back from that the first screen.
       await tester.tap(find.bySemanticsLabel(RegExp('Back')).first);
       await frames(tester);
-      expect(find.text('Open this on your computer'), findsOneWidget);
+      expect(find.text('Get Harness\non your computer'), findsOneWidget);
       await tester.tap(find.bySemanticsLabel(RegExp('Back')).first);
       await frames(tester);
       expect(find.text('Your agents\nin your pocket.'), findsOneWidget);
@@ -198,7 +198,7 @@ void main() {
       await frames(tester);
       await tapInView(tester, find.text('Try the sample while you wait'));
       await frames(tester);
-      expect(find.text('Open this on your computer'), findsOneWidget);
+      expect(find.text('Get Harness\non your computer'), findsOneWidget);
       await close(tester, app);
     });
   });

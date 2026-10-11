@@ -35,6 +35,7 @@ class FindRow extends StatelessWidget {
     this.said,
     this.accessory,
     this.accessoryRoom = 0,
+    this.minHeight = FindRow.height,
   });
 
   final String title;
@@ -89,6 +90,10 @@ class FindRow extends StatelessWidget {
 
   static const double height = 60;
 
+  /// [height], or less for a row of one line where its second has been said once for a group of
+  /// them — Computers' asleep ones. Never under a thumb's 44.
+  final double minHeight;
+
   /// Above line 1 and below line 2.
   static const double _pad = 9;
 
@@ -115,7 +120,7 @@ class FindRow extends StatelessWidget {
     final tty = Tty.of(context);
     final ink = enabled ? tty.text : tty.faint;
     final row = TtyTap(
-      minHeight: height,
+      minHeight: minHeight,
       onTap: enabled && onTap != null
           ? () {
               HapticFeedback.selectionClick();
@@ -261,8 +266,8 @@ class FindRow extends StatelessWidget {
   /// How far below the row's top the middle of line 1 is.
   ///
   /// Arithmetic, not a measurement: [Tty.style] pins every line to its size × its `height`, and
-  /// [TtyTap] centres content shorter than [height] — which a row of two lines at the default text
-  /// size is.
+  /// [TtyTap] centres content shorter than [minHeight] — which a row of two lines at the default
+  /// text size is.
   double _lineOneCenter(BuildContext context, Tty tty) {
     final scaler = MediaQuery.textScalerOf(context);
     double line(double size) {
@@ -275,7 +280,7 @@ class FindRow extends StatelessWidget {
         ? _gap + line(TtySize.meta)
         : 0.0;
     final content = _pad * 2 + one + two;
-    return math.max(0.0, (height - content) / 2) + _pad + one / 2;
+    return math.max(0.0, (minHeight - content) / 2) + _pad + one / 2;
   }
 }
 

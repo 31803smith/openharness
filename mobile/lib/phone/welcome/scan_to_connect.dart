@@ -58,6 +58,7 @@ class ScanToConnectPage extends StatefulWidget {
     this.acceptConnectCodes = true,
     this.title = 'Scan the code on your computer',
     this.step,
+    this.steps,
   });
 
   final ValueChanged<ConnectCode> onCode;
@@ -73,6 +74,12 @@ class ScanToConnectPage extends StatefulWidget {
   /// Under the title, quieter: where the code is on the computer, when the page it is opened from
   /// has not said so already. Null says nothing more.
   final String? step;
+
+  /// Under the title, from the page's edge: the steps on the computer that bring the code up —
+  /// `ComputerSteps`, Set up another computer's own — for a camera opened where nothing has said
+  /// them (Computers' Connect computer). The square shrinks on a short screen to keep them on it,
+  /// and the page scrolls where even that is not enough.
+  final Widget? steps;
 
   final VoidCallback onUseEmail;
   final VoidCallback onBack;
@@ -289,6 +296,10 @@ class _ScanToConnectPageState extends State<ScanToConnectPage>
                                   style: faint.copyWith(height: 1.5),
                                 ),
                               ],
+                              if (widget.steps case final steps?) ...[
+                                const SizedBox(height: 24),
+                                steps,
+                              ],
                             ],
                           ),
                         ),
@@ -400,11 +411,15 @@ class _CameraProblem extends StatelessWidget {
 ///
 /// [onSignInCode]: a computer's sign-in QR read here instead is handed on (after the camera closes)
 /// rather than ignored — the person pointed the phone at a computer, whichever code it showed.
+///
+/// [steps]: the steps on the computer that bring the code up, for a caller that has not said them
+/// itself — see [ScanToConnectPage.steps].
 Future<ConnectCode?> scanForCode(
   BuildContext context, {
   required String fallbackLabel,
   Widget? camera,
   ValueChanged<SignInCode>? onSignInCode,
+  Widget? steps,
 }) async {
   ConnectCode? scanned;
   SignInCode? signIn;
@@ -416,6 +431,7 @@ Future<ConnectCode?> scanForCode(
           child: ScanToConnectPage(
             camera: camera,
             fallbackLabel: fallbackLabel,
+            steps: steps,
             onCode: (code) {
               scanned = code;
               Navigator.of(page).pop();

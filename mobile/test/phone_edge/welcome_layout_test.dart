@@ -97,7 +97,7 @@ void main() {
       await pump(tester, welcome(app), scale, brightness);
       await tapInView(tester, find.byKey(const ValueKey('set-up-get-it')));
       await frames(tester);
-      expect(find.text('Open this on your computer'), findsOneWidget);
+      expect(find.text('Get Harness\non your computer'), findsOneWidget);
       await tester.drag(
         find.descendant(
           of: find.byType(GetHarnessPage),

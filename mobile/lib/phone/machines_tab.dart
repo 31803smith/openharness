@@ -9,6 +9,7 @@ import 'package:harness_mobile/shared/widgets/empty_state.dart';
 import 'package:harness_mobile/state/app_state.dart';
 
 import 'welcome/connect_computer.dart';
+import 'welcome/set_up_computer.dart' show ComputerSteps;
 import 'tty_controls.dart';
 import 'tty.dart';
 import 'find_row.dart';
@@ -96,7 +97,9 @@ class MachinesTab extends StatelessWidget {
                   if (large) PhoneSettingsButton(notifier: notifier),
                 ],
               ),
-              Expanded(child: _Body(notifier: notifier)),
+              Expanded(
+                child: _Body(notifier: notifier, home: large),
+              ),
             ],
           ),
         ),
@@ -138,15 +141,18 @@ class _SwipeBackState extends State<_SwipeBack> {
 }
 
 class _Body extends StatelessWidget {
-  const _Body({required this.notifier});
+  const _Body({required this.notifier, required this.home});
 
   final AppNotifier notifier;
 
+  /// This list is the home screen ([MachinesTab.large]), not pushed over it.
+  final bool home;
+
   @override
   Widget build(BuildContext context) {
-    // The order a swipe on the machine page walks, split back into the two sections this list draws.
+    // The order a swipe on the machine page walks, split back into the runs this list draws.
     // Taken from [visibleMachines] rather than partitioned here so the page and the list cannot
-    // drift apart — the split below is presentation, the order is not.
+    // drift apart — the split below ([_rows]) is presentation, the order is not.
     final ordered = visibleMachines(notifier);
     if (ordered.isEmpty &&
         (notifier.machinesLoading || notifier.machinesRefreshing)) {
@@ -185,31 +191,95 @@ class _Body extends StatelessWidget {
     }
 
     final tty = Tty.of(context);
-    return RefreshIndicator(
-      onRefresh: notifier.retryMachines,
-      child: ListView(
-        physics: const AlwaysScrollableScrollPhysics(),
-        padding: EdgeInsets.only(
-          bottom: MediaQuery.paddingOf(context).bottom + 24,
-        ),
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(Tty.origin, 0, Tty.origin, 8),
-            child: Text(
-              'Your harnesses run on these.',
-              style: tty.style(size: TtySize.meta, color: tty.faint),
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Expanded(
+          child: RefreshIndicator(
+            onRefresh: notifier.retryMachines,
+            child: ListView(
+              physics: const AlwaysScrollableScrollPhysics(),
+              // The bar under the list keeps clear of the home indicator; the list only of the bar.
+              padding: const EdgeInsets.only(bottom: 16),
+              children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(
+                    Tty.origin,
+                    0,
+                    Tty.origin,
+                    8,
+                  ),
+                  child: Text(
+                    'Your harnesses run on these.',
+                    style: tty.style(size: TtySize.meta, color: tty.faint),
+                  ),
+                ),
+                ..._rows(context, ordered, tty),
+              ],
             ),
           ),
-          for (final state in ordered) _row(context, state, tty),
-          const SizedBox(height: 8),
-          FindAddRow(
-            label: 'Set up another computer',
-            onTap: () => _setUpComputer(context),
-          ),
-        ],
-      ),
+        ),
+        _ConnectBar(
+          key: const ValueKey('machines-connect-bar'),
+          notifier: notifier,
+          home: home,
+          onSetUp: () => _setUpComputer(context),
+        ),
+      ],
     );
   }
+
+  /// [ordered]'s rows — each run of computers that want the same thing under one line that says it
+  /// once, `asleep · turn them on, or run harness start there`, rather than the same words under
+  /// every row: six asleep computers said it six times, half the screen of one sentence.
+  ///
+  /// A run of one keeps its own second line: a header over a single row is two lines saying what
+  /// one did, and in the singular. The working ones each say their own thing — how many harnesses —
+  /// and are never gathered. Runs, not sorting: [visibleMachines] already puts each kind together.
+  List<Widget> _rows(
+    BuildContext context,
+    List<MachineState> ordered,
+    Tty tty,
+  ) {
+    final rows = <Widget>[];
+    var start = 0;
+    while (start < ordered.length) {
+      final status = phoneMachineStatusOf(ordered[start]);
+      var end = start + 1;
+      while (end < ordered.length &&
+          phoneMachineStatusOf(ordered[end]) == status) {
+        end++;
+      }
+      final group = _groupOf(status);
+      final gathered = group != null && end - start > 1;
+      if (group != null && gathered) {
+        rows.add(_GroupLine(word: group.word, hint: group.hint));
+      }
+      for (final state in ordered.sublist(start, end)) {
+        rows.add(_row(context, state, tty, ownLine: !gathered));
+      }
+      start = end;
+    }
+    return rows;
+  }
+
+  /// What a run of computers in [status] is called over it, and what to do about them, said once —
+  /// null for the ones that need nothing.
+  static ({String word, String hint})? _groupOf(PhoneMachineStatus status) =>
+      switch (status) {
+        PhoneMachineStatus.needsPassword => (
+          word: 'locked',
+          hint: 'tap one to unlock: scan its code',
+        ),
+        PhoneMachineStatus.offline => (
+          word: 'asleep',
+          hint: 'turn them on, or run harness start there',
+        ),
+        PhoneMachineStatus.ready || PhoneMachineStatus.connecting => null,
+      };
+
+  /// A row whose second line its group's own line says instead — one line, a thumb's height.
+  static const double _gatheredRowHeight = 48;
 
   /// Connect your computer over this list — the download link, the steps, and a scan that pairs —
   /// for a computer not on the account yet.
@@ -225,7 +295,13 @@ class _Body extends StatelessWidget {
     ),
   );
 
-  Widget _row(BuildContext context, MachineState state, Tty tty) {
+  /// [ownLine] false: its run's [_GroupLine] says what the second line would have, so it has none.
+  Widget _row(
+    BuildContext context,
+    MachineState state,
+    Tty tty, {
+    bool ownLine = true,
+  }) {
     final status = phoneMachineStatusOf(state);
     final count = state.agents.length;
     final machineId = state.machine.machineId;
@@ -258,7 +334,8 @@ class _Body extends StatelessWidget {
     }
     return FindRow(
       title: state.machine.displayName,
-      detail: detail,
+      detail: ownLine ? detail : null,
+      minHeight: ownLine ? FindRow.height : _gatheredRowHeight,
       state: word,
       stateColor: color,
       // ⚠️ An asleep computer is tappable now. It used to be drawn inert, with nothing a tap could do
@@ -273,6 +350,178 @@ class _Body extends StatelessWidget {
   /// state can lose the rename or the removal.
   void _open(BuildContext context, MachineState state) =>
       openMachineActions(context, notifier, state.machine.machineId);
+}
+
+/// Over a run of computers that want the same thing: what they are, then what to do about them —
+/// `asleep · turn them on, or run harness start there` — said once for the run.
+class _GroupLine extends StatelessWidget {
+  const _GroupLine({required this.word, required this.hint});
+
+  final String word;
+  final String hint;
+
+  @override
+  Widget build(BuildContext context) {
+    final tty = Tty.of(context);
+    return Semantics(
+      header: true,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(Tty.origin, 16, Tty.origin, 4),
+        // Wraps rather than clips: at a large text size the hint is two lines, and the half cut off
+        // was the half that said what to do.
+        child: Text.rich(
+          TextSpan(
+            children: [
+              TextSpan(
+                text: word,
+                style: tty.style(
+                  color: tty.text,
+                  size: TtySize.meta,
+                  weight: FontWeight.w600,
+                ),
+              ),
+              TextSpan(text: ' · $hint'),
+            ],
+          ),
+          style: tty.style(color: tty.faint, size: TtySize.meta),
+        ),
+      ),
+    );
+  }
+}
+
+/// The foot of Computers, under the list and kept there however long it grows: Connect computer —
+/// the camera at once, for a computer already showing its QR code, the button the desktop's Add
+/// Phone tells somebody to tap — and Set up another computer, for one with no Harness on it yet.
+///
+/// Pinned, not the list's last rows: at the end of a list they sat after every computer, read as
+/// two more of them, and went below the fold at nine. Down here they are where a thumb already is.
+/// The button is Connect your computer's own, so the two screens show one thing by one name.
+///
+/// How a scan goes is said on a line over the button — under the list, where the computer it pairs
+/// turns up; once paired, the computer is in the list.
+class _ConnectBar extends StatefulWidget {
+  const _ConnectBar({
+    super.key,
+    required this.notifier,
+    required this.home,
+    required this.onSetUp,
+  });
+
+  final AppNotifier notifier;
+
+  /// This list is the home screen, which a computer turning up takes away: the code goes to the
+  /// home screen to pair by, as on Connect your computer at home — [scanAndPairComputer]'s
+  /// `handOff`.
+  final bool home;
+
+  /// Set up another computer: Connect your computer, pushed over this list.
+  final VoidCallback onSetUp;
+
+  @override
+  State<_ConnectBar> createState() => _ConnectBarState();
+}
+
+class _ConnectBarState extends State<_ConnectBar> {
+  /// What the last scan came to, while it is worth saying: pairing, or why it did not.
+  String? _said;
+  bool _failed = false;
+
+  /// A scan under way, from the camera to its answer: one at a time, so a one-time code is never
+  /// spent on two pairings.
+  bool _scanning = false;
+
+  void _say(String? message, {bool failed = false}) => setState(() {
+    _said = message;
+    _failed = failed;
+  });
+
+  Future<void> _scan() async {
+    if (_scanning) return;
+    setState(() => _scanning = true);
+    try {
+      await scanAndPairComputer(
+        context,
+        widget.notifier,
+        say: _say,
+        handOff: widget.home,
+        // ⚠️ Said on the camera, because nothing here says it. The camera only scans (owner,
+        // 2026-10-08) and leaves the steps on the computer to the page it is opened from — Set up
+        // another computer has them under its own Connect computer. Opened from here, somebody who
+        // came to the phone first faced a camera and "Scan the code on your computer" with no code
+        // on the computer and no word of how to bring one up. That page's steps, word for word.
+        steps: ComputerSteps(account: widget.notifier.currentUser?.email),
+      );
+    } finally {
+      if (mounted) setState(() => _scanning = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final tty = Tty.of(context);
+    final said = _said;
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: tty.ground,
+        // The new-device banner's rule: the list scrolls under this edge, and without it the last
+        // row ran into the button.
+        border: Border(top: BorderSide(color: tty.dim.withValues(alpha: 0.25))),
+      ),
+      child: Padding(
+        // SafeArea leaves the foot to this page: the bar keeps clear of the home indicator itself.
+        padding: EdgeInsets.only(
+          top: 12,
+          bottom: MediaQuery.paddingOf(context).bottom,
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: Tty.origin),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (said != null)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 8),
+                      child: Text(
+                        _failed ? '✗ $said' : said,
+                        key: const ValueKey('machines-connect-status'),
+                        style: tty.style(
+                          size: TtySize.meta,
+                          color: _failed ? tty.red : tty.faint,
+                        ),
+                      ),
+                    ),
+                  TtyPrimaryButton(
+                    key: const ValueKey('machines-connect-computer'),
+                    icon: LucideIcons.qrCode300,
+                    label: 'Connect computer',
+                    // Green and still while a scan is looked up or paired; the line over it says
+                    // which.
+                    busy: _scanning,
+                    onPressed: () => unawaited(_scan()),
+                  ),
+                  const SizedBox(height: 8),
+                  // "QR code", not "Add Phone code": a desktop menu's name read as a noun stack
+                  // under a button named for the other side — and the camera takes a computer's
+                  // sign-in QR too.
+                  Text(
+                    'Scan the QR code on your computer.',
+                    style: tty.style(size: TtySize.meta, color: tty.faint),
+                  ),
+                ],
+              ),
+            ),
+            FindAddRow(label: 'Set up another computer', onTap: widget.onSetUp),
+          ],
+        ),
+      ),
+    );
+  }
 }
 
 /// The list read again — what a pull does ([AppNotifier.retryMachines]) — as a glyph beside

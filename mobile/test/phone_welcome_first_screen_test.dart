@@ -124,12 +124,14 @@ void main() {
     expect(find.text('Connect computer'), findsOneWidget);
     for (final line in [
       'Open Harness on your computer',
+      'Sign in on your computer',
       'Click Add Phone',
       kAddPhoneWhere,
-      'Scan the QR code',
     ]) {
       expect(find.text(line), findsOneWidget, reason: line);
     }
+    // The scan is the button above the steps, not a step of its own.
+    expect(find.text('Scan the QR code'), findsNothing);
     expect(find.byKey(const ValueKey('set-up-get-it')), findsOneWidget);
     // The accounts are behind the camera's "Can’t scan?", and the sample behind Get it.
     expect(find.text('Continue with Google'), findsNothing);
@@ -159,7 +161,7 @@ void main() {
       await tester.tap(find.byKey(const ValueKey('set-up-get-it')));
       await tester.pump();
       expect(find.byType(GetHarnessPage), findsOneWidget);
-      expect(find.text('Open this on your computer'), findsOneWidget);
+      expect(find.text('Get Harness\non your computer'), findsOneWidget);
       expect(
         find.textContaining('harness.autonomous.ai/desktop'),
         findsOneWidget,

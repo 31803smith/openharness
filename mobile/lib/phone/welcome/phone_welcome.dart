@@ -27,7 +27,7 @@ import 'sign_in_provider_button.dart';
 /// ① Open Harness on your computer
 ///   Don’t have it? Get it ›         → Get it → Installed? Connect computer ›
 ///                                              Try the sample while you wait
-/// ② Click Add Phone  ③ Scan the QR code
+/// ② Sign in on your computer  ③ Click Add Phone
 /// ```
 ///
 /// **Connect computer** scans the code the desktop app shows ([ScanToConnectPage]), and the scan signs

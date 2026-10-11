@@ -119,7 +119,7 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('set-up-get-it')));
     await tester.pumpAndSettle();
     expect(find.byType(GetHarnessPage), findsOneWidget);
-    expect(find.text('Open this on your computer'), findsOneWidget);
+    expect(find.text('Get Harness\non your computer'), findsOneWidget);
     await tester.tap(find.byKey(const ValueKey('get-it-sample')));
     await tester.pumpAndSettle();
     expect(samples, 1);
