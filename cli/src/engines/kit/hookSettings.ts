@@ -10,6 +10,7 @@ import { join } from 'node:path'
 import { env } from '../../config/env.js'
 import type { HookSettings } from '../facets/hooks.js'
 import { prepareReviewed } from './hookReview.js'
+import { isMessagesBlock, messagesCommand, writeMessagesHook } from './messagesHook.js'
 import { command, HOOK_SCRIPT, isOurs, foreignHookBlocks, type Settings } from './notifyHooks.js'
 import { HookPreparationHeld, inspectHookFile, runHookPreparation, type HookPreparationOptions } from './nativeHookFiles.js'
 
@@ -22,6 +23,53 @@ export function defaultHookHome(settings: HookSettings): string {
 }
 
 export async function installHookSettings(engine: HookEngine, settings: HookSettings, port: number, home: string = defaultHookHome(settings), options: HookPreparationOptions = {}): Promise<boolean> {
+  const ready = await installNotifyHooks(engine, settings, port, home, options)
+  // Agent Messages' block after Harness's own, and never in its way: whatever becomes of it, the answer is the
+  // notify hooks' (a Codex agent's create waits on it, core/agents/create.ts).
+  if (ready && settings.inbox) await installMessagesBlock(settings, home, options)
+  return ready
+}
+
+/**
+ * Agent Messages' block (kit/messagesHook.ts) in the engine's settings: exactly one, in its event, running the
+ * current command, every other block as it was; its script beside the inboxes; and for Codex, the block
+ * recorded as reviewed like Harness's others. Its own preparation, after the notify hooks', so a file it
+ * cannot write (read-only, held) costs only Agent Messages' delivery at a tool call: a message still reaches
+ * an idle agent, typed. Says nothing unless it fails.
+ */
+async function installMessagesBlock(settings: HookSettings, home: string, options: HookPreparationOptions): Promise<void> {
+  const file = join(home, settings.file)
+  const root = env.HARNESS_AGENT_MESSAGES_DIR
+  const inboxCommand = messagesCommand(root)
+  const event = settings.inbox!.event
+  try {
+    await runHookPreparation([file, ...(settings.reviewed ? [join(home, settings.reviewed.file)] : [])], async attempt => {
+      const observed = inspectHookFile(file)
+      const current = (observed.content === null ? {} : JSON.parse(observed.content)) as Settings
+      if (!current || typeof current !== 'object' || Array.isArray(current) || !current.hooks || typeof current.hooks !== 'object'
+        || Array.isArray(current.hooks) || (current.hooks[event] !== undefined && !Array.isArray(current.hooks[event]))) {
+        throw new HookPreparationHeld('the hook settings do not have the declared object shape')
+      }
+      const blocks = current.hooks[event] ?? []
+      const ours = blocks.filter(isMessagesBlock)
+      const changed = ours.length !== 1 || ours[0].matcher !== undefined || ours[0].hooks?.length !== 1
+        || ours[0].hooks[0]?.command !== inboxCommand || ours[0].hooks[0]?.timeout !== settings.timeout
+      current.hooks[event] = [...blocks.filter((b) => !isMessagesBlock(b)), { hooks: [{ type: 'command', command: inboxCommand, timeout: settings.timeout }] }]
+      const next = changed ? JSON.stringify(current, null, 2) + '\n' : observed.content!
+      const reviewed = settings.reviewed ? prepareReviewed(settings.reviewed, home, file, JSON.parse(next) as Settings) : null
+      reviewed?.verify()
+      const published = await observed.replace(next, attempt)
+      const approval = await reviewed?.commit(attempt)
+      published.verify(); approval?.verify()
+      writeMessagesHook(root)
+      return true
+    }, { ...options, identity: JSON.stringify(['agent-messages', settings, home, inboxCommand]) })
+  } catch (err) {
+    console.warn(`[hooks] Agent Messages' hook not installed in ${file} (messages reach its agents once they are idle):`, err instanceof Error ? err.message : err)
+  }
+}
+
+async function installNotifyHooks(engine: HookEngine, settings: HookSettings, port: number, home: string, options: HookPreparationOptions): Promise<boolean> {
   const file = join(home, settings.file)
   const cmd = command(port, engine, settings.commandNamesHome ? home : undefined)
   const say = (line: string): string => line.replace(/\{(file|script|port)\}/g, (_, name: string) =>
