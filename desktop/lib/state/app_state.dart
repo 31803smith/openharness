@@ -258,8 +258,16 @@ class _AgentChange {
 }
 
 class AgentCreationAttempt {
-  AgentCreationAttempt({this.background = false, String? creationId})
-    : _id = creationId ?? _newCreationId();
+  AgentCreationAttempt({
+    this.background = false,
+    String? creationId,
+    this.holdWait,
+  }) : _id = creationId ?? _newCreationId();
+
+  /// How long a request the machine holds is waited for before the create
+  /// answers ([AppNotifier._createFollowingHold]). Null answers at once with
+  /// what it waits for, as a form wants: the person reads it and may cancel.
+  final Duration? holdWait;
   String _id;
   String? _machineId, _targetId;
   Map<String, dynamic>? _choices;
@@ -2559,10 +2567,12 @@ class AppNotifier extends ChangeNotifier {
     final revision = _authRevision;
     final removal = machine?._agentRemovals[agent.id];
     return (mode) async {
+      // A harness reviewed before it bound its first conversation is the
+      // same one once it has (`Agent.continuesSession`); the request below
+      // still names the reviewed identity, so the daemon decides whether a
+      // harness that bound since may close.
       bool sameAgent(Agent? current) =>
-          current != null &&
-          current.createdAt == agent.createdAt &&
-          current.sessionId == agent.sessionId;
+          current != null && current.continuesSession(agent);
       final current = machine?.agents
           .where((a) => a.id == agent.id)
           .firstOrNull;
@@ -2631,7 +2641,9 @@ class AppNotifier extends ChangeNotifier {
           (observed == null || !observed.isStopped)) {
         _upsertAgent(
           machine,
-          agent.copyWith(
+          // The latest row seen, so a conversation bound since the review is
+          // kept on the stopped harness for reopening.
+          (observed ?? current!).copyWith(
             status: 'stopped',
             terminalAvailable: false,
             clearClosePlan: true,
@@ -7665,6 +7677,14 @@ class AppNotifier extends ChangeNotifier {
   /// Devices that joined the account and this end had never trusted, not yet dismissed.
   final List<NewDeviceNotice> newDevices = [];
 
+  /// Each device [_announceDevice] says joined the account, as it is said — never the pending list
+  /// rebuilt from the log ([_syncPendingDevices]), which is old news by then. Add Phone listens here
+  /// for the phone it is adding (`widgets/add_phone_dialog.dart`). Broadcast: with nobody listening,
+  /// a join is dropped, like [spokenTasks].
+  final StreamController<NewDeviceNotice> _deviceJoins =
+      StreamController<NewDeviceNotice>.broadcast();
+  Stream<NewDeviceNotice> get deviceJoins => _deviceJoins.stream;
+
   /// Devices taken out of the account by another device, not yet dismissed. Not persisted: the
   /// history is the durable record.
   final List<DeviceRemovalNotice> deviceRemovals = [];
@@ -7885,7 +7905,10 @@ class AppNotifier extends ChangeNotifier {
     final shown = newDevices.any((d) => d.pub == notice.pub);
     // A daemon's frame can repeat; the viewer's log says each key once ([always]).
     if (shown && !always) return;
-    if (!shown) newDevices.add(notice);
+    if (!shown) {
+      newDevices.add(notice);
+      if (!_disposed) _deviceJoins.add(notice);
+    }
     devicesRevision++;
     systemNotifications.postNotice(
       id: 'harness-device:${notice.pub}',
@@ -11651,16 +11674,56 @@ class AppNotifier extends ChangeNotifier {
       // same refusal for an engine that has no such thing (`AGENT_UNSUPPORTED`).
       'agent': ?agent,
     };
-    return _create(
+    final creation = attempt ?? AgentCreationAttempt();
+    Future<String?> ask() => _create(
       machineId,
       choices,
       projectFolder: projectFolder,
       dsh: dsh,
       swarmId: swarmId,
       split: split,
-      attempt: attempt,
+      attempt: creation,
       placement: placement,
     );
+    final holdWait = creation.holdWait;
+    return holdWait == null
+        ? ask()
+        : _createFollowingHold(creation, holdWait, ask);
+  }
+
+  /// How often a harness the machine holds is asked after
+  /// ([_createFollowingHold], for an [AgentCreationAttempt.holdWait]): the
+  /// pace `harness new` asks at.
+  @visibleForTesting
+  Duration heldCreationInterval = const Duration(seconds: 2);
+
+  /// A create that waits out a hold. The machine starts a held harness by
+  /// itself (an engine it is installing, a model waking) and answers `pending`
+  /// meanwhile; [ask] again reads what became of that same request, never
+  /// starts a second. Asked every [heldCreationInterval] until the harness is
+  /// made, refused or cancelled, or [wait] has passed, when the hold's own
+  /// words are the answer as they are without this.
+  ///
+  /// For a caller nobody is watching. The first workspace on a new computer
+  /// asked once, while setup was still downloading the agents, was told
+  /// "Installing OpenCode. The harness starts once it is installed.", and
+  /// opened nothing: the three harnesses then started with no pane anywhere
+  /// (desktop 1.2.65 with CLI 0.3.77, a fresh Ubuntu VM, 2026-10-12).
+  Future<String?> _createFollowingHold(
+    AgentCreationAttempt creation,
+    Duration wait,
+    Future<String?> Function() ask,
+  ) async {
+    final deadline = DateTime.now().add(wait);
+    var answer = await ask();
+    while (creation.canCancelPending &&
+        !_disposed &&
+        DateTime.now().isBefore(deadline)) {
+      await Future<void>.delayed(heldCreationInterval);
+      if (_disposed || creation._finished) break;
+      answer = await ask();
+    }
+    return answer;
   }
 
   /// How long, from its start, a create waits for its agent's download beside setup
@@ -17779,6 +17842,7 @@ class AppNotifier extends ChangeNotifier {
     }
     unawaited(_spokenTasks.close());
     unawaited(_deviceWindowRequests.close());
+    unawaited(_deviceJoins.close());
     unawaited(_zooPushes.close());
     unawaited(_daemonFrames.close());
     unawaited(_modelsRequests.close());

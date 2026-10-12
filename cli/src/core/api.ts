@@ -32,6 +32,7 @@ import type { NewAgentModel } from '../lib/newAgentModel.js'
 import type { LastTurnText, LiveEvent } from '../engines/kit/events.js'
 import type { SessionRecaps } from '../lib/recapReads.js'
 import type { SessionInputDelivery } from '../lib/sessionInput.js'
+import type { AgentCloseRequest, AgentCloseResult } from '../lib/closeAgentService.js'
 import { projectDisplayName, type registry, type RegisteredSession } from '../lib/registry.js'
 import type { RuntimeModelOption } from '../lib/runtimeProfile.js'
 import { externalUnavailable, type ExternalSessionAnswer, type ExternalSessionRequest } from '../lib/externalSessionWire.js'
@@ -169,6 +170,16 @@ export interface CoreApi {
     /** `activityText` with the footer's timer, for a Harness Pro. Absent in a
      *  core that cannot read them; the dial then gets the footer alone. */
     activitySnapshot?(agentId: string): Promise<{ text: string; elapsedSeconds?: number } | null>
+    /** Close a harness another agent started (`startedBy: agent`) as `agent_close` closes one: its screen saved, its
+     *  process stopped, its conversation kept. `idle` refuses one that works, waits for the person or holds a draft
+     *  (`SESSION_NOT_IDLE`); `now` does not. Any other harness is refused (`NOT_AGENT_STARTED`): the agent cleanup
+     *  (services/agentCleanup.ts) closes those, and nothing else. Absent where the core does not let a service close. */
+    closeStarted?(agentId: string, mode: 'idle' | 'now'): Promise<AgentCloseResult>
+    /** When a live agent's conversation last moved, epoch ms: the latest dated work in its transcript
+     *  (lib/transcriptActivity.ts), what the apps' `updatedAt` is when there is one. Null for none live, and for an
+     *  engine that keeps no dated transcript: a hook's time or the bind's is not when it last answered. Absent where
+     *  the core is not asked it. */
+    lastActivity?(agentId: string): Promise<number | null>
   }
   /** A device's or another machine's turns for an agent on this one: the doors the web and the hooks use. */
   turns: {
@@ -222,6 +233,8 @@ export interface CoreApi {
     lane: LaneSeal
     /** This machine's E2EE identity as Share's owner signs with it, held by the gateway (`ObserverKey`). */
     observerKey: ObserverKey
+    /** The account's connected services, sealed and opened by the gateway for its machines (`ConnectorVault`). */
+    connectorVault: ConnectorVault
     /** Whether this computer holds an account: a sign-in or sign-out restarts the daemon. */
     signedIn(): boolean
     /** The account's environment (`prod`, …), which the backend checks every request against. */
@@ -371,6 +384,23 @@ export const OBSERVER_KEY_OFF: ObserverKey = {
   signWelcome: () => Promise.reject(new Error('no key: this process holds no E2EE identity')),
 }
 
+/**
+ * The account's connected services sealed for its machines (lib/e2ee/connectorVault.ts), by the gateway,
+ * which holds this machine's identity and reads the device key log: `seal` makes an envelope for every
+ * machine of the account's log (not suspended, not pending), `open` reads one only if such a machine
+ * signed it, and answers null otherwise. `complete` says it was sealed for every such machine: one that
+ * is not misses a machine added since, and is sealed again. The envelope is opaque JSON for the backend.
+ */
+export interface ConnectorVault {
+  seal(plaintext: string): Promise<Record<string, unknown>>
+  open(envelope: unknown): Promise<{ plaintext: string, complete: boolean } | null>
+}
+/** A process with no key of the core's: it seals and opens nothing. */
+export const CONNECTOR_VAULT_OFF: ConnectorVault = {
+  seal: () => Promise.reject(new Error('no key: this process holds no E2EE identity')),
+  open: async () => null,
+}
+
 /** A service in its own process that acts on no agent: it creates none and reads no harness's frame. */
 export const AGENT_ACTIONS_OFF: Pick<CoreApi['agents'], 'create' | 'dsh'> = {
   create: async () => ({ ok: false, error: 'SERVICE_UNAVAILABLE' }),
@@ -378,10 +408,11 @@ export const AGENT_ACTIONS_OFF: Pick<CoreApi['agents'], 'create' | 'dsh'> = {
 }
 
 /** The account as a service that reads no backend, hears no notice and signs nothing has it. */
-export const ACCOUNT_BACKEND_OFF: Pick<CoreApi['account'], 'backend' | 'onNotice' | 'observerKey'> = {
+export const ACCOUNT_BACKEND_OFF: Pick<CoreApi['account'], 'backend' | 'onNotice' | 'observerKey' | 'connectorVault'> = {
   backend: async () => ({ status: 503, body: { error: 'SERVICE_UNAVAILABLE' } }),
   onNotice: () => () => {},
   observerKey: OBSERVER_KEY_OFF,
+  connectorVault: CONNECTOR_VAULT_OFF,
 }
 
 /** Where a service that was never told runs this daemon from: the installed CLI, on no port it knows. */
@@ -670,6 +701,21 @@ export interface RecapsPort {
 
 /** What the core gets when the recaps fail: nothing told, no recap, and no live card. */
 export const RECAPS_FALLBACKS: PortFallbacks<RecapsPort> = { lifecycle: undefined, recaps: null, liveCards: later([]) }
+
+/**
+ * The core's calls into the agent cleanup (services/agentCleanup.ts): what happens to the harnesses agents start.
+ * Notices: the core never waits for them, and one the cleanup misses leaves a harness open, as before it.
+ */
+export interface AgentCleanupPort {
+  /** A harness was closed or stopped (`agent_close`, Stop Harness, a purge): the harnesses it started close too. */
+  closed(agentId: string): void
+  /** The person typed or pasted into a harness, from a window or the phone (an agent id or a session id): one another
+   *  agent started is the person's from then on. */
+  typed(id: string): void
+  stop(): void
+}
+/** What the core gets when the cleanup fails: nothing told, and every harness left open, as before it. */
+export const AGENT_CLEANUP_FALLBACKS: PortFallbacks<AgentCleanupPort> = { closed: undefined, typed: undefined, stop: undefined }
 
 /** The core's calls into the DSH viewers: each harness agent's viewer server and verdict watch. */
 export interface ViewersPort {
@@ -1043,6 +1089,7 @@ export type BackendNotice =
   | { type: 'zoo_changed'; revision: number }
   | { type: 'machines_changed'; reason: string }
   | { type: 'device_keys_changed' }
+  | { type: 'connectors_changed'; revision: number }
 
 /** What a person has open on this computer, per surface (lib/windowSurfaces.ts). */
 export type { LocalWindows, WindowSurface } from '../lib/windowSurfaces.js'
@@ -1257,6 +1304,8 @@ export interface GatewayOps {
   lane: LaneSeal
   /** Share's owner's signature on a welcome, with this machine's identity (`core.account.observerKey`). */
   observerKey: ObserverKey
+  /** The account's connected services sealed for its machines (`core.account.connectorVault`). */
+  connectorVault: ConnectorVault
 }
 
 /** A window on this computer working on another of the owner's machines, through the relay: what the
@@ -1312,10 +1361,11 @@ export interface CorePorts {
   orchestrator: OrchestratorPort | null
   sharing: SharingPort | null
   recaps: RecapsPort | null
+  agentCleanup: AgentCleanupPort | null
 }
 
 export function emptyPorts(): CorePorts {
-  return { usage: null, store: null, search: null, viewers: null, models: null, workspaces: null, messages: null, devices: null, wifi: null, monitor: null, orchestrator: null, sharing: null, recaps: null }
+  return { usage: null, store: null, search: null, viewers: null, models: null, workspaces: null, messages: null, devices: null, wifi: null, monitor: null, orchestrator: null, sharing: null, recaps: null, agentCleanup: null }
 }
 
 export interface CoreApiDeps {
@@ -1336,6 +1386,7 @@ export interface CoreApiDeps {
   accessToken: CoreApi['account']['accessToken']
   lane: CoreApi['account']['lane']
   observerKey: CoreApi['account']['observerKey']
+  connectorVault: CoreApi['account']['connectorVault']
   observer: CoreApi['clients']['observer']
   privateGridName: CoreApi['account']['privateGridName']
   machineName: CoreApi['account']['machineName']
@@ -1353,6 +1404,10 @@ export interface CoreApiDeps {
   machine: CoreApi['machine']
   activityText: CoreApi['agents']['activityText']
   activitySnapshot?: CoreApi['agents']['activitySnapshot']
+  /** One `agent_close` (core/agents/close.ts), for `closeStarted`; absent, a service closes nothing. */
+  closeAgent?: (request: AgentCloseRequest) => Promise<AgentCloseResult>
+  /** When an agent's conversation last moved (lib/transcriptActivity.ts), for `lastActivity`. */
+  activityAt?: (session: RegisteredSession) => Promise<number | null>
   signedIn: CoreApi['account']['signedIn']
   environment: CoreApi['account']['environment']
   machines: CoreApi['account']['machines']
@@ -1374,8 +1429,9 @@ export interface CoreApiDeps {
 
 export function createCoreApi({
   dataDir, registry, stoppedAgents, databaseHistory, syncSession, runtimeModels, viewerChanged,
-  gridNamed, gridModelsChanged, dshInstallStatus, mintGridName, accessToken, lane, observerKey, observer, privateGridName, machineName, backend, onNotice,
+  gridNamed, gridModelsChanged, dshInstallStatus, mintGridName, accessToken, lane, observerKey, connectorVault, observer, privateGridName, machineName, backend, onNotice,
   runtimeProfile, setRuntime, fork, create, dsh, windows, daemon, turns, questions, terminals = TERMINALS_OFF, conversations = CONVERSATIONS_OFF, viewerFrame, machine, activityText, activitySnapshot,
+  closeAgent, activityAt,
   signedIn, environment, machines, sendLocal, sendToWindow, hasWindow, devicesChanged, dialWatching, wifi, lastTurn, turnCard, turnSummary,
   log = (line) => console.warn(line),
 }: CoreApiDeps): CoreApi {
@@ -1408,11 +1464,24 @@ export function createCoreApi({
       dsh,
       activityText,
       activitySnapshot,
+      // Decided here, not in the service: whatever the cleanup asks, from its process or this one, the core closes only
+      // a harness another agent started, the conversation it reviewed (`agent_close`'s identity), and keeps it.
+      closeStarted: async (agentId, mode) => {
+        const session = registry.byAgent(agentId)
+        if (!session) return { error: 'AGENT_CHANGED' }
+        if (session.startedBy !== 'agent') return { error: 'NOT_AGENT_STARTED' }
+        if (!closeAgent) return { error: 'UNSUPPORTED' }
+        return closeAgent({ agentId, sessionId: session.sessionId, createdAt: new Date(session.registeredAt).toISOString(), mode })
+      },
+      lastActivity: async (agentId) => {
+        const session = registry.byAgent(agentId)
+        return session && activityAt ? activityAt(session) : null
+      },
     },
     turns,
     questions,
     transcripts: { databaseHistory, lastTurn },
-    account: { mintGridName, accessToken, lane, observerKey, privateGridName, machineName, backend, onNotice, signedIn, environment, machines },
+    account: { mintGridName, accessToken, lane, observerKey, connectorVault, privateGridName, machineName, backend, onNotice, signedIn, environment, machines },
     clients: {
       viewerChanged, gridNamed, gridModelsChanged, dshInstallStatus, windows, observer, hasWindow, devicesChanged, dialWatching,
       // A viewers process speaks to the core as a service: what it may send a client is a viewer stream's

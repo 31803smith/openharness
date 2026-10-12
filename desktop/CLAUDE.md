@@ -346,8 +346,11 @@ closes. Idle-only closes retain the daemon's activity guard; newly active work g
 of the remaining sessions. Failures identify confirmed stops separately from uncertain ones
 and default to Keep open. Close pane / Close Tab dismisses the captured views through the
 normal recently-closed history path without another stop request; unconfirmed sessions may
-still be running, and their views in other tabs remain open. Previously queued daemon close
-plans remain compatible. Layout cleanup, moving panes, switching tabs, and sign-out retain
+still be running, and their views in other tabs remain open. A session reviewed before its
+engine bound a conversation (Codex's first seconds) that has bound one since is the same session
+(`Agent.continuesSession`): its Stop names the reviewed identity, no conversation, and the daemon
+decides (CLI `closeAgentService.ts` `matches`); another conversation once one was bound is a
+change. Previously queued daemon close plans remain compatible. Layout cleanup, moving panes, switching tabs, and sign-out retain
 their view-only behavior. Older daemons retain their existing behavior until updated.
 
 `HarnessMonitor` supplies the global running-harness count without process sampling
@@ -447,10 +450,11 @@ add a kind there, not at the call site.
   with harness, machine and installed local model counts plus subscription allowance remaining at the bottom left and focused machine/repo/branch/PR at the bottom right.
   Tabs center their name/status group and show no shortcut hint (Command changes nothing on
   them). Hovering a tab shows Agent Messages' 💬 — grey off, accent blue on — just
-  left of ×; while its agents message, the status slot shows an animated 💬 for 10 s instead
+  left of ×; traffic between its agents shows nothing on the tab, whose status slot keeps its
+  own status (owner, 2026-10-12: messages arrive when they arrive)
   (`lib/agent_messages/`, `AgentMessagesController` on `AppNotifier.agentMessages`, its own
-  notifier so traffic never rebuilds the workspace; `MessagingMark`; `SwarmTabButton` mirrors
-  it natively). At rest the name has the whole tab; hovered, it moves left only as far as 💬
+  notifier so traffic never rebuilds the workspace; `SwarmTabButton` mirrors it natively).
+  At rest the name has the whole tab; hovered, it moves left only as far as 💬
   and × need. Tab and pane close
   marks are small and quiet, with larger click targets. Terminal panes end with matching
   plain-text agent/model selectors and close at every width. Hovering the right

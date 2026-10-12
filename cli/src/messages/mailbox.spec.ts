@@ -1,10 +1,10 @@
-import { mkdirSync, mkdtempSync, renameSync, rmSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { PaneInbox } from './inbox.js'
 import { ATTEMPT_MS, deliveryKey, FINISHED_KEEP_MS, FYI_REASON, HOOKLESS_MS, HOOKLESS_REASON, Mailbox, MAX_BACKOFF_MS, PARK_MS, PARKED_MAX_MS, PUMP_MS, WITHHELD, type MailboxAgent, type MailboxDeps } from './mailbox.js'
-import type { DeliveryStatus, Message } from './model.js'
+import { NOTICE_TEXT, paneNotice, type DeliveryStatus, type Message } from './model.js'
 import { MessageStore } from './store.js'
 
 let root: string
@@ -25,6 +25,7 @@ function setup(over: Partial<MailboxDeps> = {}) {
   const delivered: Array<[string, string, string]> = []
   const statuses: DeliveryStatus[] = []
   let refused: string | null = null
+  let held: string | null = null
   let ready = true
   const writable = vi.fn()
   const deps: MailboxDeps = {
@@ -32,6 +33,7 @@ function setup(over: Partial<MailboxDeps> = {}) {
     agent: () => agent,
     deliver: (agentId, text, id) => { delivered.push([agentId, text, id]) },
     refused: () => refused,
+    held: () => held,
     ready: () => ready,
     text: (_d, m) => `[${m.id}] ${m.text}`,
     changed: (status) => { statuses.push(status) },
@@ -48,6 +50,7 @@ function setup(over: Partial<MailboxDeps> = {}) {
     now: () => clock,
     setAgent: (next: MailboxAgent | null) => { agent = next },
     refuse: (why: string | null) => { refused = why },
+    hold: (why: string | null) => { held = why },
     setReady: (next: boolean) => { ready = next },
     claim: (pane: string, key: string) => {
       // As the hook does: the rename into claimed/, which it makes.
@@ -131,6 +134,21 @@ describe('Agent Messages\' mailbox', () => {
     expect(t.mailbox.read('web', ['m0000002'])).toEqual([])
     t.mailbox.pump()
     expect(t.delivered.filter(([, , id]) => id.includes(parked.key))).toHaveLength(1)
+  })
+
+  it('leaves the person a line in the pane for each message the hook gives the model', () => {
+    // A tab's agents traded messages at their tool calls while their panes showed nothing (owner, 2026-10-12).
+    const t = setup()
+    const delivery = t.accept({ ...message(), fyi: true })
+    const item = JSON.parse(readFileSync(join(root, 'agent-messages', 'inbox', '3', `${delivery.key}.json`), 'utf8'))
+    expect(item.notice).toBe('← lead · FYI: review 3f2a9c1')
+    expect(item.text).toContain('review 3f2a9c1')
+    // Its first line that says something, on one line, cut short.
+    expect(paneNotice({ ...message(), text: '\n  \nQuiet window   starts now\nuntil 06:16Z' })).toBe('← lead: Quiet window starts now')
+    const long = paneNotice({ ...message(), text: 'x'.repeat(500) })
+    expect(long).toBe(`← lead: ${'x'.repeat(NOTICE_TEXT - 1)}…`)
+    expect(paneNotice({ ...message(), text: 'short' })).toBe('← lead: short')
+    expect(paneNotice({ ...message(), text: '' })).toBe('← lead: ')
   })
 
   it('never types news into an idle agent: it waits for its next tool call, or for the agent to read it', () => {
@@ -254,6 +272,45 @@ describe('Agent Messages\' mailbox', () => {
     t.event(written.attempt!.id, 'delivered')
     expect(written).toMatchObject({ state: 'delivered', via: 'prompt' })
     expect(t.inbox.waiting('%3', written.key)).toBe(false)
+  })
+
+  it('holds a delivery its tab does not carry for now: out of the hook\'s reach, given to no one, put back after', () => {
+    // A tab turned off by a slip of the mouse failed the message waiting in it (2026-10-12).
+    const t = setup()
+    const waiting = t.accept({ ...message(), fyi: true })
+    expect(t.inbox.waiting('%3', waiting.key)).toBe(true)
+    t.hold('off for now')
+    t.mailbox.refuseAll()
+    expect(waiting).toMatchObject({ state: 'queued', reason: 'off for now' })
+    expect(t.inbox.waiting('%3', waiting.key)).toBe(false)
+    t.mailbox.pump()
+    expect(t.inbox.waiting('%3', waiting.key)).toBe(false)
+    t.hold(null)
+    t.mailbox.pump()
+    expect(t.inbox.waiting('%3', waiting.key)).toBe(true)
+    expect(waiting.reason).toBe(FYI_REASON)
+    // A parked attempt is back with the hook: held, it leaves the hook's reach too, and is typed again after.
+    const typed = t.accept(message('m0000002'))
+    t.event(typed.attempt!.id, 'queued')
+    t.tick(PARK_MS)
+    t.mailbox.pump()
+    expect(typed.attempt?.parked).toBe(true)
+    expect(t.inbox.waiting('%3', typed.key)).toBe(true)
+    t.hold('off for now')
+    t.mailbox.pump()
+    expect(typed).toMatchObject({ state: 'queued', reason: 'off for now', attempt: undefined })
+    expect(t.inbox.waiting('%3', typed.key)).toBe(false)
+    t.hold(null)
+    t.mailbox.pump()
+    expect(t.delivered.filter(([, , id]) => id.includes(typed.key))).toHaveLength(2)
+    // Refused for good, a parked one fails like any other.
+    t.event(typed.attempt!.id, 'queued')
+    t.tick(PARK_MS)
+    t.mailbox.pump()
+    t.refuse('gone')
+    t.mailbox.refuseAll()
+    expect(typed).toMatchObject({ state: 'failed', reason: 'gone' })
+    expect(t.inbox.waiting('%3', typed.key)).toBe(false)
   })
 
   it('fails a delivery the directory refuses, withdrawing it from the hook; nothing moves before the directory is read', () => {

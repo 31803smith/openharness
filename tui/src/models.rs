@@ -89,6 +89,9 @@ impl LocalModel {
         })
     }
     pub fn running(&self) -> bool { self.state == "running" }
+    /// Its name as shown: without the quantization a file name ends in, which the Quant line says.
+    /// [name] stays whole — it is what the grid serves it as, and what a harness is matched to it by.
+    pub fn shown(&self) -> String { without_quant(&self.name).to_string() }
     pub fn downloaded(&self) -> bool { self.state == "downloaded" || self.running() }
     /// Running, parked while this computer's models rest: it answers again on the next message.
     pub fn resting(&self) -> bool { self.running() && self.asleep }
@@ -96,12 +99,30 @@ impl LocalModel {
     /// guessed from its size.
     pub fn quantization(&self) -> Option<String> {
         if let Some(q) = &self.quant { return Some(q.clone()) }
-        self.id.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_')).find(|w| {
-            let u = w.to_ascii_uppercase();
-            let digit_after = |p: &str| u.strip_prefix(p).is_some_and(|r| r.starts_with(|c: char| c.is_ascii_digit()));
-            digit_after("IQ") || digit_after("Q") || digit_after("MXFP") || ["BF16", "FP16", "F16"].contains(&u.as_str())
-        }).map(str::to_ascii_uppercase)
+        quant_of(&self.id)
     }
+}
+
+/// The quantization a model's file name says (`…-Q4_K_M.gguf`): `Q4_K_M`.
+pub fn quant_of(name: &str) -> Option<String> {
+    name.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_')).find(|w| {
+        let u = w.to_ascii_uppercase();
+        let digit_after = |p: &str| u.strip_prefix(p).is_some_and(|r| r.starts_with(|c: char| c.is_ascii_digit()));
+        digit_after("IQ") || digit_after("Q") || digit_after("MXFP") || ["BF16", "FP16", "F16"].contains(&u.as_str())
+    }).map(str::to_ascii_uppercase)
+}
+
+/// [name] without the quantization its file name ends in: `Qwen3.8-27B-UD-Q4_K_M` is `Qwen3.8-27B`,
+/// `qwen3:4b-instruct-2507-q4_k_m` is `qwen3:4b-instruct-2507`. A name that is all quant stays.
+pub fn without_quant(name: &str) -> &str {
+    let quant = |rest: &str| {
+        let u = rest.to_ascii_uppercase();
+        let q = u.strip_prefix("UD-").or_else(|| u.strip_prefix("UD_")).unwrap_or(&u);
+        let digit_after = |p: &str| q.strip_prefix(p).is_some_and(|r| r.starts_with(|c: char| c.is_ascii_digit()) && r.chars().all(|c| c.is_ascii_alphanumeric() || c == '_'));
+        digit_after("IQ") || digit_after("Q") || digit_after("MXFP") || ["BF16", "FP16", "F16"].contains(&q)
+    };
+    name.char_indices().filter(|&(i, c)| i > 0 && matches!(c, '-' | '_' | '.')).map(|(i, _)| i)
+        .find(|&i| quant(&name[i + 1..])).map_or(name, |i| &name[..i])
 }
 
 /// What `grid_fleet_models_list` answers: the models, the machine's memory and free disk, and
@@ -109,6 +130,9 @@ impl LocalModel {
 /// shared models are one Set up row (the desktop's); `grid_setup_error`: why the last Set up failed.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Snapshot { pub models: Vec<LocalModel>, pub memory: Option<f64>, pub free_disk: Option<f64>, pub hardware: Option<String>, pub notice: Option<String>, pub busy: bool, pub supports_download: bool,
+    /// What the catalog fits models to, and whether that is an NVIDIA card's VRAM (`fitMemory: vram`)
+    /// with its cards' VRAM in all: [memory] is the machine's RAM, not what such a model runs in.
+    pub fit: Option<f64>, pub fit_vram: bool, pub gpu_memory: Option<f64>,
     pub grid_setup_needed: bool, pub grid_setup_error: Option<String> }
 
 /// None when there is no list — a daemon too old for it, or a reply that failed.
@@ -119,6 +143,7 @@ pub fn parse_local(reply: &Value) -> Option<Snapshot> {
         // A sentence beside the list, never a failure (an `error` fails the whole request).
         notice: text(&reply["notice"]), busy: reply["busy"] == true, supports_download: reply["supportsDownload"] == true,
         grid_setup_needed: reply["gridSetupNeeded"] == true, grid_setup_error: text(&reply["gridSetupError"]),
+        fit: num(&reply["fitBytes"]).filter(|m| *m > 0.0), fit_vram: reply["fitMemory"] == "vram", gpu_memory: num(&reply["gpuMemoryBytes"]).filter(|m| *m > 0.0),
     })
 }
 
@@ -260,7 +285,17 @@ pub fn parse_api_models(reply: &Value) -> Option<Vec<ApiModel>> {
 /// An agent account's subscription, from the usage the status line reads (`usage_read`): how much
 /// of its tightest window is left.
 #[derive(Clone, Debug, PartialEq)]
-pub struct Sub { pub engine: String, pub title: String, pub account: String, pub left: Option<f64>, pub status: String, pub details: Vec<String> }
+pub struct Sub {
+    pub engine: String, pub title: String, pub account: String, pub left: Option<f64>, pub status: String, pub details: Vec<String>,
+    /// The machines this account's plan was read on, by name, this computer's first — what tells two plans apart, as the
+    /// status line does. (The account key itself is a hash: it says nothing to a person.)
+    pub machines: Vec<String>,
+}
+
+/// A machine as a person knows it: its name, never its id.
+fn machine_name(app: &App, id: &str) -> String {
+    app.fleet.machine(id).map(|m| m.name.clone()).filter(|n| !n.is_empty()).unwrap_or_else(|| "Unnamed machine".into())
+}
 
 /// What is left of a window, as the desktop says it: never a positive remainder rounded to 0.
 fn left_of(used: f64) -> String { let left = (100.0 - used).clamp(0.0, 100.0); if left > 0.0 && left < 1.0 { "<1%".into() } else { format!("{}%", left.floor() as u32) } }
@@ -272,7 +307,12 @@ pub fn subscriptions(app: &App) -> Vec<Sub> {
     for m in machines {
         for u in &app.usage[m] {
             let account = u.account.clone().unwrap_or_default();
-            if out.iter().any(|s| s.engine == u.provider && s.account == account) { continue }
+            let name = machine_name(app, m);
+            // The same account on another machine is the same plan: one row, every machine it is on.
+            if let Some(seen) = out.iter_mut().find(|s| s.engine == u.provider && s.account == account) {
+                if !seen.machines.contains(&name) { seen.machines.push(name) }
+                continue;
+            }
             let tightest = u.windows.iter().max_by(|a, b| a.used.total_cmp(&b.used));
             let title = match u.provider.as_str() { "claude" => "Anthropic".to_string(), "codex" => "OpenAI".to_string(), p => engine_label(p).to_string() };
             out.push(Sub {
@@ -280,6 +320,7 @@ pub fn subscriptions(app: &App) -> Vec<Sub> {
                 left: tightest.map(|w| (100.0 - w.used).clamp(0.0, 100.0)),
                 status: tightest.map(|w| format!("{} left", left_of(w.used))).unwrap_or_else(|| "Usage unavailable".into()),
                 details: u.windows.iter().map(|w| format!("{} — {} left", w.label, left_of(w.used))).collect(),
+                machines: vec![name],
             });
         }
     }
@@ -375,6 +416,9 @@ pub struct Models {
     /// The picker keeps the harness it opened for, even if another client changes focus.
     pub selection: Option<crate::session_close::Identity>,
     pub selection_fixed: bool,
+    /// The pane focused when it opened: a harness there still starting (its terminal, until the
+    /// daemon sees the engine) becomes the selection once it is one.
+    selection_pane: Option<u64>,
     pub panel_generation: u64,
     pub switch_generation: u64,
     /// Each machine's local models, when they were last read, and a read out now.
@@ -488,7 +532,7 @@ pub fn target(app: &App) -> Option<Target> {
     };
     if app.models_view.selection_fixed {
         let selected = app.models_view.selection.as_ref()?;
-        if !selected.matches(app) { return None }
+        if !same_harness(app, selected) { return None }
         return of(selected.machine.clone(), selected.agent.clone());
     }
     if let Some(t) = crate::input::focused_agent(app).and_then(|(m, a)| of(m, a)) { return Some(t) }
@@ -603,7 +647,7 @@ pub fn facts(app: &App, m: &LocalModel, t: Option<&Target>) -> Facts {
     let active = op.as_ref().is_some_and(Operation::active);
     let busy = v.busy(machine);
     let online = up(app, machine) && v.local.contains_key(machine);
-    let other = other_running(app, m).map(|o| o.name);
+    let other = other_running(app, m).map(|o| o.shown());
     let runs = t.is_some_and(|t| can_run(app, &t.engine));
     let served = served_in(v.grids.get(machine), m);
     let in_use = t.is_some_and(|t| m.running() && !t.grid_model.is_empty()
@@ -646,7 +690,16 @@ fn capital(s: &str) -> String { let mut c = s.chars(); c.next().map(|f| f.to_upp
 /// `Get for this Mac · 64 GB`: the downloads, and the memory they were chosen for.
 pub fn catalog_heading(snap: Option<&Snapshot>) -> String {
     let mut h = format!("Get for {}", this_computer());
-    if let Some(m) = snap.and_then(|s| s.memory) { h.push_str(&format!(" · {}", gb(m))) }
+    // (An NVIDIA machine's models run in its card: its VRAM, not the machine's RAM.)
+    match snap {
+        Some(s) if s.fit_vram => match (s.gpu_memory, s.fit) {
+            (Some(all), _) => h.push_str(&format!(" · {} VRAM", gb(all))),
+            (None, Some(room)) => h.push_str(&format!(" · {} VRAM for models", gb(room))),
+            _ => {}
+        },
+        Some(s) => if let Some(m) = s.memory { h.push_str(&format!(" · {}", gb(m))) },
+        None => {}
+    }
     h
 }
 
@@ -712,7 +765,7 @@ fn local_row(app: &App, m: &LocalModel, t: Option<&Target>, group: &str) -> Row 
     // quantization and app are in the preview, and found by a search.
     let quant = m.quantization().unwrap_or_default();
     let app_name = m.app.clone().unwrap_or_default();
-    Row::new(format!("mv:local:{}", m.id), m.name.clone()).group(group.to_string())
+    Row::new(format!("mv:local:{}", m.id), m.shown()).group(group.to_string())
         .extra(format!("{} {quant} {app_name} {word} local{}", m.id, if m.recommended { " recommended" } else { "" }))
         .lead(vec![span(dot, fg(color))])
         .right(columns(&m.size.map(gb).unwrap_or_default(), &speed(m), &word))
@@ -733,8 +786,9 @@ fn grid_word(app: &App, x: &GridModel, t: Option<&Target>) -> String {
 fn grid_row(app: &App, s: &Section, x: &GridModel, t: Option<&Target>, group: &str) -> Row {
     let word = grid_word(app, x, t);
     let (dot, color) = if word.starts_with('✓') { ("✓ ", theme::accent()) } else if x.offline.is_some() { ("· ", theme::MUTED) } else { ("◆ ", theme::TEAL) };
-    Row::new(format!("mv:grid:{}\t{}\t{}", s.name, x.node, x.id), x.id.clone()).group(group.to_string())
-        .extra(format!("{} {} {} {}", s.name, x.node, if s.own { "local" } else { "shared" }, word))
+    // Shown without its quant, as Your models are; switched onto (and found by) the name it is served as.
+    Row::new(format!("mv:grid:{}\t{}\t{}", s.name, x.node, x.id), without_quant(&x.id).to_string()).group(group.to_string())
+        .extra(format!("{} {} {} {} {}", x.id, s.name, x.node, if s.own { "local" } else { "shared" }, word))
         .lead(vec![span(dot, fg(color))])
         .detail(vec![span(x.node.clone(), fg(theme::MUTED))])
         .right(word)
@@ -749,20 +803,21 @@ fn sub_word(app: &App, sub: &Sub, t: Option<&Target>) -> String {
 const LOW_WATER: f64 = 20.0;
 
 
-/// A subscription's row, as the desktop's: the account (`Anthropic 315df1`), then how much of it is
-/// left (`20% remaining`) — the one figure worth a glance; Enter on it is the preview's to say. Its
-/// mark says it is in use (✓) or running low (!).
-fn sub_row(app: &App, sub: &Sub, t: Option<&Target>, group: &str, twin: bool) -> Row {
+/// A subscription's row: the plan's maker, the machines it is on (`Anthropic  studio, laptop`), then how
+/// much of it is left (`20% remaining`) — the one figure worth a glance; Enter on it is the preview's to
+/// say. Its mark says it is in use (✓) or running low (!). [ordinal]: which of several plans of one maker
+/// on the same machines this is — the only case a machine's name cannot tell them apart.
+fn sub_row(app: &App, sub: &Sub, t: Option<&Target>, group: &str, ordinal: Option<usize>) -> Row {
     let word = sub_word(app, sub, t);
     let low = sub.left.is_some_and(|l| l <= LOW_WATER);
-    let short: String = sub.account.chars().take(6).collect();
-    let label = if twin && !short.is_empty() { format!("{} · {short}", sub.title) } else { sub.title.clone() };
+    let label = ordinal.map_or_else(|| sub.title.clone(), |n| format!("{} {n}", sub.title));
+    let machines = sub.machines.join(", ");
     let (dot, color) = if word.starts_with('✓') { ("✓ ", if low { theme::WARN } else { theme::accent() }) } else if low { ("! ", theme::WARN) } else { ("◇ ", theme::SOFT) };
     let left = sub.left.map(|l| format!("{} remaining", left_of(100.0 - l))).unwrap_or_else(|| sub.status.clone());
     Row::new(format!("mv:sub:{}\t{}", sub.engine, sub.account), label).group(group.to_string())
-        .extra(format!("{} {} subscription own login {word}", sub.engine, sub.account))
+        .extra(format!("{} {machines} subscription own login {word}", sub.engine))
         .lead(vec![span(dot, fg(color))])
-        .detail(vec![span(if twin { String::new() } else { short }, fg(theme::MUTED))])
+        .detail(vec![span(machines, fg(theme::MUTED))])
         .right(left)
 }
 
@@ -788,7 +843,12 @@ pub fn rows(app: &App, query: &str) -> Vec<Row> {
     // Subscriptions: every account's, as the desktop lists them — how much of it is left and whether
     // that is running low; the harness's own login says it is in use.
     let subs = subscriptions(app);
-    out.extend(subs.iter().map(|sub| sub_row(app, sub, t, SUBSCRIPTIONS, subs.iter().filter(|s| s.title == sub.title).count() > 1)));
+    out.extend(subs.iter().enumerate().map(|(i, sub)| {
+        // (Two plans of one maker on the same machines have only their order to tell them apart.)
+        let alike: Vec<usize> = subs.iter().enumerate().filter(|(_, s)| s.title == sub.title && s.machines == sub.machines).map(|(j, _)| j).collect();
+        let ordinal = (alike.len() > 1).then(|| alike.iter().position(|j| *j == i).unwrap_or(0) + 1);
+        sub_row(app, sub, t, SUBSCRIPTIONS, ordinal)
+    }));
 
     // APIs saved on this computer: each folds its models until Enter (or a search) opens it.
     match &v.apis {
@@ -1038,7 +1098,7 @@ pub fn plan_enter(app: &App, id: &str) -> Plan {
     if let Some(u) = v.using.as_ref().filter(|u| u.model == m.id) { return Plan::Say(using_label(app, u)) }
     if f.active || f.pending.is_some() || f.busy { return say("Wait for the current model operation to finish.") }
     if let (true, Some(t), Some((grid, served))) = (f.use_running, t, f.served.clone()) {
-        return Plan::Retarget { machine: t.machine.clone(), payload: json!({ "agentId": t.agent, "gridModel": served, "gridName": grid }), name: m.name.clone() };
+        return Plan::Retarget { machine: t.machine.clone(), payload: json!({ "agentId": t.agent, "gridModel": served, "gridName": grid }), name: m.shown() };
     }
     if m.running() {
         return match t {
@@ -1051,11 +1111,11 @@ pub fn plan_enter(app: &App, id: &str) -> Plan {
     // first when another harness answers with that one.
     let other = other_running(app, &m);
     let users = other.as_ref().map(|o| harnesses_on(app, o, t)).unwrap_or_default();
-    let stop_said = other.as_ref().and_then(|o| stop_words(&o.name, &users));
+    let stop_said = other.as_ref().and_then(|o| stop_words(&o.shown(), &users));
     if m.downloaded() {
         if f.use_start {
             let go = Plan::Use { model: m.id.clone(), download: false };
-            return match (&other, &stop_said) { (Some(o), Some(said)) => Plan::Arm(format!("Stop {}? {said} Enter · Esc", o.name), Box::new(go)), _ => go };
+            return match (&other, &stop_said) { (Some(o), Some(said)) => Plan::Arm(format!("Stop {}? {said} Enter · Esc", o.shown()), Box::new(go)), _ => go };
         }
         if let Some(o) = &f.other { return Plan::Say(format!("Stop {o} first: one local model runs at a time — ^S on it")) }
         return match t {
@@ -1071,7 +1131,7 @@ pub fn plan_enter(app: &App, id: &str) -> Plan {
     let size = m.size.map(gb).map(|s| format!(" ({s})")).unwrap_or_default();
     let then = match (f.get_use, &f.other) { (true, Some(o)) => format!(", stop {o}, start it, move this harness onto it"), (true, None) => ", start it, move this harness onto it".into(), _ => String::new() };
     let said = stop_said.filter(|_| f.get_use).map(|s| format!(" {s}")).unwrap_or_default();
-    Plan::Arm(format!("Get {}{size}{then}?{said} Enter · Esc", m.name), Box::new(go))
+    Plan::Arm(format!("Get {}{size}{then}?{said} Enter · Esc", m.shown()), Box::new(go))
 }
 
 /// What ^S does on row [id]: stop a local model (asked first).
@@ -1080,7 +1140,7 @@ pub fn plan_stop(app: &App, id: &str) -> Plan {
     let f = facts(app, &m, None);
     if f.busy { return Plan::Say("Wait for the current model operation to finish.".into()) }
     if !m.can_stop { return Plan::Say(if m.running() { "Other models share its engine — stop it from the desktop's Model Manager".into() } else { "It is not running".into() }) }
-    Plan::Arm(format!("^S again stops {} — the download is kept", m.name), Box::new(Plan::Act { model: m.id.clone(), action: "stop" }))
+    Plan::Arm(format!("^S again stops {} — the download is kept", m.shown()), Box::new(Plan::Act { model: m.id.clone(), action: "stop" }))
 }
 
 /// Enter (or ^S, [stop]) on row [id] of the view: planned, then done.
@@ -1094,8 +1154,16 @@ pub fn choose(app: &mut App, picker: &mut Picker, id: &str, stop: bool) {
     run(app, picker, plan, &key);
 }
 
+/// Whether [identity] is still the harness the view opened for. One that had no conversation yet and
+/// now has its first (a new harness is chatted with, or its engine reports its session late) is the
+/// same harness; any other change of conversation is not.
+fn same_harness(app: &App, identity: &crate::session_close::Identity) -> bool {
+    identity.matches(app) || identity.session.is_empty() && identity.connection_matches(app)
+        && app.fleet.agent(&identity.machine, &identity.agent).is_some_and(|a| a.created_at_wire == identity.created)
+}
+
 fn current_identity(app: &App, identity: &crate::session_close::Identity) -> bool {
-    identity.matches(app) && app.fleet.agent(&identity.machine, &identity.agent).is_some_and(|a| a.status != "stopped")
+    same_harness(app, identity) && app.fleet.agent(&identity.machine, &identity.agent).is_some_and(|a| a.status != "stopped")
 }
 
 fn selection_changed(app: &App) -> bool {
@@ -1800,10 +1868,10 @@ fn start_use(app: &mut App, model: &str, download: bool) {
     let supports = app.models_view.local.get(&app.fleet.local_id).is_some_and(|s| s.supports_download);
     // One local model runs at a time: the one running here stops first — after a download, so it
     // answers until this one is ready to start.
-    let stops = other_running(app, &m).map(|o| (o.id, o.name));
+    let stops = other_running(app, &m).map(|o| { let shown = o.shown(); (o.id, shown) });
     let step = match (&stops, download && supports) { (_, true) => Step::Get, (Some(_), false) => Step::Stop, (None, false) => if download { Step::Get } else { Step::Start } };
     let identity = app.fleet.agent(&t.machine, &t.agent).map(|a| crate::session_close::Identity::capture(app, a));
-    app.models_view.using = Some(Use { model: m.id.clone(), name: m.name.clone(), machine: t.machine, agent: t.agent, step, stops: stops.clone(), since: Instant::now(), identity });
+    app.models_view.using = Some(Use { model: m.id.clone(), name: m.shown(), machine: t.machine, agent: t.agent, step, stops: stops.clone(), since: Instant::now(), identity });
     app.models_view.ended = None;
     match (step, stops) {
         (Step::Stop, Some((other, _))) => act(app, &other, "stop"),
@@ -1853,15 +1921,21 @@ pub fn advance(app: &mut App) {
 /// The view opened: read what it shows now (what was read in the last 20 s of the grids is kept).
 pub fn open(app: &mut App) {
     reconcile_reads(app);
-    app.models_view.selection_fixed = false;
-    app.models_view.selection = target(app).and_then(|t| app.fleet.agent(&t.machine, &t.agent)).map(|a| crate::session_close::Identity::capture(app, a));
-    app.models_view.selection_fixed = true;
+    app.models_view.selection_pane = app.focused();
+    select(app);
     app.models_view.panel_generation = app.models_view.panel_generation.wrapping_add(1);
     let machine = app.fleet.local_id.clone();
     if machine.is_empty() || app.link(&machine).is_none() { return }
     if !app.models_view.reading.contains(&machine) { read_local(app, &machine) }
     if !app.models_view.grids_reading.contains(&machine) && due(app.models_view.grids_at.get(&machine), Duration::from_secs(20), Instant::now()) { read_grids(app, &machine) }
     read_apis(app);
+}
+
+/// Fix the harness the view acts on: the one [target] names now.
+fn select(app: &mut App) {
+    app.models_view.selection_fixed = false;
+    app.models_view.selection = target(app).and_then(|t| app.fleet.agent(&t.machine, &t.agent)).map(|a| crate::session_close::Identity::capture(app, a));
+    app.models_view.selection_fixed = true;
 }
 
 /// Whether the view is still reading what it shows (its spinner turns).
@@ -1872,7 +1946,14 @@ pub fn loading(app: &App) -> bool { !app.models_view.reading.is_empty() || !app.
 pub fn tick(app: &mut App) {
     reconcile_reads(app);
     let open = matches!(&app.modal, Some(crate::modal::Modal::Picker { kind: crate::modal::PickerKind::Models, .. }));
-    if !open { app.models_view.selection_fixed = false; app.models_view.selection = None; }
+    if !open { app.models_view.selection_fixed = false; app.models_view.selection = None; app.models_view.selection_pane = None; }
+    // Opened over a harness still starting: it is the one meant once its engine is seen, while that
+    // pane keeps the focus. (A selection already made is never replaced: "This session changed".)
+    if open && app.models_view.selection.is_none() && app.models_view.selection_pane.is_some() && app.focused() == app.models_view.selection_pane { select(app) }
+    // Its first conversation, once it has one, is the one it is held to from then on.
+    let first = app.models_view.selection.as_ref().filter(|s| s.session.is_empty() && same_harness(app, s))
+        .and_then(|s| app.fleet.agent(&s.machine, &s.agent)).map(|a| a.session_id.clone()).filter(|id| !id.is_empty());
+    if let (Some(session), Some(s)) = (first, app.models_view.selection.as_mut()) { s.session = session }
     follow(app);
     app.models_view.starts.retain(|_, at| at.elapsed() < START_CAP);
     if app.models_view.switching.as_ref().is_some_and(|s| switched(app, s)) { app.models_view.switching = None }
@@ -1990,7 +2071,7 @@ pub fn preview(app: &App, id: &str) -> Vec<Line<'static>> {
         let status = if let Some(o) = f.op.as_ref().filter(|o| o.active()) { o.word() } else if let Some(p) = f.pending { p.to_string() } else if f.failed { "Failed · try again".into() }
             else if m.running() { "Running".into() } else if m.downloaded() { "Downloaded".into() } else { "Not downloaded".into() };
         let status = if f.switching { format!("{SWITCHING} this harness is moving onto it") } else if f.in_use { format!("{status} · this harness is on it") } else { status };
-        let mut out = vec![bold(m.name.clone()), Line::raw(status)];
+        let mut out = vec![bold(m.shown()), Line::raw(status)];
         // (A Use's end says why it failed itself.)
         if !v.ended.as_ref().is_some_and(|e| e.row == id) { out.extend(failed) }
         out.extend(use_lines(app, &m, id));
@@ -2000,7 +2081,12 @@ pub fn preview(app: &App, id: &str) -> Vec<Line<'static>> {
         if let Some(size) = m.size {
             let free = snap.and_then(|s| s.free_disk).filter(|_| !m.downloaded()).map(|d| format!(" · {} free", gb(d))).unwrap_or_default();
             out.push(kv(if m.downloaded() { "Size" } else { "Download" }, format!("{}{free}", gb(size))));
-            if let Some(mem) = snap.and_then(|s| s.memory) { out.push(kv("Memory", format!("{} · {here} has {}", if size <= mem { "fits".to_string() } else { format!("needs {}", gb(size)) }, gb(mem)))) }
+            // (An NVIDIA machine's against the VRAM its card has for models — what is free on it and
+            // what our own running model holds, which a start of another frees — the catalog's fit.)
+            match snap {
+                Some(s) if s.fit_vram => if let Some(room) = s.fit { out.push(kv("VRAM", format!("{} · its GPU has {} for models", if size <= room { "fits".to_string() } else { format!("needs {}", gb(size)) }, gb(room)))) },
+                _ => if let Some(mem) = snap.and_then(|s| s.memory) { out.push(kv("Memory", format!("{} · {here} has {}", if size <= mem { "fits".to_string() } else { format!("needs {}", gb(size)) }, gb(mem)))) },
+            }
         }
         match (m.running().then_some(m.tok_s).flatten(), m.est_tok_s) {
             (Some(s), _) => out.push(kv("Speed", format!("{s:.1} tok/s"))),
@@ -2042,10 +2128,11 @@ pub fn preview(app: &App, id: &str) -> Vec<Line<'static>> {
             "✓ In use" => format!("{status} · this harness is on it"),
             _ => status,
         };
-        let mut out = vec![bold(model.to_string()), Line::raw(status)];
+        let mut out = vec![bold(without_quant(model).to_string()), Line::raw(status)];
         out.extend(failed(model));
         out.push(Line::raw(""));
         out.push(kv("Machine", node.to_string()));
+        if let Some(q) = quant_of(model) { out.push(kv("Quant", q)) }
         out.push(kv("Source", if own { "On your machines".to_string() } else { format!("Shared · {grid}") }));
         let said = match plan_enter(app, id) { Plan::Retarget { .. } => "Enter moves this harness onto it.".to_string(), Plan::Arm(..) => "Enter twice moves this harness onto it anyway.".into(), Plan::Say(w) if w == NO_HARNESS => no_target_why(app), Plan::Say(w) => w, _ => String::new() };
         if !said.is_empty() { out.push(Line::raw("")); out.push(Line::from(span(said, fg(theme::accent())))) }
@@ -2069,6 +2156,7 @@ pub fn preview(app: &App, id: &str) -> Vec<Line<'static>> {
         out.extend(failed(""));
         out.push(Line::raw(""));
         out.extend(sub.details.iter().take(3).map(|d| kv("Window", d.clone())));
+        out.push(kv(if sub.machines.len() > 1 { "Machines" } else { "Machine" }, sub.machines.join(", ")));
         out.push(kv("Agent", engine_label(&sub.engine).to_string()));
         out.push(kv("Source", "Subscription"));
         let said = match sub_payload(app, &sub, t) { Ok(_) => "Enter puts this harness back on its own login.".to_string(), Err(w) => w };
@@ -2238,7 +2326,7 @@ mod tests {
     /// The harness's frame, its `grid` as given (`{}`: on its own login).
     fn frame(app: &mut App, grid: Value) {
         let key = ("local".to_string(), "a1".to_string());
-        let row = json!({ "id": "a1", "name": "fix-login", "engine": "claude", "selectedModel": "opus", "grid": grid });
+        let row = json!({ "id": "a1", "name": "fix-login", "engine": "claude", "sessionId": "s1", "selectedModel": "opus", "grid": grid });
         let a = crate::fleet::agent_from("local", &row, app.fleet.agents.get(&key));
         app.fleet.agents.insert(key, a);
     }
@@ -2254,6 +2342,38 @@ mod tests {
         on_grids(&mut app, "local", Ok(g));
         let mine: Vec<String> = super::rows(&app, "").into_iter().filter(|r| r.group.as_deref() == Some("Your models") && is_row(&r.id)).map(|r| r.id).collect();
         assert_eq!(mine, vec!["mv:local:qwen-35b".to_string(), "mv:local:gemma-12b".into(), "mv:grid:own-grid\tstudio\tbox-model".into(), "mv:grid:own-grid\tlap\taway-model".into()]);
+    }
+
+    /// A harness just opened reads as its terminal until the daemon sees the engine in it (OpenCode:
+    /// ~7 s). Models opened in that window takes the engine once it is seen — the same pane, never
+    /// another — instead of saying "focus a harness" until it is closed and opened again.
+    #[test]
+    fn models_opened_while_a_harness_starts_takes_it_once_its_engine_is_seen() {
+        let mut app = app();
+        let key = ("local".to_string(), "t1".to_string());
+        app.fleet.agents.insert(key.clone(), crate::fleet::agent_from("local", &json!({ "id": "t1", "name": "new", "engine": "terminal" }), None));
+        app.panes.insert(2, crate::pane::Pane::new(2, "local", "t1", 75, 40));
+        app.rects = vec![(1, ratatui::layout::Rect::new(0, 0, 75, 40)), (2, ratatui::layout::Rect::new(75, 0, 75, 40))];
+        app.tabs[0].focus = Some(2);
+        app.modal = Some(crate::modal::Modal::Picker { kind: crate::modal::PickerKind::Models, picker: crate::picker::Picker::new("Models", "") });
+        open(&mut app);
+        assert!(target(&app).is_none(), "still a terminal");
+        app.fleet.agents.insert(key.clone(), crate::fleet::agent_from("local", &json!({ "id": "t1", "name": "new", "engine": "opencode" }), None));
+        tick(&mut app);
+        assert_eq!(target(&app).map(|t| t.agent).as_deref(), Some("t1"), "{}", no_target_why(&app));
+        // Its first conversation a moment later is the same harness; another one after it is not.
+        app.fleet.agents.insert(key.clone(), crate::fleet::agent_from("local", &json!({ "id": "t1", "name": "new", "engine": "opencode", "sessionId": "ses_1" }), None));
+        assert_eq!(target(&app).map(|t| t.agent).as_deref(), Some("t1"), "{}", no_target_why(&app));
+        tick(&mut app);
+        app.fleet.agents.insert(key.clone(), crate::fleet::agent_from("local", &json!({ "id": "t1", "name": "new", "engine": "opencode", "sessionId": "ses_2" }), None));
+        assert!(target(&app).is_none());
+        assert!(no_target_why(&app).contains("This session changed"), "{}", no_target_why(&app));
+        // Another pane focused meanwhile: not followed there.
+        app.fleet.agents.insert(key, crate::fleet::agent_from("local", &json!({ "id": "t1", "name": "new", "engine": "terminal" }), None));
+        open(&mut app);
+        app.tabs[0].focus = Some(1);
+        tick(&mut app);
+        assert!(target(&app).is_none());
     }
 
     /// Which harness Enter moves: the focused pane's. A focused terminal is the one meant — never
@@ -2389,6 +2509,37 @@ mod tests {
     fn toast(app: &App) -> String { app.toast.as_ref().map(|t| t.0.clone()).unwrap_or_default() }
     fn flash(p: &Picker) -> String { p.flash.as_ref().map(|f| f.0.clone()).unwrap_or_default() }
     fn text(lines: &[Line]) -> String { lines.iter().map(|l| l.spans.iter().map(|s| s.content.as_ref()).collect::<String>()).collect::<Vec<_>>().join("\n") }
+
+    /// A subscription row names the machines its plan is on, never the account's hash; the same plan on two
+    /// machines is one row, and only two plans of one maker on the same machines are told apart by number.
+    #[test]
+    fn subscriptions_name_their_machines_and_not_their_account_keys() {
+        let mut app = app();
+        app.fleet.machines.push(Machine { shared: false, id: "m2".into(), name: "laptop".into(), local: false, status: "online".into(), reach: Reach::Ready });
+        let win = || vec![Window { label: "5h".into(), used: 10.0, resets: None }];
+        let claude = |account: &str| Usage { provider: "claude".into(), account: Some(account.into()), windows: win() };
+        let codex = |account: &str| Usage { provider: "codex".into(), account: Some(account.into()), windows: win() };
+        // The app() fixture has claude 7f0c on studio (local). The same account is on the laptop too, with a codex plan.
+        app.usage.insert("m2".into(), vec![claude("7f0c"), codex("aa11")]);
+        let text_of = |r: &Row| r.detail.iter().map(|s| s.content.as_ref()).collect::<String>();
+        let rows = rows(&app, "");
+        let one = row(&rows, "mv:sub:claude\t7f0c");
+        assert_eq!((one.label.as_str(), text_of(one).as_str()), ("Anthropic", "studio, laptop"), "one plan, every machine it is on");
+        let alone = row(&rows, "mv:sub:codex\taa11");
+        assert_eq!((alone.label.as_str(), text_of(alone).as_str()), ("OpenAI", "laptop"));
+        for r in [one, alone] { assert!(![r.label.clone(), text_of(r), r.right.clone()].join(" ").contains("7f0c") && !r.label.contains("aa11"), "no account key shown") }
+        assert!(!rows.iter().any(|r| r.label.contains("this Mac") || text_of(r).contains("this Mac")), "machines are named, never 'this Mac'");
+        // A second Anthropic plan on the same two machines: only now do the plans need a number.
+        app.usage.get_mut("local").unwrap().push(claude("cc33"));
+        app.usage.get_mut("m2").unwrap().push(claude("cc33"));
+        let rows = super::rows(&app, "");
+        let labels: Vec<&str> = rows.iter().filter(|r| r.id.starts_with("mv:sub:claude")).map(|r| r.label.as_str()).collect();
+        assert_eq!(labels, ["Anthropic 1", "Anthropic 2"]);
+        assert!(rows.iter().filter(|r| r.id.starts_with("mv:sub:claude")).all(|r| text_of(r) == "studio, laptop"));
+        // The preview names them too.
+        let preview = text(&super::preview(&app, "mv:sub:claude\t7f0c"));
+        assert!(preview.contains("Machines") && preview.contains("studio, laptop"), "{preview}");
+    }
 
     /// The owner's flow, end to end on fake replies: the subscription runs low, so the focused
     /// harness is moved onto a local model that is not downloaded yet — Get (asked twice) →
@@ -3401,5 +3552,84 @@ mod tests {
         assert!(url_problem("https://example.com/v1?x=1").unwrap().starts_with("Take the ? or #"));
         assert_eq!(url_problem("https://api.example.com/v1"), None);
         assert_eq!(url_problem("http://localhost:8080/v1"), None);
+    }
+
+    /// An NVIDIA machine's models run in its card: the heading says its VRAM and "fits" is judged
+    /// against the VRAM it has for models — what is free on it and what our own running model holds —
+    /// not the machine's RAM, which a Mac's unified memory still shows.
+    #[test]
+    fn an_nvidia_machine_is_told_its_vram_not_its_ram() {
+        let mut app = app();
+        let mut reply = local_reply(qwen("available", Value::Null), false);
+        on_local(&mut app, "local", Ok(reply.clone()));
+        assert_eq!(catalog_heading(app.models_view.local.get("local")), format!("Get for {} · 64 GB", this_computer()));
+        assert!(text(&preview(&app, "mv:local:qwen-35b")).contains("Memory   fits"), "{}", text(&preview(&app, "mv:local:qwen-35b")));
+
+        reply["fitBytes"] = json!(14.0 * GIB);
+        reply["fitMemory"] = json!("vram");
+        reply["gpuMemoryBytes"] = json!(16.0 * GIB);
+        on_local(&mut app, "local", Ok(reply.clone()));
+        assert_eq!(catalog_heading(app.models_view.local.get("local")), format!("Get for {} · 16 GB VRAM", this_computer()));
+        let panel = text(&preview(&app, "mv:local:qwen-35b"));
+        assert!(panel.contains("VRAM     needs 20 GB · its GPU has 14 GB for models"), "{panel}");
+        assert!(!panel.contains("has 64 GB"), "{panel}");
+
+        // A daemon that names no card's total: what it has for models.
+        reply.as_object_mut().unwrap().remove("gpuMemoryBytes");
+        on_local(&mut app, "local", Ok(reply));
+        assert_eq!(catalog_heading(app.models_view.local.get("local")), format!("Get for {} · 14 GB VRAM for models", this_computer()));
+    }
+
+    #[test]
+    fn a_name_is_shown_without_the_quant_its_file_ends_in() {
+        for (name, shown) in [("Qwen3.8-27B-UD-Q4_K_M", "Qwen3.8-27B"), ("Qwen3-4B-Instruct-2507-Q4_K_M", "Qwen3-4B-Instruct-2507"),
+            ("qwen3:4b-instruct-2507-q4_k_m", "qwen3:4b-instruct-2507"), ("Kev-0.8B-Q8_0", "Kev-0.8B"), ("gpt-oss-20b-MXFP4", "gpt-oss-20b"),
+            ("Mistral-7B-v0.1.IQ4_XS", "Mistral-7B-v0.1"), ("gemma-4-E4B-it-BF16", "gemma-4-E4B-it"), ("Qwen3.6-35B-A3B-UD_Q5_K_XL", "Qwen3.6-35B-A3B"),
+            // Nothing to take off — and a word that only starts like one (`Q3-Coder`, `Qwen`) is the name's.
+            ("Qwen3.6-35B-A3B", "Qwen3.6-35B-A3B"), ("llama3.2:3b", "llama3.2:3b"), ("gemma-4-e2b", "gemma-4-e2b"), ("Qwen-Q3-Coder", "Qwen-Q3-Coder"),
+            ("Q4_K_M", "Q4_K_M"), ("-Q4", "-Q4"), ("Qwen/Qwen3.8-27B", "Qwen/Qwen3.8-27B")] {
+            assert_eq!(without_quant(name), shown, "{name}");
+        }
+    }
+
+    #[test]
+    fn a_shared_model_is_shown_without_its_quant_and_switched_onto_by_its_served_name() {
+        let mut app = loaded();
+        let mut g = grids_reply(&[]);
+        g["grids"][1]["models"][0]["id"] = json!("Qwen3.8-27B-UD-Q4_K_M");
+        on_grids(&mut app, "local", Ok(g));
+        let id = "mv:grid:team\tgpu-box\tQwen3.8-27B-UD-Q4_K_M";
+        assert_eq!(row(&rows_of(&app), id).label, "Qwen3.8-27B");
+        assert!(row(&rows_of(&app), id).extra.contains("Qwen3.8-27B-UD-Q4_K_M"));
+        let panel = text(&preview(&app, id));
+        assert!(panel.starts_with("Qwen3.8-27B\n"), "{panel}");
+        assert!(panel.contains("Quant    Q4_K_M"), "{panel}");
+        match plan_enter(&app, id) {
+            Plan::Retarget { payload, .. } => assert_eq!(payload["gridModel"], "Qwen3.8-27B-UD-Q4_K_M"),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    /// A model a Grid setup left running, which the catalog does not list: grid serves it under its
+    /// file's name, quant and all. It is shown without the quant (the Quant line says it), and a
+    /// harness still moves onto it by the name grid serves.
+    #[test]
+    fn a_running_model_is_shown_without_its_quant_and_still_switched_onto_by_its_served_name() {
+        let mut app = app();
+        let file = json!({ "id": "local:Qwen3.8-27B-UD-Q4_K_M.gguf", "name": "Qwen3.8-27B-UD-Q4_K_M", "state": "running", "quant": "", "canStart": false, "canStop": true, "app": "Grid" });
+        on_local(&mut app, "local", Ok(local_reply(file, false)));
+        on_grids(&mut app, "local", Ok(grids_reply(&["Qwen3.8-27B-UD-Q4_K_M"])));
+        let id = "mv:local:local:Qwen3.8-27B-UD-Q4_K_M.gguf";
+        assert_eq!(row(&rows_of(&app), id).label, "Qwen3.8-27B");
+        let panel = text(&preview(&app, id));
+        assert!(panel.starts_with("Qwen3.8-27B\n"), "{panel}");
+        assert!(panel.contains("Quant    Q4_K_M"), "{panel}");
+        match plan_enter(&app, id) {
+            Plan::Retarget { payload, name, .. } => {
+                assert_eq!(payload["gridModel"], "Qwen3.8-27B-UD-Q4_K_M");
+                assert_eq!(name, "Qwen3.8-27B");
+            }
+            other => panic!("{other:?}"),
+        }
     }
 }

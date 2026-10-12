@@ -1397,7 +1397,18 @@ class _SwarmResourcePreviewState extends State<SwarmResourcePreview> {
                   '${gigabytesLabel(owner.freeDiskBytes!)} free',
               ].join(' · '),
             ),
-          if ((local.sizeBytes, owner.memoryBytes) case (
+          // An NVIDIA machine's against the VRAM its card has for models, which the catalog fits to.
+          if (owner.fitsInVram) ...[
+            if ((local.sizeBytes, owner.fitBytes) case (
+              final size?,
+              final room?,
+            ))
+              labelValue(
+                'VRAM',
+                '${size <= room ? 'fits' : 'needs ${gigabytesLabel(size)}'} · '
+                    'its GPU has ${gigabytesLabel(room)} for models',
+              ),
+          ] else if ((local.sizeBytes, owner.memoryBytes) case (
             final size?,
             final memory?,
           ))
