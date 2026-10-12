@@ -49,7 +49,6 @@ class TerminalPanel extends StatefulWidget {
   /// Only the focused page may claim keyboard focus on mount/rebuild.
   final bool focused;
   final bool visible;
-  final String? tabId;
 
   /// True while the software keyboard is mid-animation and the pane's height is
   /// still a moving target.
@@ -123,7 +122,6 @@ class TerminalPanel extends StatefulWidget {
     required this.session,
     required this.focused,
     this.visible = true,
-    this.tabId,
     this.settling = false,
     this.focusRequest = 0,
     this.scrollback,
@@ -285,9 +283,6 @@ class _TerminalPanelState extends State<TerminalPanel>
   @override
   void didUpdateWidget(TerminalPanel oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (widget.visible && _focusNode.hasFocus) {
-      widget.session.inputTabId = widget.tabId;
-    }
     if (oldWidget.jumpToEndRequest != widget.jumpToEndRequest) _jumpToEnd();
     if (!identical(oldWidget.session, widget.session)) {
       _previewCancellation?.cancel();
@@ -531,7 +526,6 @@ class _TerminalPanelState extends State<TerminalPanel>
 
   void _handleFocusChange() {
     if (kTypingTrace) typingEvent('panel focus=${_focusNode.hasFocus}');
-    if (_focusNode.hasFocus) widget.session.inputTabId = widget.tabId;
     _syncCursorBlink();
   }
 
@@ -1242,7 +1236,6 @@ class _TerminalPanelState extends State<TerminalPanel>
   /// is the one hook that runs BEFORE its shortcut map (terminal_view.dart), so
   /// this is where the binding has to be replaced rather than added.
   KeyEventResult _onTerminalKey(FocusNode node, KeyEvent event) {
-    widget.session.inputTabId = widget.tabId;
     if (event is! KeyDownEvent) return KeyEventResult.ignored;
     if (event.logicalKey != LogicalKeyboardKey.keyV) {
       return KeyEventResult.ignored;

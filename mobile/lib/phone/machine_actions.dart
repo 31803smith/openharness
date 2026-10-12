@@ -13,15 +13,14 @@ import 'phone_sheet.dart';
 import 'phone_status.dart';
 import 'remove_machine.dart';
 import 'unlink_machine.dart';
-import 'team_page.dart';
 
 /// The sheet of what can be done TO a computer — Settings ▸ Computers.
 ///
 /// Every computer opens it, whatever it reads, because what the account can do to a computer does
 /// not wait on the computer: a rename and a removal are the backend's (`AppNotifier.renameMachine`,
 /// `deleteMachine`), and an asleep or locked one is as likely as any to be the one somebody wants to
-/// rename or take off the account. What its own socket can do — its swarms, its harnesses, its
-/// password — is offered only where it answers.
+/// rename or take off the account. What its own socket can do — its harnesses, its password — is
+/// offered only where it answers.
 ///
 /// Read at the tap, not when the row was drawn, so a computer that got linked in between gets the
 /// sheet for what it is now.
@@ -85,16 +84,6 @@ void openMachineActions(
       destructive = [remove];
     case PhoneMachineStatus.connecting || PhoneMachineStatus.ready:
       actions = [
-        PhoneSheetAction(
-          icon: LucideIcons.users300,
-          label: 'Swarms',
-          chevron: true,
-          onTap: () => Navigator.of(context).push(
-            phoneRoute(
-              (_) => TeamPage(notifier: notifier, machineId: machineId),
-            ),
-          ),
-        ),
         if (status == PhoneMachineStatus.connecting)
           tryAgain
         else

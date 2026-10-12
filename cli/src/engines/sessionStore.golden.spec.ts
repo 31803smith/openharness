@@ -1,3 +1,5 @@
+import { clearEngineHomeFixture } from '../testing/engineHomeFixture.js'
+import { nativeConversationFixture } from '../testing/nativeConversationEvidence.js'
 /**
  * Where Claude Code and Codex keep their sessions, and what core reads there, answer for answer: recorded
  * from the code as it stood before their session stores became declared data applied by the kit
@@ -28,6 +30,29 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import type { RegisteredSession } from '../lib/registry.js'
 
 const fixtureClock = vi.hoisted(() => ({ root: '', now: Date.parse('2026-10-09T00:00:00Z') }))
+vi.mock('node:perf_hooks', async original => ({ ...await original<object>(), performance: { now: () => 0 } }))
+// Other test processes create and remove siblings under the host's temporary directory. Those
+// mutations are outside this recording; keep ancestor content stamps stable, retaining native inode
+// identity and all content stamps within the fixture. The expected artifact remains unchanged.
+vi.mock('node:fs', async original => {
+  const fs = await original<typeof import('node:fs')>()
+  return { ...fs, lstatSync: (...args: Parameters<typeof fs.lstatSync>) => {
+    const info = Reflect.apply(fs.lstatSync, fs, args)
+    const path = String(args[0])
+    if (!info || !fixtureClock.root || path === fixtureClock.root || path.startsWith(fixtureClock.root + '/') || !info.isDirectory()) return info
+    return new Proxy(info, { get: (value, key) => ['size', 'mtimeNs', 'ctimeNs'].includes(String(key)) ? 0n : Reflect.get(value, key) })
+  } }
+})
+
+
+vi.mock('../lib/bootId.js', async original => ({ ...await original<object>(), currentBootId: () => 'fixture-boot', bootChanged: () => false }))
+vi.mock('../lib/processLiveness.js', async original => ({ ...await original<object>(),
+  processLockIdentity: () => ({ startMarker: 'fixture-start', generationMarker: 'fixture-generation' }), lockOwnerAlive: () => true,
+}))
+vi.mock('../lib/processEvidence.js', async () => {
+  const { nativeConversationFixture } = await import('../testing/nativeConversationEvidence.js')
+  return { readProcessEvidence: nativeConversationFixture(async () => [], async () => []).processes }
+})
 vi.mock('fs/promises', async original => {
   const fs = await original<typeof import('node:fs/promises')>()
   return { ...fs, stat: async (path: string, ...args: unknown[]) => {
@@ -153,13 +178,13 @@ afterAll(() => {
 /** The person's moved homes: adopted, so remembered in the data folder, as the core does at start. */
 function adoptMoved(): unknown {
   m.homes.resetEngineHomes()
-  rmSync(join(root, 'data', 'engine-homes.json'), { force: true })
+  clearEngineHomeFixture(join(root, 'data'))
   return m.homes.adoptEngineHomes({ CLAUDE_CONFIG_DIR: join(root, 'moved-claude'), CODEX_HOME: join(root, 'moved-codex') },
     { claudeHome: join(root, 'claude'), codexHome: join(root, 'codex') })
 }
 function forgetMoved(): void {
   m.homes.resetEngineHomes()
-  rmSync(join(root, 'data', 'engine-homes.json'), { force: true })
+  clearEngineHomeFixture(join(root, 'data'))
 }
 
 // --------------------------------------------------------------------------------------------- homes
@@ -182,7 +207,7 @@ async function homeCases(): Promise<Record<string, unknown>> {
     ],
     sessionClaudeHome: [h.sessionClaudeHome({ transcriptPath: paths.claudeMoved }), h.sessionClaudeHome({ transcriptPath: paths.claudeA }),
       h.sessionClaudeHome({ transcriptPath: paths.outside }), h.sessionClaudeHome({})],
-    saved: existsSync(join(root, 'data', 'engine-homes.json')) ? readFileSync(join(root, 'data', 'engine-homes.json'), 'utf8') : null,
+    saved: (() => { h.resetEngineHomes(); const catalog = h.movedEngineHomes(); return Object.values(catalog).some(homes => homes.length) ? JSON.stringify(catalog) + '\n' : null })(),
   })
   forgetMoved()
   cases['none moved'] = norm(probe())
@@ -349,7 +374,7 @@ async function findCases(): Promise<Record<string, unknown>> {
   }
   for (const [name, files] of Object.entries(held)) {
     for (const [cwdName, cwd] of [['a', work('a')], ['c', work('c')]] as const) {
-      cases[`open files · ${name} · ${cwdName}`] = await attempt(() => s.openFileSessionOf('codex', 7, sessions, cwd, async () => files))
+      cases[`open files · ${name} · ${cwdName}`] = await attempt(() => s.openFileSessionOf('codex', 7, sessions, cwd, { sources: nativeConversationFixture(async () => files) }))
     }
   }
   // Only a file named as a rollout counts, however its first record reads.
@@ -357,9 +382,9 @@ async function findCases(): Promise<Record<string, unknown>> {
   write(join(heldRoot, `rollout-held-${B}.jsonl`), jsonl(meta(B, work('a'))))
   write(join(heldRoot, `notes-${C}.jsonl`), jsonl(meta(C, work('a'))))
   cases['open files · a rollout and another session-shaped file'] = await attempt(() => s.openFileSessionOf('codex', 7, heldRoot, work('a'),
-    async () => [join(heldRoot, `notes-${C}.jsonl`), join(heldRoot, `rollout-held-${B}.jsonl`)]))
-  cases['open files · one root'] = await attempt(() => s.openFileSessionOf('codex', 7, join(root, 'codex', 'sessions'), work('a'), async () => [paths.codexA]))
-  cases['open files · claude'] = await attempt(() => s.openFileSessionOf('claude', 7, sessions, work('a'), async () => [paths.codexA]))
+    { sources: nativeConversationFixture(async () => [join(heldRoot, `notes-${C}.jsonl`), join(heldRoot, `rollout-held-${B}.jsonl`)]) }))
+  cases['open files · one root'] = await attempt(() => s.openFileSessionOf('codex', 7, join(root, 'codex', 'sessions'), work('a'), { sources: nativeConversationFixture(async () => [paths.codexA]) }))
+  cases['open files · claude'] = await attempt(() => s.openFileSessionOf('claude', 7, sessions, work('a'), { sources: nativeConversationFixture(async () => [paths.codexA]) }))
   const rows = (args: string, executable: string) => async () => [
     { pid: 7, parentPid: 1, executable, args },
     { pid: 8, parentPid: 7, executable: 'codex', args: 'codex --no-daemon' },
@@ -372,18 +397,20 @@ async function findCases(): Promise<Record<string, unknown>> {
     ['nodejs launcher', [], '/usr/bin/nodejs /opt/codex.js', '/usr/bin/nodejs'],
     ['not a launcher', ['/dev/null'], 'python3 x', 'python3'],
   ] as const) {
-    cases[`process files · ${name}`] = await attempt(() => s.processFilesOf('codex', 7, filesOf({ 7: [...own], 8: [paths.codexB] }), rows(launcher, executable)))
+    cases[`process files · ${name}`] = await attempt(() => s.processFilesOf('codex', 7, { sources: nativeConversationFixture(filesOf({ 7: [...own], 8: [paths.codexB] }), rows(launcher, executable)) }))
   }
-  cases['process files · no process table'] = await attempt(() => s.processFilesOf('codex', 7, filesOf({ 7: ['/dev/null'] }), async () => null))
-  cases['process files · two children'] = await attempt(() => s.processFilesOf('codex', 7, filesOf({ 7: [], 8: [paths.codexB], 10: [paths.codexA] }), async () => [
+  cases['process files · no process table'] = await attempt(() => s.processFilesOf('codex', 7, { sources: nativeConversationFixture(filesOf({ 7: ['/dev/null'] }), async () => null) }))
+  cases['process files · two children'] = await attempt(() => s.processFilesOf('codex', 7, { sources: nativeConversationFixture(filesOf({ 7: [], 8: [paths.codexB], 10: [paths.codexA] }), async () => [
     { pid: 7, parentPid: 1, executable: 'node', args: 'node /opt/codex.js' },
-    { pid: 8, parentPid: 7, executable: 'codex', args: 'codex' }, { pid: 10, parentPid: 7, executable: 'codex', args: 'codex' }]))
+    { pid: 8, parentPid: 7, executable: 'codex', args: 'codex' }, { pid: 10, parentPid: 7, executable: 'codex', args: 'codex' }]) }))
   return cases
 }
 
 // ------------------------------------------------------------------------------------------- continuation
 
 async function continuationCases(): Promise<Record<string, unknown>> {
+  const owned: string[] = []
+  const put = (path: string, text: string) => { owned.push(path); write(path, text) }
   const dir = join(root, 'claude/projects/-work-b')
   const marker = (id: unknown) => ({ type: 'continued-in', continuedInSessionId: id })
   const big = 'x'.repeat(300 * 1024)
@@ -402,20 +429,23 @@ async function continuationCases(): Promise<Record<string, unknown>> {
     'empty': '',
     'trailing blank lines': `${JSON.stringify(marker(C))}\n\n  \n`,
   }
-  write(join(dir, 'a0a0a0a0-0000-4000-8000-a0a0a0a0a0a0.jsonl'), jsonl({ type: 'ai-title' }, { type: 'agent-name' }))
+  put(join(dir, 'a0a0a0a0-0000-4000-8000-a0a0a0a0a0a0.jsonl'), jsonl({ type: 'ai-title' }, { type: 'agent-name' }))
+  owned.push(join(dir, 'c0c0c0c0-0000-4000-8000-c0c0c0c0c0c0.jsonl'))
   mkdirSync(join(dir, 'c0c0c0c0-0000-4000-8000-c0c0c0c0c0c0.jsonl'), { recursive: true })
-  write(join(dir, 'd0d0d0d0-0000-4000-8000-d0d0d0d0d0d0.jsonl'), jsonl({ type: 'file-history-snapshot', big }, { type: 'user' }))
-  write(join(dir, 'e0e0e0e0-0000-4000-8000-e0e0e0e0e0e0.jsonl'), jsonl({ type: 'mode' }, '{"type":"assistant","x":"\\"user\\""}'))
+  put(join(dir, 'd0d0d0d0-0000-4000-8000-d0d0d0d0d0d0.jsonl'), jsonl({ type: 'file-history-snapshot', big }, { type: 'user' }))
+  put(join(dir, 'e0e0e0e0-0000-4000-8000-e0e0e0e0e0e0.jsonl'), jsonl({ type: 'mode' }, '{"type":"assistant","x":"\\"user\\""}'))
   // Past the 256 KiB head and short of twice it, with no turn at all: taken for its length.
-  write(join(dir, 'f0f0f0f0-0000-4000-8000-f0f0f0f0f0f0.jsonl'), jsonl({ type: 'file-history-snapshot', big }))
+  put(join(dir, 'f0f0f0f0-0000-4000-8000-f0f0f0f0f0f0.jsonl'), jsonl({ type: 'file-history-snapshot', big }))
   const cases: Record<string, unknown> = {}
   for (const [name, text] of Object.entries(files)) {
     const path = join(dir, `${name.replace(/[^a-z]+/g, '-')}.jsonl`)
-    write(path, text)
+    put(path, text)
     cases[name] = await attempt(() => m.stores.continuationOf('claude', path))
   }
   cases['missing file'] = await attempt(() => m.stores.continuationOf('claude', join(dir, 'nope.jsonl')))
   cases['codex'] = await attempt(() => m.stores.continuationOf('codex', join(dir, 'continued-with-a-turn.jsonl')))
+  // Continuation bodies are not discovery headers. Do not carry these fixtures into the Linux pass.
+  for (const path of owned) rmSync(path, { recursive: true, force: true })
   return cases
 }
 
@@ -539,8 +569,17 @@ async function captureCases(): Promise<Record<string, unknown>> {
     'claude, unbound, no process': { sessionId: '' },
   }
   for (const [name, over] of Object.entries(shapes)) {
-    const out = await m.capture.captureResumeIdentity(session(over))
-    cases[`capture · ${name}`] = norm({ sessionId: out.sessionId, transcriptPath: out.transcriptPath, source: out.source ?? null })
+    const input = session(over), before = structuredClone(input)
+    try {
+      const out = await m.capture.captureResumeIdentity(input)
+      cases[`capture · ${name}`] = norm({ sessionId: out.sessionId, transcriptPath: out.transcriptPath, source: out.source ?? null })
+    } catch (error) {
+      if (name !== 'claude, unknown' && name !== 'codex, a sub-agent id') throw error
+      expect(error).toMatchObject({ code: 'IDENTITY_UNAVAILABLE' })
+      expect(input).toEqual(before)
+      cases[`capture · ${name}`] = norm({ held: (error as Error).message,
+        retained: { sessionId: input.sessionId, transcriptPath: input.transcriptPath, source: input.source ?? null } })
+    }
   }
   forgetMoved()
   // Which finder the handoff asks, per engine, and with what.
@@ -592,7 +631,47 @@ describe('core finds sessions where it did before Claude Code and Codex declared
       expect(Object.keys(actual), platform).toEqual(Object.keys(golden))
       for (const [section, cases] of Object.entries(golden)) {
         expect(Object.keys(actual[section]!).sort(), `${platform} · ${section}`).toEqual(Object.keys(cases).sort())
-        for (const [key, value] of Object.entries(cases)) expect(actual[section]![key], `${platform} · ${section} · ${key}`).toEqual(value)
+        for (const [key, value] of Object.entries(cases)) {
+          // These former successful answers are unsafe for Stop: no usable native
+          // file, or a delegated rollout. Keep the historical artifact unchanged,
+          // assert its exact former answer, and require the typed hold plus unchanged
+          // input now. In particular, do not synthesize the child's former path.
+          const captureCorrections = new Map<string, { before: unknown; retained: unknown }>([
+            ['capture · claude, unknown', { before: { sessionId: OTHER, transcriptPath: null, source: null },
+              retained: { sessionId: OTHER, transcriptPath: null, source: null } }],
+            ['capture · codex, a sub-agent id', { before: { sessionId: CHILD, transcriptPath: norm(paths.codexChild), source: null },
+              retained: { sessionId: CHILD, transcriptPath: null, source: null } }],
+          ])
+          const captureCorrection = section === 'capture' ? captureCorrections.get(key) : undefined
+          if (captureCorrection) {
+            expect(value, `${platform} · ${key} · former unsafe success`).toEqual(captureCorrection.before)
+            expect(actual[section]![key], `${platform} · ${key} · retained hold`).toEqual({
+              held: 'Conversation identity is held: the saved conversation file is unavailable.', retained: captureCorrection.retained,
+            })
+            continue
+          }
+          // Safety correction: an existing unusable process record is not proof of absence. Keep
+          // the former artifact intact, assert its exact old answer, and name every changed case.
+          const held = new Map<string, string>(['default homes', 'moved homes'].flatMap(home => [
+            ...['no id', 'no start', 'unreadable'].map(name => [
+              `process record · ${home} · ${name}`, 'the process record is incomplete or invalid',
+            ] as const),
+            [`process record · ${home} · no transcript`, 'the process names a conversation whose transcript is unavailable'] as const,
+            [`process record · ${home} · another folder`, 'the current process record names a different working directory'] as const,
+          ]))
+          const descriptorCorrections = new Map<string, { before: unknown; reason: string }>([
+            ...['a', 'c'].map(cwd => [`open files · outside the sessions · ${cwd}`, {
+              before: null, reason: 'the open rollout pathname does not name the process file',
+            }] as const),
+            ['process files · no process table', { before: ['/dev/null'], reason: 'the native process graph is incomplete' }],
+            ['process files · two children', { before: [], reason: 'more than one native child could own the conversation' }],
+          ])
+          const corrected = section === 'find' ? descriptorCorrections.get(key) : undefined
+          const reason = corrected?.reason ?? (section === 'find' ? held.get(key) : undefined)
+          if (reason) expect(value, `${platform} · ${key} · former refusal`).toEqual(corrected ? corrected.before : null)
+          expect(actual[section]![key], `${platform} · ${section} · ${key}`)
+            .toEqual(reason ? { threw: `Conversation identity is held: ${reason}.` } : value)
+        }
       }
     }
   }, 120_000)

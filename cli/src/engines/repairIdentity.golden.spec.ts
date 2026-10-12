@@ -10,12 +10,18 @@ import { afterAll, beforeAll, expect, it, vi } from 'vitest'
 const clock = vi.hoisted(() => ({ root: '', time: Date.parse('2026-10-09T00:00:00Z') }))
 vi.mock('fs/promises', async original => {
   const fs = await original<typeof import('node:fs/promises')>()
-  return { ...fs, stat: async (path: string, ...args: unknown[]) => {
+  return { ...fs, realpath: (name: string) => fs.realpath(name.startsWith('/work/') ? join(clock.root, 'workspaces', name.slice(6)) : name),
+    stat: async (path: string, ...args: unknown[]) => {
     const result = await Reflect.apply(fs.stat, fs, [path, ...args])
     return String(path).startsWith(clock.root + '/')
       ? new Proxy(result, { get: (value, key) => key === 'birthtimeMs' ? clock.time : Reflect.get(value, key) })
       : result
   } }
+})
+vi.mock('node:fs', async original => {
+  const fs = await original<typeof import('node:fs')>()
+  const mapped = (name: string) => name.startsWith('/work/') ? join(clock.root, 'workspaces', name.slice(6)) : name
+  return { ...fs, realpathSync: (name: string) => fs.realpathSync(mapped(name)), statSync: (name: string) => fs.statSync(mapped(name)) }
 })
 
 const GOLDEN = fileURLToPath(new URL('./__fixtures__/repair-identity.golden.json', import.meta.url))
@@ -39,11 +45,25 @@ async function check(key: string, run: () => unknown | Promise<unknown>): Promis
   try { value = await run() } catch (error) { value = { error: (error as Error).message } }
   if (typeof value === 'symbol') value = '<unsettled>'
   captured[key] = JSON.parse(JSON.stringify(value ?? null).split(clock.root).join('<root>'))
-  if (!RECORD) expect({ key, value: captured[key] }).toEqual({ key, value: expected[key] })
+  if (!RECORD) {
+    // Explicit safety corrections only: keep the former nulls in the artifact, but do not
+    // let an incomplete identity remove a possible competitor from a discovery pool.
+    const held: Record<string, string> = {
+      'muse:malformed': 'the workspace header is incomplete or invalid',
+      'muse:noWorkspace': 'the workspace header is incomplete or invalid',
+      'muse:wrongEnvelope': 'the workspace header is incomplete or invalid',
+      'muse:incomplete': 'the run identity is incomplete or invalid',
+    }
+    const reason = held[key]
+    if (reason) expect(expected[key], `${key} · former answer`).toBeNull()
+    expect({ key, value: captured[key] }).toEqual({ key,
+      value: reason ? { error: `Conversation identity is held: ${reason}.` } : expected[key] })
+  }
 }
 
 beforeAll(async () => {
   clock.root = realpathSync(mkdtempSync(join(tmpdir(), 'repair-identity-golden-')))
+  for (const cwd of ['pi/resume', 'pi/a-b', 'pi-a/b']) mkdirSync(join(clock.root, 'workspaces', cwd), { recursive: true })
   Object.defineProperty(process, 'platform', { ...platform, value: 'linux' })
   vi.useFakeTimers({ toFake: ['Date'], now: clock.time })
   const home = join(clock.root, 'home')
@@ -86,6 +106,8 @@ it('records which Muse files identify a conversation', async () => {
     const cwd = `/work/muse/${name}`
     file(join(root, name, 'session.jsonl'), body(cwd))
     await check(`muse:${name}`, () => repair.findLiveSession('muse', cwd, clock.time, { bornOnly: true }))
+    // A malformed header must not affect later cases; keep spoken for the final age check.
+    if (name !== 'spoken') rmSync(join(root, name), { recursive: true, force: true })
   }
   file(join(root, 'parent', 'subagent', 'session.jsonl'), lines(header('/work/muse/child'), event('run', 'started')))
   await check('muse:subagent', () => repair.findLiveSession('muse', '/work/muse/child', clock.time))

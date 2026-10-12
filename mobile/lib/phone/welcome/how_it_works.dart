@@ -27,12 +27,12 @@ class HowItWorksPage extends StatelessWidget {
           'They keep going when you close the app.',
     ),
     // "Tab", not "Swarm": the naming system's word for a group of harnesses
-    // (`docs/naming-system.md`), and the desktop's setting is Tab collaboration now.
+    // (`docs/naming-system.md`), and Agent Messages is what lets a tab's agents talk.
     (
       'Tab',
       'A group of harnesses, shown together in the workspace. Add a harness to '
-          'include it. With Settings ▸ Experimental ▸ Tab collaboration turned on '
-          'in the desktop app, their agents can consult peers in the same tab.',
+          'include it. With Agent Messages on for it, its agents can message each '
+          'other.',
     ),
     (
       'Project',

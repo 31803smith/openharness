@@ -20,6 +20,7 @@
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { performance } from 'node:perf_hooks'
 import { fileURLToPath } from 'node:url'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import type { AgentEngine } from './types.js'
@@ -30,6 +31,13 @@ const descriptors = vi.hoisted(() => new Map<string, string[]>())
 vi.mock('fs/promises', async (original) => {
   const fs = await original<typeof import('node:fs/promises')>()
   return { ...fs,
+    realpath: (name: string) => fs.realpath(name.startsWith('/work/') ? join(root, 'workspaces', name.slice(6)) : name),
+    // Keep a streamed descriptor listing private as well as the former readdir path.
+    opendir: async (path: string, ...args: unknown[]) => /^\/proc\/\d+\/fd$/.test(String(path))
+      ? { async *[Symbol.asyncIterator]() {
+        for (const [index] of (descriptors.get(String(path)) ?? []).entries()) yield { name: String(index) }
+      } }
+      : Reflect.apply(fs.opendir, fs, [path, ...args]),
     readdir: async (path: string, ...args: unknown[]) => /^\/proc\/\d+\/fd$/.test(String(path))
       ? (descriptors.get(String(path)) ?? []).map((_, index) => String(index))
       : Reflect.apply(fs.readdir, fs, [path, ...args]),
@@ -38,6 +46,11 @@ vi.mock('fs/promises', async (original) => {
       return match ? descriptors.get(match[1]!)?.[Number(match[2])] ?? '' : Reflect.apply(fs.readlink, fs, [path, ...args])
     },
   }
+})
+vi.mock('node:fs', async original => {
+  const fs = await original<typeof import('node:fs')>()
+  const mapped = (name: string) => name.startsWith('/work/') ? join(root, 'workspaces', name.slice(6)) : name
+  return { ...fs, realpathSync: (name: string) => fs.realpathSync(mapped(name)), statSync: (name: string) => fs.statSync(mapped(name)) }
 })
 
 const GOLDEN = fileURLToPath(new URL('./__fixtures__/other-identity.golden.json', import.meta.url))
@@ -56,11 +69,13 @@ function check(key: string, value: unknown): void {
   recorded[key] = result
   if (!RECORD) expect({ key, result }).toEqual({ key, result: golden[key] })
 }
+const writtenFiles: string[] = []
 let fileTime = T0
 /** A file, written, whose modification time is the next tick of a fixed clock: a scan's newest-first order is set. */
 function file(path: string, text = ''): string {
   mkdirSync(join(path, '..'), { recursive: true })
   writeFileSync(path, text)
+  writtenFiles.push(path)
   fileTime += 1000
   utimesSync(path, fileTime / 1000, fileTime / 1000)
   return path
@@ -78,11 +93,17 @@ type Modules = {
   cursorDiscovery: typeof import('../core/engines/cursorDiscovery.js')
 }
 let m: Modules
+let restoreClock = () => {}
 
 beforeAll(async () => {
   root = realpathSync(mkdtempSync(join(tmpdir(), 'other-identity-golden-')))
+  for (const cwd of ['r', 'other']) mkdirSync(join(root, 'workspaces', cwd), { recursive: true })
   Object.defineProperty(process, 'platform', { ...platform, value: 'linux' })
   vi.useFakeTimers({ toFake: ['Date'], now: NOW })
+  // This records healthy identity wiring. Registry fsync under runner load must
+  // not spend its proof deadline; nativeEvidence.spec.ts tests elapsed budgets.
+  const monotonic = vi.spyOn(performance, 'now').mockReturnValue(0)
+  restoreClock = () => monotonic.mockRestore()
   const home = join(root, 'home')
   const env: Record<string, string | undefined> = {
     HOME: home, XDG_CONFIG_HOME: undefined, XDG_DATA_HOME: undefined, ADAPTER_DATA_DIR: join(root, 'data'), ADAPTER_RUNTIME_DIR: join(root, 'runtime'),
@@ -113,6 +134,7 @@ beforeAll(async () => {
 })
 
 afterAll(() => {
+  restoreClock()
   vi.useRealTimers()
   Object.defineProperty(process, 'platform', platform)
   for (const [name, value] of Object.entries(saved)) if (value === undefined) delete process.env[name]; else process.env[name] = value
@@ -214,7 +236,7 @@ describe('where the core finds the other engines\' conversations', () => {
       } as never,
       mirror: { inheritSummary: () => {} }, forgetSession: () => {}, clients: { send: () => {} }, attachSession: async () => true,
       announceSession: () => {}, stoppedAgents: { save: () => {}, finishResume: () => {}, get: () => null } as never, syncRecapPool: () => {},
-      teams: { forget: () => {} } as never, input: { forget: () => {} } as never, deviceInput: { forget: () => {} } as never,
+      input: { forget: () => {} } as never, deviceInput: { forget: () => {} } as never,
       homes: { copilot: home('.copilot'), grok: home('.grok'), agy: home('.gemini', 'antigravity-cli') },
     })
     const observed = (engine: string, over: Record<string, unknown>) => ({
@@ -240,6 +262,8 @@ describe('where the core finds the other engines\' conversations', () => {
 
   it('repairs a live process\'s session: by folder, by store, by its lock, and a resumed Pi conversation', async () => {
     const since = T0
+    // Resolver/binding fixtures model older conversations; repair gets a fresh corpus below.
+    for (const path of writtenFiles) utimesSync(path, (T0 - 60_000) / 1000, (T0 - 60_000) / 1000)
     // Pi, Command Code and Amp name the folder on their first line; Muse its workspace, once a run has opened.
     file(home('.pi', 'agent', 'sessions', '--work-r--', `2026_${UUID(41)}.jsonl`), `${JSON.stringify({ type: 'session', id: UUID(41), cwd: '/work/r' })}\n`)
     file(home('.commandcode', 'projects', 'work-r', `${UUID(42)}.jsonl`), `${JSON.stringify({ cwd: '/work/r', sessionId: UUID(42) })}\n`)
