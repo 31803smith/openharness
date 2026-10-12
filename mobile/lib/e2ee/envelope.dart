@@ -57,6 +57,10 @@ const Set<String> encryptedDownTypes = {
   'memory_deliver',
   // The trust-group roster swap (`viewer/group_sync.dart`): the keys every member trusts.
   'group_sync',
+  // Connected services (`phone/connectors_page.dart`, CLI services/connectors.ts): the sign-in's
+  // redirect, with its code, rides `callback`. A `MACHINE_REQUESTS` type in the CLI: sent in the clear
+  // the machine refused it ("E2EE required"), which read as no computer online.
+  'connectors',
   'codex_profiles_list',
   'codex_profile_link',
   // Asks the machine to read its OWN agent accounts' usage (cli/src/lib/accountUsage.ts). Missing
