@@ -16,6 +16,7 @@ import 'join_moment.dart';
 import 'onboarding_copy.dart';
 import 'onboarding_frame.dart';
 import 'onboarding_picture.dart';
+import 'set_up_computer.dart' show StepsTimeline, goToSteps;
 
 /// ② Your computer: "On your computer, go to", the address, and the phone looking for the computer
 /// that opens it.
@@ -29,10 +30,16 @@ import 'onboarding_picture.dart';
 ///        │ the laptop breathes │
 ///        └─────────────────────┘
 ///      Looking for your computer▌
+///
+///   (1) Install Harness                  what to do there ([GoToComputer])
+///    │
+///   (2) Sign in
+///       With ada@gmail.com.
 /// ```
 ///
 /// At home this is what an account with no computer stands on (`agent_home.dart`, which builds it
-/// from [GoAddressButton] and [ComputerWatch] on its own [OnboardingStage]). This page is the same
+/// from [ComputerWatch] and [GoToComputer] on its own [OnboardingStage], with
+/// "Not you? Sign out" under the steps). This page is the same
 /// step pushed from Computers ▸ Add computer, with back: a second computer is set up the way the
 /// first was (`docs/research/2026-10-11-phone-onboarding`, "More computers, more phones").
 ///
@@ -120,7 +127,7 @@ class _YourComputerPageState extends State<YourComputerPage>
       underHeadline: joined == null
           ? ComputerWatch(
               notifier: widget.notifier,
-              child: const GoAddressButton(),
+              child: GoToComputer(account: widget.notifier.currentUser?.email),
             )
           : null,
       status: joined == null
@@ -129,6 +136,48 @@ class _YourComputerPageState extends State<YourComputerPage>
       onTap: joined == null ? null : _moment.skip,
     );
   }
+}
+
+/// What goes under "On your computer, go to": the link ([GoAddressButton]) and, under it, what to do
+/// there — as a timeline ([goToSteps]): download and install Harness, and sign in with this account.
+/// Signed in there with it, the computer joins the account, and the screen moves on by itself
+/// ([ComputerWatch]): no Add Phone, nothing to scan.
+class GoToComputer extends StatelessWidget {
+  const GoToComputer({super.key, required this.account});
+
+  /// The account the computer has to sign in to — this phone's.
+  final String? account;
+
+  @override
+  Widget build(BuildContext context) => Column(
+    mainAxisSize: MainAxisSize.min,
+    crossAxisAlignment: CrossAxisAlignment.stretch,
+    children: [
+      const GoAddressButton(),
+      const SizedBox(height: OnboardingFrame.stepsAbove),
+      StepsTimeline(steps: goToSteps(account)),
+    ],
+  );
+}
+
+/// "Not you? Sign out", the quiet line at the foot of "On your computer, go to" at home — where this
+/// screen is all an account with no computer has, and the account it names in its steps may be the
+/// wrong one. Asks first ([confirmSignOut]).
+class NotYouSignOut extends StatelessWidget {
+  const NotYouSignOut({super.key, required this.notifier});
+
+  final AppNotifier notifier;
+
+  @override
+  Widget build(BuildContext context) => Center(
+    child: TtyTextButton(
+      key: const ValueKey('home-sign-out'),
+      label: OnboardingCopy.notYou,
+      size: OnboardingFrame.quietSize,
+      color: Tty.of(context).faint,
+      onPressed: () => unawaited(confirmSignOut(context, notifier)),
+    ),
+  );
 }
 
 /// Asks the account for its computers every few seconds while it is up: nothing pushes a new
@@ -280,64 +329,6 @@ class _GoAddressButtonState extends State<GoAddressButton> {
               const SizedBox(width: 12),
               Icon(LucideIcons.share300, size: 20, color: ink),
             ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-/// `ada@gmail.com · Not you? Sign out` — the account the computer has to sign in to, on the quiet
-/// line at the foot of "On your computer, go to", and the way out of it. The whole line signs out,
-/// after asking ([confirmSignOut]).
-class AccountQuietLine extends StatelessWidget {
-  const AccountQuietLine({
-    super.key,
-    required this.notifier,
-    required this.email,
-  });
-
-  final AppNotifier notifier;
-  final String email;
-
-  @override
-  Widget build(BuildContext context) {
-    final tty = Tty.of(context);
-    return Semantics(
-      button: true,
-      label: 'Signed in as $email. Not you? Sign out',
-      excludeSemantics: true,
-      child: GestureDetector(
-        key: const ValueKey('home-sign-out'),
-        behavior: HitTestBehavior.opaque,
-        onTap: () {
-          HapticFeedback.selectionClick();
-          unawaited(confirmSignOut(context, notifier));
-        },
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(minHeight: 44),
-          child: Center(
-            child: Text.rich(
-              TextSpan(
-                children: [
-                  TextSpan(text: '$email · '),
-                  TextSpan(
-                    text: 'Not you? Sign out',
-                    style: tty.style(
-                      color: tty.text,
-                      size: OnboardingFrame.quietSize,
-                    ),
-                  ),
-                ],
-              ),
-              textAlign: TextAlign.center,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: tty.style(
-                color: tty.faint,
-                size: OnboardingFrame.quietSize,
-              ),
-            ),
           ),
         ),
       ),

@@ -6,6 +6,8 @@
 ///                  [Continue with Google] [Continue with Apple]   Continue with email
 /// ② Your computer  On your computer, go to   [autonomous.ai/go ⇪]
 ///                  under the picture: Looking for your computer▌
+///                  under the link: (1) Install Harness  (2) Sign in, With you@…
+///                  at the foot: Not you? Sign out
 ///   The Mac joins  MacBook Pro is ready.
 /// ③ The session    by the mic, once: Send it, or say anything.
 /// ```
@@ -17,7 +19,10 @@
 /// with these.
 ///
 /// ⚠️ **Nothing else on these screens** (owner, 2026-10-12): no sample link, no tips, no notification
-/// prompt, no fallback lines, no page dots, and never the word "network".
+/// prompt, no page dots, and never the word "network". ② says what to do on the computer — which
+/// account to sign in with, and where Add Phone is (owner, 2026-10-12, after trying it):
+/// until the phone adds the computer itself, the computer signs in on its own, and that is where
+/// people stood stuck.
 abstract final class OnboardingCopy {
   /// ① The welcome's headline: everything lit, the promise.
   static const welcome =
@@ -39,6 +44,14 @@ abstract final class OnboardingCopy {
 
   /// ② Under the picture, while the laptop breathes.
   static const looking = 'Looking for your computer';
+
+  /// ② The first step under the link: installing Harness — the link above it is the download, so
+  /// the step need not say so (`set_up_computer.dart`'s [goToSteps]; the second is signing in with
+  /// this account).
+  static const installStep = 'Install Harness';
+
+  /// ② The quiet line at the foot, the account named in the steps above.
+  static const notYou = 'Not you? Sign out';
 
   /// The moment the computer joins — its own name, as the account knows it.
   static String ready(String computer) => '$computer is ready.';

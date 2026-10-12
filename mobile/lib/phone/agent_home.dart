@@ -1113,10 +1113,11 @@ class _AgentHomeState extends State<AgentHome>
   /// Settings at the top right is the way out (Sign out among it): a "looking" with no way out is
   /// one of the things the onboarding leaves out on purpose.
   ///
-  /// ⚠️ **The account, said at the foot, until the phone adds the computer itself.** The spec's
+  /// ⚠️ **What to do on the computer, said under the link, until the phone adds it itself** —
+  /// download and install Harness, and sign in with this account ([GoToComputer]). The spec's
   /// computer is added by the waiting phone and never signs in; until that lands (it needs the
-  /// desktop and the backend), the computer signs in on its own, and the wrong account there — one
-  /// of the person's other Google accounts — is the likeliest reason this screen never moves on.
+  /// desktop and the backend), the computer signs in on its own — with this account, and it joins,
+  /// and this screen moves on; with one of the person's other Google accounts, and it never does.
   Widget _goToYourComputer() {
     final notifier = widget.notifier;
     if (_onboarding) _awaitedComputer = true;
@@ -1127,14 +1128,11 @@ class _AgentHomeState extends State<AgentHome>
       enterFrom: notifier.signedInThisRun ? OnboardingScene.welcome : null,
       underHeadline: ComputerWatch(
         notifier: notifier,
-        child: const GoAddressButton(),
+        child: GoToComputer(account: notifier.currentUser?.email),
       ),
       status: const OnboardingStatus(OnboardingCopy.looking),
       trailing: PhoneSettingsButton(notifier: notifier),
-      actions: switch (notifier.currentUser?.email) {
-        final email? => AccountQuietLine(notifier: notifier, email: email),
-        null => null,
-      },
+      actions: NotYouSignOut(notifier: notifier),
     );
   }
 

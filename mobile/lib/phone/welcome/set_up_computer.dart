@@ -1,44 +1,64 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 
 import '../tty.dart';
 import '../tty_controls.dart';
+import 'onboarding_copy.dart';
 import 'scan_to_connect.dart' show kAddPhoneWhere;
 
-/// The steps on a computer that bring up its Add Phone QR code — for the camera opened from
-/// Computers, which pairs with a desktop from before the onboarding of 2026-10-12.
+/// The steps on a computer, as a timeline ([StepsTimeline]): under "On your computer, go to"'s link
+/// (`your_computer.dart`) — [goToSteps] — and under the camera opened from Computers —
+/// [computerSteps], which bring up Add Phone's QR code.
 ///
 /// ⚠️ This file used to be **Connect your computer**, the page a phone with no computer stood on
 /// (signed out, signed in with none, and Computers ▸ Set up another computer). The onboarding
 /// replaced it (`docs/research/2026-10-11-phone-onboarding`): signed out, the welcome signs in
 /// (`phone_welcome.dart`); with no computer, "On your computer, go to" (`your_computer.dart`). Only
-/// the steps are left, for the camera's sake.
+/// the steps are left, for that screen and the camera.
 
-/// The first step on the computer, signed in or out.
-const _openHarness = 'Open Harness on your computer';
+/// One step: what to do, and a quieter line under it when one is needed — its lines split on `\n`.
+typedef ComputerStep = ({String title, String? note});
 
-/// The steps after [_openHarness]: sign in on the computer, then Add Phone and where it is.
+/// The first step on the computer, for the camera.
 ///
-/// ⚠️ **One set, wherever they are shown (owner, 2026-10-12)** — now only the camera's, from
-/// Computers. They used to be two: signed out "Click
-/// Add Phone ③ Scan the QR code", signed in "Sign in on your computer ③ Not showing up? Click Add
-/// Phone" — one button on one page, and steps that changed under it, and on the camera "Not showing
-/// up?" was asked of somebody already scanning. Both halves hold either way: Add Phone asks a
-/// computer that is not signed in to sign in before it shows a code, and a computer that turns up
-/// by itself is paired just as well by its code. The scan is the button above the steps, and the
-/// camera's own title, so it is not a step of its own.
+/// ⚠️ **"On your computer" is said once, by the title over the steps** — "On your computer, go to",
+/// "Scan the code on your computer" — not again in each step under it (owner, 2026-10-12: three
+/// times on one screen read as noise).
+const _openHarness = 'Open Harness';
+
+/// The steps under "On your computer, go to"'s link: get Harness from it, and sign in — with
+/// [account], the phone's, when there is one to name. Signed in with this account, the computer
+/// joins it and the screen moves on by itself: no Add Phone, no code to scan (owner, 2026-10-12).
+/// The sign-in step is the camera's, word for word.
+List<ComputerStep> goToSteps(String? account) => [
+  (title: OnboardingCopy.installStep, note: null),
+  _signIn(account),
+];
+
+/// The steps under the camera opened from Computers ▸ "Or scan the QR code on your computer", which
+/// pairs a phone by Add Phone's code — where the page it came from says none of them
+/// ([ScanToConnectPage.steps]): open Harness, sign in — with [account], when there is one to name —
+/// then Add Phone and where it is.
 ///
-/// [signIn]: under signing in, which account — the phone's, when it has one to name. Null signed
-/// out, where the scan signs the phone in to whichever account the computer has.
-List<({String title, String? note})> _stepsAfterOpening(String? signIn) => [
-  (title: 'Sign in on your computer', note: signIn),
+/// ⚠️ **One set for the camera (owner, 2026-10-12).** It used to be two: signed out "Click Add
+/// Phone ③ Scan the QR code", signed in "Sign in on your computer ③ Not showing up? Click Add
+/// Phone" — steps that changed under one button, and on the camera "Not showing up?" was asked of
+/// somebody already scanning. Both halves hold either way: Add Phone asks a computer that is not
+/// signed in to sign in before it shows a code, and a computer that turns up by itself is paired
+/// just as well by its code. The scan is the camera's own title, so it is not a step of its own.
+List<ComputerStep> computerSteps(String? account) => [
+  (title: _openHarness, note: null),
+  _signIn(account),
   (title: 'Click Add Phone', note: kAddPhoneWhere),
 ];
 
-/// The steps on the computer under the camera, opened from Computers ▸ "Or scan the QR code on your
-/// computer" — where the page it came from says none of them ([ScanToConnectPage.steps]).
-///
-/// For a desktop from before the onboarding of 2026-10-12, which still pairs a phone by its Add
-/// Phone QR code; every other computer is added by "On your computer, go to" (`your_computer.dart`).
+/// Signing in on the computer — with [account], the phone's, when there is one to name. Null signed
+/// out, where a scan signs the phone in to whichever account the computer has.
+ComputerStep _signIn(String? account) =>
+    (title: 'Sign in', note: account == null ? null : 'With $account.');
+
+/// The steps on the computer under the camera ([computerSteps]) as a [StepsTimeline].
 class ComputerSteps extends StatelessWidget {
   const ComputerSteps({super.key, required this.account});
 
@@ -46,24 +66,63 @@ class ComputerSteps extends StatelessWidget {
   final String? account;
 
   @override
-  Widget build(BuildContext context) {
-    final account = this.account;
-    final next = _stepsAfterOpening(account == null ? null : 'With $account.');
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        const _HowItWorksRow(number: 1, title: _openHarness),
-        for (final (i, step) in next.indexed)
-          _HowItWorksRow(
-            number: i + 2,
-            title: step.title,
-            note: step.note,
-            last: i == next.length - 1,
-          ),
-      ],
+  Widget build(BuildContext context) =>
+      StepsTimeline(steps: computerSteps(account));
+}
+
+/// Steps as a timeline — each number in a ring, a thread down to the next:
+///
+/// ```
+/// (1)  Install Harness
+///  │
+/// (2)  Sign in
+///      With ada@gmail.com.
+/// ```
+///
+/// ⚠️ **A line each, ending in "…" rather than wrapping** — a title, and each line of a note — so
+/// [heightOf] is exact: "On your computer, go to" holds that much room under its link, and the
+/// picture under the steps stays put.
+class StepsTimeline extends StatelessWidget {
+  const StepsTimeline({super.key, required this.steps});
+
+  final List<ComputerStep> steps;
+
+  /// How tall [steps] stand at [scaler]'s text size: each title at least a ring tall, each note's
+  /// lines and the room round them, the gap under every step but the last.
+  static double heightOf(List<ComputerStep> steps, TextScaler scaler) {
+    final title = math.max(
+      _HowItWorksRow._ring,
+      scaler.scale(TtySize.row) * 1.2,
     );
+    final line = scaler.scale(TtySize.meta) * _HowItWorksRow._noteHeight;
+    var height = 0.0;
+    for (final (i, step) in steps.indexed) {
+      height += title;
+      if (step.note case final note?) {
+        height +=
+            '\n'.allMatches(note).length * line +
+            line +
+            _HowItWorksRow.noteInsets.vertical;
+      }
+      if (i < steps.length - 1) height += _HowItWorksRow._gap;
+    }
+    return height;
   }
+
+  @override
+  Widget build(BuildContext context) => Column(
+    crossAxisAlignment: CrossAxisAlignment.stretch,
+    mainAxisSize: MainAxisSize.min,
+    children: [
+      for (final (i, step) in steps.indexed)
+        _HowItWorksRow(
+          number: i + 1,
+          title: step.title,
+          note: step.note,
+          last: i == steps.length - 1,
+        ),
+    ],
+  );
 }
 
 /// One step: its number in a ring, a thread down to the next one's, what to do, and under it a
@@ -82,6 +141,18 @@ class _HowItWorksRow extends StatelessWidget {
   final bool last;
 
   static const double _ring = 24;
+
+  /// Under every step but the last: the thread's room down to the next ring.
+  ///
+  /// ⚠️ With [_threadInset] above and below it, a step with no note under it — "Download and
+  /// install Harness" — still leaves a thread long enough to read as one: at 16 and 6 it was four
+  /// points, and the two rings read as two dots, not a timeline.
+  static const double _gap = 20;
+
+  /// The thread's distance from the ring above it and the ring below.
+  static const double _threadInset = 4;
+
+  static const double _noteHeight = 1.45;
 
   static const EdgeInsets noteInsets = EdgeInsets.only(top: 2, bottom: 6);
 
@@ -116,7 +187,9 @@ class _HowItWorksRow extends StatelessWidget {
                   Expanded(
                     child: Container(
                       width: 1,
-                      margin: const EdgeInsets.symmetric(vertical: 6),
+                      margin: const EdgeInsets.symmetric(
+                        vertical: _threadInset,
+                      ),
                       color: line,
                     ),
                   ),
@@ -126,7 +199,7 @@ class _HowItWorksRow extends StatelessWidget {
           const SizedBox(width: 14),
           Expanded(
             child: Padding(
-              padding: EdgeInsets.only(bottom: last ? 0 : 16),
+              padding: EdgeInsets.only(bottom: last ? 0 : _gap),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -137,6 +210,9 @@ class _HowItWorksRow extends StatelessWidget {
                       alignment: Alignment.centerLeft,
                       child: Text(
                         title,
+                        maxLines: 1,
+                        softWrap: false,
+                        overflow: TextOverflow.ellipsis,
                         style: tty.style(
                           size: TtySize.row,
                           weight: FontWeight.w600,
@@ -144,14 +220,25 @@ class _HowItWorksRow extends StatelessWidget {
                       ),
                     ),
                   ),
+                  // A line each, ending in "…" rather than wrapping: a long account wrapping onto
+                  // another would stand the steps taller than [StepsTimeline.heightOf] says.
                   if (note case final note?)
                     Padding(
                       padding: noteInsets,
-                      child: Text(
-                        note,
-                        style: tty
-                            .style(color: tty.faint, size: TtySize.meta)
-                            .copyWith(height: 1.45),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          for (final part in note.split('\n'))
+                            Text(
+                              part,
+                              maxLines: 1,
+                              softWrap: false,
+                              overflow: TextOverflow.ellipsis,
+                              style: tty
+                                  .style(color: tty.faint, size: TtySize.meta)
+                                  .copyWith(height: _noteHeight),
+                            ),
+                        ],
                       ),
                     ),
                 ],
