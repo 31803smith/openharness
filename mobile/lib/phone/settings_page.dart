@@ -305,7 +305,7 @@ class _Body extends StatelessWidget {
 }
 
 /// Sign out, asked first — from the account sheet here, and from "Not you? Sign out" on the page a
-/// phone waits for its first computer on (`welcome/connect_computer.dart`).
+/// phone waits for its first computer on (`welcome/your_computer.dart`).
 ///
 /// Asked first, because a sign-out is more than leaving this screen: the phone's key leaves the
 /// account's devices ([AppNotifier.logout]), and signing in again makes a new one — which every

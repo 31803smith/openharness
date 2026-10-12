@@ -35,11 +35,12 @@ import 'set_up_computer.dart' show StepsTimeline, goToSteps;
 ///    │
 ///   (2) Sign in
 ///       With ada@gmail.com.
+///       Not you? Sign out                at home only ([NotYouSignOut])
 /// ```
 ///
 /// At home this is what an account with no computer stands on (`agent_home.dart`, which builds it
 /// from [ComputerWatch] and [GoToComputer] on its own [OnboardingStage], with
-/// "Not you? Sign out" under the steps). This page is the same
+/// "Not you? Sign out" under the account). This page is the same
 /// step pushed from Computers ▸ Add computer, with back: a second computer is set up the way the
 /// first was (`docs/research/2026-10-11-phone-onboarding`, "More computers, more phones").
 ///
@@ -143,10 +144,14 @@ class _YourComputerPageState extends State<YourComputerPage>
 /// Signed in there with it, the computer joins the account, and the screen moves on by itself
 /// ([ComputerWatch]): no Add Phone, nothing to scan.
 class GoToComputer extends StatelessWidget {
-  const GoToComputer({super.key, required this.account});
+  const GoToComputer({super.key, required this.account, this.notYou});
 
   /// The account the computer has to sign in to — this phone's.
   final String? account;
+
+  /// Under the account, at home: [NotYouSignOut]. None on the page pushed from Computers, and
+  /// none with no account to name — "Not you?" would ask about nobody.
+  final Widget? notYou;
 
   @override
   Widget build(BuildContext context) => Column(
@@ -155,29 +160,70 @@ class GoToComputer extends StatelessWidget {
     children: [
       const GoAddressButton(),
       const SizedBox(height: OnboardingFrame.stepsAbove),
-      StepsTimeline(steps: goToSteps(account)),
+      StepsTimeline(
+        steps: goToSteps(account),
+        under: account == null ? null : notYou,
+      ),
     ],
   );
 }
 
-/// "Not you? Sign out", the quiet line at the foot of "On your computer, go to" at home — where this
-/// screen is all an account with no computer has, and the account it names in its steps may be the
-/// wrong one. Asks first ([confirmSignOut]).
+/// "Not you? Sign out", right under the account "On your computer, go to" names at home — where
+/// this screen is all an account with no computer has, and that account may be the wrong one. Next
+/// to it, not at the foot (owner, 2026-10-12): the question is about the line above it. Asks first
+/// ([confirmSignOut]).
+///
+/// ⚠️ **One line of the note to the eye, a 44pt target all the same.** [StepsTimeline.heightOf]
+/// counts it as the one line it shows; the rest of the target reaches down into the room the frame
+/// leaves under the steps, where nothing else is.
 class NotYouSignOut extends StatelessWidget {
   const NotYouSignOut({super.key, required this.notifier});
 
   final AppNotifier notifier;
 
   @override
-  Widget build(BuildContext context) => Center(
-    child: TtyTextButton(
-      key: const ValueKey('home-sign-out'),
-      label: OnboardingCopy.notYou,
-      size: OnboardingFrame.quietSize,
-      color: Tty.of(context).faint,
-      onPressed: () => unawaited(confirmSignOut(context, notifier)),
-    ),
-  );
+  Widget build(BuildContext context) {
+    final tty = Tty.of(context);
+    return Semantics(
+      button: true,
+      label: '${OnboardingCopy.notYou} ${OnboardingCopy.signOut}',
+      excludeSemantics: true,
+      child: GestureDetector(
+        key: const ValueKey('home-sign-out'),
+        behavior: HitTestBehavior.opaque,
+        onTap: () {
+          HapticFeedback.selectionClick();
+          unawaited(confirmSignOut(context, notifier));
+        },
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(minHeight: 44),
+          child: Align(
+            alignment: Alignment.topLeft,
+            widthFactor: 1,
+            // The question as quiet as the account over it; the way out in the text's colour.
+            child: Text.rich(
+              TextSpan(
+                text: '${OnboardingCopy.notYou} ',
+                children: [
+                  TextSpan(
+                    text: OnboardingCopy.signOut,
+                    style: TextStyle(
+                      color: tty.text,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ],
+              ),
+              maxLines: 1,
+              softWrap: false,
+              overflow: TextOverflow.ellipsis,
+              style: StepsTimeline.noteStyle(tty),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 /// Asks the account for its computers every few seconds while it is up: nothing pushes a new

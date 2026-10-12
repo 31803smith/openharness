@@ -7,7 +7,7 @@
 /// ② Your computer  On your computer, go to   [autonomous.ai/go ⇪]
 ///                  under the picture: Looking for your computer▌
 ///                  under the link: (1) Install Harness  (2) Sign in, With you@…
-///                  at the foot: Not you? Sign out
+///                  under the account: Not you? Sign out
 ///   The Mac joins  MacBook Pro is ready.
 /// ③ The session    by the mic, once: Send it, or say anything.
 /// ```
@@ -50,8 +50,9 @@ abstract final class OnboardingCopy {
   /// this account).
   static const installStep = 'Install Harness';
 
-  /// ② The quiet line at the foot, the account named in the steps above.
-  static const notYou = 'Not you? Sign out';
+  /// ② Right under the account the steps name, at home: the question, and the way out after it.
+  static const notYou = 'Not you?';
+  static const signOut = 'Sign out';
 
   /// The moment the computer joins — its own name, as the account knows it.
   static String ready(String computer) => '$computer is ready.';

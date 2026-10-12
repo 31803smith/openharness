@@ -14,7 +14,9 @@ enum OnboardingLayout {
   /// ① A headline of up to three lines; the two accounts and the quiet line at the foot.
   welcome,
 
-  /// ② The headline, the link and the steps on the computer under it; one quiet line at the foot.
+  /// ② The headline, the link and the steps on the computer under it — "Not you? Sign out" under
+  /// the account among them; one quiet line at the foot, the wait's "See your computers ›" once it
+  /// is slow.
   goTo,
 }
 
@@ -127,8 +129,8 @@ class OnboardingFrame extends StatelessWidget {
             _underGap +
             button +
             stepsAbove +
-            // With an account named, as it is once signed in.
-            StepsTimeline.heightOf(goToSteps('you'), scaler),
+            // With an account named, as it is once signed in, and "Not you? Sign out" under it.
+            StepsTimeline.heightOf(goToSteps('you'), scaler, under: true),
         quiet + 8,
       ),
     };

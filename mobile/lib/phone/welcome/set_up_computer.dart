@@ -77,19 +77,35 @@ class ComputerSteps extends StatelessWidget {
 ///  │
 /// (2)  Sign in
 ///      With ada@gmail.com.
+///      Not you? Sign out             [under], at home
 /// ```
 ///
 /// ⚠️ **A line each, ending in "…" rather than wrapping** — a title, and each line of a note — so
 /// [heightOf] is exact: "On your computer, go to" holds that much room under its link, and the
 /// picture under the steps stays put.
 class StepsTimeline extends StatelessWidget {
-  const StepsTimeline({super.key, required this.steps});
+  const StepsTimeline({super.key, required this.steps, this.under});
 
   final List<ComputerStep> steps;
 
+  /// Under the last step's note, as one more line of it: at home, "Not you? Sign out" under the
+  /// account the sign-in names (`your_computer.dart`'s NotYouSignOut). Set in [noteStyle], and
+  /// counted by [heightOf] as one line of it.
+  final Widget? under;
+
+  /// A note's face: the meta size, faint, its lines a little apart.
+  static TextStyle noteStyle(Tty tty) => tty
+      .style(color: tty.faint, size: TtySize.meta)
+      .copyWith(height: _HowItWorksRow._noteHeight);
+
   /// How tall [steps] stand at [scaler]'s text size: each title at least a ring tall, each note's
-  /// lines and the room round them, the gap under every step but the last.
-  static double heightOf(List<ComputerStep> steps, TextScaler scaler) {
+  /// lines and the room round them, the gap under every step but the last — and with [under], one
+  /// more line under the last note.
+  static double heightOf(
+    List<ComputerStep> steps,
+    TextScaler scaler, {
+    bool under = false,
+  }) {
     final title = math.max(
       _HowItWorksRow._ring,
       scaler.scale(TtySize.row) * 1.2,
@@ -106,6 +122,7 @@ class StepsTimeline extends StatelessWidget {
       }
       if (i < steps.length - 1) height += _HowItWorksRow._gap;
     }
+    if (under) height += line;
     return height;
   }
 
@@ -119,6 +136,7 @@ class StepsTimeline extends StatelessWidget {
           number: i + 1,
           title: step.title,
           note: step.note,
+          under: i == steps.length - 1 ? under : null,
           last: i == steps.length - 1,
         ),
     ],
@@ -126,18 +144,20 @@ class StepsTimeline extends StatelessWidget {
 }
 
 /// One step: its number in a ring, a thread down to the next one's, what to do, and under it a
-/// quieter line when one is needed.
+/// quieter line when one is needed — and [under] it, the last step's [StepsTimeline.under].
 class _HowItWorksRow extends StatelessWidget {
   const _HowItWorksRow({
     required this.number,
     required this.title,
     this.note,
+    this.under,
     this.last = false,
   });
 
   final int number;
   final String title;
   final String? note;
+  final Widget? under;
   final bool last;
 
   static const double _ring = 24;
@@ -234,10 +254,9 @@ class _HowItWorksRow extends StatelessWidget {
                               maxLines: 1,
                               softWrap: false,
                               overflow: TextOverflow.ellipsis,
-                              style: tty
-                                  .style(color: tty.faint, size: TtySize.meta)
-                                  .copyWith(height: _noteHeight),
+                              style: StepsTimeline.noteStyle(tty),
                             ),
+                          ?under,
                         ],
                       ),
                     ),

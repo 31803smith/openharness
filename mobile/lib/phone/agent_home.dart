@@ -1128,11 +1128,13 @@ class _AgentHomeState extends State<AgentHome>
       enterFrom: notifier.signedInThisRun ? OnboardingScene.welcome : null,
       underHeadline: ComputerWatch(
         notifier: notifier,
-        child: GoToComputer(account: notifier.currentUser?.email),
+        child: GoToComputer(
+          account: notifier.currentUser?.email,
+          notYou: NotYouSignOut(notifier: notifier),
+        ),
       ),
       status: const OnboardingStatus(OnboardingCopy.looking),
       trailing: PhoneSettingsButton(notifier: notifier),
-      actions: NotYouSignOut(notifier: notifier),
     );
   }
 
