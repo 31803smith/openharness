@@ -432,11 +432,11 @@ describe('Agent Messages\' mailbox', () => {
     const statuses: DeliveryStatus[] = []
     // The directory is not read yet (signed out, the backend down): nothing else is refused.
     const restarted = new Mailbox({ store: new MessageStore(join(root, 'state')), inbox: t.inbox, agent: () => null, deliver: () => {}, refused: () => 'refused', ready: () => false,
-      forbidden: (d) => (d.messageId === 'm0000006' ? 'it was sent outside any tab with Agent Messages on' : null), text: () => '', changed: (s) => { statuses.push(s) }, now: t.now })
+      forbidden: (d) => (d.messageId === 'm0000006' ? 'it was sent outside any tab' : null), text: () => '', changed: (s) => { statuses.push(s) }, now: t.now })
     restarted.start()
     restarted.stop()
     const state = new MessageStore(join(root, 'state')).state.local
-    expect(state.find((d) => d.key === never.key)).toMatchObject({ state: 'failed', reason: 'it was sent outside any tab with Agent Messages on' })
+    expect(state.find((d) => d.key === never.key)).toMatchObject({ state: 'failed', reason: 'it was sent outside any tab' })
     expect(statuses).toEqual([expect.objectContaining({ messageId: 'm0000006', state: 'failed' })])
     // Its attempt in flight did not go back to the hook; the other one's did.
     expect(t.inbox.waiting('%3', never.key)).toBe(false)
@@ -457,6 +457,43 @@ describe('Agent Messages\' mailbox', () => {
     t.mailbox.stop()
     vi.advanceTimersByTime(PUMP_MS * 3)
     expect(pump).toHaveBeenCalledTimes(2)
+  })
+
+  it('asleep, looks only until nothing waits, then stops by itself; paused, looks at nothing until resumed', () => {
+    // Off costs nothing: Agent Messages run in the edge host on every computer, and a look every two seconds at a
+    // mailbox with nothing in it was a timer for nothing (2026-10-12).
+    vi.useFakeTimers()
+    let asleep = false
+    const t = setup({ asleep: () => asleep })
+    t.mailbox.resume()
+    const pump = vi.spyOn(t.mailbox, 'pump')
+    vi.advanceTimersByTime(PUMP_MS * 2)
+    expect(pump, 'not started: nothing to look at').not.toHaveBeenCalled()
+    t.mailbox.start()
+    t.mailbox.resume()
+    t.setAgent(null)
+    const delivery = t.accept()
+    pump.mockClear()
+    asleep = true
+    expect(t.mailbox.waiting()).toBe(true)
+    vi.advanceTimersByTime(PUMP_MS * 2)
+    expect(pump).toHaveBeenCalledTimes(2)
+    // What waited has settled: one more look, and none after it.
+    t.refuse('Agent Messages were turned off on its computer')
+    vi.advanceTimersByTime(PUMP_MS)
+    expect(delivery.state).toBe('failed')
+    expect(t.mailbox.waiting()).toBe(false)
+    vi.advanceTimersByTime(PUMP_MS * 5)
+    expect(pump).toHaveBeenCalledTimes(3)
+    // Awake, it looks with nothing waiting too; paused, not at all.
+    asleep = false
+    t.mailbox.resume()
+    vi.advanceTimersByTime(PUMP_MS * 2)
+    expect(pump).toHaveBeenCalledTimes(5)
+    t.mailbox.pause()
+    t.mailbox.pause()
+    vi.advanceTimersByTime(PUMP_MS * 2)
+    expect(pump).toHaveBeenCalledTimes(5)
   })
 
   it('keeps going when the inbox cannot be written or the store saved', () => {
