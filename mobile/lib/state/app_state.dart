@@ -5561,6 +5561,33 @@ class AppNotifier extends ChangeNotifier {
         machine.machine.machineId,
   ];
 
+  /// The computers whose services can be connected from this phone: linked and online. Their
+  /// daemon answers `connectors` for the account's owner only, end to end encrypted.
+  List<MachineState> get connectorMachines => [
+    for (final machine in machineStates.values)
+      if (!machine.needsLink && machine.nodeOnline != false) machine,
+  ];
+
+  /// `connectors` on [machineId] (cli/src/services/connectors.ts): `list`, `connect`, `flow`,
+  /// `callback`, `disconnect`. A machine that cannot answer reads as `{error: UNAVAILABLE}`.
+  Future<Map<String, dynamic>> connectors(
+    String machineId,
+    Map<String, dynamic> payload, {
+    Duration timeout = const Duration(seconds: 30),
+  }) async {
+    final machine = machineStates[machineId];
+    if (machine == null || machine.needsLink) return {'error': 'UNAVAILABLE'};
+    try {
+      return await _conn(machineId).request(
+        'connectors',
+        payload: payload,
+        timeout: timeout,
+      );
+    } catch (_) {
+      return {'error': 'UNAVAILABLE'};
+    }
+  }
+
   /// Every turn of every session on [machineId], searched by its daemon (`session_search`,
   /// cli/src/lib/sessionSearch/) — the desktop's `searchSessions`, unchanged. Null when the machine
   /// cannot answer: offline, or a CLI that predates the request, which goes silent rather than

@@ -20,6 +20,7 @@ import 'package:harness_mobile/terminal/terminal_font_store.dart';
 import 'package:harness_mobile/terminal/terminal_theme_store.dart';
 
 import 'approve_sign_in.dart';
+import 'connectors_page.dart';
 import 'devices_page.dart';
 import 'machine_profile_picker.dart';
 import 'machines_tab.dart';
@@ -187,6 +188,14 @@ class _Body extends StatelessWidget {
               onTap: () =>
                   unawaited(showMachineProfilePicker(context, notifier)),
             ),
+          // The services those computers' agents use (Linear, GitHub…), signed in to from here.
+          SettingsRow(
+            key: const Key('settings-connectors'),
+            title: 'Connectors',
+            onTap: () => Navigator.of(context).push(
+              phoneRoute((_) => ConnectorsPage(notifier: notifier)),
+            ),
+          ),
           // Every device signed in to the account — each trusted by the others because of that, so
           // this is where one that is not yours is seen and taken out.
           // A computer showing its sign-in QR (`harness login`, or the desktop app's "Scan with your

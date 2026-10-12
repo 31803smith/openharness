@@ -110,6 +110,8 @@ flutter:
   uses-material-design: true
   assets:
     - assets/engine-icons/
+    # Each connected service's icon for Settings ▸ Connectors, PNG only (cli/scripts/connector-assets.mjs).
+    - assets/connector-icons/
     # The real app icon, shown on the sign-in and bootstrapping screens.
     #
     # ⚠️ `assets/app_icon.svg` beside it is the MASTER this and all 20 launcher
