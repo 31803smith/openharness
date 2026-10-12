@@ -7959,23 +7959,31 @@ class _SwarmScreenState extends State<SwarmScreen> {
       final messagesColor = grid.AppPalette.accentOnSurface;
       final storeWidth = math.min(
         WorkspaceStoreButton.widthOf(context),
-        math.max(0.0, constraints.maxWidth - cell.width * 26),
+        math.max(0.0, constraints.maxWidth - cell.width * 22),
       );
       // Sign in or the avatar always stays; see [_accountControl].
       final accountWidth = _accountControlWidth(context);
       // Devices only where Store keeps its full width beside it. A narrow
       // window drops it from the bar first; Harness Store still opens it.
       final devicesWidth = WorkspaceStoreButton.widthOf(context, devices: true);
-      final showDevices =
-          app.devicesEnabled &&
-          constraints.maxWidth - cell.width * 26 - accountWidth >=
-              WorkspaceStoreButton.widthOf(context) + devicesWidth;
+      final room =
+          constraints.maxWidth -
+          cell.width * 22 -
+          accountWidth -
+          WorkspaceStoreButton.widthOf(context);
+      final showDevices = app.devicesEnabled && room >= devicesWidth;
+      // Add Phone likewise, and it goes before Devices: a phone is added once,
+      // and the account menu, the Harness menu and `> add phone` still open it.
+      final addPhoneWidth = cell.width * 4;
+      final showAddPhone =
+          room >= addPhoneWidth + (showDevices ? devicesWidth : 0);
       // Search, notifications, Add Phone, Devices, Store and the account —
       // none of it here when the title bar holds them.
       final actionsWidth = _titleBarActions
           ? 0.0
           : storeWidth +
-                cell.width * 12 +
+                cell.width * 8 +
+                (showAddPhone ? addPhoneWidth : 0) +
                 (showDevices ? devicesWidth : 0) +
                 accountWidth;
       final leadingWidth = chrome?.leadingWidth(context) ?? 0.0;
@@ -8154,7 +8162,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
               if (!_titleBarActions) ...[
                 _searchButton(theme),
                 _notificationsButton(theme),
-                _addPhoneButton(theme),
+                if (showAddPhone) _addPhoneButton(theme),
                 if (showDevices) _devicesButton(context),
                 WorkspaceStoreButton(
                   key: const ValueKey('swarm-store-button'),
