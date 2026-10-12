@@ -109,6 +109,9 @@ impl LocalModel {
 /// shared models are one Set up row (the desktop's); `grid_setup_error`: why the last Set up failed.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Snapshot { pub models: Vec<LocalModel>, pub memory: Option<f64>, pub free_disk: Option<f64>, pub hardware: Option<String>, pub notice: Option<String>, pub busy: bool, pub supports_download: bool,
+    /// What the catalog fits models to, and whether that is an NVIDIA card's VRAM (`fitMemory: vram`)
+    /// with its cards' VRAM in all: [memory] is the machine's RAM, not what such a model runs in.
+    pub fit: Option<f64>, pub fit_vram: bool, pub gpu_memory: Option<f64>,
     pub grid_setup_needed: bool, pub grid_setup_error: Option<String> }
 
 /// None when there is no list — a daemon too old for it, or a reply that failed.
@@ -119,6 +122,7 @@ pub fn parse_local(reply: &Value) -> Option<Snapshot> {
         // A sentence beside the list, never a failure (an `error` fails the whole request).
         notice: text(&reply["notice"]), busy: reply["busy"] == true, supports_download: reply["supportsDownload"] == true,
         grid_setup_needed: reply["gridSetupNeeded"] == true, grid_setup_error: text(&reply["gridSetupError"]),
+        fit: num(&reply["fitBytes"]).filter(|m| *m > 0.0), fit_vram: reply["fitMemory"] == "vram", gpu_memory: num(&reply["gpuMemoryBytes"]).filter(|m| *m > 0.0),
     })
 }
 
@@ -646,7 +650,16 @@ fn capital(s: &str) -> String { let mut c = s.chars(); c.next().map(|f| f.to_upp
 /// `Get for this Mac · 64 GB`: the downloads, and the memory they were chosen for.
 pub fn catalog_heading(snap: Option<&Snapshot>) -> String {
     let mut h = format!("Get for {}", this_computer());
-    if let Some(m) = snap.and_then(|s| s.memory) { h.push_str(&format!(" · {}", gb(m))) }
+    // (An NVIDIA machine's models run in its card: its VRAM, not the machine's RAM.)
+    match snap {
+        Some(s) if s.fit_vram => match (s.gpu_memory, s.fit) {
+            (Some(all), _) => h.push_str(&format!(" · {} VRAM", gb(all))),
+            (None, Some(free)) => h.push_str(&format!(" · {} VRAM free", gb(free))),
+            _ => {}
+        },
+        Some(s) => if let Some(m) = s.memory { h.push_str(&format!(" · {}", gb(m))) },
+        None => {}
+    }
     h
 }
 
@@ -2000,7 +2013,11 @@ pub fn preview(app: &App, id: &str) -> Vec<Line<'static>> {
         if let Some(size) = m.size {
             let free = snap.and_then(|s| s.free_disk).filter(|_| !m.downloaded()).map(|d| format!(" · {} free", gb(d))).unwrap_or_default();
             out.push(kv(if m.downloaded() { "Size" } else { "Download" }, format!("{}{free}", gb(size))));
-            if let Some(mem) = snap.and_then(|s| s.memory) { out.push(kv("Memory", format!("{} · {here} has {}", if size <= mem { "fits".to_string() } else { format!("needs {}", gb(size)) }, gb(mem)))) }
+            // (An NVIDIA machine's against the VRAM free on its card, which the catalog fits to.)
+            match snap {
+                Some(s) if s.fit_vram => if let Some(free) = s.fit { out.push(kv("VRAM", format!("{} · its GPU has {} free", if size <= free { "fits".to_string() } else { format!("needs {}", gb(size)) }, gb(free)))) },
+                _ => if let Some(mem) = snap.and_then(|s| s.memory) { out.push(kv("Memory", format!("{} · {here} has {}", if size <= mem { "fits".to_string() } else { format!("needs {}", gb(size)) }, gb(mem)))) },
+            }
         }
         match (m.running().then_some(m.tok_s).flatten(), m.est_tok_s) {
             (Some(s), _) => out.push(kv("Speed", format!("{s:.1} tok/s"))),
@@ -3401,5 +3418,30 @@ mod tests {
         assert!(url_problem("https://example.com/v1?x=1").unwrap().starts_with("Take the ? or #"));
         assert_eq!(url_problem("https://api.example.com/v1"), None);
         assert_eq!(url_problem("http://localhost:8080/v1"), None);
+    }
+
+    /// An NVIDIA machine's models run in its card: the heading says its VRAM and "fits" is judged
+    /// against the VRAM free on it — not the machine's RAM, which a Mac's unified memory still shows.
+    #[test]
+    fn an_nvidia_machine_is_told_its_vram_not_its_ram() {
+        let mut app = app();
+        let mut reply = local_reply(qwen("available", Value::Null), false);
+        on_local(&mut app, "local", Ok(reply.clone()));
+        assert_eq!(catalog_heading(app.models_view.local.get("local")), format!("Get for {} · 64 GB", this_computer()));
+        assert!(text(&preview(&app, "mv:local:qwen-35b")).contains("Memory   fits"), "{}", text(&preview(&app, "mv:local:qwen-35b")));
+
+        reply["fitBytes"] = json!(14.0 * GIB);
+        reply["fitMemory"] = json!("vram");
+        reply["gpuMemoryBytes"] = json!(16.0 * GIB);
+        on_local(&mut app, "local", Ok(reply.clone()));
+        assert_eq!(catalog_heading(app.models_view.local.get("local")), format!("Get for {} · 16 GB VRAM", this_computer()));
+        let panel = text(&preview(&app, "mv:local:qwen-35b"));
+        assert!(panel.contains("VRAM     needs 20 GB · its GPU has 14 GB free"), "{panel}");
+        assert!(!panel.contains("has 64 GB"), "{panel}");
+
+        // A daemon that names no card's total: what is free on it.
+        reply.as_object_mut().unwrap().remove("gpuMemoryBytes");
+        on_local(&mut app, "local", Ok(reply));
+        assert_eq!(catalog_heading(app.models_view.local.get("local")), format!("Get for {} · 14 GB VRAM free", this_computer()));
     }
 }
