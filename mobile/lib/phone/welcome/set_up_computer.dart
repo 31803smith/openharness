@@ -56,7 +56,7 @@ List<ComputerStep> computerSteps(String? account) => [
 /// Signing in on the computer — with [account], the phone's, when there is one to name. Null signed
 /// out, where a scan signs the phone in to whichever account the computer has.
 ComputerStep _signIn(String? account) =>
-    (title: 'Sign in', note: account == null ? null : 'With $account.');
+    (title: 'Sign in', note: account == null ? null : 'Use $account');
 
 /// The steps on the computer under the camera ([computerSteps]) as a [StepsTimeline].
 class ComputerSteps extends StatelessWidget {
@@ -76,7 +76,7 @@ class ComputerSteps extends StatelessWidget {
 /// (1)  Install Harness
 ///  │
 /// (2)  Sign in
-///      With ada@gmail.com.
+///      Use ada@gmail.com
 ///      Not you? Sign out             [under], at home
 /// ```
 ///

@@ -34,7 +34,7 @@ import 'set_up_computer.dart' show StepsTimeline, goToSteps;
 ///   (1) Install Harness                  what to do there ([GoToComputer])
 ///    │
 ///   (2) Sign in
-///       With ada@gmail.com.
+///       Use ada@gmail.com
 ///       Not you? Sign out                at home only ([NotYouSignOut])
 /// ```
 ///

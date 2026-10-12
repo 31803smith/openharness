@@ -6,7 +6,7 @@
 ///                  [Continue with Google] [Continue with Apple]   Continue with email
 /// ② Your computer  On your computer, go to   [autonomous.ai/go ⇪]
 ///                  under the picture: Looking for your computer▌
-///                  under the link: (1) Install Harness  (2) Sign in, With you@…
+///                  under the link: (1) Install Harness  (2) Sign in, Use you@…
 ///                  under the account: Not you? Sign out
 ///   The Mac joins  MacBook Pro is ready.
 /// ③ The session    by the mic, once: Send it, or say anything.
