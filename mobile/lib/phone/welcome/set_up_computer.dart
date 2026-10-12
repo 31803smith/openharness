@@ -22,10 +22,11 @@ typedef ComputerStep = ({String title, String? note});
 
 /// The first step on the computer, for the camera.
 ///
-/// ⚠️ **"On your computer" is said once, by the title over the steps** — "On your computer, go to",
-/// "Scan the code on your computer" — not again in each step under it (owner, 2026-10-12: three
-/// times on one screen read as noise).
-const _openHarness = 'Open Harness';
+/// ⚠️ **"On your computer" is said once on a screen** (owner, 2026-10-12: three times on one screen
+/// read as noise) — by the title over ②'s steps ("On your computer, go to"), and under the camera
+/// by this first step: the camera has no title of its own, and "Open Harness" on its own, on a
+/// phone already in Harness, read as opening this app.
+const _openHarness = 'Open Harness on your computer';
 
 /// The steps under "On your computer, go to"'s link: get Harness from it, and sign in — with
 /// [account], the phone's, when there is one to name. Signed in with this account, the computer
@@ -36,21 +37,21 @@ List<ComputerStep> goToSteps(String? account) => [
   _signIn(account),
 ];
 
-/// The steps under the camera opened from Computers ▸ "Or scan the QR code on your computer", which
-/// pairs a phone by Add Phone's code — where the page it came from says none of them
-/// ([ScanToConnectPage.steps]): open Harness, sign in — with [account], when there is one to name —
-/// then Add Phone and where it is.
+/// The steps under the camera that reads Add Phone's code — the welcome's Scan QR code, and
+/// Computers' "Or scan the QR code on your computer" — where the page it came from says none of
+/// them ([ScanToConnectPage.steps]): open Harness on the computer, then Add Phone and where it is.
 ///
 /// ⚠️ **One set for the camera (owner, 2026-10-12).** It used to be two: signed out "Click Add
 /// Phone ③ Scan the QR code", signed in "Sign in on your computer ③ Not showing up? Click Add
 /// Phone" — steps that changed under one button, and on the camera "Not showing up?" was asked of
 /// somebody already scanning. Both halves hold either way: Add Phone asks a computer that is not
 /// signed in to sign in before it shows a code, and a computer that turns up by itself is paired
-/// just as well by its code. The scan is the camera's own title, so it is not a step of its own.
+/// just as well by its code. The scan is the camera itself, so it is not a step of its own.
+/// Two steps, signing in not among them (owner, 2026-10-12): the desktop now has its person sign
+/// in before anything else, Add Phone included. [account] is kept for the callers that pass it.
 List<ComputerStep> computerSteps(String? account) => [
   (title: _openHarness, note: null),
-  _signIn(account),
-  (title: 'Click Add Phone', note: kAddPhoneWhere),
+  (title: 'Click "Add Phone"', note: kAddPhoneWhere),
 ];
 
 /// Signing in on the computer — with [account], the phone's, when there is one to name. Null signed
@@ -58,7 +59,12 @@ List<ComputerStep> computerSteps(String? account) => [
 ComputerStep _signIn(String? account) =>
     (title: 'Sign in', note: account == null ? null : 'Use $account');
 
-/// The steps on the computer under the camera ([computerSteps]) as a [StepsTimeline].
+/// Over the camera's steps: what they are for — how the code comes up on the computer, so they
+/// are not read as more to do on the phone. The camera above them is what says to scan.
+const _howToGetCode = 'How to get the QR code';
+
+/// The steps on the computer under the camera ([computerSteps]) as a [StepsTimeline], under a
+/// quiet line that says what they are for.
 class ComputerSteps extends StatelessWidget {
   const ComputerSteps({super.key, required this.account});
 
@@ -66,8 +72,24 @@ class ComputerSteps extends StatelessWidget {
   final String? account;
 
   @override
-  Widget build(BuildContext context) =>
-      StepsTimeline(steps: computerSteps(account));
+  Widget build(BuildContext context) {
+    final tty = Tty.of(context);
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Semantics(
+          header: true,
+          child: Text(
+            _howToGetCode,
+            style: tty.style(color: tty.faint, size: TtySize.meta),
+          ),
+        ),
+        const SizedBox(height: 12),
+        StepsTimeline(steps: computerSteps(account)),
+      ],
+    );
+  }
 }
 
 /// Steps as a timeline — each number in a ring, a thread down to the next:

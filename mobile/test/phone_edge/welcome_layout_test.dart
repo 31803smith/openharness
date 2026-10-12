@@ -45,6 +45,7 @@ void main() {
     signIn: (_, _) async => throw Exception(
       'That code has expired. Ask for a new one and try again within ten minutes.',
     ),
+    scanCamera: const SizedBox.expand(),
   );
 
   /// Home as the shell mounts it, for an account with no computer yet.
@@ -70,7 +71,10 @@ void main() {
       final app = edgeApp(noMachines: true);
       addTearDown(app.dispose);
       await pump(tester, welcome(app), scale, brightness);
-      await tapInView(tester, find.byKey(const ValueKey('welcome-email-way')));
+      // The emailed code's way in: Scan QR code, then the camera's "Use email instead".
+      await tapInView(tester, find.byKey(const ValueKey('welcome-scan')));
+      await frames(tester);
+      await tapInView(tester, find.text('Use email instead'));
       await frames(tester);
       await tester.enterText(
         find.byType(TextField),

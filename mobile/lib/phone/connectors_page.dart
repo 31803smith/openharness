@@ -467,145 +467,166 @@ class _ConnectorsPageState extends State<ConnectorsPage>
       resizeToAvoidBottomInset: false,
       body: SafeArea(
         bottom: false,
-        child: RefreshIndicator(
-          onRefresh: _refresh,
-          child: ListView(
-            padding: EdgeInsets.fromLTRB(
-              Tty.origin,
-              12,
-              Tty.origin,
-              MediaQuery.paddingOf(context).bottom + 24,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            // Pushed from Settings ▸ Connectors: back above the title, fixed while the list scrolls,
+            // as Settings and Computers have it when pushed.
+            Align(
+              alignment: Alignment.centerLeft,
+              child: TtyBackButton(
+                onPressed: () => Navigator.of(context).maybePop(),
+              ),
             ),
-            children: [
-              const TtyText(
-                'Connectors',
-                size: TtySize.display,
-                weight: FontWeight.w600,
-              ),
-              const SizedBox(height: 8),
-              Text(
-                'Services your agents can use. Sign in here once: every computer of your account '
-                'gets the connection.',
-                style: tty.style(color: tty.dim),
-              ),
-              if (_notice.isNotEmpty) ...[
-                const SizedBox(height: 12),
-                Text(_notice, style: tty.style(color: tty.dim)),
-              ],
-              // Agents read their tools when they start: one already running gets a connection
-              // made since only on a restart. Always here, for the harness last opened.
-              if (lastOpened != null) ...[
-                const SizedBox(height: 12),
-                SettingsGroup(
+            Expanded(
+              child: RefreshIndicator(
+                onRefresh: _refresh,
+                child: ListView(
+                  padding: EdgeInsets.fromLTRB(
+                    Tty.origin,
+                    8,
+                    Tty.origin,
+                    MediaQuery.paddingOf(context).bottom + 24,
+                  ),
                   children: [
-                    SettingsRow(
-                      key: const Key('connectors-restart'),
-                      leading: const Icon(LucideIcons.refreshCw300, size: 20),
-                      title: 'Restart "${lastOpened.$2.displayName}"',
-                      detail:
-                          'Restart to use the new tools from your connectors.',
-                      onTap: () => _restartThere(lastOpened),
+                    const TtyText(
+                      'Connectors',
+                      size: TtySize.display,
+                      weight: FontWeight.w600,
                     ),
-                  ],
-                ),
-              ],
-              if (cards == null && _loading) ...[
-                const SizedBox(height: 24),
-                const Center(child: CircularProgressIndicator()),
-              ] else if (_machineId == null) ...[
-                const SizedBox(height: 16),
-                Text(
-                  'No computer of yours is online. Start Harness on a computer signed in to your '
-                  'account, then pull to refresh.',
-                  style: tty.style(color: tty.dim),
-                ),
-              ] else if (cards != null) ...[
-                // At the top, not under the connected list: a long one pushed both off the screen.
-                // Which computer signs in matters only when it cannot: any of them gets the connection.
-                if (_app.connectorMachines.length > 1) ...[
-                  const SizedBox(height: 8),
-                  // A long host name gives way, never "Change".
-                  Row(
-                    children: [
-                      Flexible(
-                        child: Text(
-                          'Through ${_machineName(_machineId)}',
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: tty.style(color: tty.dim),
-                        ),
-                      ),
-                      TtyTextButton(
-                        key: const Key('connectors-computer'),
-                        label: 'Change',
-                        onPressed: _pickMachine,
-                      ),
+                    const SizedBox(height: 8),
+                    Text(
+                      'Services your agents can use. Sign in here once: every computer of your account '
+                      'gets the connection.',
+                      style: tty.style(color: tty.dim),
+                    ),
+                    if (_notice.isNotEmpty) ...[
+                      const SizedBox(height: 12),
+                      Text(_notice, style: tty.style(color: tty.dim)),
                     ],
-                  ),
-                ],
-                const SizedBox(height: 12),
-                TextField(
-                  key: const Key('connectors-search'),
-                  decoration: const InputDecoration(
-                    hintText: 'Search connectors',
-                    prefixIcon: Icon(LucideIcons.search300),
-                  ),
-                  onChanged: (value) => setState(() => _query = value.trim()),
-                ),
-                const SettingsCaption('Connected'),
-                if (connected.isEmpty)
-                  Text(
-                    query.isEmpty ? 'Nothing connected yet.' : 'No match.',
-                    style: tty.style(color: tty.dim),
-                  )
-                else
-                  SettingsGroup(
-                    children: [
-                      for (final card in connected)
-                        SettingsRow(
-                          leading: _ConnectorMark(
-                            code: card.code,
-                            name: card.name,
+                    // Agents read their tools when they start: one already running gets a connection
+                    // made since only on a restart. Always here, for the harness last opened.
+                    if (lastOpened != null) ...[
+                      const SizedBox(height: 12),
+                      SettingsGroup(
+                        children: [
+                          SettingsRow(
+                            key: const Key('connectors-restart'),
+                            leading: const Icon(
+                              LucideIcons.refreshCw300,
+                              size: 20,
+                            ),
+                            title: 'Restart "${lastOpened.$2.displayName}"',
+                            detail: 'Restart to use the new tools from your connectors.',
+                            onTap: () => _restartThere(lastOpened),
                           ),
-                          title: card.name,
-                          detail: card.needsAttention
-                              ? 'Connect again'
-                              : card.description,
-                          value: card.needsAttention
-                              ? 'Reconnect'
-                              : 'Connected',
-                          onTap: () => _manage(card),
-                        ),
-                    ],
-                  ),
-                SettingsCaption('Available ${available.length}'),
-                SettingsGroup(
-                  children: [
-                    for (final card in available)
-                      SettingsRow(
-                        leading: _ConnectorMark(
-                          code: card.code,
-                          name: card.name,
-                        ),
-                        title: card.name,
-                        detail: card.reason.isNotEmpty
-                            ? card.reason
-                            : card.description,
-                        value: _busy.contains(card.code)
-                            ? 'Signing in…'
-                            : card.reason.isNotEmpty
-                            ? null
-                            : 'Add',
-                        onTap:
-                            card.reason.isNotEmpty || _busy.contains(card.code)
-                            ? null
-                            : () => unawaited(_connect(card)),
+                        ],
                       ),
+                    ],
+                    if (cards == null && _loading) ...[
+                      const SizedBox(height: 24),
+                      const Center(child: CircularProgressIndicator()),
+                    ] else if (_machineId == null) ...[
+                      const SizedBox(height: 16),
+                      Text(
+                        'No computer of yours is online. Start Harness on a computer signed in to your '
+                        'account, then pull to refresh.',
+                        style: tty.style(color: tty.dim),
+                      ),
+                    ] else if (cards != null) ...[
+                      // At the top, not under the connected list: a long one pushed both off the screen.
+                      // Which computer signs in matters only when it cannot: any of them gets the connection.
+                      if (_app.connectorMachines.length > 1) ...[
+                        const SizedBox(height: 8),
+                        // A long host name gives way, never "Change".
+                        Row(
+                          children: [
+                            Flexible(
+                              child: Text(
+                                'Through ${_machineName(_machineId)}',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: tty.style(color: tty.dim),
+                              ),
+                            ),
+                            TtyTextButton(
+                              key: const Key('connectors-computer'),
+                              label: 'Change',
+                              onPressed: _pickMachine,
+                            ),
+                          ],
+                        ),
+                      ],
+                      const SizedBox(height: 12),
+                      TextField(
+                        key: const Key('connectors-search'),
+                        decoration: const InputDecoration(
+                          hintText: 'Search connectors',
+                          prefixIcon: Icon(LucideIcons.search300),
+                        ),
+                        onChanged: (value) =>
+                            setState(() => _query = value.trim()),
+                      ),
+                      const SettingsCaption('Connected'),
+                      if (connected.isEmpty)
+                        Text(
+                          query.isEmpty
+                              ? 'Nothing connected yet.'
+                              : 'No match.',
+                          style: tty.style(color: tty.dim),
+                        )
+                      else
+                        SettingsGroup(
+                          children: [
+                            for (final card in connected)
+                              SettingsRow(
+                                leading: _ConnectorMark(
+                                  code: card.code,
+                                  name: card.name,
+                                ),
+                                title: card.name,
+                                detail: card.needsAttention
+                                    ? 'Connect again'
+                                    : card.description,
+                                value: card.needsAttention
+                                    ? 'Reconnect'
+                                    : 'Connected',
+                                onTap: () => _manage(card),
+                              ),
+                          ],
+                        ),
+                      SettingsCaption('Available ${available.length}'),
+                      SettingsGroup(
+                        children: [
+                          for (final card in available)
+                            SettingsRow(
+                              leading: _ConnectorMark(
+                                code: card.code,
+                                name: card.name,
+                              ),
+                              title: card.name,
+                              detail: card.reason.isNotEmpty
+                                  ? card.reason
+                                  : card.description,
+                              value: _busy.contains(card.code)
+                                  ? 'Signing in…'
+                                  : card.reason.isNotEmpty
+                                  ? null
+                                  : 'Add',
+                              onTap:
+                                  card.reason.isNotEmpty ||
+                                      _busy.contains(card.code)
+                                  ? null
+                                  : () => unawaited(_connect(card)),
+                            ),
+                        ],
+                      ),
+                    ],
                   ],
                 ),
-              ],
-            ],
-          ),
+              ),
+            ),
+          ],
         ),
       ),
     );

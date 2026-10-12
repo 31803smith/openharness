@@ -174,7 +174,13 @@ class _Body extends StatelessWidget {
           SettingsRow(
             title: 'Computers',
             onTap: () => Navigator.of(context).push(
-              phoneRoute((_) => MachinesTab(notifier: notifier, large: false)),
+              phoneRoute(
+                (_) => MachinesTab(
+                  notifier: notifier,
+                  large: false,
+                  fromSettings: true,
+                ),
+              ),
             ),
           ),
           // Which computer's tabs this phone shows — the desktop's Profiles. Beside Computers: it

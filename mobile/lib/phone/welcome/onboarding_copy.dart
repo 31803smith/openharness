@@ -3,7 +3,8 @@
 ///
 /// ```
 /// ① Welcome        Manage all your agents on all your computers from your phone.
-///                  [Continue with Google] [Continue with Apple]   Continue with email
+///                  [Scan QR code] [Continue with Google] [Continue with Apple]
+///                  Scan QR code → the camera: How to get the QR code, its steps, Use email instead
 /// ② Your computer  On your computer, go to   [autonomous.ai/go ⇪]
 ///                  under the picture: Looking for your computer▌
 ///                  under the link: (1) Install Harness  (2) Sign in, Use you@…
@@ -28,8 +29,17 @@ abstract final class OnboardingCopy {
   static const welcome =
       'Manage all your agents on all your computers from your phone.';
 
-  /// ① The quiet line under the accounts.
+  /// ① The first of the three ways in: the camera, for the code a signed-in computer's Add Phone
+  /// shows, which signs this phone in to that computer's account with nothing to type.
+  static const scanQrCode = 'Scan QR code';
+
+  /// An emailed code. Not on the welcome any more (owner, 2026-10-12: three ways in, nothing else);
+  /// the camera's "Use email instead" leads to it.
   static const continueWithEmail = 'Continue with email';
+
+  /// ① Under the picture, when the camera read a computer's own sign-in code (its "Scan with your
+  /// phone"): this phone needs an account before it can approve one.
+  static const signInFirst = 'Sign in first, then approve your computer.';
 
   /// ② The headline over the address.
   static const goToHeadline = 'On your computer, go to';

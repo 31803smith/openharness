@@ -35,7 +35,13 @@ class MachinesTab extends StatelessWidget {
     required this.notifier,
     this.large = true,
     this.fromTerminal = false,
+    this.fromSettings = false,
   });
+
+  /// The ↻ beside the title — hidden, its code kept (owner, 2026-10-13): a pull on the list reads
+  /// it again, a failed read has its own Try again, and with no computer connected the list is read
+  /// again by itself ([AppNotifier.deafMachineListInterval]). Settings has its place.
+  static const _showRefresh = false;
 
   final AppNotifier notifier;
 
@@ -46,6 +52,10 @@ class MachinesTab extends StatelessWidget {
   /// Pushed by a swipe left on the terminal: a swipe right ANYWHERE goes back — the way home is the
   /// same swipe the other way, as on the New Harness form.
   final bool fromTerminal;
+
+  /// Pushed from Settings ▸ Computers: no Settings at the top right — back is the way there, and
+  /// Settings again over this list would stack Settings on Settings.
+  final bool fromSettings;
 
   @override
   Widget build(BuildContext context) => ListenableBuilder(
@@ -86,16 +96,18 @@ class MachinesTab extends StatelessWidget {
                   ),
                   // What a pull on the list does, for whoever does not know to pull — or has
                   // nothing to pull: the empty and failed states draw no list.
-                  _RefreshButton(
-                    busy:
-                        notifier.machinesRefreshing || notifier.machinesLoading,
-                    trailing: !large,
-                    onPressed: () => unawaited(notifier.retryMachines()),
-                  ),
-                  // Large, this is the home screen while no computer is ready — locked, or off —
-                  // and nothing else on it leads to Settings or Sign out. Pushed (small) — from
-                  // Settings, or by the terminal's swipe left — back is the way out.
-                  if (large) PhoneSettingsButton(notifier: notifier),
+                  if (_showRefresh)
+                    _RefreshButton(
+                      busy:
+                          notifier.machinesRefreshing ||
+                          notifier.machinesLoading,
+                      trailing: fromSettings,
+                      onPressed: () => unawaited(notifier.retryMachines()),
+                    ),
+                  // Settings, top right, wherever this list stands (owner, 2026-10-13): the home
+                  // screen while no computer is ready — where nothing else leads to Settings or
+                  // Sign out — and pushed from home or the terminal. Not when Settings pushed it.
+                  if (!fromSettings) PhoneSettingsButton(notifier: notifier),
                 ],
               ),
               Expanded(
@@ -413,6 +425,13 @@ class _ConnectBar extends StatefulWidget {
   /// Add computer: "On your computer, go to", pushed over this list.
   final VoidCallback onSetUp;
 
+  /// "Or scan the QR code on your computer" under Add computer — hidden, its code kept (owner,
+  /// 2026-10-13). Signed in here, a computer on the same account turns up and is trusted by itself
+  /// (the device key log), and one that still wants a code reads "locked" in the list, whose
+  /// Unlock page leads with "Scan its code": the line only repeated that, and under Add computer it
+  /// read as a second way to add one.
+  static const offerScan = false;
+
   @override
   State<_ConnectBar> createState() => _ConnectBarState();
 }
@@ -465,9 +484,12 @@ class _ConnectBarState extends State<_ConnectBar> {
       ),
       child: Padding(
         // SafeArea leaves the foot to this page: the bar keeps clear of the home indicator itself.
+        // Without the scan's line under the button, the gap under it is the one over it.
         padding: EdgeInsets.only(
           top: 12,
-          bottom: MediaQuery.paddingOf(context).bottom,
+          bottom:
+              MediaQuery.paddingOf(context).bottom +
+              (_ConnectBar.offerScan ? 0 : 12),
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -500,17 +522,18 @@ class _ConnectBarState extends State<_ConnectBar> {
                   // A desktop from before shows its Add Phone QR code rather than an address: the
                   // camera pairs with it. "QR code", not "Add Phone code" — a desktop menu's name
                   // read as a noun stack under a button named for the other side.
-                  Center(
-                    child: TtyTextButton(
-                      key: const ValueKey('machines-connect-computer'),
-                      label: _scanning
-                          ? 'Scanning…'
-                          : 'Or scan the QR code on your computer',
-                      size: TtySize.meta,
-                      color: tty.faint,
-                      onPressed: _scanning ? null : () => unawaited(_scan()),
+                  if (_ConnectBar.offerScan)
+                    Center(
+                      child: TtyTextButton(
+                        key: const ValueKey('machines-connect-computer'),
+                        label: _scanning
+                            ? 'Scanning…'
+                            : 'Or scan the QR code on your computer',
+                        size: TtySize.meta,
+                        color: tty.faint,
+                        onPressed: _scanning ? null : () => unawaited(_scan()),
+                      ),
                     ),
-                  ),
                 ],
               ),
             ),

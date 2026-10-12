@@ -80,6 +80,7 @@ void main() {
             signIn: (_, code) async {
               if (code != '4242') throw Exception('That code is not right.');
             },
+            scanCamera: const SizedBox.expand(),
           ),
         ),
       );
@@ -87,9 +88,11 @@ void main() {
       return (app: app, sent: sent);
     }
 
-    /// The welcome's quiet line, under the accounts.
+    /// The emailed code's way in: Scan QR code, then the camera's "Use email instead".
     Future<void> toEmail(WidgetTester tester) async {
-      await tester.tap(find.byKey(const ValueKey('welcome-email-way')));
+      await tester.tap(find.byKey(const ValueKey('welcome-scan')));
+      await frames(tester);
+      await tester.tap(find.text('Use email instead'));
       await frames(tester);
     }
 
