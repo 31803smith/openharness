@@ -5,6 +5,18 @@ import 'package:flutter/material.dart';
 import '../tty.dart';
 import '../tty_controls.dart';
 import 'onboarding_picture.dart';
+import 'set_up_computer.dart' show StepsTimeline, goToSteps;
+
+/// How an onboarding screen's slots are measured: the welcome's, or "On your computer, go to"'s —
+/// which every screen after signing in shares (its wait, and the computer joining), so the picture
+/// stays put from one to the next.
+enum OnboardingLayout {
+  /// ① A headline of up to three lines; the two accounts and the quiet line at the foot.
+  welcome,
+
+  /// ② The headline, the link and the steps on the computer under it; one quiet line at the foot.
+  goTo,
+}
 
 /// The one layout every onboarding screen is drawn on — the welcome, "On your computer, go to" and
 /// the computer joining — so that going from one to the next only the words change.
@@ -13,10 +25,10 @@ import 'onboarding_picture.dart';
 /// ‹                                   (leading, trailing)
 ///
 ///   Manage all your agents on all      headline: 22pt mono semibold, up to three lines
-///   your computers from your phone.    [underHeadline] — ②'s address
+///   your computers from your phone.    [underHeadline] — ②'s link and steps
 ///
 ///          ┌──────────────────┐
-///          │     picture      │        the middle, the same place on every screen
+///          │     picture      │        the middle, the same place on every screen of a [layout]
 ///          └──────────────────┘
 ///      Looking for your computer▌      status
 ///
@@ -25,10 +37,11 @@ import 'onboarding_picture.dart';
 ///        Continue with email
 /// ```
 ///
-/// ⚠️ **Every slot is measured the same way on every screen**, whatever it holds — the headline's
-/// three lines, room for a button under it, the foot's two buttons and quiet line — so the picture
-/// sits at one height whichever screen is up, and never moves (`docs/research/2026-10-11-phone-
-/// onboarding`, "Type and space"). It only shrinks where the phone is short or the text large.
+/// ⚠️ **Every slot is measured the same way on every screen of a [layout]**, whatever it holds — the
+/// headline and what goes under it, the foot — so the picture sits at one height whichever of them
+/// is up, and never moves (`docs/research/2026-10-11-phone-onboarding`, "Type and space"). It only
+/// shrinks where the phone is short or the text large. Between the welcome and the screens after
+/// it, the screen changes whole as the phone signs in, and the picture with it.
 ///
 /// Between screens the words rise 8pt into place over 250ms (a 200ms fade under Reduce Motion);
 /// what changes in the picture is its own business ([OnboardingPicture]).
@@ -43,12 +56,16 @@ class OnboardingFrame extends StatelessWidget {
     this.actions,
     this.leading,
     this.trailing,
+    this.layout = OnboardingLayout.welcome,
   });
 
   final String headline;
   final Key? headlineKey;
 
-  /// Under the headline, rising with it: "On your computer, go to"'s address.
+  /// How the slots are measured — see the class comment.
+  final OnboardingLayout layout;
+
+  /// Under the headline, rising with it: "On your computer, go to"'s link and steps.
   final Widget? underHeadline;
 
   /// The picture, laid out in the middle at its own 320 × 300 proportions.
@@ -79,6 +96,9 @@ class OnboardingFrame extends StatelessWidget {
   /// The quiet line's size, and the status line's.
   static const double quietSize = TtySize.meta;
 
+  /// ②'s steps under the link ([goToSteps]): the gap above them.
+  static const double stepsAbove = 24;
+
   /// The picture may reach wider than the words, as far as this from each edge.
   static const double _pictureSide = 27;
 
@@ -95,9 +115,23 @@ class OnboardingFrame extends StatelessWidget {
       scaler.scale(TtySize.title) * 1.2 + 20,
     );
     final quiet = math.max(44.0, scaler.scale(quietSize) * 1.45);
-    // The headline's three lines — or two and a button under them, ②'s address.
-    final head = math.max(3 * line, 2 * line + _underGap + button);
-    final foot = 2 * button + _buttonGap + quiet + 8;
+    final (head, foot) = switch (layout) {
+      // The headline's three lines; the two accounts and the quiet line under them.
+      OnboardingLayout.welcome => (
+        math.max(3 * line, 2 * line + _underGap + button),
+        2 * button + _buttonGap + quiet + 8,
+      ),
+      // Two lines of headline, the link and the steps; one quiet line.
+      OnboardingLayout.goTo => (
+        2 * line +
+            _underGap +
+            button +
+            stepsAbove +
+            // With an account named, as it is once signed in.
+            StepsTimeline.heightOf(goToSteps('you'), scaler),
+        quiet + 8,
+      ),
+    };
     // Room for two lines under the picture: a sign-in's failure can run to a second.
     final statusRow = 2 * scaler.scale(quietSize) * 1.45;
 
@@ -188,11 +222,15 @@ class OnboardingStage extends StatelessWidget {
     this.leading,
     this.trailing,
     this.onTap,
+    this.layout = OnboardingLayout.goTo,
   });
 
   final String headline;
   final Key? headlineKey;
   final OnboardingScene scene;
+
+  /// "On your computer, go to"'s, for every screen after signing in — see [OnboardingLayout].
+  final OnboardingLayout layout;
 
   /// See [OnboardingPicture.enterFrom], [OnboardingPicture.agent] and [OnboardingPicture.join].
   final OnboardingScene? enterFrom;
@@ -231,6 +269,7 @@ class OnboardingStage extends StatelessWidget {
             actions: actions,
             leading: leading,
             trailing: trailing,
+            layout: layout,
           ),
         ),
       ),
