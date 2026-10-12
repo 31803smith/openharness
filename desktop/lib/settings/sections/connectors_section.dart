@@ -153,7 +153,7 @@ class _ConnectorsSectionState extends State<ConnectorsSection> {
               const SizedBox(width: 12),
               OutlinedButton.icon(
                 key: const ValueKey('connectors-restart'),
-                icon: const Icon(Icons.restart_alt, size: 16),
+                icon: const Icon(AppIcons.rotateCw, size: AppIcons.inlineSize),
                 label: const Text('Restart'),
                 onPressed: () {
                   final navigator = Navigator.of(context);
