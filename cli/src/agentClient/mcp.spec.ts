@@ -2,7 +2,8 @@ import { PassThrough } from 'node:stream'
 import { parseNewArgs } from '../lib/newCommand.js'
 import { step } from './commands.js'
 import { describe, expect, it } from 'vitest'
-import { agentOfClient, answer, callerEnv, INSTRUCTIONS, mcpCommand, PROTOCOL_VERSIONS, result, type McpDeps, type Ran } from './mcp.js'
+import { agentOfClient, answer, callerEnv, INSTRUCTIONS, mcpCommand, PROTOCOL_VERSIONS, result, TOOLS, type McpDeps, type Ran } from './mcp.js'
+import { HARNESS_AGENT_TOOLS } from '../engines/facets/hooks.js'
 
 /** A runner that records what it was asked and answers [ran]. */
 function runner(ran: Partial<Ran> = {}) {
@@ -37,6 +38,23 @@ describe('harness mcp', () => {
     expect(send.description).toMatch(/teammate.*Agent Messages on.*Refused anywhere else, even to a harness you started/)
     expect(INSTRUCTIONS).toContain('starting a harness does not let you message it')
     expect(INSTRUCTIONS).not.toContain('Send follow-ups for the same work to the harness you started')
+  })
+
+  it('says which tools only read or add, so Codex runs them without asking; closing still says it is destructive', async () => {
+    // Codex's rule for a tool with no approval setting of its own (codex-rs core/src/mcp_tool_call.rs
+    // `requires_mcp_tool_approval`, 0.162.1): destructive asks, read-only does not, and anything else asks unless it
+    // says it is neither destructive nor open-world. The plugin's Codex manifest approves close as well.
+    const codexAsks = (a: Record<string, unknown> = {}) => a.destructiveHint === true || (a.readOnlyHint !== true && (a.destructiveHint !== false || a.openWorldHint !== false))
+    const listed = ((await answer({ jsonrpc: '2.0', id: 1, method: 'tools/list' }, deps({ inPane: true })))!.result as { tools: Array<{ name: string; annotations?: Record<string, unknown> }> }).tools
+    expect(Object.fromEntries(listed.map((tool) => [tool.name, codexAsks(tool.annotations)]))).toEqual({
+      harness_list: false, harness_start: false, harness_wait: false, harness_read: false, harness_send: false, harness_close: true,
+    })
+  })
+
+  it('runs only the verbs Harness allows agents to run without asking, each as the tool the rules name', () => {
+    // The engines' permission rules (facets/hooks.ts HARNESS_AGENT_TOOLS) allow each verb, and its tool by name.
+    const runs = Object.fromEntries(TOOLS.map((tool) => [tool.argv({ name: 'x', names: ['x'], task: 't', to: 'x', text: 't' }, '/work')[0], tool.name]))
+    expect(runs).toEqual(HARNESS_AGENT_TOOLS)
   })
 
   it('runs each tool as its verb', async () => {
