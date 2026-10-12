@@ -36,9 +36,8 @@ const kAddPhoneWhere = 'Mac: Harness menu\nLinux: Ctrl+Shift+P → add phone';
 /// ```
 ///
 /// ⚠️ **Only the scan here (owner, 2026-10-08).** What has to happen on the computer first — get
-/// Harness, open it, sign in, open Add Phone, and where that is — is the page this one is opened
-/// from (`set_up_computer.dart`, Connect your computer): the camera at the top and its title are the
-/// page. Centred in the room left, the camera had put every word at the foot of the screen under an
+/// Harness, open it, sign in, open Add Phone, and where that is — is said by the page this one is
+/// opened from, or under its title ([steps]): the camera at the top and its title are the page. Centred in the room left, the camera had put every word at the foot of the screen under an
 /// empty band.
 ///
 /// The camera runs only while this page is up. A code that is not ours is ignored, so a stray QR
@@ -76,8 +75,8 @@ class ScanToConnectPage extends StatefulWidget {
   final String? step;
 
   /// Under the title, from the page's edge: the steps on the computer that bring the code up —
-  /// `ComputerSteps`, Set up another computer's own — for a camera opened where nothing has said
-  /// them (Computers' Connect computer). The square shrinks on a short screen to keep them on it,
+  /// `ComputerSteps` — for a camera opened where nothing has said them (Computers' "Or scan the QR
+  /// code on your computer"). The square shrinks on a short screen to keep them on it,
   /// and the page scrolls where even that is not enough.
   final Widget? steps;
 

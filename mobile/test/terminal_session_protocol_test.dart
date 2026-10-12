@@ -1086,6 +1086,38 @@ void main() {
       expect(await s.pasteText('hi'), isFalse);
     });
 
+    test('a line sent — a Return, or a message that went — is said, once each', () async {
+      final (s, _) = await live();
+      var sent = 0;
+      s.onLineSent = () => sent++;
+
+      s.terminal.textInput('l');
+      s.terminal.textInput('s');
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+      expect(sent, 0, reason: 'keys typed are not a line sent');
+      s.terminal.textInput('\r');
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+      expect(sent, 1);
+
+      expect(await s.sendComposerText('  '), isFalse);
+      expect(sent, 1, reason: 'nothing went');
+      expect(await s.sendComposerText('fix it'), isTrue);
+      expect(sent, 2);
+    });
+
+    test('a line that cannot go is not said', () async {
+      final s = session();
+      await s.open();
+      await ready(s, readOnly: true);
+      var sent = 0;
+      s.onLineSent = () => sent++;
+
+      s.terminal.textInput('ls\r');
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+      expect(await s.sendComposerText('hi'), isFalse);
+      expect(sent, 0);
+    });
+
     test(
       'a paste is one frame; one that cannot be sent is a lost stream',
       () async {

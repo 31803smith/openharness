@@ -1031,6 +1031,18 @@ class AppNotifier extends ChangeNotifier {
   /// so the welcome screen's pressed button says what it is waiting on, and only it.
   SignInProvider? signInProvider;
 
+  /// Signed in on this phone during this run — from the welcome — rather than a session the app
+  /// came back with. The onboarding after a sign-in reads it: home draws its waits on the
+  /// onboarding's picture, eased from the welcome's, and the computer joining gets its moment
+  /// (`phone/welcome/onboarding_frame.dart`). Cleared with the session.
+  bool signedInThisRun = false;
+
+  /// The one line the phone says by the mic the first time the onboarding opens a session — "Send
+  /// it, or say anything." — and the session it is for. Set by home as it hands over
+  /// (`phone/agent_home.dart`), spent by that session's page on its first send or when it goes
+  /// (`phone/terminal_page.dart`). Null the rest of the time; cleared with the session.
+  ({String machineId, String agentId, String text})? firstSessionLine;
+
   AppNotifier({
     required AppConfig config,
     required AuthSession authSession,
@@ -1640,6 +1652,9 @@ class AppNotifier extends ChangeNotifier {
     _lastError = message;
     _lastErrorRetryable = true;
     signedOutReason = _signedOutEnded;
+    signedInThisRun = false;
+    welcomedMachines.clear();
+    firstSessionLine = null;
     status = AppStatus.unauthenticated;
     notifyListeners();
   }
@@ -1678,6 +1693,7 @@ class AppNotifier extends ChangeNotifier {
     try {
       await login.signIn(email: email, code: code);
       if (!_authWorkCurrent(revision)) return;
+      signedInThisRun = true;
       status = AppStatus.bootstrapping;
       notifyListeners();
       await _enterSignedIn(revision);
@@ -1709,6 +1725,7 @@ class AppNotifier extends ChangeNotifier {
     try {
       await login.signInWithScan(code, label: phoneClientDescriptor().name);
       if (!_authWorkCurrent(revision)) return;
+      signedInThisRun = true;
       status = AppStatus.bootstrapping;
       notifyListeners();
       await _enterSignedIn(revision);
@@ -1750,6 +1767,7 @@ class AppNotifier extends ChangeNotifier {
       // iOS takes its sheet down here; Android's Custom Tab is the person's to close.
       unawaited(closeSignInPage());
       if (!_authWorkCurrent(revision)) return;
+      signedInThisRun = true;
       status = AppStatus.bootstrapping;
       notifyListeners();
       await _enterSignedIn(revision);
@@ -1905,6 +1923,9 @@ class AppNotifier extends ChangeNotifier {
     expandedMachines.clear();
     selectedMachineId = null;
     signedOutReason = reason;
+    signedInThisRun = false;
+    welcomedMachines.clear();
+    firstSessionLine = null;
     status = AppStatus.unauthenticated;
     notifyListeners();
   }
@@ -2805,6 +2826,23 @@ class AppNotifier extends ChangeNotifier {
   /// from the log's persisted `pending` ([_syncPendingDevices]), so a restart does not lose them.
   final List<DevLogMember> newDevices = [];
 
+  /// Computers this phone was waiting for when they joined the account — the onboarding's "On your
+  /// computer, go to" — and so already named on its screen ("MacBook Pro is ready."). The device
+  /// log's "New device" for one of them is what the person just did: confirmed as theirs, with no
+  /// banner and no notice ([welcomeMachine]). Cleared with the session.
+  final Set<String> welcomedMachines = {};
+
+  /// [machineId] joined while this phone waited for it: see [welcomedMachines]. A "New device" for
+  /// it the log already announced goes too.
+  void welcomeMachine(String machineId) {
+    if (!welcomedMachines.add(machineId)) return;
+    for (final device in [...newDevices]) {
+      if (device.kind == 'machine' && device.machineId == machineId) {
+        dismissNewDevice(device.pub);
+      }
+    }
+  }
+
   /// Which of [newDevices] a fork suspended (not trusted here until the list is reviewed), as of the
   /// last read of the log. "Mine" on the banner cannot lift that, so for these it opens the device's
   /// page, which says why.
@@ -2903,6 +2941,12 @@ class AppNotifier extends ChangeNotifier {
       onAnnounce: (m) => _whenSignedIn(() {
         _failedDismissals.remove(m.pub);
         if (newDevices.any((d) => d.pub == m.pub)) return;
+        // The computer the onboarding was waiting for: the person is looking at its name already.
+        if (m.kind == 'machine' && welcomedMachines.contains(m.machineId)) {
+          _pendingSyncGen++;
+          unawaited(_dismissInLog(pubs: [m.pub], confirm: true));
+          return;
+        }
         newDevices.add(m);
         devicesRevision++;
         final name = m.label.isEmpty ? 'A device' : m.label;

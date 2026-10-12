@@ -10,6 +10,7 @@ import 'package:harness_mobile/state/app_state.dart';
 
 import 'welcome/connect_computer.dart';
 import 'welcome/set_up_computer.dart' show ComputerSteps;
+import 'welcome/your_computer.dart';
 import 'tty_controls.dart';
 import 'tty.dart';
 import 'find_row.dart';
@@ -185,7 +186,7 @@ class _Body extends StatelessWidget {
         action: FilledButton(
           key: const ValueKey('machines-set-up'),
           onPressed: () => _setUpComputer(context),
-          child: const Text('Set up a computer'),
+          child: const Text('Add computer'),
         ),
       );
     }
@@ -281,17 +282,12 @@ class _Body extends StatelessWidget {
   /// A row whose second line its group's own line says instead — one line, a thumb's height.
   static const double _gatheredRowHeight = 48;
 
-  /// Connect your computer over this list — the download link, the steps, and a scan that pairs —
-  /// for a computer not on the account yet.
+  /// Add computer: the onboarding's "On your computer, go to" over this list — the address that
+  /// sends the download, and the account watched for the computer that opens it. A second computer
+  /// is set up the way the first was (`welcome/your_computer.dart`).
   void _setUpComputer(BuildContext context) => unawaited(
     Navigator.of(context).push(
-      phoneRoute(
-        (route) => ConnectComputerPage(
-          notifier: notifier,
-          signedIn: false,
-          onBack: () => Navigator.of(route).maybePop(),
-        ),
-      ),
+      phoneRoute((_) => YourComputerPage(notifier: notifier)),
     ),
   );
 
@@ -390,13 +386,13 @@ class _GroupLine extends StatelessWidget {
   }
 }
 
-/// The foot of Computers, under the list and kept there however long it grows: Connect computer —
-/// the camera at once, for a computer already showing its QR code, the button the desktop's Add
-/// Phone tells somebody to tap — and Set up another computer, for one with no Harness on it yet.
+/// The foot of Computers, under the list and kept there however long it grows: **Add computer** —
+/// the onboarding's own step ② ("On your computer, go to"), the way every computer is added now —
+/// and under it, quietly, the camera, for a desktop from before that still pairs by its Add Phone
+/// QR code.
 ///
 /// Pinned, not the list's last rows: at the end of a list they sat after every computer, read as
 /// two more of them, and went below the fold at nine. Down here they are where a thumb already is.
-/// The button is Connect your computer's own, so the two screens show one thing by one name.
 ///
 /// How a scan goes is said on a line over the button — under the list, where the computer it pairs
 /// turns up; once paired, the computer is in the list.
@@ -411,11 +407,10 @@ class _ConnectBar extends StatefulWidget {
   final AppNotifier notifier;
 
   /// This list is the home screen, which a computer turning up takes away: the code goes to the
-  /// home screen to pair by, as on Connect your computer at home — [scanAndPairComputer]'s
-  /// `handOff`.
+  /// home screen to pair by — [scanAndPairComputer]'s `handOff`.
   final bool home;
 
-  /// Set up another computer: Connect your computer, pushed over this list.
+  /// Add computer: "On your computer, go to", pushed over this list.
   final VoidCallback onSetUp;
 
   @override
@@ -497,26 +492,28 @@ class _ConnectBarState extends State<_ConnectBar> {
                       ),
                     ),
                   TtyPrimaryButton(
-                    key: const ValueKey('machines-connect-computer'),
-                    icon: LucideIcons.qrCode300,
-                    label: 'Connect computer',
-                    // Green and still while a scan is looked up or paired; the line over it says
-                    // which.
-                    busy: _scanning,
-                    onPressed: () => unawaited(_scan()),
+                    key: const ValueKey('machines-add-computer'),
+                    icon: LucideIcons.laptopMinimal300,
+                    label: 'Add computer',
+                    onPressed: widget.onSetUp,
                   ),
-                  const SizedBox(height: 8),
-                  // "QR code", not "Add Phone code": a desktop menu's name read as a noun stack
-                  // under a button named for the other side — and the camera takes a computer's
-                  // sign-in QR too.
-                  Text(
-                    'Scan the QR code on your computer.',
-                    style: tty.style(size: TtySize.meta, color: tty.faint),
+                  // A desktop from before shows its Add Phone QR code rather than an address: the
+                  // camera pairs with it. "QR code", not "Add Phone code" — a desktop menu's name
+                  // read as a noun stack under a button named for the other side.
+                  Center(
+                    child: TtyTextButton(
+                      key: const ValueKey('machines-connect-computer'),
+                      label: _scanning
+                          ? 'Scanning…'
+                          : 'Or scan the QR code on your computer',
+                      size: TtySize.meta,
+                      color: tty.faint,
+                      onPressed: _scanning ? null : () => unawaited(_scan()),
+                    ),
                   ),
                 ],
               ),
             ),
-            FindAddRow(label: 'Set up another computer', onTap: widget.onSetUp),
           ],
         ),
       ),

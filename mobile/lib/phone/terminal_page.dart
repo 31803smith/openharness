@@ -65,6 +65,7 @@ import 'terminal_title.dart';
 import 'welcome/focus_hints.dart';
 
 import 'package:harness_mobile/demo/sample_mode.dart';
+import 'package:harness_mobile/notify/notifications_ask.dart';
 
 import 'voice_input_controller.dart';
 
@@ -826,6 +827,9 @@ class _TerminalPageState extends State<TerminalPage>
         .paneOfAgent(widget.machineId, widget.agentId)
         ?.session;
     if (session?.voiceDeliver == _deliverVoice) session?.voiceDeliver = null;
+    if (session?.onLineSent == _onLineSent) session?.onLineSent = null;
+    // Said once: leaving the session spends the onboarding's line too.
+    _spendFirstSessionLine();
     _barMessageTimer?.cancel();
     _barMessage.dispose();
     _scrollback.dispose();
@@ -1027,7 +1031,45 @@ class _TerminalPageState extends State<TerminalPage>
     if (_sampleGuide() case final guide?) {
       return _StatusLine(text: guide, dot: true);
     }
+    // The onboarding's one line, until the first send — see [AppNotifier.firstSessionLine].
+    if (_firstSessionLine() case final line?) {
+      return _StatusLine(key: const ValueKey('first-session-line'), text: line);
+    }
     return null;
+  }
+
+  /// The onboarding's line by the mic, when this page is the session it opened on: "Send it, or say
+  /// anything." Null on every other page, and once spent.
+  String? _firstSessionLine() {
+    final line = widget.notifier.firstSessionLine;
+    if (line == null ||
+        line.machineId != widget.machineId ||
+        line.agentId != widget.agentId) {
+      return null;
+    }
+    return line.text;
+  }
+
+  /// Takes the onboarding's line away, if it is this page's. True when it was.
+  bool _spendFirstSessionLine() {
+    if (_firstSessionLine() == null) return false;
+    widget.notifier.firstSessionLine = null;
+    return true;
+  }
+
+  /// A line sent from this page — a Return typed or tapped, a take that went ([TerminalSession
+  /// .onLineSent]). The first on this phone asks for notifications, a moment later
+  /// ([NotificationsAsk]); and the onboarding's line by the mic has been answered.
+  ///
+  /// Not in the sample: nothing there reaches a harness, and its notices would be for nothing.
+  void _onLineSent() {
+    if (!mounted || SampleMode.maybeOf(context) != null) return;
+    unawaited(
+      NotificationsAsk.shared.afterSend(
+        widget.notifier.agentNotices.system.requestPermission,
+      ),
+    );
+    if (_spendFirstSessionLine()) setState(() {});
   }
 
   /// Whether [session] is a kept screen standing in while its stream attaches — drawn like the live
@@ -1851,6 +1893,9 @@ class _TerminalPageState extends State<TerminalPage>
     // While the agent's question is open, a voice take answers it — never a paste and a blind
     // Return into the dialog. See [_answerByVoice].
     session?.voiceDeliver = _deliverVoice;
+    // What this page sends: the first send on the phone asks for notifications, and answers the
+    // onboarding's line by the mic. See [_onLineSent].
+    session?.onLineSent = _onLineSent;
     // Read once: the body reserves it, and search subtracts what the body
     // already took. See [_navigationBar].
     final navigationBar = _navigationBar;
@@ -2376,9 +2421,10 @@ class _TerminalPageState extends State<TerminalPage>
                               setState(() => _showEndCard = false),
                         ),
                       ),
-                    // The first time a terminal is up: what the swipes and the mic do. Once.
-                    // Not in the sample: its guide line teaches the same by having them done, and the
-                    // hints stay unseen for the real first terminal.
+                    // What the swipes and the mic do — only when asked for again, Settings ▸ Show
+                    // the tips again: the first session opens on its own line by the mic instead,
+                    // and nothing else (owner, 2026-10-12; see [FocusHintsSeen]). Not in the sample:
+                    // its guide line teaches the same by having them done.
                     if (session != null &&
                         widget.isActive &&
                         !_keyBarUp &&
@@ -3676,7 +3722,12 @@ class _AnchoredTerminalState extends State<_AnchoredTerminal> {
 /// `VoiceNotice`), but not on every phone at every text size — and a warning cut mid-word hid
 /// what to do. Positioned by its foot, a second line grows up over the terminal, off the mic.
 class _StatusLine extends StatelessWidget {
-  const _StatusLine({required this.text, this.color, this.dot = false});
+  const _StatusLine({
+    super.key,
+    required this.text,
+    this.color,
+    this.dot = false,
+  });
 
   final String text;
   final Color? color;

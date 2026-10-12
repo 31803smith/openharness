@@ -1,0 +1,346 @@
+import 'dart:async';
+
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:lucide_icons_flutter/lucide_icons.dart';
+import 'package:share_plus/share_plus.dart';
+
+import 'package:harness_mobile/core/handoff.dart';
+import 'package:harness_mobile/shared/theme/app_theme.dart';
+import 'package:harness_mobile/state/app_state.dart';
+
+import '../settings_page.dart' show confirmSignOut;
+import '../tty.dart';
+import '../tty_controls.dart';
+import 'join_moment.dart';
+import 'onboarding_copy.dart';
+import 'onboarding_frame.dart';
+import 'onboarding_picture.dart';
+
+/// ② Your computer: "On your computer, go to", the address, and the phone looking for the computer
+/// that opens it.
+///
+/// ```
+///   On your computer, go to
+///   [ autonomous.ai/go           ⇪ ]     the address IS the button: it sends the link
+///
+///        ┌─────────────────────┐
+///        │ dashed computers,   │          the laptop breathing, rings out from the phone
+///        │ the laptop breathes │
+///        └─────────────────────┘
+///      Looking for your computer▌
+/// ```
+///
+/// At home this is what an account with no computer stands on (`agent_home.dart`, which builds it
+/// from [GoAddressButton] and [ComputerWatch] on its own [OnboardingStage]). This page is the same
+/// step pushed from Computers ▸ Add computer, with back: a second computer is set up the way the
+/// first was (`docs/research/2026-10-11-phone-onboarding`, "More computers, more phones").
+///
+/// It watches the account for a computer it has not seen. When one joins, it has its moment —
+/// "MacBook Pro is ready.", the laptop drawing itself and lighting, the notes ([JoinMoment]) — and
+/// goes back to the list, which has it now; a tap goes back sooner.
+class YourComputerPage extends StatefulWidget {
+  const YourComputerPage({super.key, required this.notifier});
+
+  final AppNotifier notifier;
+
+  @override
+  State<YourComputerPage> createState() => _YourComputerPageState();
+}
+
+class _YourComputerPageState extends State<YourComputerPage>
+    with SingleTickerProviderStateMixin {
+  /// The account's computers when this page came up: a computer joining is one not among them.
+  ///
+  /// ⚠️ Taken in [initState], not on first read: read first when the account's next answer lands,
+  /// that answer — the computer that just joined among it — would be what "already there" means.
+  late final Set<String> _known;
+
+  /// The computer that joined, by its name, once one has.
+  String? _joined;
+
+  late final JoinMoment _moment = JoinMoment(vsync: this, onDone: _back);
+
+  @override
+  void initState() {
+    super.initState();
+    _known = {
+      for (final machine in widget.notifier.machines) machine.machineId,
+    };
+    widget.notifier.addListener(_lookForNew);
+  }
+
+  @override
+  void dispose() {
+    widget.notifier.removeListener(_lookForNew);
+    _moment.dispose();
+    super.dispose();
+  }
+
+  void _lookForNew() {
+    if (!mounted || _joined != null) return;
+    final added = widget.notifier.machines
+        .where((machine) => !_known.contains(machine.machineId))
+        .firstOrNull;
+    if (added == null) return;
+    setState(() => _joined = added.displayName);
+    // After the frame that draws it joined: the moment, and the computer named to the device log
+    // as the person's own — no "New device" for the one they are looking at.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      widget.notifier.welcomeMachine(added.machineId);
+      _moment.start();
+    });
+  }
+
+  bool _leaving = false;
+
+  void _back() {
+    if (!mounted || _leaving) return;
+    _leaving = true;
+    unawaited(
+      Navigator.of(context).maybePop().then((popped) {
+        if (!popped) _leaving = false;
+      }),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    AppTheme.watch(context);
+    final joined = _joined;
+    return OnboardingStage(
+      headline: joined == null
+          ? OnboardingCopy.goToHeadline
+          : OnboardingCopy.ready(joined),
+      headlineKey: const ValueKey('your-computer-headline'),
+      scene: joined == null ? OnboardingScene.looking : OnboardingScene.joined,
+      join: joined == null ? null : _moment.picture,
+      leading: TtyBackButton(onPressed: _back),
+      underHeadline: joined == null
+          ? ComputerWatch(
+              notifier: widget.notifier,
+              child: const GoAddressButton(),
+            )
+          : null,
+      status: joined == null
+          ? const OnboardingStatus(OnboardingCopy.looking)
+          : null,
+      onTap: joined == null ? null : _moment.skip,
+    );
+  }
+}
+
+/// Asks the account for its computers every few seconds while it is up: nothing pushes a new
+/// computer to a phone that has none connected, and this is the screen waiting for one.
+///
+/// A request that fails (offline for a moment) is simply asked again on the next tick — caught
+/// here, where it would otherwise reach the zone as an unhandled error every five seconds.
+class ComputerWatch extends StatefulWidget {
+  const ComputerWatch({super.key, required this.notifier, required this.child});
+
+  final AppNotifier notifier;
+  final Widget child;
+
+  static const every = Duration(seconds: 5);
+
+  @override
+  State<ComputerWatch> createState() => _ComputerWatchState();
+}
+
+class _ComputerWatchState extends State<ComputerWatch> {
+  Timer? _watch;
+
+  @override
+  void initState() {
+    super.initState();
+    _watch = Timer.periodic(ComputerWatch.every, (_) {
+      if (!mounted) return;
+      unawaited(widget.notifier.refreshMachines().catchError((Object _) {}));
+    });
+  }
+
+  @override
+  void dispose() {
+    _watch?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => widget.child;
+}
+
+/// The address, as the button that sends it: the green of the screen's one action, the address at
+/// its left edge and the share mark at its right. Pressed, the share sheet — AirDrop to the Mac
+/// beside you first, or a message to yourself.
+///
+/// While it is up it also offers the page to a Mac nearby by Handoff ([Handoff]): signed in to the
+/// same Apple account, the Mac shows it in its Dock, and nothing is typed at all.
+class GoAddressButton extends StatefulWidget {
+  const GoAddressButton({super.key});
+
+  @override
+  State<GoAddressButton> createState() => _GoAddressButtonState();
+}
+
+class _GoAddressButtonState extends State<GoAddressButton> {
+  bool _down = false;
+  late final AppLifecycleListener _lifecycle;
+
+  static final _url = Uri.parse(OnboardingCopy.goUrl);
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(Handoff.offer(this, _url));
+    // iOS stops advertising in the background — the person away installing Harness — so the page
+    // is offered again whenever the app is back in front.
+    _lifecycle = AppLifecycleListener(
+      onResume: () => unawaited(Handoff.offer(this, _url)),
+    );
+  }
+
+  @override
+  void dispose() {
+    _lifecycle.dispose();
+    unawaited(Handoff.withdraw(this));
+    super.dispose();
+  }
+
+  /// The share sheet with the address, anchored to the button for iPad, where it is a popover.
+  Future<void> _send() async {
+    final box = context.findRenderObject() as RenderBox?;
+    final origin = box == null || !box.attached
+        ? null
+        : box.localToGlobal(Offset.zero) & box.size;
+    try {
+      await SharePlus.instance.share(
+        ShareParams(
+          uri: _url,
+          subject: 'Get Harness for your computer',
+          sharePositionOrigin: origin,
+        ),
+      );
+    } catch (_) {
+      // No share sheet came up: the address is still there to type, and can be pressed again.
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final tty = Tty.of(context);
+    final ink = tty.onFill(tty.theme.black);
+    return Semantics(
+      button: true,
+      label: '${OnboardingCopy.goAddress}, Send link',
+      excludeSemantics: true,
+      child: GestureDetector(
+        key: const ValueKey('go-address'),
+        behavior: HitTestBehavior.opaque,
+        onTapDown: (_) => setState(() => _down = true),
+        onTapCancel: () => setState(() => _down = false),
+        onTapUp: (_) => setState(() => _down = false),
+        onTap: () {
+          HapticFeedback.lightImpact();
+          unawaited(_send());
+        },
+        child: Container(
+          // At least this tall, and taller when the text is larger — never clipped.
+          constraints: const BoxConstraints(minHeight: TtyPrimaryButton.height),
+          padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
+          decoration: BoxDecoration(
+            // Pressed, it darkens on the finger's way DOWN, as the phone's other buttons do.
+            color: _down
+                ? Color.alphaBlend(
+                    Colors.black.withValues(alpha: 0.18),
+                    tty.green,
+                  )
+                : tty.green,
+            borderRadius: BorderRadius.circular(14),
+          ),
+          child: Row(
+            children: [
+              // One line on any phone: a narrow one shrinks it rather than breaking the address.
+              Expanded(
+                child: FittedBox(
+                  fit: BoxFit.scaleDown,
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    OnboardingCopy.goAddress,
+                    maxLines: 1,
+                    softWrap: false,
+                    style: tty.style(
+                      size: TtySize.title,
+                      weight: FontWeight.w600,
+                      color: ink,
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Icon(LucideIcons.share300, size: 20, color: ink),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// `ada@gmail.com · Not you? Sign out` — the account the computer has to sign in to, on the quiet
+/// line at the foot of "On your computer, go to", and the way out of it. The whole line signs out,
+/// after asking ([confirmSignOut]).
+class AccountQuietLine extends StatelessWidget {
+  const AccountQuietLine({
+    super.key,
+    required this.notifier,
+    required this.email,
+  });
+
+  final AppNotifier notifier;
+  final String email;
+
+  @override
+  Widget build(BuildContext context) {
+    final tty = Tty.of(context);
+    return Semantics(
+      button: true,
+      label: 'Signed in as $email. Not you? Sign out',
+      excludeSemantics: true,
+      child: GestureDetector(
+        key: const ValueKey('home-sign-out'),
+        behavior: HitTestBehavior.opaque,
+        onTap: () {
+          HapticFeedback.selectionClick();
+          unawaited(confirmSignOut(context, notifier));
+        },
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(minHeight: 44),
+          child: Center(
+            child: Text.rich(
+              TextSpan(
+                children: [
+                  TextSpan(text: '$email · '),
+                  TextSpan(
+                    text: 'Not you? Sign out',
+                    style: tty.style(
+                      color: tty.text,
+                      size: OnboardingFrame.quietSize,
+                    ),
+                  ),
+                ],
+              ),
+              textAlign: TextAlign.center,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: tty.style(
+                color: tty.faint,
+                size: OnboardingFrame.quietSize,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
