@@ -16,6 +16,8 @@ import 'package:harness/shared/theme/app_theme.dart' as grid;
 import 'package:harness/shared/widgets/qr_code_view.dart';
 import 'package:harness/state/app_state.dart';
 import 'package:harness/widgets/add_phone_dialog.dart';
+import 'package:harness/widgets/desktop_chrome.dart'
+    show DesktopChrome, DesktopDialogSurface;
 
 import 'swarm_interactions_test.dart' show chord;
 import 'swarm_screen_test.dart' show mount;
@@ -236,6 +238,18 @@ void main() {
         find.byKey(const ValueKey('add-phone-see-phones')),
         findsOneWidget,
       );
+      // One row across the foot: See your phones at the panel's left edge,
+      // Done at its right, both inside the panel's padding.
+      final panel = tester
+          .getRect(find.byType(DesktopDialogSurface))
+          .deflate(DesktopChrome.panelPadding);
+      final link = tester.getRect(
+        find.byKey(const ValueKey('add-phone-see-phones')),
+      );
+      final done = tester.getRect(find.byKey(const ValueKey('add-phone-done')));
+      expect((link.center.dy - done.center.dy).abs(), lessThan(1));
+      expect(link.left, moreOrLessEquals(panel.left, epsilon: 1));
+      expect(done.right, moreOrLessEquals(panel.right, epsilon: 1));
       // Nothing moves once the phone is in: the dialog settles.
       await tester.pumpAndSettle();
       expect(find.byType(AddPhoneDialog), findsOneWidget);
@@ -694,7 +708,7 @@ void main() {
       expect(find.byType(AddPhoneDialog), findsNothing);
     });
 
-    testWidgets('a code that did not match is replaced, QR and all', (
+    testWidgets('a code that did not match is replaced quietly, QR and all', (
       tester,
     ) async {
       final app = _signedInApp();
@@ -708,7 +722,10 @@ void main() {
       await _codeUp(tester);
       await tester.pump();
       final first = daemon.codes.single;
-      expect(_status(tester), "That code didn't work. Scan the new one above.");
+      // Most often a phone already in, pairing late by an earlier dialog's
+      // code: nothing for the person to do here, so nothing in red.
+      expect(find.byKey(const ValueKey('add-phone-status')), findsNothing);
+      expect(find.textContaining("didn't work"), findsNothing);
       expect(_qrData(tester), isNot(contains('c=$first')));
 
       await tester.pump(const Duration(milliseconds: 1500));
@@ -716,9 +733,8 @@ void main() {
       final second = daemon.codes.last;
       expect(second, isNot(first));
       expect(_qrData(tester), contains('c=$second&'));
-      // An instruction outlives the "no phone yet" that follows it.
       await tester.pump();
-      expect(_status(tester), "That code didn't work. Scan the new one above.");
+      expect(find.byKey(const ValueKey('add-phone-status')), findsNothing);
 
       await tester.sendKeyEvent(LogicalKeyboardKey.escape);
       await tester.pump();
@@ -726,6 +742,29 @@ void main() {
       expect(daemon.tokens.last.isCancelled, isTrue);
       await tester.pump(const Duration(seconds: 10));
       expect(daemon.codes, hasLength(2), reason: 'nothing asks after closing');
+    });
+
+    testWidgets('a mismatch also takes away what an earlier answer said', (
+      tester,
+    ) async {
+      final app = _signedInApp();
+      addTearDown(app.dispose);
+      final daemon = _FakeDaemon([
+        _failed('TIMEOUT'),
+        _failed('CODE_MISMATCH'),
+        _failed('NO_INTENT'),
+      ]);
+      await _open(tester, app, daemon.call);
+      await _codeUp(tester);
+      await tester.pump();
+      expect(_status(tester), 'Your phone stopped answering. Scan again.');
+
+      await tester.pump(const Duration(milliseconds: 1500));
+      await tester.pump();
+      expect(daemon.codes, hasLength(2));
+      expect(find.byKey(const ValueKey('add-phone-status')), findsNothing);
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.pump();
     });
 
     testWidgets('rate limited waits a minute before asking again', (

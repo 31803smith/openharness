@@ -3004,10 +3004,6 @@ class _SwarmScreenState extends State<SwarmScreen> {
     // (its Continue with…) must not bring the card back once it closes, so
     // the offer is dropped on the way out too.
     app.dropPhoneOffer();
-    // "See your phones" pops the dialog and asks for Machines, but this
-    // [_dialog] is still open until the pop lands — a picker opened from
-    // the callback would be refused. So it is remembered, and opened after.
-    var manageDevices = false;
     try {
       await _dialog(
         () => showAddPhoneDialog(
@@ -3015,14 +3011,16 @@ class _SwarmScreenState extends State<SwarmScreen> {
           app,
           keymap: _keymap,
           onConnectMachine: () => unawaited(_openMachines()),
-          onManageDevices: () => manageDevices = true,
+          // "See your phones": Machines, at its phones, once the dialog has
+          // gone. ⚠️ Asked for, not opened here: right after the pop this
+          // route still reads as not current until its next frame, and the
+          // picker refused to open — the link did nothing. The request waits
+          // for the route ([_maybeOpenMachinesRequest]).
+          onManageDevices: () => app.requestMachines(phones: true),
         ),
       );
     } finally {
       app.dropPhoneOffer();
-    }
-    if (manageDevices && mounted) {
-      await _openMachines(phones: true, toggle: false);
     }
   }
 
