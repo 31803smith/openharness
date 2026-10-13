@@ -5570,6 +5570,25 @@ class AppNotifier extends ChangeNotifier {
 
   /// `connectors` on [machineId] (cli/src/services/connectors.ts): `list`, `connect`, `flow`,
   /// `callback`, `disconnect`. A machine that cannot answer reads as `{error: UNAVAILABLE}`.
+  /// Set by the phone shell: opens a page a harness's program asked for (`browser_open`,
+  /// phone/browser_handoff.dart).
+  void Function(String machineId, String agentId, String url)? onBrowserOpen;
+
+  /// Hands a sign-in this phone caught back to [machineId], to the program waiting for it there
+  /// (`browser_callback`, cli core/terminals/browser.ts). `{'error': 'UNAVAILABLE'}` when the line is down.
+  Future<Map<String, dynamic>> browserCallback(String machineId, String url) async {
+    final machine = machineStates[machineId];
+    if (machine == null || machine.needsLink) return {'error': 'UNAVAILABLE'};
+    try {
+      return await _conn(machineId).request(
+        'browser_callback',
+        payload: {'url': url},
+      );
+    } catch (_) {
+      return {'error': 'UNAVAILABLE'};
+    }
+  }
+
   Future<Map<String, dynamic>> connectors(
     String machineId,
     Map<String, dynamic> payload, {
@@ -8191,6 +8210,14 @@ class AppNotifier extends ChangeNotifier {
           }
         }
         break;
+      // A program in a harness's pane opened a page (Claude Code's `/login`) while this phone was the one
+      // typing there (cli core/terminals/browser.ts): it opens on this phone. Nothing here to redraw.
+      case 'browser_open':
+        final url = payload['url'];
+        if (url is String && url.isNotEmpty) {
+          onBrowserOpen?.call(machineId, payload['agentId'] as String? ?? '', url);
+        }
+        return;
       // ⚠️ Everything else changed nothing here, so it must not redraw. The machine streams every
       // agent's live chat — `text_delta`, `tool_start`, … — down this socket, several per second
       // per agent, and each one used to rebuild every screen listening to this notifier.

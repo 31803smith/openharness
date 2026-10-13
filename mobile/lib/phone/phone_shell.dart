@@ -7,6 +7,7 @@ import 'package:harness_mobile/state/app_state.dart';
 import '../p2p/phone_terminal_p2p.dart';
 import 'agent_home.dart';
 import 'approve_sign_in.dart';
+import 'browser_handoff.dart';
 import 'devices_page.dart';
 import 'exit_app.dart';
 import 'new_device_banner.dart';
@@ -35,6 +36,7 @@ class PhoneShell extends StatefulWidget {
 }
 
 class _PhoneShellState extends State<PhoneShell> with WidgetsBindingObserver {
+  late final BrowserHandoff _browser;
   final _navigator = GlobalKey<NavigatorState>();
 
   /// The nested navigator's own — see the note at the `HeroControllerScope` below.
@@ -44,6 +46,15 @@ class _PhoneShellState extends State<PhoneShell> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    // A page a harness's program opened while this phone was typing there (Claude Code's `/login`).
+    _browser = BrowserHandoff(
+      widget.notifier,
+      say: (text) =>
+          ScaffoldMessenger.maybeOf(context)
+              ?.showSnackBar(SnackBar(content: Text(text))),
+    );
+    widget.notifier.onBrowserOpen = (machineId, _, url) =>
+        unawaited(_browser.open(machineId, url));
     final notices = widget.notifier.agentNotices.system;
     notices.opened.addListener(_openNoticedAgent);
     notices.openedDevice.addListener(_openNoticedDevice);
@@ -71,6 +82,8 @@ class _PhoneShellState extends State<PhoneShell> with WidgetsBindingObserver {
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    widget.notifier.onBrowserOpen = null;
+    unawaited(_browser.dispose());
     widget.notifier.agentNotices.system.opened.removeListener(
       _openNoticedAgent,
     );
