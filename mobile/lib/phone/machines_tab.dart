@@ -38,11 +38,6 @@ class MachinesTab extends StatelessWidget {
     this.fromSettings = false,
   });
 
-  /// The ↻ beside the title — hidden, its code kept (owner, 2026-10-13): a pull on the list reads
-  /// it again, a failed read has its own Try again, and with no computer connected the list is read
-  /// again by itself ([AppNotifier.deafMachineListInterval]). Settings has its place.
-  static const _showRefresh = false;
-
   final AppNotifier notifier;
 
   /// The tab's big title. Off when this is PUSHED — from Settings or a swipe left on the terminal —
@@ -63,6 +58,10 @@ class MachinesTab extends StatelessWidget {
     builder: (context, _) {
       AppTheme.watch(context);
       final tty = Tty.of(context);
+      // The ↻ at the top right, where Settings was (owner, 2026-10-13). Settings stays beside it
+      // only on the home screen — while no computer is ready, nothing else there leads to Settings
+      // or Sign out. Pushed, back leads to a screen that has it.
+      final showSettings = large && !fromSettings;
       final page = Scaffold(
         backgroundColor: tty.ground,
         body: SafeArea(
@@ -96,18 +95,13 @@ class MachinesTab extends StatelessWidget {
                   ),
                   // What a pull on the list does, for whoever does not know to pull — or has
                   // nothing to pull: the empty and failed states draw no list.
-                  if (_showRefresh)
-                    _RefreshButton(
-                      busy:
-                          notifier.machinesRefreshing ||
-                          notifier.machinesLoading,
-                      trailing: fromSettings,
-                      onPressed: () => unawaited(notifier.retryMachines()),
-                    ),
-                  // Settings, top right, wherever this list stands (owner, 2026-10-13): the home
-                  // screen while no computer is ready — where nothing else leads to Settings or
-                  // Sign out — and pushed from home or the terminal. Not when Settings pushed it.
-                  if (!fromSettings) PhoneSettingsButton(notifier: notifier),
+                  _RefreshButton(
+                    busy:
+                        notifier.machinesRefreshing || notifier.machinesLoading,
+                    trailing: !showSettings,
+                    onPressed: () => unawaited(notifier.retryMachines()),
+                  ),
+                  if (showSettings) PhoneSettingsButton(notifier: notifier),
                 ],
               ),
               Expanded(
@@ -544,8 +538,8 @@ class _ConnectBarState extends State<_ConnectBar> {
   }
 }
 
-/// The list read again — what a pull does ([AppNotifier.retryMachines]) — as a glyph beside
-/// Settings.
+/// The list read again — what a pull does ([AppNotifier.retryMachines]) — as a glyph at the top
+/// right, beside Settings on the home screen.
 ///
 /// While a read the person asked for is running ([busy]) the glyph turns and a press does nothing;
 /// it keeps its ink rather than greying out, because it is working, not unavailable — the rail's
@@ -560,9 +554,9 @@ class _RefreshButton extends StatefulWidget {
 
   final bool busy;
 
-  /// Last in its row, with no Settings after it (the list pushed from Settings): the glyph sits on
-  /// the right gutter, in Settings' own box. Otherwise it stands left of Settings, which keeps its
-  /// place on the gutter.
+  /// Last in its row, with no Settings after it (the list pushed): the glyph sits on the right
+  /// gutter, in Settings' own box. Otherwise it stands left of Settings, which keeps its place on
+  /// the gutter.
   final bool trailing;
 
   final VoidCallback onPressed;
