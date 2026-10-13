@@ -11,8 +11,8 @@ import 'set_up_computer.dart' show StepsTimeline, goToSteps;
 /// which every screen after signing in shares (its wait, and the computer joining), so the picture
 /// stays put from one to the next.
 enum OnboardingLayout {
-  /// ① A headline of up to three lines; Scan QR code, the two accounts and the quiet line at the
-  /// foot.
+  /// ① A headline of up to three lines; Scan QR from computer, the two accounts and the quiet line
+  /// at the foot.
   welcome,
 
   /// ② The headline, the link and the steps on the computer under it — "Not you? Sign out" under
@@ -35,9 +35,9 @@ enum OnboardingLayout {
 ///          └──────────────────┘
 ///      Looking for your computer▌      status
 ///
-///   [ Scan QR code         ]           actions, at the foot
-///   [ Continue with Google ]
-///   [ Continue with Apple  ]
+///   [ Scan QR from computer ]          actions, at the foot
+///   [ Continue with Google  ]
+///   [ Continue with Apple   ]
 /// ```
 ///
 /// ⚠️ **Every slot is measured the same way on every screen of a [layout]**, whatever it holds — the

@@ -37,9 +37,10 @@ List<ComputerStep> goToSteps(String? account) => [
   _signIn(account),
 ];
 
-/// The steps under the camera that reads Add Phone's code — the welcome's Scan QR code, and
-/// Computers' "Or scan the QR code on your computer" — where the page it came from says none of
-/// them ([ScanToConnectPage.steps]): open Harness on the computer, then Add Phone and where it is.
+/// The steps under the camera that reads Add Phone's code — the welcome's Scan QR from computer,
+/// and Computers' "Or scan the QR code on your computer" — where the page it came from says none
+/// of them ([ScanToConnectPage.steps]): open Harness on the computer, then Add Phone and where it
+/// is.
 ///
 /// ⚠️ **One set for the camera (owner, 2026-10-12).** It used to be two: signed out "Click Add
 /// Phone ③ Scan the QR code", signed in "Sign in on your computer ③ Not showing up? Click Add

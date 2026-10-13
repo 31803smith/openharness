@@ -31,9 +31,9 @@ import 'sign_in_provider_button.dart';
 ///        │  all lit, a phone   │
 ///        └─────────────────────┘
 ///
-///   [ ⊞  Scan QR code         ]     → the camera ([ScanToConnectPage]) → Use email instead
-///   [ G  Continue with Google ]
-///   [   Continue with Apple   ]
+///   [ ⊞  Scan QR from computer  ]   → the camera ([ScanToConnectPage]) → Use email instead
+///   [ G  Continue with Google   ]
+///   [   Continue with Apple     ]
 ///                                     (Cancel here while an account's page is up)
 /// ```
 ///
@@ -42,10 +42,11 @@ import 'sign_in_provider_button.dart';
 /// the computer's session when it has one (`docs/research/2026-10-11-phone-onboarding`, agreed with
 /// the owner 2026-10-12).
 ///
-/// ⚠️ **Three ways in, nothing else** (owner, 2026-10-12): **Scan QR code** first, the screen's one
-/// filled button — its camera reads the code a signed-in computer's Add Phone shows ([ConnectCode]):
-/// its sign-in code signs this phone in to that computer's account with nothing to type, and its
-/// pairing code is held for that computer ([AppNotifier.pendingPairing]) — then Google and Apple.
+/// ⚠️ **Three ways in, nothing else** (owner, 2026-10-12): **Scan QR from computer** first, the
+/// screen's one filled button — its camera reads the code a signed-in computer's Add Phone shows
+/// ([ConnectCode]): its sign-in code signs this phone in to that computer's account with nothing to
+/// type, and its pairing code is held for that computer ([AppNotifier.pendingPairing]) — then
+/// Google and Apple.
 /// No sample, no "Is Harness on your computer?", no tips. An emailed code is the camera's "Use
 /// email instead", and where a scan without a sign-in code ends up.
 ///
@@ -67,7 +68,8 @@ class PhoneWelcome extends StatefulWidget {
   final Future<void> Function(String email)? sendCode;
   final Future<void> Function(String email, String code)? signIn;
 
-  /// Stands in for the camera on Scan QR code's page, in tests and renders. Null opens the real one.
+  /// Stands in for the camera on Scan QR from computer's page, in tests and renders. Null opens the
+  /// real one.
   final Widget? scanCamera;
 
   @override
@@ -438,9 +440,9 @@ class _PhoneWelcomeState extends State<PhoneWelcome> {
   }
 }
 
-/// The welcome's foot: Scan QR code — the screen's one filled button — then Google and Apple
-/// ([SignInProviderButton]), and under them the quiet line's slot: Cancel while an account's page
-/// is up, empty otherwise, so the foot is the same height whatever it holds.
+/// The welcome's foot: Scan QR from computer — the screen's one filled button — then Google and
+/// Apple ([SignInProviderButton]), and under them the quiet line's slot: Cancel while an account's
+/// page is up, empty otherwise, so the foot is the same height whatever it holds.
 class _Accounts extends StatelessWidget {
   const _Accounts({
     required this.onProvider,
@@ -461,7 +463,7 @@ class _Accounts extends StatelessWidget {
   final bool entering;
   final VoidCallback onCancel;
 
-  /// "Scan QR code": the camera.
+  /// "Scan QR from computer": the camera.
   final VoidCallback onScan;
 
   @override
