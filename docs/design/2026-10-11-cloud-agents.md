@@ -35,6 +35,11 @@ started from New Harness. They are not a second product beside the panes.
                                                         Fo's cloud
   ```
 
+  As built (rendered by `desktop/test/cloud_chat_pane_capture_test.dart` with
+  `HARNESS_CLOUD_CAPTURE_DIR`), beside a terminal pane:
+
+  ![A Fo harness's chat pane beside a terminal pane, rendered with synthetic data](images/cloud-chat-pane.png)
+
 - **Devin and Devin Cloud** are two agents, as Cognition presents them; Cursor and Cursor Cloud the same.
   Devin is today's terminal pane on a computer. Devin Cloud asks for a GitHub repository Devin can reach
   rather than a folder (a local folder carries its GitHub remote over; its tooltip says uncommitted
@@ -48,6 +53,10 @@ started from New Harness. They are not a second product beside the panes.
    └───────────────────────────────────────────────────────────┘
    Up to 5 ACUs                                      New Harness
   ```
+
+  As built:
+
+  ![New Harness with Devin Cloud: its cloud for a computer, a GitHub repository, an ACU limit](images/cloud-new-harness.png)
 
   Its chat pane's footer carries the session's branch and pull request like any pane's:
 
