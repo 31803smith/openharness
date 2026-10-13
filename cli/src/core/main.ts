@@ -112,6 +112,9 @@ import { SHELL_REQUESTS } from '../lib/shellProtocol.js'
 import { answerShellQuery } from './shellQueries.js'
 import { createTerminalControl } from './terminals/control.js'
 import { createTerminalRequests } from './terminals/requests.js'
+import { createBrowser } from './terminals/browser.js'
+import { loopbackGet } from '../lib/loopbackGet.js'
+import { writeBrowserShim } from '../lib/browserShim.js'
 import { createAgentEvents } from './agents/events.js'
 import { createSessionNormalizers } from './transcripts/normalizers.js'
 import { createInput } from './input.js'
@@ -1008,6 +1011,20 @@ async function runForeground(session: AuthSession | null): Promise<void> {
   const deviceIsWatching = (): boolean => backend.hasCommander() || cableWatchingLocal() || wifiCore.connected()
   /** Anyone who can DRAW a question: a device, a cabled dial, or a desktop window on this computer. */
   const someoneCanAnswer = (): boolean => deviceIsWatching() || backend.hasLocalClient()
+  // A page a program in a harness's pane opens (Claude Code's `/login`) goes to the phone typing there, and the
+  // sign-in the phone catches comes back to the program (core/terminals/browser.ts, lib/browserShim.ts).
+  const browser = createBrowser({
+    agentOfPane: (pane) => registry.list().find((session) => session.tmuxPane === pane)?.agentId,
+    sendTo: (connId, type, payload) => backend.sendViewerFrame(connId, type, payload),
+    isLocal: isLocalClientId,
+    who: (connId) => backend.remoteClient(connId)?.identity ?? connId,
+    replay: (url) => loopbackGet(url),
+    now: Date.now,
+    log: (line) => console.log(line),
+  })
+  backend.browserProvider = { open: browser.open, callback: browser.callback }
+  // The script every pane's BROWSER names asks this daemon first; rewritten as it starts (the CLI may have moved).
+  writeBrowserShim(daemonCommand())
   const terminalStreams = new TerminalStreamManager({
     terminals,
     resolveAgent: (agentId) => registry.resolve(agentId),
@@ -1029,7 +1046,8 @@ async function runForeground(session: AuthSession | null): Promise<void> {
     // The keystroke prewarm (grid-reads-without-waking issue 03): typing into a pane whose agent runs on
     // a sleeping grid starts that grid while the person types. Here, in the daemon's own input path, so
     // an older desktop and typing from a phone get it too; an agent on its own login has no `grid`.
-    onInput: (agentId, typed) => {
+    onInput: (agentId, typed, from) => {
+      if (typed) browser.typed(agentId, from)
       const grid = registry.resolve(agentId)?.grid
       if (grid) ports.models?.prewarm(grid)
       // The person typing into a harness another agent started makes it theirs (services/agentCleanup.ts).
