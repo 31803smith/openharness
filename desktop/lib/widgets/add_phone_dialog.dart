@@ -522,10 +522,20 @@ class _AddPhoneDialogState extends State<AddPhoneDialog> {
           if (!_sticky && _message != null) setState(() => _message = null);
           wait = _poll;
         case 'CODE_MISMATCH':
-          // The phone holds the old code and the daemon has spent it. A new
-          // one — and a new QR — is the only way forward.
-          // Under the code, which is the new one by now: "above".
-          _say("That code didn't work. Scan the new one above.", sticky: true);
+          // A phone holding another code than this one, and the daemon has
+          // spent this one: a new code — and a new QR — goes up, QUIETLY.
+          //
+          // ⚠️ That phone is almost always one already in. A scan signs the
+          // phone in by its sign-in code, and the account takes it at once
+          // (the dialog turns to "is ready." on [_deviceJoined]); the phone
+          // then also pairs by the QR's code, which reaches the daemon after
+          // that dialog stopped answering, and the daemon keeps it a minute.
+          // The next Add Phone opened in that minute hands it a fresh code,
+          // and the handshake fails. Its red "That code didn't work. Scan the
+          // new one above." read as the phone just added having failed
+          // (2026-10-13). A phone that truly scanned an old code is told so
+          // on its own screen, and joins by signing in all the same.
+          if (_message != null) setState(() => _message = null);
           setState(() => _code = newPhonePairCode());
           wait = _poll;
         case 'RATE_LIMITED':
