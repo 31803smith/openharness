@@ -19,6 +19,12 @@ describe('the windows a person has open, per surface', () => {
     expect(tuiPresence({ HARNESS_OS: '1' }, files({ [model]: 'Orange Pi 4 Pro\0' }))).toBe('harness-os-pi')
     expect(tuiPresence({}, files({ [unit]: '[Unit]', [model]: 'OrangePi 5\0' }))).toBe('harness-os-pi')
     expect(tuiPresence({ HARNESS_OS: '1' }, files({ [model]: 'Raspberry Pi 5\0' }))).toBe('harness-os')
+    // Orange Pi's own Debian, as an Orange Pi 4 Pro reads it (2026-10-13): the SoC in `model`.
+    const compatible = '/proc/device-tree/compatible'
+    const release = '/etc/orangepi-release'
+    expect(tuiPresence({ HARNESS_OS: '1' }, files({ [model]: 'sun60iw2\0', [compatible]: 'xunlong,orangepi-4-pro\0arm,sun60iw2p1\0' }))).toBe('harness-os-pi')
+    expect(tuiPresence({ HARNESS_OS: '1' }, files({ [model]: 'sun60iw2\0', [release]: 'BOARD=orangepi4pro\nBOARD_NAME="Orange Pi 4 Pro"\n' }))).toBe('harness-os-pi')
+    expect(tuiPresence({ HARNESS_OS: '1' }, files({ [model]: 'sun60iw2\0' })), 'a SoC alone names no board').toBe('harness-os')
     expect(['tui', 'harness-os']).toContain(tuiPresence())
   })
 
