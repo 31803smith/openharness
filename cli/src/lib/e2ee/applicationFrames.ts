@@ -28,6 +28,8 @@ const MACHINE_REQUESTS = new Set([...SHELL_REQUESTS, 'agent_purge', 'agent_workt
   'agent_create_cancel',
   // Memories (services/memory.ts): what this machine's agents remember, and About You and its on/off choice.
   'memory_snapshot', 'memory_about_put', 'memory_deliver',
+  // Cloud agents (services/cloud.ts): a cloud harness's conversation, the person's words for it, which are connected.
+  'cloud_transcript', 'cloud_send', 'cloud_agents',
   // A sign-in a phone caught for a page a harness's program opened (core/terminals/browser.ts): it holds the code.
   'browser_callback', ...ROUTE_COMMAND_TYPES])
 const MACHINE_RESULTS = new Set([...MACHINE_REQUESTS].map(type => `${type}_result`))
