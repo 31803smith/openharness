@@ -679,26 +679,29 @@ class _AddPhoneDialogState extends State<AddPhoneDialog> {
           },
         ),
         actions: [
-          if (ready) ...[
-            if (widget.onManageDevices != null)
-              // The link sits on the button's line, not at its top.
-              SizedBox(
-                height: DesktopChrome.controlHeight,
-                child: Center(
-                  child: _InlineLink(
+          if (ready)
+            // One row across the foot: See your phones at its left, Done at
+            // its right. ⚠️ Not two actions: the actions wrap to the right, and
+            // the link, centred in a box of the button's height, took a whole
+            // row of its own — centred over Done.
+            Row(
+              children: [
+                if (widget.onManageDevices != null)
+                  _InlineLink(
                     key: const ValueKey('add-phone-see-phones'),
                     label: 'See your phones',
                     onPressed: _seePhones,
                   ),
+                const Spacer(),
+                FilledButton(
+                  key: const ValueKey('add-phone-done'),
+                  autofocus: true,
+                  onPressed: _close,
+                  child: const Text('Done'),
                 ),
-              ),
-            FilledButton(
-              key: const ValueKey('add-phone-done'),
-              autofocus: true,
-              onPressed: _close,
-              child: const Text('Done'),
-            ),
-          ] else if (_signedOut)
+              ],
+            )
+          else if (_signedOut)
             TextButton(
               key: const ValueKey('add-phone-cancel'),
               onPressed: _close,

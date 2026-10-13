@@ -16,6 +16,8 @@ import 'package:harness/shared/theme/app_theme.dart' as grid;
 import 'package:harness/shared/widgets/qr_code_view.dart';
 import 'package:harness/state/app_state.dart';
 import 'package:harness/widgets/add_phone_dialog.dart';
+import 'package:harness/widgets/desktop_chrome.dart'
+    show DesktopChrome, DesktopDialogSurface;
 
 import 'swarm_interactions_test.dart' show chord;
 import 'swarm_screen_test.dart' show mount;
@@ -236,6 +238,18 @@ void main() {
         find.byKey(const ValueKey('add-phone-see-phones')),
         findsOneWidget,
       );
+      // One row across the foot: See your phones at the panel's left edge,
+      // Done at its right, both inside the panel's padding.
+      final panel = tester
+          .getRect(find.byType(DesktopDialogSurface))
+          .deflate(DesktopChrome.panelPadding);
+      final link = tester.getRect(
+        find.byKey(const ValueKey('add-phone-see-phones')),
+      );
+      final done = tester.getRect(find.byKey(const ValueKey('add-phone-done')));
+      expect((link.center.dy - done.center.dy).abs(), lessThan(1));
+      expect(link.left, moreOrLessEquals(panel.left, epsilon: 1));
+      expect(done.right, moreOrLessEquals(panel.right, epsilon: 1));
       // Nothing moves once the phone is in: the dialog settles.
       await tester.pumpAndSettle();
       expect(find.byType(AddPhoneDialog), findsOneWidget);
