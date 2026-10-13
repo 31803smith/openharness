@@ -38,6 +38,8 @@ DOWNLOAD_CHUNK = 1024 * 1024
 RESTART_REQUIRED = Path('/run/harness-os-restart-required')
 DAEMON_UNIT = 'harness-daemon.service'
 DAEMON_STATUS = 'http://127.0.0.1:18473/api/status'
+# How long the unit's restarted daemon has to answer for itself before the update is rolled back.
+RUNTIME_ANSWER_SECONDS = 30
 KEEP_ON = 'Keep the computer on and plugged in until the system update finishes.'
 SYSTEM_LOCK = Path('/run/lock/hn-os.lock')
 BOOT_ID = Path('/proc/sys/kernel/random/boot_id')
@@ -525,9 +527,15 @@ def restart(cli_changed):
         if serving is not None and serving != main:
             run('/usr/bin/harness', 'stop', timeout=90)
         run('systemctl', '--user', 'restart', DAEMON_UNIT, timeout=180)
-        # wait-runtime accepts whichever daemon answers. Activation needs the unit's own.
+        # wait-runtime accepts whichever daemon answers. Activation needs the unit's own, and its
+        # /api/status can lag the socket wait-runtime saw by a few seconds (an Orange Pi answered at
+        # 4 s, after one check at once had already rolled the update back): ask until it answers.
         run('/usr/lib/harness-os/wait-runtime')
+        deadline = time.monotonic() + RUNTIME_ANSWER_SECONDS
         serving, main = runtime_pids()
+        while (serving is None or serving != main) and time.monotonic() < deadline:
+            time.sleep(1)
+            serving, main = runtime_pids()
         if serving is None or serving != main:
             raise ValueError(f'The agent runtime is not running under {DAEMON_UNIT}.')
     # The terminal surface is separate from the processes that own agent PTYs.
