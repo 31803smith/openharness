@@ -61,6 +61,9 @@ const Set<String> encryptedDownTypes = {
   // redirect, with its code, rides `callback`. A `MACHINE_REQUESTS` type in the CLI: sent in the clear
   // the machine refused it ("E2EE required"), which read as no computer online.
   'connectors',
+  // A sign-in this phone caught for a page a harness's program opened (`AppNotifier.browserCallback`): it
+  // carries the code. A `MACHINE_REQUESTS` type in the CLI.
+  'browser_callback',
   'codex_profiles_list',
   'codex_profile_link',
   // Asks the machine to read its OWN agent accounts' usage (cli/src/lib/accountUsage.ts). Missing
