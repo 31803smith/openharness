@@ -736,7 +736,7 @@ pub fn searched(picker: &Picker) -> &str {
 pub fn is_row(id: &str) -> bool { id.starts_with("mv:") }
 
 fn note(key: &str, words: &str, group: &str) -> Row {
-    Row::new(format!("mv:note:{key}"), words.to_string()).group(group.to_string()).lead(vec![span("  ", Style::default())]).extra("note")
+    Row::new(format!("mv:note:{key}"), words.to_string()).group(group.to_string()).extra("note")
 }
 
 /// The row that sets grid up here (the desktop's `model:grid-setup`), and the note over an empty
@@ -765,10 +765,9 @@ fn set_up_word(app: &App) -> &'static str {
 
 fn local_row(app: &App, m: &LocalModel, t: Option<&Target>, group: &str) -> Row {
     let f = facts(app, m, t);
+    // No mark before the name (owner, 2026-10-13: "remove these silly icons"): the word on the right
+    // says it — ✓ In use, Running, Downloaded, Get, Failed, a download's progress.
     let word = f.word(m);
-    // (No round marks: `✓` in use, `↻` busy, `✗` failed, `▶` running, `·` downloaded, `↓` to get.)
-    let (dot, color) = if f.in_use { ("✓ ", theme::accent()) } else if f.active || f.pending.is_some() { ("↻ ", theme::WARN) } else if f.failed { ("✗ ", theme::DANGER) }
-        else if m.running() { ("▶ ", theme::ONLINE) } else if m.downloaded() { ("· ", theme::SOFT) } else { ("↓ ", theme::MUTED) };
     // As the desktop's row: the name alone, then its size and speed (or the app it runs in) in
     // columns that line up, then the word — the word alone where the list is narrow. Its
     // quantization and app are in the preview, and found by a search.
@@ -776,7 +775,6 @@ fn local_row(app: &App, m: &LocalModel, t: Option<&Target>, group: &str) -> Row 
     let app_name = m.app.clone().unwrap_or_default();
     Row::new(format!("mv:local:{}", m.id), m.shown()).group(group.to_string())
         .extra(format!("{} {quant} {app_name} {word} local{}", m.id, if m.recommended { " recommended" } else { "" }))
-        .lead(vec![span(dot, fg(color))])
         .right(columns(&m.size.map(gb).unwrap_or_default(), &speed(m), &word))
         .right_narrow(word)
 }
@@ -794,11 +792,9 @@ fn grid_word(app: &App, x: &GridModel, t: Option<&Target>) -> String {
 
 fn grid_row(app: &App, s: &Section, x: &GridModel, t: Option<&Target>, group: &str) -> Row {
     let word = grid_word(app, x, t);
-    let (dot, color) = if word.starts_with('✓') { ("✓ ", theme::accent()) } else if x.offline.is_some() { ("· ", theme::MUTED) } else { ("◆ ", theme::TEAL) };
     // Shown without its quant, as Your models are; switched onto (and found by) the name it is served as.
     Row::new(format!("mv:grid:{}\t{}\t{}", s.name, x.node, x.id), without_quant(&x.id).to_string()).group(group.to_string())
         .extra(format!("{} {} {} {} {}", x.id, s.name, x.node, if s.own { "local" } else { "shared" }, word))
-        .lead(vec![span(dot, fg(color))])
         .detail(vec![span(x.node.clone(), fg(theme::MUTED))])
         .right(word)
 }
@@ -814,18 +810,15 @@ const LOW_WATER: f64 = 20.0;
 
 /// A subscription's row: the plan's maker, the machines it is on (`Anthropic  studio, laptop`), then how
 /// much of it is left (`20% remaining`) — the one figure worth a glance; Enter on it is the preview's to
-/// say. Its mark says it is in use (✓) or running low (!). [ordinal]: which of several plans of one maker
+/// say. [ordinal]: which of several plans of one maker
 /// on the same machines this is — the only case a machine's name cannot tell them apart.
 fn sub_row(app: &App, sub: &Sub, t: Option<&Target>, group: &str, ordinal: Option<usize>) -> Row {
     let word = sub_word(app, sub, t);
-    let low = sub.left.is_some_and(|l| l <= LOW_WATER);
     let label = ordinal.map_or_else(|| sub.title.clone(), |n| format!("{} {n}", sub.title));
     let machines = sub.machines.join(", ");
-    let (dot, color) = if word.starts_with('✓') { ("✓ ", if low { theme::WARN } else { theme::accent() }) } else if low { ("! ", theme::WARN) } else { ("◇ ", theme::SOFT) };
     let left = sub.left.map(|l| format!("{} remaining", left_of(100.0 - l))).unwrap_or_else(|| sub.status.clone());
     Row::new(format!("mv:sub:{}\t{}", sub.engine, sub.account), label).group(group.to_string())
         .extra(format!("{} {machines} subscription own login {word}", sub.engine))
-        .lead(vec![span(dot, fg(color))])
         .detail(vec![span(machines, fg(theme::MUTED))])
         .right(left)
 }
@@ -868,7 +861,6 @@ pub fn rows(app: &App, query: &str) -> Vec<Row> {
             let open = opened || searching;
             let hint = match listed { _ if !api.serves_models() => "Tools".to_string(), Some(Ok(l)) if !l.is_empty() => format!("{} model{}", l.len(), if l.len() == 1 { "" } else { "s" }), None => "Loading…".into(), _ => "Tools".into() };
             out.push(Row::new(format!("mv:api:{}", api.id), api.name.clone()).group(APIS).extra(format!("{} api", api.host()))
-                .lead(vec![span(if opened || (open && api.serves_models()) { "▾ " } else { "▸ " }, fg(theme::MUTED))])
                 .detail(vec![span(api.host(), fg(theme::MUTED))]).right(hint));
             if !open { continue }
             if let Some(Ok(models)) = listed {
@@ -879,27 +871,26 @@ pub fn rows(app: &App, query: &str) -> Vec<Row> {
                     };
                     out.push(Row::new(format!("mv:apimodel:{}\t{}", api.id, m.id), m.id.clone()).group(APIS)
                         .extra(format!("{} {} api", api.name, m.name.clone().unwrap_or_default()))
-                        .lead(vec![span("  ", Style::default()), span(if word.starts_with('✓') { "✓ " } else { "· " }, fg(if word.starts_with('✓') { theme::accent() } else { theme::MUTED }))])
+                        .lead(vec![span("  ", Style::default())])
                         .detail(vec![span(m.context.map(|w| format!("{} context", context_label(w))).unwrap_or_default(), fg(theme::MUTED))])
                         .right(format!("{word:>9}")));
                 }
             }
             // Opened by hand (not by a search): what can be done to the API itself, under its models.
             if opened && !v.api_presets.is_empty() {
-                let action = |id: String, label: &str, mark: &str, words: &str| Row::new(id, label).group(APIS).extra(format!("{} {words} api", api.name))
-                    .lead(vec![span("  ", Style::default()), span(mark.to_string(), fg(theme::MUTED))]);
-                out.push(action(format!("{API_EDIT}{}", api.id), "Edit connection", "✎ ", "edit change key"));
-                out.push(action(format!("{API_DELETE}{}", api.id), "Delete", "✕ ", "delete remove"));
+                let action = |id: String, label: &str, words: &str| Row::new(id, label).group(APIS).extra(format!("{} {words} api", api.name))
+                    .lead(vec![span("  ", Style::default())]);
+                out.push(action(format!("{API_EDIT}{}", api.id), "Edit connection", "edit change key"));
+                out.push(action(format!("{API_DELETE}{}", api.id), "Delete", "delete remove"));
             }
         }
         // Add API, last under them (and the only row when none is saved yet), and once opened the
         // APIs it adds: the daemon's presets, then Custom API. Not offered by a daemon too old to save.
         if !v.api_presets.is_empty() {
-            out.push(Row::new(API_ADD, "Add API").group(APIS).extra("add new api key connection")
-                .lead(vec![span(if v.api_adding { "− " } else { "+ " }, fg(theme::accent()))]));
+            out.push(Row::new(API_ADD, "Add API").group(APIS).extra("add new api key connection"));
             if v.api_adding {
                 let choice = |id: String, label: &str, detail: String| Row::new(id, label).group(APIS).extra(format!("add {label} api"))
-                    .lead(vec![span("  ", Style::default()), span("· ", fg(theme::MUTED))]).detail(vec![span(detail, fg(theme::MUTED))]);
+                    .lead(vec![span("  ", Style::default())]).detail(vec![span(detail, fg(theme::MUTED))]);
                 for p in &v.api_presets { out.push(choice(format!("{API_NEW}{}", p.provider), &p.name, host_of(&p.base_url))) }
                 out.push(choice(format!("{API_NEW}custom"), "Custom API", "any OpenAI-compatible API".into()));
             }
@@ -911,7 +902,7 @@ pub fn rows(app: &App, query: &str) -> Vec<Row> {
     // or a shared model cannot be used before then, and listed beside "Set up" they read as if they could.
     if needs_set_up(app) {
         out.push(Row::new(SET_UP, "Set up local & shared models").group(YOUR_MODELS).extra("setup grid local shared download")
-            .lead(vec![span("+ ", fg(theme::accent()))]).right(set_up_word(app)));
+            .right(set_up_word(app)));
         return out;
     }
 
@@ -958,7 +949,7 @@ pub fn rows(app: &App, query: &str) -> Vec<Row> {
         out.extend(now.iter().chain(rest.iter().take(shown)).map(|m| local_row(app, m, t, &head)));
         if !searching && rest.len() > SHOWN_DOWNLOADS {
             let label = if v.more { "Show fewer".to_string() } else { format!("More models ({})", rest.len() - SHOWN_DOWNLOADS) };
-            out.push(Row::new("mv:more", label).group(head).extra("more models").lead(vec![span(if v.more { "− " } else { "+ " }, fg(theme::accent()))]));
+            out.push(Row::new("mv:more", label).group(head).extra("more models"));
         }
     }
 
@@ -975,7 +966,7 @@ pub fn rows(app: &App, query: &str) -> Vec<Row> {
                 if let Some(sentence) = &words.sentence { out.push(note(&format!("grid:{}", s.name), &format!("{} · {sentence}", s.name), SHARED)) }
                 if words.offer_wake {
                     out.push(Row::new(format!("mv:wake:{}", s.name), format!("Show models · {}", s.name)).group(SHARED).extra(format!("{} wake", s.name))
-                        .lead(vec![span("↻ ", fg(theme::accent()))]).right("usually 15–40 s"));
+                        .right("usually 15–40 s"));
                 }
             }
             for x in &s.models {
@@ -1145,6 +1136,13 @@ pub fn plan_enter(app: &App, id: &str) -> Plan {
 
 /// What ^S does on row [id]: stop a local model (asked first).
 pub fn plan_stop(app: &App, id: &str) -> Plan {
+    // A model another computer runs (shared with you, or on your other machines) stops there: said, not
+    // silently ignored — two ^S on one once read as a stop that never reached the grid.
+    if let Some(rest) = id.strip_prefix("mv:grid:") {
+        let mut parts = rest.splitn(3, '\t');
+        let (_, node, model) = (parts.next(), parts.next().unwrap_or(""), parts.next().unwrap_or(""));
+        return Plan::Say(format!("{} runs on {node} — stop it there", without_quant(model)));
+    }
     let Some(m) = id.strip_prefix("mv:local:").and_then(|model| local_model(app, model)) else { return Plan::Nothing };
     let f = facts(app, &m, None);
     if f.busy { return Plan::Say("Wait for the current model operation to finish.".into()) }
@@ -2559,11 +2557,11 @@ mod tests {
     fn the_focused_harness_moves_onto_a_local_model_and_back() {
         let mut app = loaded();
         let rows = rows(&app, "");
-        // The subscriptions first, as on the desktop: the harness's own login, how much is left, its
-        // mark saying it is in use (amber: running low).
+        // The subscriptions first, as on the desktop: the harness's own login and how much is left — no
+        // mark before its name (its preview and words say it is in use).
         assert_eq!(rows[0].group.as_deref(), Some("Subscriptions"));
         assert_eq!((rows[0].label.as_str(), rows[0].right.as_str()), ("Anthropic", "12% remaining"));
-        assert_eq!(rows[0].lead[0].content, "✓ ");
+        assert!(rows.iter().all(|r| r.lead.iter().all(|s| s.content.trim().is_empty())), "no row has a mark before its name");
         assert_eq!(in_use_row(&rows).as_deref(), Some("mv:sub:claude\t7f0c"));
         assert!(row(&rows, "mv:local:qwen-35b").right.ends_with("Get"));
 
@@ -2623,7 +2621,7 @@ mod tests {
         assert!(row(&rows, "mv:local:qwen-35b").right.ends_with("✓ In use"));
         assert!(pane_note(&app, "local", "a1").is_none());
         // (A subscription's row says how much is left; what Enter does is its preview's, and its mark's.)
-        assert!(rows[0].extra.ends_with("Use") && rows[0].lead[0].content != "✓ ", "its own login is a Use away: {}", rows[0].extra);
+        assert!(rows[0].extra.ends_with("Use") && !rows[0].extra.ends_with("✓ In use"), "its own login is a Use away: {}", rows[0].extra);
 
         // And back to the subscription.
         let before = app.models_view.sent.len();
@@ -2632,7 +2630,7 @@ mod tests {
         assert_eq!(last_sent(&app), ("local".into(), "agent_retarget".into(), json!({ "agentId": "a1", "clearGrid": true })));
         assert!(rows_of(&app)[0].extra.ends_with(SWITCHING));
         frame(&mut app, json!({}));
-        assert!(rows_of(&app)[0].extra.ends_with("✓ In use") && rows_of(&app)[0].lead[0].content == "✓ ");
+        assert!(rows_of(&app)[0].extra.ends_with("✓ In use") && rows_of(&app)[0].lead.is_empty());
     }
 
     fn rows_of(app: &App) -> Vec<Row> { rows(app, "") }
@@ -3640,6 +3638,20 @@ mod tests {
         older.models.iter_mut().for_each(|m| m.served_as.clear());
         app.models_view.local.insert("local".into(), older);
         assert!(rows_of(&app).iter().any(|r| r.id == "mv:grid:own-grid\tstudio\tQwen3.8-27B-UD-Q4_K_M"));
+    }
+
+    #[test]
+    fn stop_on_a_model_another_computer_runs_says_where_to_stop_it() {
+        let mut app = loaded();
+        let mut g = grids_reply(&[]);
+        g["grids"][1]["models"][0]["id"] = json!("Qwen3.8-27B-UD-Q4_K_M");
+        on_grids(&mut app, "local", Ok(g));
+        let mut picker = Picker::new("Models", "");
+        let id = "mv:grid:team\tgpu-box\tQwen3.8-27B-UD-Q4_K_M";
+        assert!(matches!(plan_stop(&app, id), Plan::Say(ref w) if w == "Qwen3.8-27B runs on gpu-box — stop it there"));
+        choose(&mut app, &mut picker, id, true);
+        choose(&mut app, &mut picker, id, true);
+        assert!(app.models_view.sent.iter().all(|s| s.1 != "grid_fleet_model_stop"));
     }
 
     /// A model a Grid setup left running, which the catalog does not list: grid serves it under its
