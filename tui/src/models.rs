@@ -1145,6 +1145,13 @@ pub fn plan_enter(app: &App, id: &str) -> Plan {
 
 /// What ^S does on row [id]: stop a local model (asked first).
 pub fn plan_stop(app: &App, id: &str) -> Plan {
+    // A model another computer runs (shared with you, or on your other machines) stops there: said, not
+    // silently ignored — two ^S on one once read as a stop that never reached the grid.
+    if let Some(rest) = id.strip_prefix("mv:grid:") {
+        let mut parts = rest.splitn(3, '\t');
+        let (_, node, model) = (parts.next(), parts.next().unwrap_or(""), parts.next().unwrap_or(""));
+        return Plan::Say(format!("{} runs on {node} — stop it there", without_quant(model)));
+    }
     let Some(m) = id.strip_prefix("mv:local:").and_then(|model| local_model(app, model)) else { return Plan::Nothing };
     let f = facts(app, &m, None);
     if f.busy { return Plan::Say("Wait for the current model operation to finish.".into()) }
@@ -3640,6 +3647,20 @@ mod tests {
         older.models.iter_mut().for_each(|m| m.served_as.clear());
         app.models_view.local.insert("local".into(), older);
         assert!(rows_of(&app).iter().any(|r| r.id == "mv:grid:own-grid\tstudio\tQwen3.8-27B-UD-Q4_K_M"));
+    }
+
+    #[test]
+    fn stop_on_a_model_another_computer_runs_says_where_to_stop_it() {
+        let mut app = loaded();
+        let mut g = grids_reply(&[]);
+        g["grids"][1]["models"][0]["id"] = json!("Qwen3.8-27B-UD-Q4_K_M");
+        on_grids(&mut app, "local", Ok(g));
+        let mut picker = Picker::new("Models", "");
+        let id = "mv:grid:team\tgpu-box\tQwen3.8-27B-UD-Q4_K_M";
+        assert!(matches!(plan_stop(&app, id), Plan::Say(ref w) if w == "Qwen3.8-27B runs on gpu-box — stop it there"));
+        choose(&mut app, &mut picker, id, true);
+        choose(&mut app, &mut picker, id, true);
+        assert!(app.models_view.sent.iter().all(|s| s.1 != "grid_fleet_model_stop"));
     }
 
     /// A model a Grid setup left running, which the catalog does not list: grid serves it under its
