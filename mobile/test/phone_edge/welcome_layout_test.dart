@@ -71,10 +71,11 @@ void main() {
       final app = edgeApp(noMachines: true);
       addTearDown(app.dispose);
       await pump(tester, welcome(app), scale, brightness);
-      // The emailed code's way in: Scan QR code, then the camera's "Use email instead".
-      await tapInView(tester, find.byKey(const ValueKey('welcome-scan')));
-      await frames(tester);
-      await tapInView(tester, find.text('Use email instead'));
+      // The emailed code's way in: Continue with email, under the accounts.
+      await tapInView(
+        tester,
+        find.byKey(const ValueKey('welcome-continue-email')),
+      );
       await frames(tester);
       await tester.enterText(
         find.byType(TextField),

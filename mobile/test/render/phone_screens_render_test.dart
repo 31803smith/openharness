@@ -369,7 +369,7 @@ void main() {
 
   /// The welcome's quiet line: the emailed code.
   Future<void> toEmail(WidgetTester tester) async {
-    await tester.tap(find.byKey(const ValueKey('welcome-email-way')));
+    await tester.tap(find.byKey(const ValueKey('welcome-continue-email')));
     await tester.pump(const Duration(milliseconds: 300));
   }
 

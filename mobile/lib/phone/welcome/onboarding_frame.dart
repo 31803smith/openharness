@@ -11,8 +11,8 @@ import 'set_up_computer.dart' show StepsTimeline, goToSteps;
 /// which every screen after signing in shares (its wait, and the computer joining), so the picture
 /// stays put from one to the next.
 enum OnboardingLayout {
-  /// ① A headline of up to three lines; Scan QR from computer, the two accounts and the quiet line
-  /// at the foot.
+  /// ① A headline of up to three lines; the two accounts and, under them, one quiet line — Continue
+  /// with email · QR code, or Cancel in their place — at the foot.
   welcome,
 
   /// ② The headline, the link and the steps on the computer under it — "Not you? Sign out" under
@@ -35,9 +35,9 @@ enum OnboardingLayout {
 ///          └──────────────────┘
 ///      Looking for your computer▌      status
 ///
-///   [ Scan QR from computer ]          actions, at the foot
-///   [ Continue with Google  ]
+///   [ Continue with Google  ]          actions, at the foot
 ///   [ Continue with Apple   ]
+///   ✉ Continue with email · ⊞ QR code  the quiet line: the lesser ways in, as words
 /// ```
 ///
 /// ⚠️ **Every slot is measured the same way on every screen of a [layout]**, whatever it holds — the
@@ -119,10 +119,10 @@ class OnboardingFrame extends StatelessWidget {
     );
     final quiet = math.max(44.0, scaler.scale(quietSize) * 1.45);
     final (head, foot) = switch (layout) {
-      // The headline's three lines; the three ways in and the quiet line under them.
+      // The headline's three lines; the two accounts and the quiet line under them.
       OnboardingLayout.welcome => (
         math.max(3 * line, 2 * line + _underGap + button),
-        3 * button + 2 * _buttonGap + quiet + 8,
+        2 * button + 2 * _buttonGap + quiet + 8,
       ),
       // Two lines of headline, the link and the steps; one quiet line.
       OnboardingLayout.goTo => (

@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import 'package:harness_mobile/auth/sign_in_provider.dart';
@@ -31,10 +32,13 @@ import 'sign_in_provider_button.dart';
 ///        │  all lit, a phone   │
 ///        └─────────────────────┘
 ///
-///   [ ⊞  Scan QR from computer  ]   → the camera ([ScanToConnectPage]) → Use email instead
-///   [ G  Continue with Google   ]
-///   [   Continue with Apple     ]
-///                                     (Cancel here while an account's page is up)
+///   [ G  Continue with Google     ]
+///   [    Continue with Apple      ]
+///    ✉ Continue with email · ⊞ QR code      words, not boxes
+///                                           (Cancel in their place while an account's page is up)
+///
+///   Continue with email → Your email → Check your email.
+///   QR code → the camera ([ScanToConnectPage]); back for the others.
 /// ```
 ///
 /// Signing in is all there is to do here, and it moves on by itself: signed in, the app swaps this
@@ -42,17 +46,17 @@ import 'sign_in_provider_button.dart';
 /// the computer's session when it has one (`docs/research/2026-10-11-phone-onboarding`, agreed with
 /// the owner 2026-10-12).
 ///
-/// ⚠️ **Three ways in, nothing else** (owner, 2026-10-12): **Scan QR from computer** first, the
-/// screen's one filled button — its camera reads the code a signed-in computer's Add Phone shows
-/// ([ConnectCode]): its sign-in code signs this phone in to that computer's account with nothing to
-/// type, and its pairing code is held for that computer ([AppNotifier.pendingPairing]) — then
-/// Google and Apple.
-/// No sample, no "Is Harness on your computer?", no tips. An emailed code is the camera's "Use
-/// email instead", and where a scan without a sign-in code ends up.
+/// ⚠️ **Four ways in, nothing else** (owner, 2026-10-14; it was the scan first, then Google and
+/// Apple, on 2026-10-12): **Google** and **Apple**, the only buttons, then the lesser ways in as
+/// one line of words — **Continue with email**, an emailed code, also where a scan without a
+/// sign-in code ends up; **QR code**: its camera reads the code a signed-in computer's Add Phone
+/// shows ([ConnectCode]): its sign-in code signs this phone in to that computer's account with
+/// nothing to type, and its pairing code is held for that computer ([AppNotifier.pendingPairing]).
+/// No sample, no "Is Harness on your computer?", no tips.
 ///
-/// ⚠️ **The foot never changes height.** While an account's page is up, the quiet line under the
-/// buttons becomes Cancel; why it did not finish is said under the picture — so the picture, in
-/// the same place on every onboarding screen ([OnboardingFrame]), never moves for it.
+/// ⚠️ **The foot never changes height.** While an account's page is up, the line of lesser ways in
+/// under the buttons becomes Cancel; why it did not finish is said under the picture — so the
+/// picture, in the same place on every onboarding screen ([OnboardingFrame]), never moves for it.
 class PhoneWelcome extends StatefulWidget {
   const PhoneWelcome({
     super.key,
@@ -352,6 +356,7 @@ class _PhoneWelcomeState extends State<PhoneWelcome> {
                 waitingOn: notifier.signInProvider,
                 entering: entering,
                 onCancel: notifier.cancelProviderSignIn,
+                onEmail: () => _go(_Step.email),
                 onScan: () => _go(_Step.scan),
               ),
             ),
@@ -364,7 +369,8 @@ class _PhoneWelcomeState extends State<PhoneWelcome> {
               signingIn: _signingInWithScan,
               // Where the code is on the computer — the same steps as the camera on Computers.
               steps: const ComputerSteps(account: null),
-              onUseEmail: () => _go(_Step.email),
+              // No "Use email instead" under it (owner, 2026-10-14): Continue with email sits
+              // beside QR code, one back away.
               onBack: () => _go(_Step.hello),
             ),
             _Step.email => SignInForm(
@@ -440,13 +446,14 @@ class _PhoneWelcomeState extends State<PhoneWelcome> {
   }
 }
 
-/// The welcome's foot: Scan QR from computer — the screen's one filled button — then Google and
-/// Apple ([SignInProviderButton]), and under them the quiet line's slot: Cancel while an account's
-/// page is up, empty otherwise, so the foot is the same height whatever it holds.
+/// The welcome's foot: Google and Apple ([SignInProviderButton]), and under them one line — the
+/// lesser ways in as words ([_WayLink]), or Cancel in their place while an account's page is up —
+/// so the foot is the same height whatever it holds.
 class _Accounts extends StatelessWidget {
   const _Accounts({
     required this.onProvider,
     required this.onCancel,
+    required this.onEmail,
     required this.onScan,
     this.waitingOn,
     this.entering = false,
@@ -463,6 +470,9 @@ class _Accounts extends StatelessWidget {
   final bool entering;
   final VoidCallback onCancel;
 
+  /// "Continue with email": the emailed code's step.
+  final VoidCallback onEmail;
+
   /// "Scan QR from computer": the camera.
   final VoidCallback onScan;
 
@@ -473,15 +483,8 @@ class _Accounts extends StatelessWidget {
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        TtyPrimaryButton(
-          key: const ValueKey('welcome-scan'),
-          icon: LucideIcons.qrCode300,
-          label: OnboardingCopy.scanQrCode,
-          // Not while an account's page is up, or past it: the scan would sign in behind it.
-          onPressed: onProvider == null ? null : onScan,
-        ),
-        for (final provider in SignInProvider.values) ...[
-          const SizedBox(height: 10),
+        for (final (i, provider) in SignInProvider.values.indexed) ...[
+          if (i > 0) const SizedBox(height: 10),
           SignInProviderButton(
             provider: provider,
             onPressed: onProvider == null ? null : () => onProvider!(provider),
@@ -490,6 +493,9 @@ class _Accounts extends StatelessWidget {
                 : null,
           ),
         ],
+        const SizedBox(height: 10),
+        // The lesser ways in, as words; Cancel in their place while an account's page is up — they
+        // could not be pressed then anyway — so the foot holds no empty room for it.
         if (waiting)
           Center(
             child: TtyTextButton(
@@ -500,9 +506,123 @@ class _Accounts extends StatelessWidget {
             ),
           )
         else
-          // The quiet line's room, held: Cancel takes it without the foot growing.
-          const SizedBox(height: 44),
+          // Wider than the phone — a large text size — it shrinks to fit, on one line.
+          Center(
+            child: FittedBox(
+              fit: BoxFit.scaleDown,
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  // Not while an account's page is up, or past it — neither the email nor the
+                  // scan: either would sign in behind it.
+                  _WayLink(
+                    key: const ValueKey('welcome-continue-email'),
+                    icon: LucideIcons.mail300,
+                    label: OnboardingCopy.continueWithEmail,
+                    onPressed: onProvider == null ? null : onEmail,
+                  ),
+                  const _Dot(),
+                  _WayLink(
+                    key: const ValueKey('welcome-scan'),
+                    icon: LucideIcons.qrCode300,
+                    label: OnboardingCopy.qrCode,
+                    semanticLabel: OnboardingCopy.scanQrCode,
+                    onPressed: onProvider == null ? null : onScan,
+                  ),
+                ],
+              ),
+            ),
+          ),
       ],
+    );
+  }
+}
+
+/// One of the welcome's lesser ways in, under the accounts: its icon and words in the quiet line's
+/// face — Continue with email, QR code. Words, not a box: only the accounts are buttons. Pressed,
+/// it brightens on the finger's way DOWN.
+class _WayLink extends StatefulWidget {
+  const _WayLink({
+    super.key,
+    required this.icon,
+    required this.label,
+    required this.onPressed,
+    this.semanticLabel,
+  });
+
+  final IconData icon;
+  final String label;
+
+  /// Null while a sign-in is in flight.
+  final VoidCallback? onPressed;
+
+  /// What a screen reader hears, where [label] is the short form. Null is [label].
+  final String? semanticLabel;
+
+  @override
+  State<_WayLink> createState() => _WayLinkState();
+}
+
+class _WayLinkState extends State<_WayLink> {
+  bool _down = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final tty = Tty.of(context);
+    final enabled = widget.onPressed != null;
+    final ink = !enabled
+        ? tty.dim
+        : _down
+        ? tty.text
+        : tty.faint;
+    return Semantics(
+      button: true,
+      enabled: enabled,
+      label: widget.semanticLabel ?? widget.label,
+      excludeSemantics: true,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTapDown: enabled ? (_) => setState(() => _down = true) : null,
+        onTapCancel: enabled ? () => setState(() => _down = false) : null,
+        onTapUp: enabled ? (_) => setState(() => _down = false) : null,
+        onTap: enabled
+            ? () {
+                HapticFeedback.selectionClick();
+                widget.onPressed!();
+              }
+            : null,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(minHeight: 44),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 8),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(widget.icon, size: 15, color: ink),
+                const SizedBox(width: 7),
+                TtyText(
+                  widget.label,
+                  color: ink,
+                  size: OnboardingFrame.quietSize,
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// The `·` between the lesser ways in.
+class _Dot extends StatelessWidget {
+  const _Dot();
+
+  @override
+  Widget build(BuildContext context) {
+    final tty = Tty.of(context);
+    return ExcludeSemantics(
+      child: TtyText('·', color: tty.dim, size: OnboardingFrame.quietSize),
     );
   }
 }
