@@ -3,13 +3,14 @@ import { typedByPerson } from './typedInput.js'
 import { unlink } from 'node:fs/promises'
 import { deflateSync } from 'node:zlib'
 import { ENGINES } from '../engines/types.js'
+import { launchContract } from '../engines/launches.js'
 import type { RegisteredSession } from './registry.js'
 import { writeImageToOsClipboard } from './osClipboard.js'
 import { sleptFor } from './sleepAware.js'
 import { writePasteDropFile, writePasteImageFile } from './pasteDropFiles.js'
 import type { TerminalBackendCoordinator } from './terminalBackendCoordinator.js'
 import { terminalPlacementKey, terminalRouteKey } from './terminalRuntime.js'
-import type { TerminalStreamHandle, TerminalStreamSize } from './terminalTypes.js'
+import { KEYFRAME_MAX_BYTES, type TerminalStreamHandle, type TerminalStreamSize } from './terminalTypes.js'
 import {
   TerminalBinaryKind,
   TERMINAL_LOCAL_IMAGE_PASTE_MAX_PAYLOAD_BYTES,
@@ -94,7 +95,12 @@ const PAUSE_HIGH_WATERMARK_BYTES = 384 * 1024
 const RESUME_LOW_WATERMARK_BYTES = 128 * 1024
 const RENDER_STALL_TIMEOUT_MS = 10_000
 const MAX_TOTAL_BUFFERED_BYTES = 2 * 1024 * 1024
-const KEYFRAME_MAX_BYTES = 480 * 1024
+/**
+ * How long after a keyframe for an open or a resize an engine's print may still begin as live output: its clear then
+ * never reaches the viewer, and another keyframe waits for the print (facets/launch.ts `ScreenContract.resizeRepaint`).
+ * Codex's came 78-82 ms after an idle resize; at work, late enough to miss a 150 ms wait (a phone, 2026-10-13).
+ */
+const REPAINT_GUARD_MS = 1_500
 const TERMINAL_ENGINES: ReadonlySet<string> = new Set(ENGINES)
 
 interface PendingOutput {
@@ -133,6 +139,10 @@ interface ActiveStream {
   outputBytes: number
   flushTimer: ReturnType<typeof setTimeout> | null
   lastFlushAt: number
+  /** Until when live output is watched for the engine's print after a resize, and the end of the last chunk read,
+   *  which the next may complete the clear in. See REPAINT_GUARD_MS. */
+  repaintWatchUntil: number
+  repaintTail: Buffer
   snapshotting: boolean
   resyncing: boolean
   closing: boolean
@@ -555,6 +565,8 @@ export class TerminalStreamManager {
         outputBytes: buffered.reduce((sum, chunk) => sum + chunk.length, 0),
         flushTimer: null,
         lastFlushAt: 0,
+        repaintWatchUntil: 0,
+        repaintTail: Buffer.alloc(0),
         snapshotting: false,
         resyncing: false,
         closing: false,
@@ -588,7 +600,7 @@ export class TerminalStreamManager {
         return
       }
       this.diagnostic(state, 'opened', { cols: size.cols, rows: size.rows, compression: state.compression })
-      await this.sendKeyframe(state)
+      await this.sendKeyframe(state, 'open')
     })
   }
 
@@ -660,7 +672,7 @@ export class TerminalStreamManager {
       (result) => {
         if (state.closing || result.state === 'succeeded') return
         this.sendError(state.connId, 'TERMINAL_INPUT_FAILED', { streamId: state.streamId, message: result.reason })
-        if (result.dispatch === 'possibly_executed') void this.sendKeyframe(state)
+        if (result.dispatch === 'possibly_executed') void this.sendKeyframe(state, 'input')
       },
       (error: unknown) => {
         if (state.closing) return
@@ -696,7 +708,7 @@ export class TerminalStreamManager {
       this.sendError(connId, 'TERMINAL_RESIZE_FAILED', { streamId: state.streamId, message: result.reason })
       return
     }
-    await this.sendKeyframe(state)
+    await this.sendKeyframe(state, 'resize')
   }
 
   /**
@@ -727,7 +739,7 @@ export class TerminalStreamManager {
     const result = await state.handle.pasteRaw(text)
     if (result.state !== 'succeeded') {
       this.sendError(state.connId, 'TERMINAL_PASTE_FAILED', { streamId: state.streamId, message: result.reason })
-      if (result.dispatch === 'possibly_executed') await this.sendKeyframe(state)
+      if (result.dispatch === 'possibly_executed') await this.sendKeyframe(state, 'input')
     }
   }
 
@@ -766,7 +778,7 @@ export class TerminalStreamManager {
       const result = await state.handle.writeRaw(CTRL_V_BYTE)
       if (result.state !== 'succeeded') {
         this.sendError(state.connId, 'TERMINAL_PASTE_IMAGE_FAILED', { streamId: state.streamId, message: result.reason })
-        if (result.dispatch === 'possibly_executed') await this.sendKeyframe(state)
+        if (result.dispatch === 'possibly_executed') await this.sendKeyframe(state, 'input')
         return
       }
       this.deps.sendTarget(state.connId, 'terminal_paste_image_result', {
@@ -785,7 +797,7 @@ export class TerminalStreamManager {
     const result = await state.handle.pasteRaw(path)
     if (result.state !== 'succeeded') {
       this.sendError(state.connId, 'TERMINAL_PASTE_IMAGE_FAILED', { streamId: state.streamId, message: result.reason })
-      if (result.dispatch === 'possibly_executed') await this.sendKeyframe(state)
+      if (result.dispatch === 'possibly_executed') await this.sendKeyframe(state, 'input')
       return
     }
     this.deps.sendTarget(state.connId, 'terminal_paste_image_result', {
@@ -819,7 +831,7 @@ export class TerminalStreamManager {
     const result = await state.handle.pasteRaw(path)
     if (result.state !== 'succeeded') {
       this.sendError(state.connId, 'TERMINAL_PASTE_FILE_FAILED', { streamId: state.streamId, message: result.reason })
-      if (result.dispatch === 'possibly_executed') await this.sendKeyframe(state)
+      if (result.dispatch === 'possibly_executed') await this.sendKeyframe(state, 'input')
       return
     }
     this.deps.sendTarget(state.connId, 'terminal_paste_file_result', { streamId: state.streamId, path })
@@ -983,7 +995,7 @@ export class TerminalStreamManager {
     if (state) {
       state.resyncs++
       this.diagnostic(state, 'resync_requested', { attempt: payload.attempt })
-      await this.sendKeyframe(state)
+      await this.sendKeyframe(state, 'resync')
     }
   }
 
@@ -1002,6 +1014,7 @@ export class TerminalStreamManager {
       void this.closeStream(state, 'terminal output exceeded safe buffer limit', true)
       return
     }
+    if (this.repaintBegan(state, bytes)) return
     state.output.push(Buffer.from(bytes))
     state.outputBytes += bytes.length
     if (state.snapshotting || state.outputPaused) return
@@ -1018,6 +1031,28 @@ export class TerminalStreamManager {
       return
     }
     state.flushTimer ??= setTimeout(() => this.flushOutput(state), state.flushMs)
+  }
+
+  /**
+   * Whether `bytes` begin the engine's print after a resize, which a keyframe then stands in for: the chunk and what
+   * waits unsent are dropped, never the cleared screen they would draw, and the keyframe waits for the print's end.
+   */
+  private repaintBegan(state: ActiveStream, bytes: Uint8Array): boolean {
+    if (state.snapshotting || this.now() > state.repaintWatchUntil) return false
+    const repaint = launchContract(state.engineId)?.screen?.resizeRepaint
+    if (!repaint) return false
+    const clears = Buffer.from(repaint.clears, 'utf8')
+    const read = Buffer.concat([state.repaintTail, Buffer.from(bytes)])
+    const at = read.indexOf(clears)
+    if (at < 0) {
+      state.repaintTail = read.subarray(Math.max(0, read.length - clears.length + 1))
+      return false
+    }
+    state.repaintWatchUntil = 0
+    state.repaintTail = Buffer.alloc(0)
+    // A print that ended in the same chunk is on the screen already: nothing is left to wait for.
+    void this.sendKeyframe(state, 'repaint', read.subarray(at + clears.length).includes(repaint.ends) ? 'ended' : 'printing')
+    return true
   }
 
   private flushOutput(state: ActiveStream): void {
@@ -1091,7 +1126,14 @@ export class TerminalStreamManager {
     this.flushOutput(state)
   }
 
-  private async sendKeyframe(state: ActiveStream): Promise<void> {
+  /**
+   * `reason`: what asked for it, for the log — an open, a resize, a client's resync, input that may have run, or the
+   * engine's print after a resize that began as live output; `print` says whether that print is still `printing`,
+   * which the snapshot then waits out, or `ended`.
+   */
+  private async sendKeyframe(
+    state: ActiveStream, reason: 'open' | 'resize' | 'resync' | 'input' | 'repaint', print?: 'printing' | 'ended',
+  ): Promise<void> {
     if (state.closing || state.resyncing) return
     const startedAt = this.now()
     state.resyncing = true
@@ -1128,8 +1170,23 @@ export class TerminalStreamManager {
       reason: 'tmux snapshot did not run',
     }
     try {
+      // An engine Harness keeps in the scrollback (facets/launch.ts `ScreenContract`) has its conversation there:
+      // all of it is seeded, re-wrapped by word, since the pane's width changes with every takeover between a
+      // desktop and a phone.
+      // One that prints its transcript again on a resize has the keyframe after a resize wait for that print, and
+      // its live output watched for a print that begins later still.
+      const screen = launchContract(state.engineId)?.screen
+      const repaint = screen?.resizeRepaint && print !== 'ended'
+        ? { ...screen.resizeRepaint, ...(print === 'printing' ? { cleared: true } : {}) }
+        : undefined
+      if (repaint && (reason === 'open' || reason === 'resize')) {
+        state.repaintWatchUntil = this.now() + REPAINT_GUARD_MS
+        state.repaintTail = Buffer.alloc(0)
+      }
       snapshot = await state.handle.snapshot(
-        state.engineId === 'grok' ? { tuiOwnsScrollback: true } : undefined,
+        state.engineId === 'grok' ? { tuiOwnsScrollback: true }
+          : screen ? { conversationHistory: true, ...(repaint ? { repaint } : {}) }
+            : undefined,
       )
     } catch (error) {
       snapshot = { state: 'failed', reason: error instanceof Error ? error.message : 'tmux snapshot failed' }
@@ -1179,14 +1236,18 @@ export class TerminalStreamManager {
     state.lastSyncAt = this.now()
     state.peakBufferedBytes = Math.max(state.peakBufferedBytes, state.pendingBytes)
     this.diagnostic(state, 'keyframe_sent', {
+      reason,
       seq,
       plainBytes: body.plainBytes,
       compressedBytes: body.bytes.length,
       snapshotMs: Math.max(0, this.now() - startedAt),
     })
-    state.handle.endSnapshot()
+    // The output held behind the keyframe is released as live output, read for an engine's print as it is
+    // (`repaintBegan`): Codex's clear came in it, after a keyframe taken before its print began, and went straight to
+    // the viewer while the keyframe was still marked as being taken. The print's keyframe can begin from it here.
     state.snapshotting = false
     state.resyncing = false
+    state.handle.endSnapshot()
     this.flushOutput(state)
     if (state.pendingBytes > PAUSE_HIGH_WATERMARK_BYTES && !state.outputPaused) void this.pauseOutput(state)
   }
