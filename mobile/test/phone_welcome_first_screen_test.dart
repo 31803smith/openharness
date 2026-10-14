@@ -181,30 +181,144 @@ void main() {
     },
   );
 
-  testWidgets('why the phone was signed out is said under the headline', (
+  final headline = find.byKey(const ValueKey('welcome-headline'));
+
+  /// Past the headline's 250ms swap: the words going out are gone, the ones coming in in place.
+  Future<void> settle(WidgetTester tester) async {
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+  }
+
+  /// [notifier] as one whose accounts' pages are [provider], not the real sign-in.
+  void stubAccounts(Future<void> Function(SignInProvider) provider) {
+    notifier.dispose();
+    notifier = _StubAccounts(provider);
+  }
+
+  testWidgets('why the phone was signed out takes the headline\'s place', (
     tester,
   ) async {
     await pump(tester);
     final before = picture(tester);
+    final words = tester.getRect(headline);
     notifier.signedOutReason = 'You were signed out on another device.';
     notifier.notifyListeners();
-    await tester.pump();
+    await settle(tester);
     final said = find.byKey(const ValueKey('welcome-signed-out'));
     expect(said, findsOneWidget);
     expect(
       find.textContaining('You were signed out on another device.'),
       findsOneWidget,
     );
-    // Between the headline and the picture, on the headline's left edge.
-    final headline = tester.getRect(
-      find.byKey(const ValueKey('welcome-headline')),
-    );
-    final line = tester.getRect(said);
-    expect(line.top, greaterThan(headline.bottom));
-    expect(line.left, headline.left);
-    expect(line.bottom, lessThanOrEqualTo(before.top));
+    // The headline gone, the reason where it was, on its left edge; the picture still.
+    expect(find.text(OnboardingCopy.welcome), findsNothing);
+    expect(tester.getRect(said).topLeft, words.topLeft);
     expect(picture(tester), before);
   });
+
+  // Each way in lets the reason go, and the headline comes back — on the welcome, or on the way
+  // back to it.
+  for (final way in [
+    'Continue with Google',
+    'Continue with Apple',
+    OnboardingCopy.continueWithEmail,
+    OnboardingCopy.qrCode,
+  ]) {
+    testWidgets('$way pressed: the reason goes, the headline is back', (
+      tester,
+    ) async {
+      final pages = <SignInProvider>[];
+      stubAccounts((provider) async => pages.add(provider));
+      notifier.signedOutReason = 'You were signed out on another device.';
+      await pump(tester);
+      final before = picture(tester);
+      expect(find.text(OnboardingCopy.welcome), findsNothing);
+
+      await tester.tap(find.text(way));
+      await settle(tester);
+      if (way == OnboardingCopy.continueWithEmail) {
+        expect(find.text('Your email'), findsOneWidget);
+      } else if (way == OnboardingCopy.qrCode) {
+        expect(find.byType(ScanToConnectPage), findsOneWidget);
+      } else {
+        expect(pages, hasLength(1));
+      }
+      if (find.text(OnboardingCopy.welcome).evaluate().isEmpty) {
+        await tester.binding.handlePopRoute();
+        await settle(tester);
+      }
+
+      expect(find.text(OnboardingCopy.welcome), findsOneWidget);
+      expect(find.byKey(const ValueKey('welcome-signed-out')), findsNothing);
+      expect(picture(tester), before);
+    });
+  }
+
+  testWidgets(
+    'a sign-in that fails says why in the headline\'s place, until the next way in',
+    (tester) async {
+      stubAccounts(
+        (_) async => throw Exception(
+          'Could not open the sign-in page. Check your connection and try again.',
+        ),
+      );
+      await pump(tester);
+      final before = picture(tester);
+      final words = tester.getRect(headline);
+
+      await tester.tap(find.text('Continue with Google'));
+      await settle(tester);
+      final said = find.byKey(const ValueKey('welcome-error'));
+      expect(said, findsOneWidget);
+      expect(
+        find.textContaining('Could not open the sign-in page.'),
+        findsOneWidget,
+      );
+      expect(find.text(OnboardingCopy.welcome), findsNothing);
+      expect(tester.getRect(said).topLeft, words.topLeft);
+      expect(picture(tester), before);
+
+      // The email, and back: the failure was the account's, and is gone with it.
+      await tester.tap(email);
+      await settle(tester);
+      expect(find.text('Your email'), findsOneWidget);
+      await tester.binding.handlePopRoute();
+      await settle(tester);
+      expect(find.text(OnboardingCopy.welcome), findsOneWidget);
+      expect(said, findsNothing);
+
+      // Failing again says so again, in the same place.
+      await tester.tap(find.text('Continue with Apple'));
+      await settle(tester);
+      expect(said, findsOneWidget);
+      expect(find.text(OnboardingCopy.welcome), findsNothing);
+    },
+  );
+
+  testWidgets(
+    'a computer\'s own sign-in code read first: what to do next, in the headline\'s place',
+    (tester) async {
+      stubAccounts((_) async {});
+      await pump(tester);
+      await tester.tap(scan);
+      await settle(tester);
+      tester
+          .widget<ScanToConnectPage>(find.byType(ScanToConnectPage))
+          .onSignInCode!(const SignInCode('hnq_computer'));
+      await settle(tester);
+      expect(notifier.pendingComputerSignIn, 'hnq_computer');
+      expect(find.byKey(const ValueKey('welcome-notice')), findsOneWidget);
+      expect(find.textContaining(OnboardingCopy.signInFirst), findsOneWidget);
+      expect(find.text(OnboardingCopy.welcome), findsNothing);
+
+      // An account pressed lets it go; the code is still held for after the sign-in.
+      await tester.tap(find.text('Continue with Google'));
+      await settle(tester);
+      expect(find.byKey(const ValueKey('welcome-notice')), findsNothing);
+      expect(find.text(OnboardingCopy.welcome), findsOneWidget);
+      expect(notifier.pendingComputerSignIn, 'hnq_computer');
+    },
+  );
 
   testWidgets('QR code: the camera, with no "Use email instead" — back is the way out', (
     tester,
@@ -254,4 +368,20 @@ void main() {
     // The resend clock runs out before the test ends.
     await tester.pump(const Duration(seconds: 31));
   });
+}
+
+/// The app's notifier, its accounts' pages stubbed: [provider] stands in for the real sign-in.
+class _StubAccounts extends AppNotifier {
+  _StubAccounts(this.provider)
+    : super(
+        config: AppConfig.dev,
+        authSession: AuthSession(),
+        configStore: null,
+      );
+
+  final Future<void> Function(SignInProvider) provider;
+
+  @override
+  Future<void> signInWithProvider(SignInProvider provider) =>
+      this.provider(provider);
 }

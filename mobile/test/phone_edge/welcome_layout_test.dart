@@ -62,7 +62,12 @@ void main() {
             'You were signed out because this phone was removed from your account on another device.';
       addTearDown(app.dispose);
       await pump(tester, welcome(app), scale, brightness);
-      expect(find.text(OnboardingCopy.welcome), findsOneWidget);
+      // The reason in the headline's place, the headline back once a way in is pressed.
+      expect(
+        find.textContaining('removed from your account on another device'),
+        findsOneWidget,
+      );
+      expect(find.text(OnboardingCopy.welcome), findsNothing);
     });
   });
 

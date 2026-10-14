@@ -55,9 +55,12 @@ import 'sign_in_provider_button.dart';
 /// No sample, no "Is Harness on your computer?", no tips.
 ///
 /// ⚠️ **The foot never changes height.** While an account's page is up, the line of lesser ways in
-/// under the buttons becomes Cancel; why it did not finish is said under the headline, in room
-/// kept for it — so the picture, in the same place on every onboarding screen ([OnboardingFrame]),
-/// never moves for it.
+/// under the buttons becomes Cancel; why it did not finish is said in the headline's place — so the
+/// picture, in the same place on every onboarding screen ([OnboardingFrame]), never moves for it.
+///
+/// ⚠️ **A message takes the headline's place** (owner, 2026-10-14): why the phone was signed out,
+/// why a sign-in did not finish, what to do next. Pressing any way in — Google, Apple, Continue
+/// with email, QR code — lets it go, and the headline comes back.
 class PhoneWelcome extends StatefulWidget {
   const PhoneWelcome({
     super.key,
@@ -97,8 +100,12 @@ class _PhoneWelcomeState extends State<PhoneWelcome> {
 
   String? _error;
 
-  /// A line under the headline that is neither a failure nor a sign-out: what to do next.
+  /// A line in the headline's place that is neither a failure nor a sign-out: what to do next.
   String? _notice;
+
+  /// A way in was pressed: the sign-out's reason has been read, and gives the headline back for
+  /// good. Kept here, not cleared on the notifier, which says why the phone was signed out.
+  bool _reasonRead = false;
 
   int _resendIn = 0;
   Timer? _resendTimer;
@@ -117,10 +124,15 @@ class _PhoneWelcomeState extends State<PhoneWelcome> {
   }
 
   /// "Continue with Google / Apple": the account's own sign-in page, in the app. Its failure is
-  /// said under the headline; a cancel says nothing ([AppNotifier.signInWithProvider]).
+  /// said in the headline's place; a cancel says nothing ([AppNotifier.signInWithProvider]).
   Future<void> _signInWith(SignInProvider provider) async {
     if (widget.notifier.signingIn) return;
-    setState(() => _error = null);
+    // A way in pressed: whatever was said lets the headline back.
+    setState(() {
+      _error = null;
+      _notice = null;
+      _reasonRead = true;
+    });
     try {
       await widget.notifier.signInWithProvider(provider);
     } catch (e) {
@@ -347,7 +359,7 @@ class _PhoneWelcomeState extends State<PhoneWelcome> {
                   key: const ValueKey('welcome-notice'),
                   icon: LucideIcons.monitorSmartphone300,
                 ),
-                (null, null, final reason?) => _Said(reason),
+                (null, null, final reason?) when !_reasonRead => _Said(reason),
                 _ => null,
               },
               actions: _Accounts(
@@ -357,8 +369,15 @@ class _PhoneWelcomeState extends State<PhoneWelcome> {
                 waitingOn: notifier.signInProvider,
                 entering: entering,
                 onCancel: notifier.cancelProviderSignIn,
-                onEmail: () => _go(_Step.email),
-                onScan: () => _go(_Step.scan),
+                // Either way in lets the message go, as the accounts do: back here, the headline.
+                onEmail: () {
+                  _reasonRead = true;
+                  _go(_Step.email);
+                },
+                onScan: () {
+                  _reasonRead = true;
+                  _go(_Step.scan);
+                },
               ),
             ),
             _Step.scan => ScanToConnectPage(
@@ -628,10 +647,10 @@ class _Dot extends StatelessWidget {
   }
 }
 
-/// A line under the headline, in the status line's place: why an account's sign-in did not finish
-/// (the terminal's red ✗), why a phone that was signed in is back here (the sign-out mark in its
-/// yellow — not red: the person did nothing wrong, and signing in again is the whole of what to do),
-/// or what to do next ([icon] in place of the sign-out mark).
+/// A line in the headline's place, until a way in is pressed: why an account's sign-in did not
+/// finish (the terminal's red ✗), why a phone that was signed in is back here (the sign-out mark in
+/// its yellow — not red: the person did nothing wrong, and signing in again is the whole of what to
+/// do), or what to do next ([icon] in place of the sign-out mark).
 class _Said extends StatelessWidget {
   const _Said(
     this.text, {
@@ -669,7 +688,7 @@ class _Said extends StatelessWidget {
             TextSpan(text: text),
           ],
         ),
-        // Left, on the headline's edge, as the words above it are.
+        // Left, on the headline's edge, where the headline was.
         textAlign: TextAlign.start,
         maxLines: 2,
         overflow: TextOverflow.ellipsis,
