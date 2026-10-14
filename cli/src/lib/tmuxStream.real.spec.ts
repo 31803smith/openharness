@@ -215,6 +215,80 @@ run('TmuxControlStream real tmux', () => {
     }
   })
 
+  // The print began before the capture's cut and had not ended at it, after the wait for it had given up: the keyframe
+  // held a cleared, half-printed screen, and the rest of the print came as output with no clear in it (review of #1310).
+  it('takes the keyframe again when an engine\'s print was under way at the capture\'s cut', async () => {
+    const script = join(socketRoot, 'late-repaint.sh')
+    await writeFile(script, [
+      `trap 'printf "\\033[2J\\033[3J\\033[H\\033[?2026hHALF\\n"; sleep 0.5; printf "REPAINTED\\n\\033[?2026l"' WINCH`,
+      `printf 'ready\\n'`,
+      'while :; do sleep 0.02; done',
+    ].join('\n') + '\n')
+    await tmux(['respawn-pane', '-k', '-t', paneId, 'bash', script])
+    await eventually(async () => (await tmux(['capture-pane', '-p', '-t', paneId])).includes('ready'))
+    const live: Buffer[] = []
+    // The session's own size: opening does not resize it, and sets off no print of its own.
+    const opened = await TmuxControlStream.open(paneId, { cols: 80, rows: 24 }, { onData: (bytes) => { live.push(Buffer.from(bytes)) }, onClose: () => {} })
+    expect(opened.state).toBe('succeeded')
+    try {
+      if (opened.state !== 'succeeded') return
+      await new Promise((resolve) => setTimeout(resolve, 100))
+      opened.value.beginSnapshot()
+      expect((await opened.value.resize({ cols: 80, rows: 12 })).state).toBe('succeeded')
+      // Past the 250 ms the snapshot waits from a resize for the print to begin, which it did, and still under way.
+      await new Promise((resolve) => setTimeout(resolve, 300))
+      const screen = await tmux(['capture-pane', '-p', '-t', paneId])
+      expect(screen).toContain('HALF')
+      expect(screen).not.toContain('REPAINTED')
+      live.length = 0
+      const snapshot = await opened.value.snapshot({ repaint: { clears: '\u001b[3J', ends: '\u001b[?2026l', withinMs: 250 } })
+      opened.value.endSnapshot()
+      await new Promise((resolve) => setTimeout(resolve, 300))
+      expect(snapshot.state).toBe('succeeded')
+      expect(snapshot.state === 'succeeded' && Buffer.from(snapshot.value.bytes).toString('utf8')).toContain('REPAINTED')
+      expect(Buffer.concat(live).toString('latin1')).not.toContain('REPAINTED')
+    } finally {
+      if (opened.state === 'succeeded') await opened.value.close()
+    }
+  })
+
+  // The stream manager reads the output a keyframe held back as it reads live output, and begins the keyframe for
+  // Codex's print from it: what follows the clear precedes that keyframe's cut, and must not reach the viewer after it.
+  it('holds what is left of the output a snapshot releases behind the next one its sink begins', async () => {
+    const delivered: string[] = []
+    let regate: (() => void) | null = null
+    const opened = await TmuxControlStream.open(paneId, { cols: 80, rows: 20 }, {
+      onData: (bytes) => {
+        delivered.push(Buffer.from(bytes).toString('utf8'))
+        const begin = regate
+        regate = null
+        begin?.()
+      },
+      onClose: () => {},
+    })
+    expect(opened.state).toBe('succeeded')
+    try {
+      if (opened.state !== 'succeeded') return
+      opened.value.beginSnapshot()
+      expect((await opened.value.snapshot()).state).toBe('succeeded')
+      const script = join(socketRoot, 'chunks.sh')
+      await writeFile(script, "printf 'one,'; sleep 0.1; printf 'two,'; sleep 0.1; printf 'three'; sleep 30\n")
+      await tmux(['respawn-pane', '-k', '-t', paneId, 'bash', script])
+      await eventually(async () => (await tmux(['capture-pane', '-p', '-t', paneId])).includes('one,two,three'))
+      await new Promise((resolve) => setTimeout(resolve, 100))
+      delivered.length = 0
+      regate = () => opened.value.beginSnapshot()
+      opened.value.endSnapshot()
+      // The first chunk began a snapshot: the rest are held behind it, and released with it, in order.
+      expect(delivered).toHaveLength(1)
+      opened.value.endSnapshot()
+      expect(delivered.length).toBeGreaterThan(1)
+      expect(delivered.join('')).toContain('one,two,three')
+    } finally {
+      if (opened.state === 'succeeded') await opened.value.close()
+    }
+  })
+
   it('streams large styled Unicode and control-byte output without losing or changing bytes', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'harness-stream-bytes-'))
     const path = join(directory, 'payload.bin')

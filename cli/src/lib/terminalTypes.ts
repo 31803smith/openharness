@@ -184,13 +184,16 @@ export interface TerminalStreamHandle<Ref extends TerminalRuntimeRef = TerminalR
    * (facets/launch.ts `ScreenContract.resizeRepaint`): a snapshot taken right
    * after the pane was resized waits for that print, so it holds what follows
    * the clear rather than what preceded it; `cleared`, when the clear has come
-   * already, as live output, so only the print's end is waited for. */
+   * already, as live output, so only the print's end is waited for. A print
+   * that began before the capture's cut and had not ended there, whenever it
+   * began, has the snapshot taken again once it ends. */
   snapshot(options?: {
     tuiOwnsScrollback?: boolean
     conversationHistory?: boolean
     repaint?: { clears: string; ends: string; withinMs: number; cleared?: boolean }
   }): Promise<TerminalReadResult<TerminalStreamSnapshot>>
-  /** Release output produced strictly after the snapshot cut. */
+  /** Release output produced strictly after the snapshot cut. The sink may
+   * begin the next snapshot from it: what is left is then held behind that one. */
   endSnapshot(): void
   writeRaw(bytes: Uint8Array): Promise<TerminalActionResult>
   /** A clipboard paste, delivered as one atomic unit rather than chunked like `writeRaw` — see

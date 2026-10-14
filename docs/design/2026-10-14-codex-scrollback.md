@@ -92,7 +92,19 @@ line breaks, which tmux cannot join.
 - once joined back into logical lines (`capture-pane -J`).
 
 It also probes the seam: `-J -S -1 -E 0` returns one line if the last history row runs on into the visible
-grid. All three commands are sent together, so no output lands between them.
+grid. The three must read the same history:
+
+- **One write.** `ControlCommandQueue.runTogether` writes the three lines to tmux in one write. tmux runs
+  every line it read at once before it reads the pane again. Against a pane printing as fast as it could,
+  output was read between the three in 28 of 500 tries when written one line per write, and in 0 of 500
+  when written together (tmux 3.7c).
+- **Checked, not assumed.** tmux sends a pane's output and command replies in the order they happened. The
+  stream counts the pane's output notifications at the first capture's `%end` and at the last one's. If they
+  differ, the three are read again; if they differ a second time, the history goes as tmux has it.
+- **Not one line joined with `;`.** tmux answers each command of a list with its own `%begin`/`%end`, and
+  none after one that fails. The queue, which also carries keystrokes, could no longer pair replies with
+  commands.
+
 `lib/historyRewrap.ts` then writes the history again:
 
 - **Measure as the viewer does.** `cellAdvance.ts` ports xterm.dart's Unicode 11 wide table. xterm.dart
@@ -149,13 +161,22 @@ between.
 
 - **The wait.** Codex declares `resizeRepaint`. `TmuxControlStream` records when it really changed the
   pane's size (`resizedAt`). A snapshot taken within `withinMs` (250 ms) of that waits for the clear, then
-  for the first `ESC[?2026l` after it, and gives up after 400 ms (`REPAINT_MAX_MS`). Output meanwhile is
-  held behind the snapshot gate, and what precedes the capture's cut is the capture's. The clear never
-  leaves the daemon, and the keyframe holds the reprinted screen.
+  for the first `ESC[?2026l` after it, and gives up 400 ms after it saw the clear (`REPAINT_MAX_MS`).
+  Output meanwhile is held behind the snapshot gate, and what precedes the capture's cut is the capture's.
+  The clear never leaves the daemon, and the keyframe holds the reprinted screen.
+- **A print under way at the cut.** The clear can come after the wait gave up, or where there was no wait
+  to make, and still before the capture's cut. The cut then discards it, and the capture holds a cleared or
+  half-printed screen. So the output the cut discards is read for the print (`printInProgress`). If the
+  print began there and had not ended, the snapshot waits for its end and is taken again; only that
+  keyframe is sent.
 - **The guard.** For 1.5 s after a keyframe for an open or a resize (`REPAINT_GUARD_MS`), the stream
   manager watches live output for the clear. If it arrives anyway (a Codex at work answered later than the
   wait), the chunk and anything unsent are dropped, and a keyframe waits for the reprint's end. If the end
   came in the same chunk, the keyframe is taken at once.
+- **The output a keyframe held back is live output too.** After a keyframe is sent, the output that followed
+  its cut is released, and it is read for the clear like any live output. The manager marks the keyframe as
+  done before releasing that output. If a keyframe for the print begins partway through the release, the
+  stream holds the rest behind that keyframe's gate: it precedes the new cut, so the capture holds it.
 - **Reading the end, not a pause.** A first version waited for a 50 ms pause in the output. A Codex at work
   redraws its `Working (…)` line continuously and never pauses, so every resize keyframe ran to the 1.5 s
   cap, holding the phone's echo of what was typed (`snapshotMs` 1536–1585 in the daemon's log).
@@ -202,7 +223,9 @@ override the person's own choice for Claude Code.
   until they scroll into history and a later keyframe arrives (an open, a resize or a keyboard toggle).
   Codex's own reprint usually repairs them first.
 - **Resize keyframes for Codex arrive later:**
-  - 100–112 ms idle, about 185 ms in a long session at work, at most 400 ms;
+  - 100–112 ms idle, about 185 ms in a long session at work, at most 400 ms after the clear;
+  - a print caught under way at the capture's cut costs one more capture, after waiting up to another
+    400 ms for its end;
   - a Codex with no transcript to reprint costs the full 250 ms wait;
   - typed echo is held for that window, and only right after a resize.
 - **Heavier keyframes for Codex panes.** 2000 rows at 40 columns measured 103 KiB and about 32 ms to
@@ -237,11 +260,17 @@ keyframe.
     long words, wide characters, clusters, the seam, and Codex diff joins;
   - `lib/cellAdvance.spec.ts`;
   - `engines/kit/launchScreen.spec.ts`.
-- **Updated specs:** `lib/engineLaunch.spec.ts`, `shellLaunch.spec.ts`, `lib/terminalStreamManager.spec.ts`
-  (options, the repaint guard, `reason`) and `lib/tmuxStream.spec.ts` (`dropOldestHistoryRows`).
+- **Updated specs:**
+  - `lib/engineLaunch.spec.ts` and `shellLaunch.spec.ts`;
+  - `lib/terminalStreamManager.spec.ts`: options, the repaint guard, `reason`, and a clear in the output a
+    keyframe held back;
+  - `lib/tmuxStream.spec.ts`: `dropOldestHistoryRows`, `printInProgress`, and `runTogether` (one write,
+    replies still paired, failures).
 - **Real tmux** (`lib/tmuxStream.real.spec.ts`, `RUN_REAL_TMUX_STREAM=1`):
   - a conversation's history seeded whole and re-wrapped;
-  - a pane script that clears and reprints on SIGWINCH while animating a status line every 20 ms.
+  - a pane script that clears and reprints on SIGWINCH while animating a status line every 20 ms;
+  - a print still under way at the capture's cut, taken again once it ends;
+  - the rest of a release held behind a snapshot its sink begins.
 
   On macOS run it with a short `TMPDIR`, or tmux's socket path is too long.
 - **Golden launch records re-recorded** (`RECORD_LAUNCH_GOLDEN`, `RECORD_LAUNCH_SHAPES_GOLDEN`,

@@ -203,6 +203,33 @@ describe('TerminalStreamManager', () => {
     expect(output()).toContain('\u001b[3J')
   })
 
+  // The keyframe after a resize was taken before Codex's print began, and the clear came in the output held behind it.
+  // Released while the keyframe was still marked as being taken, it went to the viewer unread (review of #1310).
+  it('reads the output a keyframe held back for an engine\'s print, as it reads live output', async () => {
+    const repaint = { clears: '\u001b[3J', ends: '\u001b[?2026l', withinMs: 250 }
+    const output = () => binarySent.filter(({ frame }) => frame.kind === TerminalBinaryKind.output)
+      .map(({ frame }) => Buffer.from(frame.bytes).toString('latin1')).join('')
+    await manager.handleFrame('web-1', 'terminal_open', {
+      requestId: 'open-1', protocolVersion: 3, agentId: 'agent-1', cols: 120, rows: 40,
+    })
+    const streamId = sent[0].payload.streamId as string
+    stream.onEndSnapshot = () => {
+      stream.onEndSnapshot = null
+      sink!.onData(Buffer.from('\u001b[?2026hworking\u001b[?2026l'))
+      sink!.onData(Buffer.from('\u001b[H\u001b[2J\u001b[3J\u001b[H\u001b[?2026h'))
+    }
+    const taken = stream.snapshots
+    await manager.handleFrame('web-1', 'terminal_resize', { streamId, resizeSeq: 0, cols: 120, rows: 30 })
+    await vi.advanceTimersByTimeAsync(8)
+
+    // The resize's keyframe, then the print's, which waits for its end.
+    expect(stream.snapshots).toBe(taken + 2)
+    expect(stream.snapshotOptions.at(-1)).toEqual({ conversationHistory: true, repaint: { ...repaint, cleared: true } })
+    expect(stream.snapshotBegins).toBe(stream.snapshotEnds)
+    expect(output()).not.toContain('\u001b[3J')
+    expect(binarySent.at(-1)!.frame.kind).toBe(TerminalBinaryKind.keyframe)
+  })
+
   it('tells a Grok snapshot not to seed tmux history, an engine kept in the scrollback to seed all of it, and leaves other engines alone', async () => {
     await manager.handleFrame('web-1', 'terminal_open', {
       requestId: 'open-codex', protocolVersion: 3, agentId: 'agent-1', cols: 120, rows: 40,

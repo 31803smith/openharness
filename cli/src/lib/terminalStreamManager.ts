@@ -1242,9 +1242,12 @@ export class TerminalStreamManager {
       compressedBytes: body.bytes.length,
       snapshotMs: Math.max(0, this.now() - startedAt),
     })
-    state.handle.endSnapshot()
+    // The output held behind the keyframe is released as live output, read for an engine's print as it is
+    // (`repaintBegan`): Codex's clear came in it, after a keyframe taken before its print began, and went straight to
+    // the viewer while the keyframe was still marked as being taken. The print's keyframe can begin from it here.
     state.snapshotting = false
     state.resyncing = false
+    state.handle.endSnapshot()
     this.flushOutput(state)
     if (state.pendingBytes > PAUSE_HIGH_WATERMARK_BYTES && !state.outputPaused) void this.pauseOutput(state)
   }

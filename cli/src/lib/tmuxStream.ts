@@ -19,6 +19,8 @@ import {
   type TmuxRuntimeRef,
 } from './terminalTypes.js'
 
+type SnapshotOptions = NonNullable<Parameters<TerminalStreamHandle<TmuxRuntimeRef>['snapshot']>[0]>
+
 const MIN_COLS = 1
 const MAX_COLS = 300
 const MIN_ROWS = 1
@@ -36,8 +38,8 @@ const CLOSE_EXIT_WAIT_MS = 500
 const SNAPSHOT_BUFFER_MAX_BYTES = 2 * 1024 * 1024
 const SNAPSHOT_QUIET_MS = 8
 const SNAPSHOT_QUIET_MAX_MS = 40
-/** The longest a snapshot waits from a resize for an engine's print to end, once it has begun: Codex's ended by
- *  186 ms. Past it the keyframe is taken as it is, and the rest of the print reaches the viewer as output. */
+/** The longest a snapshot waits for an engine's print to end from the moment it saw the print begin: Codex's ended
+ *  by 186 ms after the resize. Past it the keyframe is taken as it is, and the rest reaches the viewer as output. */
 const REPAINT_MAX_MS = 400
 const SNAPSHOT_HISTORY_LINES = 500
 /**
@@ -325,6 +327,18 @@ export function dropOldestHistoryRows(rows: Uint8Array, excess: number): Uint8Ar
   return end < 0 ? Buffer.alloc(0) : buffer.subarray(end + 2)
 }
 
+/**
+ * Whether the output read before a capture's cut began an engine's print (facets/launch.ts
+ * `ScreenContract.resizeRepaint`) and had not ended it there: the capture then holds a cleared or half-printed screen.
+ */
+export function printInProgress(chunks: readonly Uint8Array[], print: { clears: string; ends: string }): boolean {
+  if (chunks.length === 0) return false
+  const read = Buffer.concat(chunks)
+  const clears = Buffer.from(print.clears, 'utf8')
+  const at = read.lastIndexOf(clears)
+  return at >= 0 && read.indexOf(Buffer.from(print.ends, 'utf8'), at + clears.length) < 0
+}
+
 export function synthesizeTmuxSnapshot(
   capture: Uint8Array,
   meta: PaneMeta,
@@ -458,10 +472,22 @@ export class ControlCommandQueue {
   }
 
   run(command: string, onEnd?: () => void): Promise<ControlCommandResult> {
-    return new Promise((resolve) => {
+    return this.runTogether([{ command, onEnd }])[0]
+  }
+
+  /**
+   * Commands that must read the pane as one moment, written to tmux in one write. tmux runs every line it read at once
+   * before it reads the pane again; one line per write, a pane printing all it could had output read between three
+   * captures in 28 of 500 tries, and 0 of 500 written together (tmux 3.7c, 2026-10-14). Not one line joined with `;`:
+   * tmux answers each command of a list in its own `%begin`/`%end`, and none after one that fails, which the queue
+   * could no longer pair with what it sent.
+   */
+  runTogether(commands: ReadonlyArray<{ command: string; onEnd?: () => void }>): Array<Promise<ControlCommandResult>> {
+    const results = commands.map(({ command, onEnd }) => new Promise<ControlCommandResult>((resolve) => {
       this.waiting.push({ command, lines: [], commandNumber: null, timer: null, onEnd, resolve })
-      this.pump()
-    })
+    }))
+    this.pump()
+    return results
   }
 
   handleBegin(commandNumber: string): void {
@@ -496,22 +522,21 @@ export class ControlCommandQueue {
     }
   }
 
+  /** Everything waiting goes in one write: commands queued together (`runTogether`), or before the attach answered. */
   private pump(): void {
-    if (!this.ready) return
-    while (this.waiting.length) {
-      const next = this.waiting.shift()!
-      let written = false
-      try {
-        written = this.deps.write(`${next.command}\n`)
-      } catch {
-        written = false
-      }
-      if (!written) {
-        next.resolve(CONTROL_COMMAND_FAILED)
-        continue
-      }
-      this.outstanding.push(next)
+    if (!this.ready || this.waiting.length === 0) return
+    const batch = this.waiting.splice(0)
+    let written = false
+    try {
+      written = this.deps.write(batch.map(({ command }) => `${command}\n`).join(''))
+    } catch {
+      written = false
     }
+    if (!written) {
+      for (const next of batch) next.resolve(CONTROL_COMMAND_FAILED)
+      return
+    }
+    this.outstanding.push(...batch)
     this.armHead()
   }
 
@@ -557,6 +582,9 @@ export class TmuxControlStream implements TerminalStreamHandle<TmuxRuntimeRef> {
   private snapshotPostCut: Buffer[] = []
   private snapshotPostCutBytes = 0
   private snapshotLastOutputAt = 0
+  /** How many of the pane's output notifications have been read: one that moved between two command replies was read
+   *  by tmux between the two commands. */
+  private outputNotifications = 0
   /** When this stream last changed the pane's size (`resize`), which an engine may answer by printing again. */
   private resizedAt = Number.NEGATIVE_INFINITY
   private lastTuiScrollAt = 0
@@ -695,6 +723,12 @@ export class TmuxControlStream implements TerminalStreamHandle<TmuxRuntimeRef> {
   }
 
   private routeOutput(bytes: Uint8Array): void {
+    this.outputNotifications++
+    this.deliverOutput(bytes)
+  }
+
+  /** To the sink, or, while a snapshot is being taken, behind its gate. */
+  private deliverOutput(bytes: Uint8Array): void {
     if (!this.snapshotGated) {
       this.sink.onData(bytes)
       return
@@ -713,6 +747,11 @@ export class TmuxControlStream implements TerminalStreamHandle<TmuxRuntimeRef> {
   private runControlCommand(command: string, onEnd?: () => void): Promise<ControlCommandResult> {
     if (this.closed || !this.child.stdin.writable) return Promise.resolve(CONTROL_COMMAND_FAILED)
     return this.commands.run(command, onEnd)
+  }
+
+  private runControlCommands(commands: ReadonlyArray<{ command: string; onEnd?: () => void }>): Array<Promise<ControlCommandResult>> {
+    if (this.closed || !this.child.stdin.writable) return commands.map(() => Promise.resolve(CONTROL_COMMAND_FAILED))
+    return this.commands.runTogether(commands)
   }
 
   private serializeOperation<T>(operation: () => Promise<T>): Promise<T> {
@@ -763,123 +802,159 @@ export class TmuxControlStream implements TerminalStreamHandle<TmuxRuntimeRef> {
     let scanned = 0
     // The end of what was read that may begin a sequence the next chunk completes.
     let carry = Buffer.alloc(0)
-    // A clear that came as live output (the stream manager's guard) is behind this wait: only the end is read for.
-    let cleared = repaint.cleared === true
-    const from = cleared ? Date.now() : this.resizedAt
+    // A clear already seen, as live output (the stream manager's guard) or before a capture's cut, is behind this
+    // wait: only the end is read for.
+    let clearedAt = repaint.cleared === true ? Date.now() : null
     while (!this.closed && this.snapshotGated) {
       for (; scanned < this.snapshotPostCut.length; scanned++) {
         let chunk = Buffer.concat([carry, this.snapshotPostCut[scanned]])
-        if (!cleared) {
+        if (clearedAt == null) {
           const at = chunk.indexOf(clears)
           if (at < 0) {
             carry = chunk.subarray(Math.max(0, chunk.length - clears.length + 1))
             continue
           }
-          cleared = true
+          // The print gets all of REPAINT_MAX_MS, however late in `withinMs` it began.
+          clearedAt = Date.now()
           chunk = chunk.subarray(at + clears.length)
         }
         if (chunk.includes(ends)) return
         carry = chunk.subarray(Math.max(0, chunk.length - ends.length + 1))
       }
-      if (Date.now() - (cleared ? from : this.resizedAt) >= (cleared ? REPAINT_MAX_MS : repaint.withinMs)) return
+      const now = Date.now()
+      if (clearedAt == null ? now - this.resizedAt >= repaint.withinMs : now - clearedAt >= REPAINT_MAX_MS) return
       await new Promise((resolve) => setTimeout(resolve, 5))
     }
   }
 
-  async snapshot(options?: {
-    tuiOwnsScrollback?: boolean
-    conversationHistory?: boolean
-    repaint?: { clears: string; ends: string; withinMs: number; cleared?: boolean }
-  }): Promise<TerminalReadResult<TerminalStreamSnapshot>> {
+  async snapshot(options?: SnapshotOptions): Promise<TerminalReadResult<TerminalStreamSnapshot>> {
     return this.serializeOperation(async () => {
       if (!this.snapshotGated) return { state: 'failed', reason: 'tmux snapshot gate is not active' }
-      // -N is required for TUI fidelity: styled blank cells (for example the
-      // Codex input box background) live in trailing spaces that tmux otherwise
-      // trims from each captured row. Deliberately do not use capture-pane -S:
-      // tmux scrollback contains old full-screen TUI repaint frames. Replaying
-      // those frames into a fresh emulator corrupts the visible screen.
-      // -N is tmux 3.1. Before it the flag failed the capture, and with it every
-      // snapshot: the terminal never showed. Without it the screen is all there,
-      // short only of the colour of a row's trailing blanks.
-      const keepTrailing = this.features.captureTrailingSpaces ? ' -N' : ''
-      const baseCapture = `capture-pane -p -e${keepTrailing} -t ${this.runtime.paneId}`
-      // Attaching a control client can trigger an immediate TUI repaint. Wait
-      // before reading both cursor metadata and the grid so the synthesized
-      // keyframe cannot combine a post-repaint grid with pre-repaint cursor
-      // coordinates.
       const repaint = options?.repaint
-      if (repaint && (repaint.cleared || Date.now() - this.resizedAt < repaint.withinMs)) await this.waitForRepaint(repaint)
-      await this.waitForSnapshotQuiet()
-      const metadata = await this.runControlCommand(
-        `display-message -p -t ${this.runtime.paneId} '${PANE_META_FORMAT}'`,
-      )
-      if (!metadata.ok) return { state: 'failed', reason: 'tmux snapshot metadata is unavailable' }
-      const meta = parsePaneMeta(metadata.stdout)
-      if (!meta || meta.windowPanes !== 1) return { state: 'failed', reason: 'tmux snapshot metadata is invalid' }
-      // History is a styled cell capture used only to seed the receiver's
-      // local scrollback. It preserves SGR attributes without replaying old
-      // TUI cursor movement. Read it before the authoritative visible-grid cut
-      // so concurrent output is included there or in a post-cut delta.
-      //
-      // Grok (and any TUI that paints in the normal buffer) is the other
-      // history trap: tmux reports alternate_on=0, so a naive capture would
-      // seed hundreds of prior full-screen repaint frames. The window then
-      // shows stacked empty chrome above the live header, and the wheel
-      // scrolls that junk locally instead of the program.
-      const tuiOwnsScrollback = options?.tuiOwnsScrollback === true
-      const seedsHistory = !meta.alternateOn && !tuiOwnsScrollback
-      const conversation = seedsHistory && options?.conversationHistory === true
-      const historyRange = `-t ${this.runtime.paneId} -S -${conversation ? CONVERSATION_HISTORY_LINES : SNAPSHOT_HISTORY_LINES} -E -1`
-      // A conversation's history is re-wrapped by word as well (historyRewrap.ts): tmux re-wraps it by the cell
-      // whenever a takeover narrows the pane. That reads the same rows joined back into the lines they were (-J),
-      // and whether the last of them runs on into the visible grid (one line from -1 to 0, not two). The three go
-      // to tmux together, so no output lands between them; the plain capture stays, for the keyframe whenever
-      // there is nothing to re-wrap or the re-wrap cannot be used.
-      const rewrap = conversation && meta.paneWidth >= REWRAP_MIN_WIDTH
-      const [plain, joined, seam] = seedsHistory
-        ? await Promise.all([
-          this.runControlCommand(`capture-pane -p -e${keepTrailing} ${historyRange}`),
-          rewrap ? this.runControlCommand(`capture-pane -p -e -J ${historyRange}`) : null,
-          rewrap ? this.runControlCommand(`capture-pane -p -J -t ${this.runtime.paneId} -S -1 -E 0`) : null,
-        ])
-        : [null, null, null]
-      const history = plain?.stdout ?? Buffer.alloc(0)
-      let historyRows: Buffer | null = null
-      if (joined?.ok && seam?.ok) {
-        try {
-          // One line, its newline the last byte: rows -1 and 0 are one line.
-          const lastContinues = seam.stdout.indexOf(0x0a) === seam.stdout.length - 1
-          historyRows = rewrapTmuxHistory(joined.stdout, meta.paneWidth, { lastContinues })
-        } catch {
-          // A history the re-wrap cannot read is sent as tmux has it, as it always was.
-          historyRows = null
-        }
-      }
-      const capture = await this.runControlCommand(baseCapture, () => {
-        // `%end` is the ordered cut. Notifications observed before it are
-        // represented by capture-pane; only later output may follow the keyframe.
-        this.snapshotPostCut = []
-        this.snapshotPostCutBytes = 0
-      })
-      if (!capture.ok) return { state: 'failed', reason: 'tmux snapshot failed' }
-      const screenMeta = tuiOwnsScrollback ? { ...meta, alternateOn: true } : meta
-      let rows: Uint8Array | undefined = historyRows ?? (conversation ? normalizeTmuxHistoryLines(history) : undefined)
-      let bytes = synthesizeTmuxSnapshot(capture.stdout, screenMeta, history, rows)
-      // A conversation is seeded as far back as fits: past the limit the stream would be closed, so its oldest
-      // rows go. Any other history is sent as it always was.
-      if (conversation && rows && bytes.length > KEYFRAME_MAX_BYTES) {
-        rows = dropOldestHistoryRows(rows, bytes.length - KEYFRAME_MAX_BYTES)
-        bytes = synthesizeTmuxSnapshot(capture.stdout, screenMeta, history, rows)
-      }
-      return {
-        state: 'succeeded',
-        value: {
-          bytes,
-          cols: meta.paneWidth,
-          rows: meta.paneHeight,
-        },
-      }
+      if (!repaint) return this.capturePane(options)
+      if (repaint.cleared || Date.now() - this.resizedAt < repaint.withinMs) await this.waitForRepaint(repaint)
+      const taken = await this.capturePane(options, repaint)
+      if (taken !== 'printing') return taken
+      // The print began before the capture's cut and had not ended at it: after the wait above gave up, or where there
+      // was none to make. The viewer would draw the cleared or half-printed screen that capture holds, and the live
+      // output after it begins with no clear for the stream manager to see. It is taken again once the print ends.
+      await this.waitForRepaint({ ...repaint, cleared: true })
+      return this.capturePane(options)
     })
+  }
+
+  /**
+   * The pane, read for a keyframe. With `print`, what the capture's cut discards is read for that print
+   * (`printInProgress`), and a capture taken while it was under way comes back as `'printing'`.
+   */
+  private capturePane(options: SnapshotOptions | undefined): Promise<TerminalReadResult<TerminalStreamSnapshot>>
+  private capturePane(
+    options: SnapshotOptions | undefined, print: { clears: string; ends: string },
+  ): Promise<TerminalReadResult<TerminalStreamSnapshot> | 'printing'>
+  private async capturePane(
+    options: SnapshotOptions | undefined, print?: { clears: string; ends: string },
+  ): Promise<TerminalReadResult<TerminalStreamSnapshot> | 'printing'> {
+    // -N is required for TUI fidelity: styled blank cells (for example the
+    // Codex input box background) live in trailing spaces that tmux otherwise
+    // trims from each captured row. Deliberately do not use capture-pane -S:
+    // tmux scrollback contains old full-screen TUI repaint frames. Replaying
+    // those frames into a fresh emulator corrupts the visible screen.
+    // -N is tmux 3.1. Before it the flag failed the capture, and with it every
+    // snapshot: the terminal never showed. Without it the screen is all there,
+    // short only of the colour of a row's trailing blanks.
+    const keepTrailing = this.features.captureTrailingSpaces ? ' -N' : ''
+    const baseCapture = `capture-pane -p -e${keepTrailing} -t ${this.runtime.paneId}`
+    // Attaching a control client can trigger an immediate TUI repaint. Wait
+    // before reading both cursor metadata and the grid so the synthesized
+    // keyframe cannot combine a post-repaint grid with pre-repaint cursor
+    // coordinates.
+    await this.waitForSnapshotQuiet()
+    const metadata = await this.runControlCommand(
+      `display-message -p -t ${this.runtime.paneId} '${PANE_META_FORMAT}'`,
+    )
+    if (!metadata.ok) return { state: 'failed', reason: 'tmux snapshot metadata is unavailable' }
+    const meta = parsePaneMeta(metadata.stdout)
+    if (!meta || meta.windowPanes !== 1) return { state: 'failed', reason: 'tmux snapshot metadata is invalid' }
+    // History is a styled cell capture used only to seed the receiver's
+    // local scrollback. It preserves SGR attributes without replaying old
+    // TUI cursor movement. Read it before the authoritative visible-grid cut
+    // so concurrent output is included there or in a post-cut delta.
+    //
+    // Grok (and any TUI that paints in the normal buffer) is the other
+    // history trap: tmux reports alternate_on=0, so a naive capture would
+    // seed hundreds of prior full-screen repaint frames. The window then
+    // shows stacked empty chrome above the live header, and the wheel
+    // scrolls that junk locally instead of the program.
+    const tuiOwnsScrollback = options?.tuiOwnsScrollback === true
+    const seedsHistory = !meta.alternateOn && !tuiOwnsScrollback
+    const conversation = seedsHistory && options?.conversationHistory === true
+    const historyRange = `-t ${this.runtime.paneId} -S -${conversation ? CONVERSATION_HISTORY_LINES : SNAPSHOT_HISTORY_LINES} -E -1`
+    const plainHistory = `capture-pane -p -e${keepTrailing} ${historyRange}`
+    const { history, rows: historyRows } = conversation && meta.paneWidth >= REWRAP_MIN_WIDTH
+      ? await this.conversationHistory(plainHistory, historyRange, meta.paneWidth)
+      : { history: seedsHistory ? (await this.runControlCommand(plainHistory)).stdout : Buffer.alloc(0), rows: null }
+    let printing = false
+    const capture = await this.runControlCommand(baseCapture, () => {
+      // `%end` is the ordered cut. Notifications observed before it are
+      // represented by capture-pane; only later output may follow the keyframe.
+      if (print) printing = printInProgress(this.snapshotPostCut, print)
+      this.snapshotPostCut = []
+      this.snapshotPostCutBytes = 0
+    })
+    if (!capture.ok) return { state: 'failed', reason: 'tmux snapshot failed' }
+    if (printing) return 'printing'
+    const screenMeta = tuiOwnsScrollback ? { ...meta, alternateOn: true } : meta
+    let rows: Uint8Array | undefined = historyRows ?? (conversation ? normalizeTmuxHistoryLines(history) : undefined)
+    let bytes = synthesizeTmuxSnapshot(capture.stdout, screenMeta, history, rows)
+    // A conversation is seeded as far back as fits: past the limit the stream would be closed, so its oldest
+    // rows go. Any other history is sent as it always was.
+    if (conversation && rows && bytes.length > KEYFRAME_MAX_BYTES) {
+      rows = dropOldestHistoryRows(rows, bytes.length - KEYFRAME_MAX_BYTES)
+      bytes = synthesizeTmuxSnapshot(capture.stdout, screenMeta, history, rows)
+    }
+    return {
+      state: 'succeeded',
+      value: {
+        bytes,
+        cols: meta.paneWidth,
+        rows: meta.paneHeight,
+      },
+    }
+  }
+
+  /**
+   * A conversation's history as tmux has it, and re-wrapped by word (historyRewrap.ts) where a line of it is wider than
+   * the pane: tmux re-wraps it by the cell whenever a takeover narrows the pane. That reads the same rows joined back
+   * into the lines they were (-J), and whether the last of them runs on into the visible grid (one line from -1 to 0,
+   * not two). The three must read one history, so they are written to tmux together (`runTogether`); should the
+   * pane's output be read between them all the same, they are read again, and a second time the history goes as tmux
+   * has it. The plain capture is the keyframe's whenever there is nothing to re-wrap or the re-wrap cannot be used.
+   */
+  private async conversationHistory(
+    plainHistory: string, range: string, width: number,
+  ): Promise<{ history: Uint8Array; rows: Uint8Array | null }> {
+    let history: Uint8Array = Buffer.alloc(0)
+    for (let attempt = 0; attempt < 2; attempt++) {
+      let readAtFirst = -1
+      let readAtLast = -2
+      const [plain, joined, seam] = await Promise.all(this.runControlCommands([
+        { command: plainHistory, onEnd: () => { readAtFirst = this.outputNotifications } },
+        { command: `capture-pane -p -e -J ${range}` },
+        { command: `capture-pane -p -J -t ${this.runtime.paneId} -S -1 -E 0`, onEnd: () => { readAtLast = this.outputNotifications } },
+      ]))
+      history = plain.stdout
+      if (!plain.ok || !joined.ok || !seam.ok) return { history, rows: null }
+      if (readAtFirst !== readAtLast) continue
+      try {
+        // One line, its newline the last byte: rows -1 and 0 are one line.
+        const lastContinues = seam.stdout.indexOf(0x0a) === seam.stdout.length - 1
+        return { history, rows: rewrapTmuxHistory(joined.stdout, width, { lastContinues }) }
+      } catch {
+        // A history the re-wrap cannot read is sent as tmux has it, as it always was.
+        return { history, rows: null }
+      }
+    }
+    return { history, rows: null }
   }
 
   endSnapshot(): void {
@@ -888,7 +963,10 @@ export class TmuxControlStream implements TerminalStreamHandle<TmuxRuntimeRef> {
     const postCut = this.snapshotPostCut
     this.snapshotPostCut = []
     this.snapshotPostCutBytes = 0
-    for (const chunk of postCut) this.sink.onData(chunk)
+    // The sink can begin the next snapshot from what is released here: the stream manager reads it for an engine's
+    // print as it reads live output (terminalStreamManager.ts `repaintBegan`), and Codex's clear could be in it. What
+    // is left then comes before that snapshot's cut, and is held behind its gate like any output from then on.
+    for (const chunk of postCut) this.deliverOutput(chunk)
   }
 
   /**
