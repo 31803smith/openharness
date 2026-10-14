@@ -3,12 +3,12 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:harness_mobile/core/models.dart';
 import 'package:harness_mobile/demo/sample_mode.dart';
+import 'package:harness_mobile/phone/machines_tab.dart';
 import 'package:harness_mobile/phone/phone_search_catalog.dart'
     show phoneAgentId;
 import 'package:harness_mobile/phone/phone_shell_scope.dart';
 import 'package:harness_mobile/phone/terminal_page.dart';
 import 'package:harness_mobile/phone/terminal_search.dart';
-import 'package:harness_mobile/phone/new_agent_page.dart';
 import 'package:harness_mobile/phone/settings_page.dart';
 import 'package:harness_mobile/phone/voice_input_controller.dart';
 import 'package:harness_mobile/phone/voice_mic_button.dart';
@@ -201,7 +201,7 @@ void main() {
     await focus.close();
   });
 
-  testWidgets('back and forth between Focus, Find and New, quickly', (
+  testWidgets('back and forth between Focus, Find and Computers, quickly', (
     tester,
   ) async {
     final focus = await _Focus.open(tester);
@@ -223,20 +223,20 @@ void main() {
       );
       await frames(tester);
       expect(find.byType(TerminalSearchOverlay), findsNothing);
-      // Left on the terminal: New.
+      // Left on the terminal: Computers. A new harness is Find's `New Harness` now.
       await tester.dragFrom(
         centre + const Offset(120, 0),
         const Offset(-300, 0),
       );
       await frames(tester);
-      expect(find.byType(NewAgentPage), findsOneWidget);
-      // Right on New: back.
+      expect(find.byType(MachinesTab), findsOneWidget);
+      // Right on Computers: back.
       await tester.dragFrom(
-        tester.getCenter(find.byType(NewAgentPage)),
+        tester.getCenter(find.byType(MachinesTab)),
         const Offset(300, 0),
       );
       await frames(tester, count: 6);
-      expect(find.byType(NewAgentPage), findsNothing);
+      expect(find.byType(MachinesTab), findsNothing);
     }
     expect(tester.takeException(), isNull);
     expect(find.byType(TerminalView), findsOneWidget);
@@ -431,15 +431,19 @@ void main() {
       return focus;
     }
 
-    testWidgets('its keys beside the mic press its first and last answers', (
-      tester,
-    ) async {
+    // No keys beside the mic since the owner's call (2026-09-29): each answer is a band over its
+    // own lines, pressed by a tap there (the next test) — and, to a screen reader, a button named
+    // for the answer.
+    testWidgets('each answer is a button to VoiceOver, and presses its own '
+        'number', (tester) async {
+      final semantics = tester.ensureSemantics();
       final focus = await asked(tester);
-      await tester.tap(find.bySemanticsLabel(RegExp('^Answer 1')));
-      await tester.tap(find.bySemanticsLabel(RegExp('^Answer 3')));
+      tester.semantics.tap(find.semantics.byLabel(RegExp('^Answer 1 ')));
+      tester.semantics.tap(find.semantics.byLabel(RegExp('^Answer 3 ')));
       await frames(tester);
       expect(focus.typed, containsAllInOrder(['1', '3']));
       await focus.close();
+      semantics.dispose();
     });
 
     testWidgets('a tap on an answer\'s own line presses it', (tester) async {

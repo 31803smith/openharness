@@ -5418,6 +5418,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
     _onboarding.acknowledge(OnboardingStep.models);
     app.modelManager.setPanelVisible(true);
     unawaited(app.modelManager.dismissIntroduction());
+    app.markModelsOpened();
     unawaited(app.modelManager.refresh());
     unawaited(_modelsMenu!.refresh());
     _modelsOverlay = OverlayEntry(
@@ -6840,7 +6841,14 @@ class _SwarmScreenState extends State<SwarmScreen> {
       ),
     ),
     'app.add_phone': () => unawaited(_addPhone()),
-    'app.product_feedback': () => unawaited(showTaskFeedback(context, choice: () => app.api.productUsageSettings(), send: app.api.productUsageFeedback)),
+    'app.product_feedback': () => unawaited(
+      showTaskFeedback(
+        context,
+        choice: () => app.api.productUsageSettings(),
+        send: app.api.productUsageFeedback,
+        measurement: app.productMeasurement,
+      ),
+    ),
     'app.store': _openStore,
     'app.daemon': _openCompanions,
     'app.daemon_talk': _talkToDaemon,

@@ -55,6 +55,8 @@ impl Operation {
         Some(Operation { id: s("id")?, model: s("modelId")?, action, stage, phase, progress: v.get("progress").and_then(num).map(|p| p.clamp(0.0, 1.0)), error: s("error") })
     }
     pub fn active(&self) -> bool { self.phase == "running" }
+    /// A download under way: what ^S cancels ([plan_stop]).
+    pub fn downloading(&self) -> bool { self.active() && self.stage == "downloading" }
     pub fn failed(&self) -> bool { self.phase == "failed" }
     pub fn label(&self) -> &'static str {
         match self.stage.as_str() { "downloading" => "Downloading", "updating" => "Updating engine", "starting" => "Starting", "verifying" => "Testing", "stopping" => "Stopping", _ => "Checking" }
@@ -1216,6 +1218,11 @@ pub fn plan_stop(app: &App, id: &str) -> Plan {
     }
     let Some(m) = id.strip_prefix("mv:local:").and_then(|model| local_model(app, model)) else { return Plan::Nothing };
     let f = facts(app, &m, None);
+    // A download under way is cancelled, and what it downloaded deleted — the daemon's stop of it. A
+    // download that hung had nothing to press but Wait.
+    if f.op.as_ref().is_some_and(Operation::downloading) {
+        return Plan::Arm(format!("^S again cancels downloading {} — what it downloaded is deleted", m.shown()), Box::new(Plan::Act { model: m.id.clone(), action: "stop" }));
+    }
     if f.busy { return Plan::Say("Wait for the current model operation to finish.".into()) }
     // Run on the community grid alone: stopped there.
     if !m.can_stop && on_community(app, &m) {
@@ -1815,7 +1822,11 @@ pub fn on_api_models(app: &mut App, id: &str, reply: Result<Value, RpcError>) {
 }
 
 /// A download, start or stop of this computer's [model].
-fn act(app: &mut App, model: &str, action: &'static str) { act_on(app, model, action, false) }
+fn act(app: &mut App, model: &str, action: &'static str) {
+    // A stop of the model a Use is getting cancels that Use too: there is nothing left for it to start.
+    if action == "stop" && app.models_view.using.as_ref().is_some_and(|u| u.model == model) { app.models_view.using = None }
+    act_on(app, model, action, false)
+}
 
 /// [act], on the community grid of this computer's OS when [community] (a start or stop; the daemon's
 /// `community`).
@@ -2439,7 +2450,8 @@ pub fn preview(app: &App, id: &str) -> Vec<Line<'static>> {
             else if f.use_start { said.push(match &f.other { None => "Enter starts it and moves this harness onto it.".into(), Some(o) => format!("Enter stops {o}, starts this one, and moves this harness onto it.") }) }
             else if t.is_none() && m.downloaded() && !m.running() && m.can_start { said.push("Enter starts it.".into()) }
         }
-        if m.can_stop { said.push("^S stops it and frees its memory. The download is kept.".into()) }
+        if f.op.as_ref().is_some_and(Operation::downloading) { said.push("^S cancels the download and deletes what it downloaded.".into()) }
+        else if m.can_stop { said.push("^S stops it and frees its memory. The download is kept.".into()) }
         else if let Some(label) = &community { said.push(format!("^S stops it on {label}. The download is kept.")) }
         if !said.is_empty() { out.push(Line::raw("")); out.extend(said.into_iter().map(|s| Line::from(span(s, fg(theme::accent()))))) }
         if let Some(e) = f.op.as_ref().and_then(|o| o.error.clone()) { out.push(warn(e)) }
@@ -4353,6 +4365,30 @@ mod tests {
         assert_eq!(last_sent(&app), ("local".into(), "grid_fleet_model_start".into(), json!({ "modelId": "qwen-35b", "community": true })));
         assert!(app.models_view.sent.iter().all(|s| s.1 != "grid_fleet_model_stop"), "gemma keeps running");
         assert_eq!(app.models_view.using.as_ref().map(|u| (u.step, u.stops.clone())), Some((Step::Start, None)));
+    }
+
+    #[test]
+    fn stop_on_a_downloading_model_cancels_the_download_and_the_use_that_began_it() {
+        let mut app = loaded();
+        let mut picker = Picker::new("Models", "");
+        let id = "mv:local:qwen-35b";
+        choose(&mut app, &mut picker, id, false);
+        choose(&mut app, &mut picker, id, false);
+        on_act(&mut app, "local", Ok(json!({ "operation": op("download", "downloading", "running", Some(0.1)) })));
+        on_local(&mut app, "local", Ok(local_reply(qwen("available", op("download", "downloading", "running", Some(0.36))), true)));
+        assert!(app.models_view.using.is_some());
+        let p = text(&preview(&app, id));
+        assert!(p.contains("^S cancels the download and deletes what it downloaded."), "{p}");
+        // Not "Wait for the current model operation to finish", as it was while a download hung.
+        assert!(matches!(plan_stop(&app, id), Plan::Arm(ref w, _) if w == "^S again cancels downloading Qwen3.6-35B-A3B — what it downloaded is deleted"));
+        choose(&mut app, &mut picker, id, true);
+        assert!(app.models_view.sent.iter().all(|s| s.1 != "grid_fleet_model_stop"), "the first ^S only asks");
+        choose(&mut app, &mut picker, id, true);
+        assert_eq!(last_sent(&app), ("local".into(), "grid_fleet_model_stop".into(), json!({ "modelId": "qwen-35b" })));
+        assert!(app.models_view.using.is_none());
+        // Another operation under way is still waited for.
+        on_local(&mut app, "local", Ok(local_reply(qwen("downloaded", op("start", "starting", "running", None)), true)));
+        assert!(matches!(plan_stop(&app, id), Plan::Say(ref w) if w == "Wait for the current model operation to finish."));
     }
 
     /// A model a Grid setup left running, which the catalog does not list: grid serves it under its

@@ -16,7 +16,7 @@ automatically proven improvement. Changes still need review, tests and a deliber
 | Was the task useful? | Optional Completed / Partly completed / Not completed plus five fixed reason choices, reachable from Rate task outcome and Privacy | Voluntary and self-selected; not representative success or satisfaction. There is no free-text input. |
 | Is there usage at all? | Active and working computer counts; app opens; older-client relay totals | Background windows can count as active. An open is a surface going from no attached window to one, not each connection (the desktop holds one per machine and redials). Relay events are not distinct people; the populations must not be added together. |
 
-| Which features get tried and used again? | First measured installations and daily first/repeat feature reach | Locally deduplicated installation-days, not unique accounts. Reads the apps make on their own (history, history paging, Store list, model list; `PRODUCT_USAGE_AUTOMATIC_ACTIONS`) count reliability only and have no reach. |
+| Which features get tried and used again? | First measured installations and daily first/repeat feature reach | Locally deduplicated installation-days, not unique accounts. Reads the apps make on their own (history, history paging, Store list, model list; `PRODUCT_USAGE_AUTOMATIC_ACTIONS`) count reliability only. The Store and model lists get reach only from the request an app marks `userAction` when a person opens them (`<action>_user_*`, `PRODUCT_USAGE_USER_OPENED_ACTIONS`); history has none. |
 | Where do app flows break? | Setup, Harness/tmux/clipboard steps, sign-in, workspace/remote connections, computer linking, viewer-pane opening and manual update checking/staging | Fixed started/ok/failed/cancelled/unknown counts and coarse duration buckets. Opening a viewer pane is not rendering its content; staging an update is not a successful relaunch. |
 | Is measurement losing coverage? | Updated collector installation-days, pruned queues, full observation maps, unmatched app starts | Loss signals warrant caution. No signal does not prove complete collection. |
 | How many people use Harness, and do they come back? | People active / working / new per day and per app, and D1/D2/D3/D7 returns (backend rollup of 10-day pseudonymous marks) | Sharing accounts only, staff excluded; an app open across midnight counts on both days, so prefer working returns. Not available before `PRODUCT_USAGE_SUBJECT_KEY` is set. |
@@ -42,6 +42,40 @@ own retention, which the release owner must verify separately. The account prefe
 linked to the account so the switch works everywhere.
 
 ## Runtime and storage budget
+
+Desktop/CLI health adds separate marginal totals for the numeric public release and broad OS
+(`macos`, `linux`, `windows`, `other`). The two dimensions are never stored together or joined to
+the optional people records. The daily report suppresses margin labels and counts below 20
+collector observations; these are not 20 distinct people and this is not a claim of anonymity.
+Source/dev builds send a development context that ingestion drops without writing totals or receipts.
+Legacy clients without context remain separately unattributed. Mixed-release queued days use
+`unknown`; immutable in-flight receipts preserve their original context. Backdated returns are
+excluded from release/platform margins so a return's release cannot be mistaken for its cohort's.
+
+`health` in `usage:daily` reports consented setup/workspace/first-work/first-response milestones,
+coarse waits, request-source reconciliation, explicit composer-work D1/D7/D28 cohorts, weekly work-day
+bins, process health, and collector loss/rejection/late-report signals. Milestones describe local
+app episodes, can cross UTC days, and do not establish a joined signup conversion rate. First-work
+cohorts use explicit composer messages; terminal keystrokes and automatic work remain unclassified.
+Weekly bins cover completed weeks from installations that report again, so non-returners can be missing.
+
+Native Desktop observes main-frame/first-frame viewer loading, updater apply acknowledgements and
+the next observed version, explicit versus automatic connections, and resume-to-observed-work.
+The startup bucket measures launch to the first consented observation of a connected workspace,
+including preference/sign-in delay. One in 60 rendered frames supplies a coarse duration bucket;
+it cannot reliably detect an idle freeze. Error hooks pass only framework/async categories.
+Desktop RSS and gateway RSS/CPU sample once per minute; they describe those processes, not the
+whole machine or agents. Sampling adds no core timer, process enumeration, or subprocess.
+
+Desktop's only new disk state is the last consented run's version, clean-exit/update flags, choice
+revision and a local-only account-scope hash. One serialized asynchronous write plus one latest
+pending value bounds disk work. It is cleared on sign-out/off and never enters a report. An unclean
+run can mean a force quit or power loss, and only becomes observable if the app returns. Update
+flags are best effort; analytics never delays exit. Gateway work-day flags expire after 35 days;
+a local yes/no marker prevents an old installation from being counted as newly activated again.
+All new fields are allowlisted; no URLs, raw error strings, stack traces, device specifications,
+task/session IDs or content are accepted. Feedback is voluntary and shown/answered/dismissed
+counts are unlinked to the task and to the separate fixed-choice answer totals.
 
 The daemon collector belongs to the gateway service, ordinarily a separate process. The core
 forwards fixed counters with a 64 KiB optional-traffic backpressure limit, never waits for reporting,

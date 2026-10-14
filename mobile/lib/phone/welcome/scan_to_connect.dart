@@ -30,11 +30,13 @@ const kAddPhoneWhere = 'Harness menu → Add Phone';
 /// │        [ camera view ]       │
 /// └──────────────────────────────┘
 ///   How to get the QR code                    ([steps]; "Signing in…" over them while it does)
-///   (1) Open Harness on your computer
-///   (2) Click "Add Phone"
+///   (1) Go to autonomous.ai/go
+///       Download and install on your computer
+///   (2) Sign in
+///   (3) Click "Add Phone"
 ///       Harness menu → Add Phone
 ///
-///           Use email instead                 ([fallbackLabel])
+///           Use email instead                 ([fallbackLabel]; none without [onUseEmail])
 /// ```
 ///
 /// ⚠️ **Only the scan here (owner, 2026-10-08).** What has to happen on the computer first — get
@@ -46,12 +48,13 @@ const kAddPhoneWhere = 'Harness menu → Add Phone';
 /// The camera runs only while this page is up. A code that is not ours is ignored, so a stray QR
 /// in frame does nothing. A camera refused says where to turn it on, with a link to this app's
 /// Settings, and the camera comes up on the way back; no camera at all says so. Either way the
-/// button under the square is the way in without one.
+/// button under the square is the way in without one — or, where there is none (the welcome's,
+/// which offers Continue with email beside QR code), back.
 class ScanToConnectPage extends StatefulWidget {
   const ScanToConnectPage({
     super.key,
     required this.onCode,
-    required this.onUseEmail,
+    this.onUseEmail,
     required this.onBack,
     this.signingIn = false,
     this.fallbackLabel = 'Use email instead',
@@ -87,7 +90,9 @@ class ScanToConnectPage extends StatefulWidget {
   /// and the page scrolls where even that is not enough.
   final Widget? steps;
 
-  final VoidCallback onUseEmail;
+  /// [fallbackLabel] pressed. Null shows no way out under the camera but back: the welcome's
+  /// (owner, 2026-10-14), whose Continue with email sits right beside QR code.
+  final VoidCallback? onUseEmail;
   final VoidCallback onBack;
 
   /// A code was read and the phone is signing in with it.
@@ -320,18 +325,18 @@ class _ScanToConnectPageState extends State<ScanToConnectPage>
                           ),
                         ),
                         const Spacer(),
-                        const SizedBox(height: 20),
-                        Center(
-                          child: TtyTextButton(
-                            label: widget.fallbackLabel,
-                            color: tty.faint,
-                            // Not while the scan signs in: the other way would start a second.
-                            onPressed: widget.signingIn
-                                ? null
-                                : widget.onUseEmail,
+                        if (widget.onUseEmail case final onUseEmail?) ...[
+                          const SizedBox(height: 20),
+                          Center(
+                            child: TtyTextButton(
+                              label: widget.fallbackLabel,
+                              color: tty.faint,
+                              // Not while the scan signs in: the other way would start a second.
+                              onPressed: widget.signingIn ? null : onUseEmail,
+                            ),
                           ),
-                        ),
-                        const SizedBox(height: 12),
+                          const SizedBox(height: 12),
+                        ],
                       ],
                     ),
                   ),

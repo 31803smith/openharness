@@ -26,6 +26,29 @@ const totals = () => {
   return result
 }
 
+it('keeps upgrade backlogs unattributed and fences explicit-work intent on unavailable consent', async () => {
+  await usage.stop()
+  const context = { surface: 'cli', release: '0.3.95', platform: 'macos', channel: 'production' } as const
+  usage = createProductUsage({ file, now: () => now, request, context })
+  await usage.sync()
+  usage.launch({ id: 'PRIVATE_USER_INTENT', phase: 'work_requested', origin: 'interactive' })
+  usage.observe('turn_started', 'PRIVATE_USER_INTENT', false)
+  usage.observe('turn_ended', 'PRIVATE_USER_INTENT', false)
+  await usage.stop()
+  usage = createProductUsage({ file, now: () => now, request, context: { ...context, release: '0.3.96' } })
+  await usage.sync(); await usage.sync()
+  const workReport = (sent as { counters: Record<string, number>; context: typeof context }[]).find(r => r.counters.health_cli_interactive_work_days)
+  expect(workReport?.context.release).toBe('unknown')
+  expect(totals().health_cli_first_interactive_work).toBe(1)
+  usage.launch({ id: 'PRIVATE_STALE_INTENT', phase: 'work_requested', origin: 'interactive' })
+  request.mockResolvedValueOnce({ status: 503, body: {} })
+  await usage.sync(); await usage.sync()
+  usage.observe('turn_started', 'PRIVATE_STALE_INTENT', false); await usage.sync()
+  expect(totals().health_cli_unclassified_turns_started).toBe(1)
+  expect(JSON.stringify(sent)).not.toContain('PRIVATE')
+  expect(readFileSync(file, 'utf8')).not.toContain('PRIVATE')
+})
+
 it('keeps first-launch 24-hour value counts on their original cohort day across restart, without an identity', async () => {
   await usage.sync()
   now = Date.parse('2026-10-12T23:30:00Z')
@@ -61,6 +84,16 @@ it('collects nothing before it can check the preference, and respects off', asyn
   usage.observe('turn_started', 'private-agent', false)
   usage.opened('desktop'); await usage.sync()
   expect(sent).toEqual([])
+})
+
+it('discards a permanently invalid packet so later reports and loss counts can recover', async () => {
+  await usage.sync(); usage.counter('search_requests')
+  request.mockImplementationOnce(async () => ({ status: 200, body: { data: { enabled: true, revision: 0 } } }))
+    .mockImplementationOnce(async () => ({ status: 400, body: {} }))
+  await usage.sync()
+  expect(JSON.parse(readFileSync(file, 'utf8')).pending).toBeNull()
+  await usage.sync()
+  expect(totals().health_cli_report_rejected).toBe(1)
 })
 
 it('reduces turns locally, excludes replay, and never persists or uploads agent identity', async () => {
@@ -194,6 +227,20 @@ it('counts a read the apps make on their own for reliability only, never as a fe
     history_requests: 1, history_ok: 1, history_under_1s: 1, history_page_requests: 1,
     store_list_requests: 1, model_list_requests: 1, model_list_failed: 1,
     search_requests: 1, search_installation_days: 1, search_first_installations: 1 })
+})
+
+it('counts the Store or a model list as used only when a person opened it, once a day', async () => {
+  await usage.sync()
+  usage.counter('store_list_requests'); usage.counter('store_list_user_requests'); usage.counter('store_list_user_requests')
+  await usage.sync()
+  expect(totals()).toEqual({ measurement_v2_installation_days: 1, store_list_requests: 1, store_list_user_requests: 2,
+    store_list_user_installation_days: 1, store_list_user_first_installations: 1 })
+  now += 86400000; await usage.stop(); usage = createProductUsage({ file, now: () => now, request }); await usage.sync()
+  usage.counter('store_list_user_requests'); usage.counter('model_list_user_requests')
+  await usage.sync()
+  expect(totals()).toMatchObject({ store_list_user_installation_days: 2, store_list_user_repeat_installation_days: 1,
+    store_list_user_first_installations: 1, model_list_user_first_installations: 1 })
+  expect(totals()).not.toHaveProperty('store_list_installation_days')
 })
 
 it('tracks a durable launch through polls without persisting its receipt or counting polls as attempts', async () => {

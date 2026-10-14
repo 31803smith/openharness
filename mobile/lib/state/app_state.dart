@@ -1,4 +1,5 @@
 import '../core/test_run.dart';
+import '../measurement/onboarding_measurement.dart';
 import '../measurement/product_measurement.dart';
 import '../measurement/setup_transport.dart';
 
@@ -274,6 +275,9 @@ class AppNotifier extends ChangeNotifier {
   AppConfig config;
   late ApiClient api;
   late final ProductMeasurement productMeasurement;
+
+  /// The phone's onboarding steps after sign-in, counted through [productMeasurement].
+  late final onboardingMeasurement = OnboardingMeasurement(productMeasurement);
   final _measurementConnections = <String, void Function(ProductOutcome)>{};
 
   /// Says whether this device is signed in, and signs it out: [ViewerServices.login], the app's own
@@ -1712,6 +1716,7 @@ class AppNotifier extends ChangeNotifier {
     _lastErrorRetryable = true;
     signedOutReason = _signedOutEnded;
     signedInThisRun = false;
+    onboardingMeasurement.reset();
     welcomedMachines.clear();
     firstSessionLine = null;
     status = AppStatus.unauthenticated;
@@ -1729,6 +1734,10 @@ class AppNotifier extends ChangeNotifier {
   /// `viewer/email_code_api.dart`.
   Future<void> sendLoginCode(String email) => viewer.emailLogin.sendCode(email);
 
+  /// A sign-in attempt, counted as `sign_in` and under the welcome-screen button that started it.
+  void Function(ProductOutcome) _measureSignIn(ProductFlow method) =>
+      productMeasurement.beginEach([ProductFlow.signIn, method]);
+
   /// The phone's sign-in, second step: trade the emailed [code] for a session
   /// and go in.
   ///
@@ -1743,7 +1752,7 @@ class AppNotifier extends ChangeNotifier {
   }) async {
     final login = viewer.emailLogin;
     if (_disposed || signingIn) return;
-    final measureSignIn = productMeasurement.begin(ProductFlow.signIn);
+    final measureSignIn = _measureSignIn(ProductFlow.signInEmail);
     final revision = _invalidateAuthWork();
     _closedHistory.clear();
     _lastError = null;
@@ -1783,7 +1792,7 @@ class AppNotifier extends ChangeNotifier {
   Future<void> signInWithScan(String code) async {
     final login = viewer.emailLogin;
     if (_disposed || signingIn) return;
-    final measureSignIn = productMeasurement.begin(ProductFlow.signIn);
+    final measureSignIn = _measureSignIn(ProductFlow.signInScan);
     final revision = _invalidateAuthWork();
     _closedHistory.clear();
     _lastError = null;
@@ -1826,6 +1835,10 @@ class AppNotifier extends ChangeNotifier {
   Future<void> signInWithProvider(SignInProvider provider) async {
     final login = viewer.login;
     if (_disposed || signingIn) return;
+    final measureSignIn = _measureSignIn(switch (provider) {
+      SignInProvider.google => ProductFlow.signInGoogle,
+      SignInProvider.apple => ProductFlow.signInApple,
+    });
     final revision = _invalidateAuthWork();
     _closedHistory.clear();
     _lastError = null;
@@ -1843,17 +1856,25 @@ class AppNotifier extends ChangeNotifier {
       unawaited(closeSignInPage());
       if (!_authWorkCurrent(revision)) return;
       signedInThisRun = true;
+      measureSignIn(ProductOutcome.ok);
       status = AppStatus.bootstrapping;
       notifyListeners();
       await _enterSignedIn(revision);
     } on SignInCancelled {
+      measureSignIn(ProductOutcome.cancelled);
       unawaited(closeSignInPage());
       if (_authWorkCurrent(revision)) status = AppStatus.unauthenticated;
     } catch (_) {
+      measureSignIn(ProductOutcome.failed);
       unawaited(closeSignInPage());
       if (_authWorkCurrent(revision)) status = AppStatus.unauthenticated;
       rethrow;
     } finally {
+      measureSignIn(
+        _authWorkCurrent(revision)
+            ? ProductOutcome.unknown
+            : ProductOutcome.cancelled,
+      );
       if (_authWorkCurrent(revision)) {
         signingIn = false;
         signInProvider = null;
@@ -2002,6 +2023,7 @@ class AppNotifier extends ChangeNotifier {
     selectedMachineId = null;
     signedOutReason = reason;
     signedInThisRun = false;
+    onboardingMeasurement.reset();
     welcomedMachines.clear();
     firstSessionLine = null;
     status = AppStatus.unauthenticated;
@@ -6952,10 +6974,19 @@ class AppNotifier extends ChangeNotifier {
   /// Never throws — a machine whose daemon is too old to know the RPC, one with
   /// no grid, and one that timed out are all "nothing to offer", which is what
   /// the sheet shows.
-  Future<GridModels> gridModels(String machineId) async {
+  ///
+  /// [userAction] marks the read as a person opening a model sheet: the only
+  /// read the model list's reach counts (`model_list_user_*`).
+  Future<GridModels> gridModels(
+    String machineId, {
+    bool userAction = false,
+  }) async {
     try {
-      final response = await _conn(machineId)
-          .request('grid_models_list', timeout: const Duration(seconds: 12));
+      final response = await _conn(machineId).request(
+        'grid_models_list',
+        payload: userAction ? const {'userAction': true} : const {},
+        timeout: const Duration(seconds: 12),
+      );
       List<GridModel> parseModels(Object? raw, {String? grid}) =>
           (raw as List<dynamic>? ?? [])
               .whereType<Map<String, dynamic>>()
@@ -8925,6 +8956,7 @@ class AppNotifier extends ChangeNotifier {
 
   @override
   void dispose() {
+    onboardingMeasurement.dispose();
     productMeasurement.dispose();
     _measurementConnections.clear();
     _disposed = true;

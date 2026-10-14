@@ -9,12 +9,13 @@ import 'package:harness_mobile/phone/welcome/onboarding_copy.dart';
 import 'package:harness_mobile/phone/welcome/onboarding_picture.dart';
 import 'package:harness_mobile/phone/welcome/phone_welcome.dart';
 import 'package:harness_mobile/phone/welcome/scan_to_connect.dart';
+import 'package:harness_mobile/phone/welcome/set_up_computer.dart';
 import 'package:harness_mobile/phone/welcome/sign_in_provider_button.dart';
 import 'package:harness_mobile/state/app_state.dart';
 
-/// The first screen: ① Welcome — the promise, Scan QR code and the two accounts, and nothing else
-/// (`docs/research/2026-10-11-phone-onboarding`; owner, 2026-10-12). The emailed code is the
-/// camera's "Use email instead".
+/// The first screen: ① Welcome — the promise, the two accounts, and under them one quiet line:
+/// Continue with email · QR code (owner, 2026-10-14; it was Scan QR code first, then the two
+/// accounts, on 2026-10-12, `docs/research/2026-10-11-phone-onboarding`).
 void main() {
   group('ConnectCode', () {
     test('reads the desktop app\'s link, all of it in the fragment', () {
@@ -93,9 +94,8 @@ void main() {
   Rect picture(WidgetTester tester) =>
       tester.getRect(find.byType(OnboardingPicture));
 
-  TtyPrimaryButton scan(WidgetTester tester) => tester.widget<TtyPrimaryButton>(
-    find.byKey(const ValueKey('welcome-scan')),
-  );
+  final email = find.byKey(const ValueKey('welcome-continue-email'));
+  final scan = find.byKey(const ValueKey('welcome-scan'));
 
   SignInProviderButton account(WidgetTester tester, SignInProvider provider) =>
       tester
@@ -103,7 +103,7 @@ void main() {
           .firstWhere((button) => button.provider == provider);
 
   testWidgets(
-    'the promise, Scan QR code and the two accounts — and nothing else',
+    'the promise, the two accounts, then Continue with email · QR code — and nothing else',
     (tester) async {
       await pump(tester);
       expect(find.text(OnboardingCopy.welcome), findsOneWidget);
@@ -111,19 +111,27 @@ void main() {
         tester.widget<OnboardingPicture>(find.byType(OnboardingPicture)).scene,
         OnboardingScene.welcome,
       );
-      expect(find.text(OnboardingCopy.scanQrCode), findsOneWidget);
       expect(find.text('Continue with Google'), findsOneWidget);
       expect(find.text('Continue with Apple'), findsOneWidget);
-      // The emailed code is the camera's, not this screen's.
-      expect(find.text(OnboardingCopy.continueWithEmail), findsNothing);
-      // Scan QR code first, then Google, then Apple.
-      expect(
-        tester.getTopLeft(find.text(OnboardingCopy.scanQrCode)).dy,
-        lessThan(tester.getTopLeft(find.text('Continue with Google')).dy),
-      );
+      expect(find.text(OnboardingCopy.continueWithEmail), findsOneWidget);
+      expect(find.text(OnboardingCopy.qrCode), findsOneWidget);
+      // The camera's long name is what a screen reader hears, not what the line says.
+      expect(find.text(OnboardingCopy.scanQrCode), findsNothing);
+      // Only the accounts are buttons; the lesser ways in are words.
+      expect(find.byType(TtyPrimaryButton), findsNothing);
+      // Google, then Apple, then the quiet line — email and QR code side by side on it.
       expect(
         tester.getTopLeft(find.text('Continue with Google')).dy,
         lessThan(tester.getTopLeft(find.text('Continue with Apple')).dy),
+      );
+      expect(
+        tester.getTopLeft(find.text('Continue with Apple')).dy,
+        lessThan(tester.getTopLeft(email).dy),
+      );
+      expect(tester.getCenter(email).dy, tester.getCenter(scan).dy);
+      expect(
+        tester.getCenter(email).dx,
+        lessThan(tester.getCenter(scan).dx),
       );
 
       // Not the camera, the sample, or the steps on the computer of the first screen before it.
@@ -148,49 +156,230 @@ void main() {
       notifier.notifyListeners();
       await tester.pump();
       expect(find.text('Waiting for Google…'), findsOneWidget);
+      // Cancel takes the quiet line's place: email and the camera could not be pressed now.
       expect(find.byKey(const ValueKey('welcome-cancel')), findsOneWidget);
-      // The other account, and the camera, wait it out.
+      expect(email, findsNothing);
+      expect(scan, findsNothing);
+      // The other account waits it out.
       expect(account(tester, SignInProvider.apple).onPressed, isNull);
-      expect(scan(tester).onPressed, isNull);
       // The foot is the same height whatever it says: the picture has not moved.
       expect(picture(tester), before);
 
-      // Past the page, going in: nothing left to cancel, and a scan cannot sign in behind it.
+      // Past the page, going in: nothing left to cancel; the quiet line is back, and neither an
+      // email nor a scan can sign in behind it.
       notifier.status = AppStatus.bootstrapping;
       notifier.notifyListeners();
       await tester.pump();
       expect(find.text('Signing in…'), findsOneWidget);
       expect(find.byKey(const ValueKey('welcome-cancel')), findsNothing);
-      expect(scan(tester).onPressed, isNull);
+      await tester.tap(scan);
+      await tester.pump();
+      expect(find.byType(ScanToConnectPage), findsNothing);
+      await tester.tap(email);
+      await tester.pump();
+      expect(find.text('Your email'), findsNothing);
       expect(picture(tester), before);
     },
   );
 
-  testWidgets('why the phone was signed out is said under the picture', (
+  final headline = find.byKey(const ValueKey('welcome-headline'));
+
+  /// Past the headline's 250ms swap: the words going out are gone, the ones coming in in place.
+  Future<void> settle(WidgetTester tester) async {
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+  }
+
+  /// [notifier] as one whose accounts' pages are [provider], not the real sign-in.
+  void stubAccounts(Future<void> Function(SignInProvider) provider) {
+    notifier.dispose();
+    notifier = _StubAccounts(provider);
+  }
+
+  testWidgets('why the phone was signed out takes the headline\'s place', (
     tester,
   ) async {
     await pump(tester);
     final before = picture(tester);
+    final words = tester.getRect(headline);
     notifier.signedOutReason = 'You were signed out on another device.';
     notifier.notifyListeners();
-    await tester.pump();
-    expect(find.byKey(const ValueKey('welcome-signed-out')), findsOneWidget);
+    await settle(tester);
+    final said = find.byKey(const ValueKey('welcome-signed-out'));
+    expect(said, findsOneWidget);
     expect(
       find.textContaining('You were signed out on another device.'),
       findsOneWidget,
     );
+    // The headline gone, the reason where it was, on its left edge; the picture still.
+    expect(find.text(OnboardingCopy.welcome), findsNothing);
+    expect(tester.getRect(said).topLeft, words.topLeft);
     expect(picture(tester), before);
+  });
+
+  // Each way in lets the reason go, and the headline comes back — on the welcome, or on the way
+  // back to it.
+  for (final way in [
+    'Continue with Google',
+    'Continue with Apple',
+    OnboardingCopy.continueWithEmail,
+    OnboardingCopy.qrCode,
+  ]) {
+    testWidgets('$way pressed: the reason goes, the headline is back', (
+      tester,
+    ) async {
+      final pages = <SignInProvider>[];
+      stubAccounts((provider) async => pages.add(provider));
+      notifier.signedOutReason = 'You were signed out on another device.';
+      await pump(tester);
+      final before = picture(tester);
+      expect(find.text(OnboardingCopy.welcome), findsNothing);
+
+      await tester.tap(find.text(way));
+      await settle(tester);
+      if (way == OnboardingCopy.continueWithEmail) {
+        expect(find.text('Your email'), findsOneWidget);
+      } else if (way == OnboardingCopy.qrCode) {
+        expect(find.byType(ScanToConnectPage), findsOneWidget);
+      } else {
+        expect(pages, hasLength(1));
+      }
+      if (find.text(OnboardingCopy.welcome).evaluate().isEmpty) {
+        await tester.binding.handlePopRoute();
+        await settle(tester);
+      }
+
+      expect(find.text(OnboardingCopy.welcome), findsOneWidget);
+      expect(find.byKey(const ValueKey('welcome-signed-out')), findsNothing);
+      expect(picture(tester), before);
+    });
+  }
+
+  testWidgets(
+    'a sign-in that fails says why in the headline\'s place, until the next way in',
+    (tester) async {
+      stubAccounts(
+        (_) async => throw Exception(
+          'Could not open the sign-in page. Check your connection and try again.',
+        ),
+      );
+      await pump(tester);
+      final before = picture(tester);
+      final words = tester.getRect(headline);
+
+      await tester.tap(find.text('Continue with Google'));
+      await settle(tester);
+      final said = find.byKey(const ValueKey('welcome-error'));
+      expect(said, findsOneWidget);
+      expect(
+        find.textContaining('Could not open the sign-in page.'),
+        findsOneWidget,
+      );
+      expect(find.text(OnboardingCopy.welcome), findsNothing);
+      expect(tester.getRect(said).topLeft, words.topLeft);
+      expect(picture(tester), before);
+
+      // The email, and back: the failure was the account's, and is gone with it.
+      await tester.tap(email);
+      await settle(tester);
+      expect(find.text('Your email'), findsOneWidget);
+      await tester.binding.handlePopRoute();
+      await settle(tester);
+      expect(find.text(OnboardingCopy.welcome), findsOneWidget);
+      expect(said, findsNothing);
+
+      // Failing again says so again, in the same place.
+      await tester.tap(find.text('Continue with Apple'));
+      await settle(tester);
+      expect(said, findsOneWidget);
+      expect(find.text(OnboardingCopy.welcome), findsNothing);
+    },
+  );
+
+  testWidgets(
+    'a computer\'s own sign-in code read first: what to do next, in the headline\'s place',
+    (tester) async {
+      stubAccounts((_) async {});
+      await pump(tester);
+      await tester.tap(scan);
+      await settle(tester);
+      tester
+          .widget<ScanToConnectPage>(find.byType(ScanToConnectPage))
+          .onSignInCode!(const SignInCode('hnq_computer'));
+      await settle(tester);
+      expect(notifier.pendingComputerSignIn, 'hnq_computer');
+      expect(find.byKey(const ValueKey('welcome-notice')), findsOneWidget);
+      expect(find.textContaining(OnboardingCopy.signInFirst), findsOneWidget);
+      expect(find.text(OnboardingCopy.welcome), findsNothing);
+
+      // An account pressed lets it go; the code is still held for after the sign-in.
+      await tester.tap(find.text('Continue with Google'));
+      await settle(tester);
+      expect(find.byKey(const ValueKey('welcome-notice')), findsNothing);
+      expect(find.text(OnboardingCopy.welcome), findsOneWidget);
+      expect(notifier.pendingComputerSignIn, 'hnq_computer');
+    },
+  );
+
+  testWidgets('QR code: the camera, with no "Use email instead" — back is the way out', (
+    tester,
+  ) async {
+    await pump(tester);
+    await tester.tap(scan);
+    await tester.pump();
+    expect(find.byType(ScanToConnectPage), findsOneWidget);
+    // Continue with email is beside QR code on the welcome, one back away (owner, 2026-10-14).
+    expect(find.text('Use email instead'), findsNothing);
+
+    // Under the camera, how the code comes up on the computer (owner, 2026-10-14): Harness from
+    // ②'s address, signed in, then Add Phone — in that order.
+    expect(find.text('How to get the QR code'), findsOneWidget);
+    final steps = [
+      find.text('Go to autonomous.ai/go'),
+      find.text('Sign in'),
+      find.text('Click "Add Phone"'),
+    ];
+    for (final step in steps) {
+      expect(step, findsOneWidget);
+    }
+    for (var i = 1; i < steps.length; i++) {
+      expect(
+        tester.getTopLeft(steps[i - 1]).dy,
+        lessThan(tester.getTopLeft(steps[i]).dy),
+      );
+    }
+    expect(
+      find.text('Download and install on your computer'),
+      findsOneWidget,
+    );
+    expect(find.text(kAddPhoneWhere), findsOneWidget);
+    // Signed out, there is no account for the sign-in to name.
+    expect(find.textContaining('Use '), findsNothing);
+
+    await tester.binding.handlePopRoute();
+    await tester.pump();
+    expect(find.text(OnboardingCopy.welcome), findsOneWidget);
+    expect(email, findsOneWidget);
+  });
+
+  test('the camera\'s sign-in step names the account, when there is one', () {
+    final signedIn = computerSteps('ada@example.com');
+    expect(signedIn.map((s) => s.title), [
+      'Go to autonomous.ai/go',
+      'Sign in',
+      'Click "Add Phone"',
+    ]);
+    expect(signedIn[1].note, 'Use ada@example.com');
+    // ②'s sign-in step, word for word.
+    expect(signedIn[1], goToSteps('ada@example.com')[1]);
+    expect(computerSteps(null)[1].note, isNull);
   });
 
   testWidgets('the emailed code: the address, then the four digits, and back', (
     tester,
   ) async {
     await pump(tester);
-    // Through the camera: Scan QR code, then its "Use email instead".
-    await tester.tap(find.byKey(const ValueKey('welcome-scan')));
-    await tester.pump();
-    expect(find.byType(ScanToConnectPage), findsOneWidget);
-    await tester.tap(find.text('Use email instead'));
+    await tester.tap(email);
     await tester.pump();
     expect(find.text('Your email'), findsOneWidget);
 
@@ -219,4 +408,20 @@ void main() {
     // The resend clock runs out before the test ends.
     await tester.pump(const Duration(seconds: 31));
   });
+}
+
+/// The app's notifier, its accounts' pages stubbed: [provider] stands in for the real sign-in.
+class _StubAccounts extends AppNotifier {
+  _StubAccounts(this.provider)
+    : super(
+        config: AppConfig.dev,
+        authSession: AuthSession(),
+        configStore: null,
+      );
+
+  final Future<void> Function(SignInProvider) provider;
+
+  @override
+  Future<void> signInWithProvider(SignInProvider provider) =>
+      this.provider(provider);
 }

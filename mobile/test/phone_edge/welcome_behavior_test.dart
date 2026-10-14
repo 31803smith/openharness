@@ -88,11 +88,9 @@ void main() {
       return (app: app, sent: sent);
     }
 
-    /// The emailed code's way in: Scan QR code, then the camera's "Use email instead".
+    /// The emailed code's way in: Continue with email, under the accounts.
     Future<void> toEmail(WidgetTester tester) async {
-      await tester.tap(find.byKey(const ValueKey('welcome-scan')));
-      await frames(tester);
-      await tester.tap(find.text('Use email instead'));
+      await tester.tap(find.byKey(const ValueKey('welcome-continue-email')));
       await frames(tester);
     }
 

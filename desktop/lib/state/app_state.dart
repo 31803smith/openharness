@@ -1,4 +1,7 @@
 import '../measurement/product_measurement.dart';
+import '../measurement/product_runtime_health.dart';
+import '../measurement/product_connections.dart';
+import '../core/crash_log.dart';
 import '../measurement/setup_transport.dart';
 import 'attached_task_delivery.dart';
 import 'task_route.dart';
@@ -651,6 +654,11 @@ class AppNotifier extends ChangeNotifier {
   AppConfig config;
   late ApiClient api;
   late final ProductMeasurement productMeasurement;
+  ProductRuntimeHealth? productRuntimeHealth;
+  late final ProductConnections productConnections;
+  final _measurementResumes = <String, void Function(ProductOutcome)>{};
+  void Function(bool)? _measurementError;
+  int _measurementGeneration = -1;
   final _measurementConnections = <String, void Function(ProductOutcome)>{};
 
   /// Signs in, and says whether this computer is signed in: the harness CLI in a desktop build,
@@ -1715,6 +1723,7 @@ class AppNotifier extends ChangeNotifier {
       if (harness != null) notifyListeners();
       return;
     }
+    _storeOpenedByPerson = true;
     final existing = swarms.where((swarm) => swarm.isStore).firstOrNull;
     if (existing != null) {
       selectSwarm(existing.id);
@@ -1742,6 +1751,17 @@ class AppNotifier extends ChangeNotifier {
   }
 
   String? _pendingStoreHarness;
+
+  /// A person opened the Store ([openStore]), not a tab restored at launch: the Store tab's first ask
+  /// takes it ([takeStoreOpened]) and marks its `dsh_list` as theirs, all the Store's reach counts
+  /// (`store_list_user_*`). Its minute refresh and reconnect asks carry no mark.
+  bool _storeOpenedByPerson = false;
+
+  bool takeStoreOpened() {
+    final opened = _storeOpenedByPerson;
+    _storeOpenedByPerson = false;
+    return opened;
+  }
 
   /// Devices is a regular workspace on the desktop app. A browser or a viewer
   /// build has no device on its desk to manage.
@@ -3258,9 +3278,34 @@ class AppNotifier extends ChangeNotifier {
               ? 'desktop'
               : 'phone',
           automatic: !kUnderTest,
+          context: !kIsWeb && this.viewer == null
+              ? ProductUsageContext(
+                  release: 'unknown',
+                  platform: Platform.isMacOS
+                      ? 'macos'
+                      : Platform.isWindows
+                      ? 'windows'
+                      : Platform.isLinux
+                      ? 'linux'
+                      : 'other',
+                  production:
+                      kReleaseMode && this.config.autonomousEnv == 'prod',
+                )
+              : null,
           sendSetup: (report) =>
               sendSetupMeasurement(this.config.apiBaseUrl, report),
         );
+    productConnections = ProductConnections(this.productMeasurement);
+    this.productMeasurement.addListener(_measurementChoiceChanged);
+    if (!kUnderTest && this.productMeasurement.healthEnabled) {
+      productRuntimeHealth = ProductRuntimeHealth(this.productMeasurement);
+      _measurementError = (framework) => this.productMeasurement.health(
+        framework
+            ? ProductHealthMeasure.frameworkError
+            : ProductHealthMeasure.asyncError,
+      );
+      CrashLog.healthError = _measurementError;
+    }
     addListener(_syncProductMeasurement);
     _initDeviceLog();
     // `grid.AppTheme.palette`, not the prefs store: main.dart copies the saved
@@ -3285,6 +3330,15 @@ class AppNotifier extends ChangeNotifier {
   }
 
   void _syncProductMeasurement() {
+    final context = productMeasurement.context;
+    final production = kReleaseMode && _autonomousEnv == 'prod';
+    if (context != null && context.production != production) {
+      productMeasurement.context = ProductUsageContext(
+        release: context.release,
+        platform: context.platform,
+        production: production,
+      );
+    }
     final scope =
         signedIn &&
             !signingIn &&
@@ -3298,7 +3352,31 @@ class AppNotifier extends ChangeNotifier {
       choice: () => api.productUsageSettings(),
       send: api.productUsageReport,
     );
-    if (scope == null) _measurementConnections.clear();
+    productRuntimeHealth?.account(
+      scope == null ? null : '$_autonomousEnv:${currentUser!.id}',
+    );
+    if (scope == null) {
+      _measurementConnections.clear();
+      productConnections.clear();
+      _measurementResumes.clear();
+    } else if (machineStates.values.any(
+      (machine) => machine.connectionStatus == ConnectionStatus.connected,
+    )) {
+      productRuntimeHealth?.ready();
+      productMeasurement.milestone(ProductHealthMeasure.funnelWorkspaceReady);
+    }
+    if (status == AppStatus.unauthenticated) {
+      productMeasurement.milestone(ProductHealthMeasure.funnelSignInSeen);
+    }
+  }
+
+  void _measurementChoiceChanged() {
+    if (!productMeasurement.sharing ||
+        _measurementGeneration != productMeasurement.observationGeneration) {
+      _measurementConnections.clear();
+      _measurementResumes.clear();
+    }
+    _measurementGeneration = productMeasurement.observationGeneration;
   }
 
   // Connection keys already belong to the app. Only fixed outcomes reach measurement, never the key.
@@ -4629,6 +4707,7 @@ class AppNotifier extends ChangeNotifier {
       }
       if (firstHarness) {
         firstArrival.begin(downloads: agentPrefetch?.started ?? false);
+        productRuntimeHealth?.newInstallation = true;
       }
       if (!result.isReady) {
         status = AppStatus.preparingEnvironment;
@@ -6008,6 +6087,7 @@ class AppNotifier extends ChangeNotifier {
     // Reassigned once the manifest has been re-read below; the failure messages
     // at the end name whichever build was actually attempted.
     final finish = productMeasurement.begin(ProductFlow.updateStage);
+    void Function(ProductOutcome)? finishApply;
     var info = chosen;
     isInstallingUpdate = true;
     updateDownloadFraction = null;
@@ -6064,22 +6144,30 @@ class AppNotifier extends ChangeNotifier {
         updateError = 'Could not download and verify Harness ${info.version}.';
         return false;
       }
-      // A staged download is observable; successful relaunch is not. Never delay the update for reporting.
+      // The next consented launch can confirm the version; never wait for reporting.
       finish(ProductOutcome.ok);
+      productRuntimeHealth?.expectUpdate(info.version);
+      finishApply = productMeasurement.begin(ProductFlow.updateApply);
       final applied = await updater.applyStaged(staged, selfPid: pid);
+      finishApply(applied ? ProductOutcome.ok : ProductOutcome.failed);
       if (!applied) {
+        productRuntimeHealth?.cancelUpdate();
         updateError =
             'This copy of Harness cannot install updates automatically.';
         return false;
       }
       flushAppLog();
+      productRuntimeHealth?.cleanExit();
       exit(0);
     } catch (error) {
       finish(ProductOutcome.failed);
+      finishApply?.call(ProductOutcome.failed);
+      productRuntimeHealth?.cancelUpdate();
       updateError = 'Could not install Harness ${info.version}: $error';
       return false;
     } finally {
       finish(ProductOutcome.unknown);
+      finishApply?.call(ProductOutcome.unknown);
       isInstallingUpdate = false;
       updateDownloadFraction = null;
       if (!_disposed) notifyListeners();
@@ -6531,6 +6619,14 @@ class AppNotifier extends ChangeNotifier {
   void _onLocalFailure(String machineId, int code, String reason) {
     final machine = machineStates[machineId];
     if (machine == null) return;
+    productConnections.refused(
+      machineId,
+      code == 4404
+          ? ProductHealthMeasure.connectErrorUnlinked
+          : code == 4401 || code == 4403
+          ? ProductHealthMeasure.connectErrorAuth
+          : ProductHealthMeasure.connectErrorOther,
+    );
     if (code == 4403) {
       if (machine.isLocalMachine) {
         unawaited(_onLocalMachineMismatch(machine, reason));
@@ -6824,6 +6920,19 @@ class AppNotifier extends ChangeNotifier {
     final settling =
         nextStatus == ConnectionStatus.disconnected &&
         _trustSettling.contains(machineId);
+    productConnections.status(
+      machineId,
+      connecting:
+          settling ||
+          nextStatus == ConnectionStatus.connecting ||
+          nextStatus == ConnectionStatus.reconnecting,
+      connected: nextStatus == ConnectionStatus.connected,
+      failure: machine.needsLink
+          ? ProductHealthMeasure.connectErrorUnlinked
+          : machine.nodeOnline == false
+          ? ProductHealthMeasure.connectErrorOffline
+          : null,
+    );
     // An unlinked machine is redialled every 5 s by the link retry and refused at once each time
     // (4404 NO_PEER_LINK): measured per dial, one such machine read as ~720 failed connects an hour,
     // and prod's first day showed 1,197 of 1,233 remote connects "failed", nearly all under a second.
@@ -6871,11 +6980,7 @@ class AppNotifier extends ChangeNotifier {
       // set by onLocalFailure, which runs before this branch for 4404 (see WsConn._onDone).
       if (!machine.needsLink && !settling) {
         unawaited(
-          _applyNodeStatus(
-            machine,
-            false,
-            why: 'socket ${nextStatus.name}',
-          ),
+          _applyNodeStatus(machine, false, why: 'socket ${nextStatus.name}'),
         );
       }
     }
@@ -7479,6 +7584,7 @@ class AppNotifier extends ChangeNotifier {
   }) async {
     final state = machineStates[machineId];
     if (state == null || state.machine.isShared) return false;
+    final finishConnection = productConnections.manual(machineId);
     final done = Completer<bool>();
     var dialed = false;
     void settle() {
@@ -7506,8 +7612,19 @@ class AppNotifier extends ChangeNotifier {
       if (machineStates[machineId] case final current?)
         _connectMachine(current);
       settle();
-      return await done.future;
+      final connected = await done.future;
+      if (!connected) {
+        productConnections.refused(
+          machineId,
+          machineStates[machineId]?.needsLink == true
+              ? ProductHealthMeasure.connectErrorUnlinked
+              : ProductHealthMeasure.connectErrorTimeout,
+        );
+      }
+      finishConnection(connected ? ProductOutcome.ok : ProductOutcome.failed);
+      return connected;
     } finally {
+      finishConnection(ProductOutcome.unknown);
       timer.cancel();
       removeListener(settle);
     }
@@ -9102,8 +9219,21 @@ class AppNotifier extends ChangeNotifier {
   ///
   /// Never throws — a machine whose daemon is too old to know the RPC, one with no grid, and one
   /// that timed out are all "nothing to offer", which is what the picker shows.
-  Future<GridModels> gridModels(String machineId) =>
-      _askGridModels(machineId, const {'rowState': true});
+  Future<GridModels> gridModels(
+    String machineId, {
+    bool userAction = false,
+  }) => _askGridModels(machineId, {
+        'rowState': true,
+        if (userAction) 'userAction': true,
+      });
+
+  /// A person opened the Models panel: read this computer's model list marked as theirs, all that
+  /// the list's reach (`model_list_user_*`) counts. The panel's own refresh joins it in flight.
+  void markModelsOpened() {
+    if (localMachineState case final local?) {
+      unawaited(refreshGridModels(local.machine.machineId, userAction: true));
+    }
+  }
 
   /// One `grid_models_list` ask with [payload].
   ///
@@ -9210,12 +9340,18 @@ class AppNotifier extends ChangeNotifier {
   /// when a `grid_models_changed` push landed is returned to its caller but not adopted: the push is
   /// newer. An answer that is not one — the machine could not be asked — is returned but not adopted
   /// either: one surface's timed-out read must not blank the list every other surface is showing.
-  Future<GridModels> refreshGridModels(String machineId) {
+  ///
+  /// [userAction] marks the read as a person opening a model list ([markModelsOpened]); joined with
+  /// a read in flight, the mark is lost.
+  Future<GridModels> refreshGridModels(
+    String machineId, {
+    bool userAction = false,
+  }) {
     final inFlight = _gridReads[machineId];
     if (inFlight != null) return inFlight;
     final epoch = gridPictures.epochOf(machineId);
     late final Future<GridModels> read;
-    read = gridModels(machineId)
+    read = gridModels(machineId, userAction: userAction)
         .then((answer) {
           if (!_disposed && answer.reachable) {
             gridPictures.adopt(machineId, answer, ifEpoch: epoch);
@@ -9802,22 +9938,35 @@ class AppNotifier extends ChangeNotifier {
   /// [MachineDsh.inFlight] exactly like [probeEngines]. The Create dialog asks
   /// with [force] on every open, since an install it started itself is what
   /// most often makes the stored answer stale.
-  Future<void> probeDsh(String machineId, {bool force = false}) {
+  ///
+  /// [userAction] marks the ask as a person opening the Store, for its reach. One that joins an ask
+  /// already in flight loses the mark: the count is a lower bound.
+  Future<void> probeDsh(
+    String machineId, {
+    bool force = false,
+    bool userAction = false,
+  }) {
     final machine = machineStates[machineId];
     if (machine == null) return Future.value();
     final existing = machine.dsh.inFlight;
     if (existing != null) return existing;
     if (machine.dsh.loaded && !force) return Future.value();
-    final work = _probeDsh(machine);
+    final work = _probeDsh(machine, userAction: userAction);
     machine.dsh.inFlight = work;
     notifyListeners();
     return work;
   }
 
-  Future<void> _probeDsh(MachineState machine) async {
+  Future<void> _probeDsh(
+    MachineState machine, {
+    bool userAction = false,
+  }) async {
     try {
-      final result = await _conn(machine.machine.machineId)
-          .request('dsh_list', timeout: const Duration(seconds: 30));
+      final result = await _conn(machine.machine.machineId).request(
+        'dsh_list',
+        payload: userAction ? const {'userAction': true} : const {},
+        timeout: const Duration(seconds: 30),
+      );
       final raw = result['dsh'];
       if (raw is! List) throw const FormatException('dsh_list: no list');
       machine.dsh.replace(raw.map(DshEntry.fromJson).whereType<DshEntry>());
@@ -13099,7 +13248,8 @@ class AppNotifier extends ChangeNotifier {
         return refused(review['error'], review['detail']);
       }
       final reviewId = review['reviewId'];
-      if (reviewId is! String) return 'Could not review this harness for deletion.';
+      if (reviewId is! String)
+        return 'Could not review this harness for deletion.';
       final result = await _conn(machineId).request(
         'agent_purge',
         payload: {...target, 'mode': 'delete', 'reviewId': reviewId},
@@ -13321,6 +13471,24 @@ class AppNotifier extends ChangeNotifier {
     }
     attempt._awaitingConfirmation = true;
     final resuming = attempt.agent?.isStopped == true;
+    final measurementKey = _turnActivityKey(machineId, agentId);
+    if (resuming &&
+        !checking &&
+        productMeasurement.healthEnabled &&
+        productMeasurement.sharing) {
+      if (_measurementResumes.length >= 64) {
+        productMeasurement.health(ProductHealthMeasure.observationOverflow);
+        _measurementResumes
+            .remove(_measurementResumes.keys.first)
+            ?.call(ProductOutcome.unknown);
+      }
+      _measurementResumes
+          .remove(measurementKey)
+          ?.call(ProductOutcome.cancelled);
+      _measurementResumes[measurementKey] = productMeasurement.begin(
+        ProductFlow.resumeRecovery,
+      );
+    }
     final unknown = RestartAgentResult(
       error: resuming
           ? 'Still waiting for the Open response. Select the harness again to check status.'
@@ -13378,6 +13546,7 @@ class AppNotifier extends ChangeNotifier {
         return unknown;
       }
       attempt._awaitingConfirmation = false;
+      _measurementResumes.remove(measurementKey)?.call(ProductOutcome.failed);
       return RestartAgentResult(
         error: _restartFailure(code, result['detail'], resuming: resuming),
       );
@@ -13402,6 +13571,7 @@ class AppNotifier extends ChangeNotifier {
         final failure = result['failure'];
         if (failure is! Map || failure['code'] is! String) return unknown;
         attempt._awaitingConfirmation = false;
+        _measurementResumes.remove(measurementKey)?.call(ProductOutcome.failed);
         return RestartAgentResult(
           error: _restartFailure(
             failure['code'] as String,
@@ -17330,6 +17500,13 @@ class AppNotifier extends ChangeNotifier {
       }
     }
     if (type == 'agent_activity') return;
+    if (type == 'text_delta' &&
+        event['replay'] != true &&
+        machine.liveTurnAgents.contains(
+          _eventAgentId(machine, event, payload),
+        )) {
+      productMeasurement.milestone(ProductHealthMeasure.funnelFirstResponse);
+    }
     if (reportedActivity == null &&
         event['replay'] != true &&
         const {
@@ -17872,6 +18049,10 @@ class AppNotifier extends ChangeNotifier {
         if (agentId != null) {
           if (type == 'turn_started' && event['replay'] != true) {
             machine.liveTurnAgents.add(agentId);
+            productMeasurement.milestone(ProductHealthMeasure.funnelFirstWork);
+            _measurementResumes
+                .remove(_turnActivityKey(machineId, agentId))
+                ?.call(ProductOutcome.ok);
             changed = machine.failedTurnAgents.remove(agentId);
           }
           if (reportedActivity == null &&
@@ -18098,6 +18279,13 @@ class AppNotifier extends ChangeNotifier {
 
   @override
   void dispose() {
+    if (identical(CrashLog.healthError, _measurementError)) {
+      CrashLog.healthError = null;
+    }
+    productRuntimeHealth?.dispose();
+    productConnections.dispose();
+    _measurementResumes.clear();
+    productMeasurement.removeListener(_measurementChoiceChanged);
     productMeasurement.dispose();
     _measurementConnections.clear();
     if (cliLogin case final CliLogin cli) {

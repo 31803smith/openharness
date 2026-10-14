@@ -20,13 +20,19 @@ import 'scan_to_connect.dart' show kAddPhoneWhere;
 /// One step: what to do, and a quieter line under it when one is needed — its lines split on `\n`.
 typedef ComputerStep = ({String title, String? note});
 
-/// The first step on the computer, for the camera.
+/// The first step on the computer, for the camera: getting Harness there from ②'s address,
+/// [OnboardingCopy.goAddress] — the download for whatever computer opens it (owner, 2026-10-14).
+/// No link stands over the camera's steps, so the step names it.
 ///
 /// ⚠️ **"On your computer" is said once on a screen** (owner, 2026-10-12: three times on one screen
 /// read as noise) — by the title over ②'s steps ("On your computer, go to"), and under the camera
-/// by this first step: the camera has no title of its own, and "Open Harness" on its own, on a
-/// phone already in Harness, read as opening this app.
-const _openHarness = 'Open Harness on your computer';
+/// by this first step: the camera has no title of its own, and a step on its own, on a phone
+/// already in Harness, read as being about this phone. The address is the title and the rest its
+/// note: a title is one line ending in "…" ([StepsTimeline]).
+const ComputerStep _getHarness = (
+  title: 'Go to ${OnboardingCopy.goAddress}',
+  note: 'Download and install on your computer',
+);
 
 /// The steps under "On your computer, go to"'s link: get Harness from it, and sign in — with
 /// [account], the phone's, when there is one to name. Signed in with this account, the computer
@@ -39,8 +45,8 @@ List<ComputerStep> goToSteps(String? account) => [
 
 /// The steps under the camera that reads Add Phone's code — the welcome's Scan QR from computer,
 /// and Computers' "Or scan the QR code on your computer" — where the page it came from says none
-/// of them ([ScanToConnectPage.steps]): open Harness on the computer, then Add Phone and where it
-/// is.
+/// of them ([ScanToConnectPage.steps]): get Harness on the computer, sign in, then Add Phone and
+/// where it is.
 ///
 /// ⚠️ **One set for the camera (owner, 2026-10-12).** It used to be two: signed out "Click Add
 /// Phone ③ Scan the QR code", signed in "Sign in on your computer ③ Not showing up? Click Add
@@ -48,10 +54,12 @@ List<ComputerStep> goToSteps(String? account) => [
 /// somebody already scanning. Both halves hold either way: Add Phone asks a computer that is not
 /// signed in to sign in before it shows a code, and a computer that turns up by itself is paired
 /// just as well by its code. The scan is the camera itself, so it is not a step of its own.
-/// Two steps, signing in not among them (owner, 2026-10-12): the desktop now has its person sign
-/// in before anything else, Add Phone included. [account] is kept for the callers that pass it.
+/// Three steps (owner, 2026-10-14): somebody who has never had Harness on the computer starts from
+/// the download, and signing in is back between it and Add Phone — ②'s sign-in, word for word,
+/// with [account] when there is one to name.
 List<ComputerStep> computerSteps(String? account) => [
-  (title: _openHarness, note: null),
+  _getHarness,
+  _signIn(account),
   (title: 'Click "Add Phone"', note: kAddPhoneWhere),
 ];
 

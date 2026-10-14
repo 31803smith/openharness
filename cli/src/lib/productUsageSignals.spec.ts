@@ -1,5 +1,27 @@
 import { expect, it, vi } from 'vitest'
-import { productUsageLaunch, productUsageRequest } from './productUsageSignals.js'
+import { productUsageIntent, productUsageLaunch, productUsageRequest } from './productUsageSignals.js'
+
+it('separates automated polling, tool and app RPCs without inspecting error objects or content', () => {
+  const emit = vi.fn()
+  productUsageRequest('models_list', emit, Date.now, 'app')(undefined, undefined, false)
+  productUsageRequest('models_list', emit, Date.now, 'tool')(undefined, undefined, false)
+  productUsageRequest('agent_resume', emit, Date.now, 'tool')('AGENT_NOT_FOUND', 'failed', false)
+  productUsageRequest('agent_close', emit, Date.now, 'app')(undefined, 'cancelled', false)
+  const secret = { toString() { throw Error('PRIVATE') } }
+  expect(() => productUsageRequest('agent_restart', emit, Date.now, 'unknown')(secret, 'failed', false)).not.toThrow()
+  expect(emit.mock.calls.flat()).toEqual(expect.arrayContaining(['request_automatic_model_list_ok', 'request_tool_resume_error_not_found', 'request_app_close_cancelled', 'request_unknown_restart_error_other']))
+  expect(JSON.stringify(emit.mock.calls)).not.toContain('PRIVATE')
+  expect(emit.mock.calls.flat()).toContain('request_tool_model_list_ok')
+})
+it('requires an explicit composer marker for interactive work; raw terminal input is unclassified', () => {
+  const emit = vi.fn()
+  productUsageIntent('terminal_input', 'interactive', 'agent', 'app', emit)
+  productUsageIntent('message', undefined, 'agent', 'app', emit)
+  expect(emit).not.toHaveBeenCalled()
+  productUsageIntent('message', 'interactive', 'agent', 'app', emit)
+  expect(emit).toHaveBeenCalledWith({ id: 'agent', phase: 'work_requested', origin: 'interactive' })
+  expect(() => productUsageIntent('message', undefined, 'agent', 'tool', () => { throw Error() })).not.toThrow()
+})
 
 it('distinguishes a pending launch from a launched harness, and counts replies once', () => {
   let now = 0
@@ -42,4 +64,17 @@ it('observes Store, search and model operations without their arguments and reje
   const clock = vi.fn()
   productUsageRequest('terminal_input', emit, clock)
   expect(clock).not.toHaveBeenCalled()
+})
+
+it('marks a Store or model list a person opened, and only those', () => {
+  const emit = vi.fn()
+  productUsageRequest('dsh_list', emit, Date.now, 'app', true)(undefined, undefined, false)
+  productUsageRequest('grid_models_list', emit, Date.now, 'app', true)(undefined, undefined, false)
+  expect(emit.mock.calls.flat()).toEqual(expect.arrayContaining(['store_list_user_requests', 'model_list_user_requests']))
+  emit.mockClear()
+  // The Store's minute refresh, the pickers and the previews send no flag; history has no person behind it.
+  productUsageRequest('dsh_list', emit)(undefined, undefined, false)
+  productUsageRequest('agent_recent', emit, Date.now, 'app', true)(undefined, undefined, false)
+  productUsageRequest('session_tail', emit, Date.now, 'app', true)(undefined, undefined, false)
+  expect(emit.mock.calls.flat().filter(m => String(m).includes('_user_'))).toEqual([])
 })

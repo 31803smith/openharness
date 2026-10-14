@@ -188,6 +188,14 @@ void main() {
   TerminalView view(WidgetTester tester) =>
       tester.widget<TerminalView>(find.byType(TerminalView));
 
+  /// The frames the pane's menu (Copy, Select All) takes to follow the
+  /// selection: shown or hidden after the frame the change lands in, from the
+  /// app's root overlay, and built or taken down in the one after.
+  Future<void> pumpMenu(WidgetTester tester) async {
+    await tester.pump();
+    await tester.pump();
+  }
+
   /// The rendered row height — `RenderTerminal` itself is not exported.
   double lineHeight(WidgetTester tester) => tester
       .state<TerminalViewState>(find.byType(TerminalView))
@@ -283,6 +291,8 @@ void main() {
         view(tester).terminal.buffer.lines[0].getText(),
         startsWith('the screen after the resize'),
       );
+      // The session's wait for a screen of the size it asked for runs out.
+      await tester.pump(const Duration(seconds: 2));
     });
 
     testWidgets('keeps a reader at the end at the end', (tester) async {
@@ -298,6 +308,8 @@ void main() {
 
       final position = scroll(tester);
       expect(position.pixels, position.maxScrollExtent);
+      // The session's wait for a screen of the size it asked for runs out.
+      await tester.pump(const Duration(seconds: 2));
     });
 
     testWidgets('keeps a reader in the history on the line they were reading', (
@@ -326,6 +338,8 @@ void main() {
         reason: 'the screen moved under the reader, not the reader',
       );
       expect(scroll(tester).pixels, lessThan(scroll(tester).maxScrollExtent));
+      // The session's wait for a screen of the size it asked for runs out.
+      await tester.pump(const Duration(seconds: 2));
     });
 
     testWidgets('keeps a selection whose text is still there', (tester) async {
@@ -336,7 +350,7 @@ void main() {
       final before = view(tester).terminal.buffer;
       view(tester).controller!
           .setSelection(before.createAnchor(0, 2), before.createAnchor(14, 2));
-      await tester.pump();
+      await pumpMenu(tester);
       expect(find.text('Copy'), findsOneWidget);
 
       await keyframe(tester, pane, 1, lines(8));
@@ -346,6 +360,8 @@ void main() {
       final selection = view(tester).controller!.selection;
       expect(selection, isNotNull);
       expect(view(tester).terminal.buffer.getText(selection), 'history line 2');
+      // The session's wait for a screen of the size it asked for runs out.
+      await tester.pump(const Duration(seconds: 2));
     });
 
     testWidgets('lets a selection go when its text is not', (tester) async {
@@ -356,7 +372,8 @@ void main() {
       final before = view(tester).terminal.buffer;
       view(tester).controller!
           .setSelection(before.createAnchor(0, 2), before.createAnchor(14, 2));
-      await tester.pump();
+      await pumpMenu(tester);
+      expect(find.text('Copy'), findsOneWidget);
 
       await keyframe(tester, pane, 1, lines(8, from: 50));
       await tester.pump();
@@ -364,6 +381,8 @@ void main() {
 
       expect(view(tester).controller!.selection, isNull);
       expect(find.text('Copy'), findsNothing);
+      // The session's wait for a screen of the size it asked for runs out.
+      await tester.pump(const Duration(seconds: 2));
     });
 
     // Back puts the keyboard away without a word to the app: the terminal keeps its focus and its
@@ -418,15 +437,20 @@ void main() {
     testWidgets('copies what is selected and lets it go', (tester) async {
       final platform = _Platform(tester);
       final pane = session();
-      pane.terminal.write('npm test\r\nall 42 passed');
+      // At the foot of the screen: the menu shows nothing while what it is
+      // about is scrolled out of the pane.
+      pane.terminal.write('${_blank}npm test\r\nall 42 passed');
       await pumpPanel(tester, pane);
       final buffer = pane.terminal.buffer;
-      view(tester).controller!
-          .setSelection(buffer.createAnchor(0, 1), buffer.createAnchor(13, 1));
-      await tester.pump();
+      final row = buffer.lines.length - 1;
+      view(tester).controller!.setSelection(
+        buffer.createAnchor(0, row),
+        buffer.createAnchor(13, row),
+      );
+      await pumpMenu(tester);
 
       await tester.tap(find.text('Copy'));
-      await tester.pump();
+      await pumpMenu(tester);
 
       expect(platform.copied, 'all 42 passed');
       expect(view(tester).controller!.selection, isNull);
@@ -437,21 +461,30 @@ void main() {
       );
     });
 
-    testWidgets('× lets it go without copying', (tester) async {
+    testWidgets('a tap lets it go without copying', (tester) async {
       final platform = _Platform(tester);
       final pane = session();
-      pane.terminal.write('npm test');
+      pane.terminal.write('${_blank}npm test');
       await pumpPanel(tester, pane);
       final buffer = pane.terminal.buffer;
-      view(tester).controller!
-          .setSelection(buffer.createAnchor(0, 0), buffer.createAnchor(3, 0));
-      await tester.pump();
+      final row = buffer.lines.length - 1;
+      view(tester).controller!.setSelection(
+        buffer.createAnchor(0, row),
+        buffer.createAnchor(3, row),
+      );
+      await pumpMenu(tester);
+      expect(find.text('Copy'), findsOneWidget);
 
-      await tester.tap(find.bySemanticsLabel('Clear selection'));
-      await tester.pump();
+      // The system's menu has no button for it: a tap on the terminal, away
+      // from the selection's handles, lets it go as it would in a text field.
+      await tester.tap(find.byType(TerminalView));
+      // Past the double-tap window, which is what holds a single tap back.
+      await tester.pump(kDoubleTapTimeout);
+      await pumpMenu(tester);
 
       expect(platform.copied, isNull);
       expect(view(tester).controller!.selection, isNull);
+      expect(find.text('Copy'), findsNothing);
     });
   });
 

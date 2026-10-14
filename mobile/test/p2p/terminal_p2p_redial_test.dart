@@ -22,7 +22,7 @@ typedef Booted = ({
 
 /// The first terminal starts the negotiation and rides the relay; nothing is up yet.
 Booted started(FakeAsync async) {
-  final b = bootPlugin(async: async);
+  final b = bootPlugin(async: async, firstTerminal: false);
   b.host.sendTerminalFrame('terminal_open', {'requestId': 'r0'});
   flush(async);
   expect(b.links.created, hasLength(1));
