@@ -60,11 +60,15 @@
   /* Screens at the left of a step, its counters at the right. */
   .phone-pair { display: grid; grid-template-columns: auto 1fr; }
   .shots { display: flex; gap: 12px; padding: 16px; border-right: 1px solid var(--line); background: var(--code-bg); }
-  .shots .ph { width: 200px; flex: none; }
+  .shots .ph, .shots img { width: 200px; flex: none; }
+  .shots img { display: block; height: auto; border-radius: 24px; border: 4px solid #2a2a28; cursor: zoom-in; }
+  dialog { border: 0; padding: 0; max-width: 96vw; background: transparent; }
+  dialog img { max-width: 96vw; max-height: 94vh; display: block; border-radius: 8px; }
+  dialog::backdrop { background: rgba(0,0,0,.8); }
   @media (max-width: 760px) {
     .phone-pair { grid-template-columns: 1fr; }
     .shots { border-right: 0; border-bottom: 1px solid var(--line); justify-content: center; }
-    .shots .ph { width: calc(50% - 6px); max-width: 200px; }
+    .shots .ph, .shots img { width: calc(50% - 6px); max-width: 200px; }
   }
 
   /* Copied from docs/research/2026-10-14-mobile-onboarding so the screens match that page. */
@@ -239,8 +243,9 @@
 </svg>
 <main>
   <h1>Product measurement, Harness phone onboarding</h1>
-  <p class="lede">Every count the phone app sends while someone gets started, step by step, as built on 2026-10-14 (branch <code>feat/web</code>, not yet released).
-    The steps are the ones on the <a href="../2026-10-14-mobile-onboarding/index.html">mobile onboarding page</a>, and the screens below are copied from it.
+  <p class="lede">Every count the phone app sends while someone gets started, step by step, as built on 2026-10-14 (branch <code>feat/mobile-ios-android</code>, commit <code>248e5b1fc</code>, not yet released).
+    The steps are the ones on the <a href="../2026-10-14-mobile-onboarding/index.html">mobile onboarding page</a>. Screens 1–3 are renders of the current code
+    (<code>test/render/phone_screens_render_test.dart</code>); 4 and 5 are drawn on that page. Click a screen to enlarge it.
     The counts come from <code>mobile/lib/measurement/</code>: the shared <code>ProductMeasurement</code> and the new <code>OnboardingMeasurement</code>.
     The names they may use are fixed in <code>backend/src/types/productUsage.ts</code>.</p>
   <div class="facts">
@@ -257,17 +262,22 @@
     <p>Each step calls <code>begin(flow)</code> when it starts, which counts <code>…_started</code>. It ends once with one outcome
       (<code>ok</code> · <code>failed</code> · <code>cancelled</code> · <code>unknown</code>) and one duration bucket
       (<code>under_1s</code> · <code>1s_to_10s</code> · <code>10s_to_1m</code> · <code>over_1m</code>). The phone adds these to that UTC day's totals in memory.
-      A batch of at most 32 counters goes to <code>POST /api/product-usage/report</code> about once a minute. A Google sign-in that worked sends:</p>
+      A batch of at most 32 counters goes to <code>POST /api/product-usage/report</code> about once a minute. A phone that waited 2 minutes for its computer sends:</p>
     <div class="scroll"><table>
       <tr><th>Field</th><th>Value</th></tr>
       <tr><td>schemaVersion · day</td><td><code>1</code> · <code>"2026-10-14"</code> (UTC day only, no time)</td></tr>
       <tr><td>id</td><td><code>"3f0c…-4…"</code>, a random receipt so a retry is not counted twice; new for each report</td></tr>
       <tr><td>revision</td><td><code>0</code>, the version of the account's Share switch, so an "off" saved meanwhile wins</td></tr>
-      <tr><td>counters</td><td><code>{"ui_phone_sign_in_started":1, "ui_phone_sign_in_ok":1, "ui_phone_sign_in_under_1s":1, "ui_phone_sign_in_google_started":1, "ui_phone_sign_in_google_ok":1, "ui_phone_sign_in_google_under_1s":1}</code></td></tr>
+      <tr><td>counters</td><td><code>{"ui_phone_computer_wait_started":1, "ui_phone_computer_wait_ok":1, "ui_phone_computer_wait_over_1m":1}</code></td></tr>
     </table></div>
     <p>The backend accepts only names on its list (any other name rejects the whole report) and adds them into daily totals. Who sent a report is used to check their
       switch, and is not stored with the totals. Signed out there is no account, so nothing is sent unless the person ticked <b>Share setup and sign-in counts</b>.
-      That box starts off on every launch. Its reports go without credentials or cookies to <code>/api/product-usage/setup</code> as <code>setup_phone_*</code>.</p>
+      That box starts off on every launch. Its reports go without credentials or cookies to <code>POST /api/product-usage/setup</code>, with
+      <code>"consent": true</code> instead of a revision. That is the only way sign-in is counted, because a sign-in happens before there is an account. A Google sign-in that worked:</p>
+    <div class="scroll"><table>
+      <tr><th>Field</th><th>Value</th></tr>
+      <tr><td>counters</td><td><code>{"setup_phone_sign_in_started":1, "setup_phone_sign_in_ok":1, "setup_phone_sign_in_1s_to_10s":1, "setup_phone_sign_in_google_started":1, "setup_phone_sign_in_google_ok":1, "setup_phone_sign_in_google_1s_to_10s":1}</code></td></tr>
+    </table></div>
     <div class="note">A step that starts in the second after sign-in, before the account's switch has loaded, waits in <code>OnboardingMeasurement</code>. It is counted from its real start
       once the switch reads on, and never counted if the switch reads off or the step ends first.</div>
   </div></div>
@@ -282,6 +292,7 @@
       <tr><td>Who</td><td class="no"><code>user_email</code>, <code>user_id</code>, a stable device id, a session id on every event</td><td class="yes">Nothing. A random receipt per report, for retries only</td></tr>
       <tr><td>Device</td><td class="no">App version and build, OS and version, arch, locale</td><td class="yes"><code>phone</code> (the surface) only</td></tr>
       <tr><td>Timing</td><td class="no">Exact seconds (<code>seconds_since_login</code>, <code>open_seconds</code>)</td><td class="yes">Four buckets</td></tr>
+      <tr><td>Apps apart</td><td class="no">The phone stamped <code>harness-desktop-v2</code>, the desktop's category, so phone and desktop events could not be told apart</td><td class="yes"><code>phone</code> · <code>desktop</code> · <code>web</code> in every counter name</td></tr>
       <tr><td>Opt-out</td><td>A build variable (<code>HARNESS_ANALYTICS_DISABLED</code>)</td><td>The account's Share switch on every app; off by default before sign-in</td></tr>
     </table></div>
     <div class="scroll"><table>
@@ -289,6 +300,7 @@
       <tr><td>signed_in · sign_in_failed {reason}</td><td><code>sign_in</code> and <code>sign_in_&lt;button&gt;</code> ok · failed · cancelled (section 1)</td></tr>
       <tr><td>app_first_message {from, seconds_since_login}</td><td><code>first_message</code>: from the session opening to the first send, bucketed (section 4)</td></tr>
       <tr><td>app_opened {signed_in}</td><td>Not an event: people active per app per day come from the backend's daily marks (#1314)</td></tr>
+      <tr><td>new_agent_opened · agent_created</td><td>Not on the phone. The computer's daemon counts <code>create</code> requests and their outcomes, without the engine</td></tr>
       <tr><td>app_closed · screen_view · signed_out</td><td>Not collected. Sign-out only ends a running step as <code>cancelled</code></td></tr>
     </table></div>
   </div></div>
@@ -298,83 +310,36 @@
   <div class="card"><div class="card-body">
     <div class="scroll"><table>
       <tr><th>Step</th><th>Flow</th><th>Starts</th><th>ok</th><th>failed</th><th>cancelled</th></tr>
-      <tr><td>1 · Sign in</td><td><code>sign_in</code> + <code>sign_in_scan|google|apple|email</code></td><td>A button pressed / a code entered</td><td>Signed in</td><td>The service refused, or the page could not open</td><td>Google/Apple page closed, or another attempt replaced it</td></tr>
+      <tr><td>1 · Sign in</td><td><code>sign_in</code> + <code>sign_in_scan|google|apple|email</code></td><td>Google or Apple pressed, an email code entered, a QR code read</td><td>Signed in</td><td>The service refused, or the page could not open</td><td>Google/Apple page closed, or another attempt replaced it</td></tr>
       <tr><td>2 · Your computer</td><td><code>computer_wait</code></td><td>"On your computer, go to" shows</td><td>A computer joins the account</td><td>—</td><td>Signed out ("Not you? Sign out"), see the note</td></tr>
-      <tr><td>3 · Ready</td><td><code>session_open</code></td><td>"… is ready." starts</td><td>A session opens (its own, or one picked meanwhile)</td><td>No session after 90 s</td><td>The sessions list showed instead</td></tr>
+      <tr><td>3 · Ready</td><td><code>session_open</code></td><td>"… is ready." starts</td><td>A session opens (its own, or one picked meanwhile)</td><td>No session after 90 s</td><td>Signed out, see the note</td></tr>
       <tr><td>4 · Session</td><td><code>first_message</code></td><td>That session opens</td><td>First line sent from it (mic, composer or Return)</td><td>—</td><td>Left the session first</td></tr>
       <tr><td>5 · Notifications</td><td><code>notify_permission</code></td><td>The system prompt shows</td><td>Allow</td><td>—</td><td>Don't Allow (<code>unknown</code> when the OS gives no answer)</td></tr>
     </table></div>
-    <div class="note">Each flow runs at most once per sign-in. These are counts of attempts, not of people: the daily totals have no identity to deduplicate them.
+    <div class="note">Each flow runs at most once per sign-in and app launch. These are counts of attempts, not of people: the daily totals have no identity to deduplicate them.
       Signing out clears the phone's unsent counts, so a step ended by signing out mostly shows as a start with no outcome rather than as <code>cancelled</code>.</div>
   </div></div>
 
   <h2>1. Welcome and sign-in</h2>
-  <figure class="phone-pair"><div class="shots"><div class="ph"><div class="sb"><span>9:41</span><span class="bat"></span></div><div class="island"></div>
-        <div class="words"><h5 class="hl">Manage all your agents on all your computers from your phone.</h5></div>
-        <svg class="pic w" viewBox="0 0 320 300"><use href="#pic-welcome"/></svg>
-        <div class="foot">
-          <div class="btn pri"><svg class="i"><use href="#i-qr"/></svg>Scan QR from computer</div>
-          <div class="btn goog"><svg class="mk"><use href="#i-google"/></svg>Continue with Google</div>
-          <div class="btn appl"><svg class="mk" style="color:#fff"><use href="#i-apple"/></svg>Continue with Apple</div>
-          <div class="quiet"></div>
-        </div>
-        <div class="home"></div></div><div class="ph"><div class="sb"><span>9:41</span><span class="bat"></span></div><div class="island"></div><div class="bk"><svg class="i"><use href="#i-chev"/></svg></div>
-        <div class="cam"><div class="lap"><div class="dlg"><span>Add your phone</span><svg viewBox="-2 -2 25 25" shape-rendering="crispEdges"><use href="#qr"/></svg></div></div><i class="c tl"></i><i class="c tr"></i><i class="c bl"></i><i class="c br"></i></div>
-        <div class="under">
-          <div class="h">How to get the QR code</div>
-          <div class="steps">
-            <div class="stp"><div class="rg">1</div><div><div class="t">Open Harness on your computer</div></div></div>
-            <div class="stp"><div class="rg">2</div><div><div class="t">Click "Add Phone"</div><div class="n">Harness menu → Add Phone</div></div></div>
-          </div>
-        </div>
-        <div class="foot"><div class="quiet"><b style="font-weight:500">Use email instead</b></div></div>
-        <div class="home"></div></div></div>
-    <figcaption><div class="row"><span class="num">1</span><span class="ttl2">Three buttons, and email under the camera</span><span class="tag">phone_welcome.dart</span><span class="tag new">new</span></div>
+  <figure class="phone-pair"><div class="shots"><img src="img/01-welcome.jpg" alt="Welcome: Continue with Google, Continue with Apple, then Continue with email and QR code in one quiet line"><img src="img/02-email.jpg" alt="Your email, Send code"></div>
+    <figcaption><div class="row"><span class="num">1</span><span class="ttl2">Google, Apple, and a quiet line for email and QR</span><span class="tag">phone_welcome.dart</span><span class="tag new">new</span></div>
       <div class="scroll"><table>
         <tr><th>Counter</th><th>When</th></tr>
-        <tr><td>sign_in_scan_*</td><td>"Scan QR from computer", then a code read (<code>signInWithScan</code>)</td></tr>
         <tr><td>sign_in_google_*</td><td>"Continue with Google" (<code>signInWithProvider</code>)</td></tr>
         <tr><td>sign_in_apple_*</td><td>"Continue with Apple"</td></tr>
-        <tr><td>sign_in_email_*</td><td>"Use email instead", the 4-digit code (<code>signInWithCode</code>)</td></tr>
+        <tr><td>sign_in_email_*</td><td>"Continue with email", then the 4-digit code (<code>signInWithCode</code>). Sending the code is not counted</td></tr>
+        <tr><td>sign_in_scan_*</td><td>"QR code", then a computer's Add Phone code read by the camera (<code>signInWithScan</code>)</td></tr>
         <tr><td>sign_in_*</td><td>The total of all four, as before</td></tr>
       </table></div>
       <p>Google and Apple were not counted at all before this change, so <code>sign_in</code> totals rise when it ships. A scan that fails and falls back to the emailed code counts as a failed scan; the code typed after it is its own email attempt.</p>
-      <div class="note">Signed out, these exist only for phones that ticked <b>Share setup and sign-in counts</b>. It starts off on every launch, so expect small numbers. This is deliberate: there is no consent before an account exists.</div></figcaption></figure>
-  <figure class="phone-pair"><div class="shots"><div class="ph"><div class="sb"><span>9:41</span><span class="bat"></span></div><div class="island"></div><div class="bk"><svg class="i"><use href="#i-chev"/></svg></div>
-        <div class="form">
-          <h5 class="hl">Check your email</h5>
-          <div class="l">We sent a 4-digit code to ada@example.com.</div>
-          <div class="digits"><span>4</span><span>8</span><span class="on"></span><span></span></div>
-          <div class="btn pri" style="opacity:.5">Sign in</div>
-          <div class="row2"><span class="dim">Resend in 24s</span><span>Change email</span></div>
-        </div>
-        <div class="home"></div></div><div class="ph"><div class="sb"><span>9:41</span><span class="bat"></span></div><div class="island"></div>
-        <div class="words"><h5 class="hl">Manage all your agents on all your computers from your phone.</h5></div>
-        <svg class="pic w" viewBox="0 0 320 300"><use href="#pic-welcome"/></svg>
-        <div class="st w err">✗ Could not open the sign-in page. Check your connection and try again.</div>
-        <div class="foot">
-          <div class="btn pri"><svg class="i"><use href="#i-qr"/></svg>Scan QR from computer</div>
-          <div class="btn goog"><svg class="mk"><use href="#i-google"/></svg>Continue with Google</div>
-          <div class="btn appl"><svg class="mk" style="color:#fff"><use href="#i-apple"/></svg>Continue with Apple</div>
-          <div class="quiet"></div>
-        </div>
-        <div class="home"></div></div></div>
+      <div class="note">These exist only for phones that ticked <b>Share setup and sign-in counts</b>, the one quiet line with ⓘ at the foot of every signed-out screen (not in these renders).
+        It starts off on every launch, so expect small numbers. This is deliberate: before an account exists there is no other consent.</div></figcaption></figure>
+  <figure class="phone-pair"><div class="shots"><img src="img/03-code.jpg" alt="Check your email: the 4-digit code"></div>
     <figcaption><div class="row"><span class="num">1b</span><span class="ttl2">What a failure carries</span></div>
-      <p>Only <code>failed</code>. The red reason under the picture ("Could not open the sign-in page…") and the email typed never leave the phone. The old AA <code>reason</code> code is not sent either.</p></figcaption></figure>
+      <p>Only <code>failed</code>. The red reason under the picture ("Could not open the sign-in page…"), the email typed and the code never leave the phone. The old AA <code>reason</code> code is not sent either.</p></figcaption></figure>
 
   <h2>2. Your computer</h2>
-  <figure class="phone-pair"><div class="shots"><div class="ph"><div class="sb"><span>9:41</span><span class="bat"></span></div><div class="island"></div><div class="gear"><svg class="i"><use href="#i-gear"/></svg></div>
-        <div class="words">
-          <h5 class="hl">On your computer, go to</h5>
-          <div class="addr">autonomous.ai/go<svg class="i"><use href="#i-share"/></svg></div>
-          <div class="steps">
-            <div class="stp"><div class="rg">1</div><div><div class="t">Install Harness</div></div></div>
-            <div class="stp"><div class="rg">2</div><div><div class="t">Sign in</div><div class="n">Use ada@example.com</div><div class="n" style="padding-top:0">Not you? <b>Sign out</b></div></div></div>
-          </div>
-        </div>
-        <svg class="pic g" viewBox="0 0 320 300"><use href="#pic-looking"/></svg>
-        <div class="st g">Looking for your computer<span class="cur"></span></div>
-        <div class="home"></div></div></div>
+  <figure class="phone-pair"><div class="shots"><img src="img/04-your-computer.jpg" alt="On your computer, go to autonomous.ai/go; Looking for your computer"></div>
     <figcaption><div class="row"><span class="num">2</span><span class="ttl2">"Looking for your computer"</span><span class="tag">agent_home.dart</span><span class="tag new">new</span></div>
       <div class="scroll"><table>
         <tr><th>Counter</th><th>When</th></tr>
@@ -386,21 +351,14 @@
       <p>Accounts that already had a computer skip this step, so it has no <code>started</code> for them.</p></figcaption></figure>
 
   <h2>3. The computer joins</h2>
-  <figure class="phone-pair"><div class="shots"><div class="ph"><div class="sb"><span>9:41</span><span class="bat"></span></div><div class="island"></div>
-        <div class="words"><h5 class="hl">MacBook Pro is ready.</h5></div>
-        <svg class="pic g" viewBox="0 0 320 300"><use href="#pic-joined-oc"/></svg>
-        <div class="home"></div></div><div class="ph"><div class="sb"><span>9:41</span><span class="bat"></span></div><div class="island"></div><div class="gear"><svg class="i"><use href="#i-gear"/></svg></div>
-        <div class="words"><h5 class="hl">MacBook Pro is ready.</h5></div>
-        <svg class="pic g" viewBox="0 0 320 300"><use href="#pic-joined-none"/></svg>
-        <div class="st g">Waiting for its first session<span class="cur"></span></div>
-        <div class="home"></div></div></div>
+  <figure class="phone-pair"><div class="shots"><img src="img/05-ready.jpg" alt="MacBook Pro is ready."></div>
     <figcaption><div class="row"><span class="num">3</span><span class="ttl2">"MacBook Pro is ready." and its first session</span><span class="tag">agent_home.dart</span><span class="tag new">new</span></div>
       <div class="scroll"><table>
         <tr><th>Counter</th><th>When</th></tr>
         <tr><td>session_open_started</td><td>The join moment starts (a new computer, or the first ready one on the account)</td></tr>
         <tr><td>session_open_ok</td><td>The hand-over: the computer's session opens, or one picked meanwhile in Find or from a notice</td></tr>
         <tr><td>session_open_failed</td><td>"Waiting for its first session" passes 90 s</td></tr>
-        <tr><td>session_open_cancelled</td><td>The onboarding ended on the sessions list instead</td></tr>
+        <tr><td>session_open_cancelled</td><td>Signed out meanwhile (rarely arrives: signing out drops the unsent counts)</td></tr>
       </table></div>
       <p>A computer that wants a password or is offline leaves the step running: its time then includes unlocking it.</p></figcaption></figure>
 
@@ -446,7 +404,8 @@
         <tr><td>notify_permission_cancelled</td><td>Don't Allow</td></tr>
         <tr><td>notify_permission_unknown</td><td>The OS gave no answer, or the request failed</td></tr>
       </table></div>
-      <p>To read the answer, <code>SystemNotices.requestPermission()</code> now returns the plugin's <code>bool?</code> instead of nothing. Settings ▸ Notifications and Focus's tips call it as before.</p></figcaption></figure>
+      <p>To read the answer, <code>SystemNotices.requestPermission()</code> now returns the plugin's <code>bool?</code> instead of nothing. Settings ▸ Notifications and Focus's tips call it as before.</p>
+      <div class="note">Android 12 and older show no prompt, so there the step can end <code>ok</code> with nothing on screen. Counts do not say iOS or Android apart.</div></figcaption></figure>
 
   <h2>Already counted, unchanged</h2>
   <p class="sub">The phone flows from #1301/#1303 that the onboarding passes through.</p>
@@ -454,7 +413,18 @@
     <ul class="plain">
       <li><b>computer_link</b>: pairing with a computer by the Add Phone code or a password.</li>
       <li><b>remote_connect</b>: a computer's connection reaching connected.</li>
-      <li><b>People per day</b> and D1/D2/D3/D7 returns: the backend's 10-day pseudonymous marks (#1314), not sent by the app as counts.</li>
+      <li><b>People per day</b> and D1/D2/D3/D7 returns: the backend's 10-day pseudonymous marks (#1314), not sent by the app as counts. Nothing is collected until <code>PRODUCT_USAGE_SUBJECT_KEY</code> is set.</li>
+    </ul>
+  </div></div>
+
+  <h2>Reading the numbers</h2>
+  <div class="card"><div class="card-body">
+    <p><code>cd backend &amp;&amp; npm run usage:daily -- 14</code> (read-only <code>DATABASE_URL</code>) prints JSON; its <code>review.flows</code> lists every flow per channel and surface with its starts,
+      the four outcomes, <code>unmatchedStarts</code> and the duration buckets. The new flows appear there with no change, because the review reads the same vocabulary. Days are UTC; today is partial.</p>
+    <ul class="plain">
+      <li>Conversion between steps compares totals, not people: <code>session_open_started</code> ÷ <code>computer_wait_ok</code> is close to "joined, then went on", but nothing links the two counts.</li>
+      <li>Sign-in rates describe only phones that ticked the box: a self-selected group, not all new users.</li>
+      <li>The web build of the same app counts under <code>ui_web_*</code>. Signed out, web sends nothing.</li>
     </ul>
   </div></div>
 
@@ -476,9 +446,19 @@
       <li><b>Backend first.</b> An older backend rejects a whole report that carries a name it does not know (400). The phone then retries that same report each minute until its day is more than a day old, and the other phone counts in it are lost with it. Deploy the backend vocabulary before the phone build.</li>
       <li>The CLI copy of the vocabulary (<code>cli/src/lib/productUsageContract.ts</code>) is identical, and a backend test enforces that. Desktop's <code>product_measurement.dart</code> is kept identical to the phone's for the same reason. Desktop sends none of the new flows.</li>
       <li>The phone's Privacy ▸ See what's shared now lists the sign-in buttons and the four setup steps. Desktop's copy of that text does not mention them yet.</li>
+      <li>The backend test <i>keeps the native app collectors and anonymous transport identical</i> fails on this branch since <code>d5496d2ca</code>: the phone's redesigned
+        <code>setup_usage_choice.dart</code> no longer matches desktop's. It needs a decision (mirror it to desktop, or drop that file from the test) before the PR's checks pass.</li>
     </ul>
     <p class="q">Should signed-out sign-in counts stay opt-in only (small numbers), or is the sign-in split good enough from phones that tick the box?</p>
   </div></div>
 </main>
+<dialog id="zoom"><img alt=""></dialog>
+<script>
+  const zoom = document.getElementById('zoom');
+  document.querySelectorAll('.shots img').forEach((img) => img.addEventListener('click', () => {
+    zoom.querySelector('img').src = img.src; zoom.showModal();
+  }));
+  zoom.addEventListener('click', () => zoom.close());
+</script>
 </body>
 </html>

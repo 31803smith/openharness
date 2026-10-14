@@ -945,7 +945,7 @@ class _AgentHomeState extends State<AgentHome>
       _endLaunchWait();
       // The onboarding handing over to the session it was waiting for: it grows in, once.
       final handOver = _onboarding && _joining != null;
-      if (_onboarding) _measureHandOver(handOver);
+      if (handOver) _measureHandOver();
       // Nothing remembered, nothing picked: the sessions, each a tap from its terminal — but not at
       // the end of the onboarding, which opens the computer's own session ([_target]).
       if (!handOver &&
@@ -1216,15 +1216,12 @@ class _AgentHomeState extends State<AgentHome>
     };
   }
 
-  /// The onboarding ends: its session opened by itself, and the first message there is next — or
-  /// the person went on to another session without it.
-  void _measureHandOver(bool handOver) {
+  /// The onboarding hands over to a session — its computer's own, or one picked meanwhile — and
+  /// the first message there is next.
+  void _measureHandOver() {
     final onboarding = widget.notifier.onboardingMeasurement;
-    onboarding.end(
-      ProductFlow.sessionOpen,
-      handOver ? ProductOutcome.ok : ProductOutcome.cancelled,
-    );
-    if (handOver) onboarding.start(ProductFlow.firstMessage);
+    onboarding.end(ProductFlow.sessionOpen, ProductOutcome.ok);
+    onboarding.start(ProductFlow.firstMessage);
   }
 
   /// Arms [_firstSessionPatience] on the first frame that waits for it. Called from build: a timer,
