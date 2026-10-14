@@ -30,8 +30,10 @@ const kAddPhoneWhere = 'Harness menu → Add Phone';
 /// │        [ camera view ]       │
 /// └──────────────────────────────┘
 ///   How to get the QR code                    ([steps]; "Signing in…" over them while it does)
-///   (1) Open Harness on your computer
-///   (2) Click "Add Phone"
+///   (1) Go to autonomous.ai/go
+///       Download and install on your computer
+///   (2) Sign in
+///   (3) Click "Add Phone"
 ///       Harness menu → Add Phone
 ///
 ///           Use email instead                 ([fallbackLabel]; none without [onUseEmail])

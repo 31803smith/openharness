@@ -9,6 +9,7 @@ import 'package:harness_mobile/phone/welcome/onboarding_copy.dart';
 import 'package:harness_mobile/phone/welcome/onboarding_picture.dart';
 import 'package:harness_mobile/phone/welcome/phone_welcome.dart';
 import 'package:harness_mobile/phone/welcome/scan_to_connect.dart';
+import 'package:harness_mobile/phone/welcome/set_up_computer.dart';
 import 'package:harness_mobile/phone/welcome/sign_in_provider_button.dart';
 import 'package:harness_mobile/state/app_state.dart';
 
@@ -329,10 +330,49 @@ void main() {
     expect(find.byType(ScanToConnectPage), findsOneWidget);
     // Continue with email is beside QR code on the welcome, one back away (owner, 2026-10-14).
     expect(find.text('Use email instead'), findsNothing);
+
+    // Under the camera, how the code comes up on the computer (owner, 2026-10-14): Harness from
+    // ②'s address, signed in, then Add Phone — in that order.
+    expect(find.text('How to get the QR code'), findsOneWidget);
+    final steps = [
+      find.text('Go to autonomous.ai/go'),
+      find.text('Sign in'),
+      find.text('Click "Add Phone"'),
+    ];
+    for (final step in steps) {
+      expect(step, findsOneWidget);
+    }
+    for (var i = 1; i < steps.length; i++) {
+      expect(
+        tester.getTopLeft(steps[i - 1]).dy,
+        lessThan(tester.getTopLeft(steps[i]).dy),
+      );
+    }
+    expect(
+      find.text('Download and install on your computer'),
+      findsOneWidget,
+    );
+    expect(find.text(kAddPhoneWhere), findsOneWidget);
+    // Signed out, there is no account for the sign-in to name.
+    expect(find.textContaining('Use '), findsNothing);
+
     await tester.binding.handlePopRoute();
     await tester.pump();
     expect(find.text(OnboardingCopy.welcome), findsOneWidget);
     expect(email, findsOneWidget);
+  });
+
+  test('the camera\'s sign-in step names the account, when there is one', () {
+    final signedIn = computerSteps('ada@example.com');
+    expect(signedIn.map((s) => s.title), [
+      'Go to autonomous.ai/go',
+      'Sign in',
+      'Click "Add Phone"',
+    ]);
+    expect(signedIn[1].note, 'Use ada@example.com');
+    // ②'s sign-in step, word for word.
+    expect(signedIn[1], goToSteps('ada@example.com')[1]);
+    expect(computerSteps(null)[1].note, isNull);
   });
 
   testWidgets('the emailed code: the address, then the four digits, and back', (
