@@ -181,7 +181,7 @@ void main() {
     },
   );
 
-  testWidgets('why the phone was signed out is said under the picture', (
+  testWidgets('why the phone was signed out is said under the headline', (
     tester,
   ) async {
     await pump(tester);
@@ -189,11 +189,20 @@ void main() {
     notifier.signedOutReason = 'You were signed out on another device.';
     notifier.notifyListeners();
     await tester.pump();
-    expect(find.byKey(const ValueKey('welcome-signed-out')), findsOneWidget);
+    final said = find.byKey(const ValueKey('welcome-signed-out'));
+    expect(said, findsOneWidget);
     expect(
       find.textContaining('You were signed out on another device.'),
       findsOneWidget,
     );
+    // Between the headline and the picture, on the headline's left edge.
+    final headline = tester.getRect(
+      find.byKey(const ValueKey('welcome-headline')),
+    );
+    final line = tester.getRect(said);
+    expect(line.top, greaterThan(headline.bottom));
+    expect(line.left, headline.left);
+    expect(line.bottom, lessThanOrEqualTo(before.top));
     expect(picture(tester), before);
   });
 

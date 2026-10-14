@@ -55,8 +55,9 @@ import 'sign_in_provider_button.dart';
 /// No sample, no "Is Harness on your computer?", no tips.
 ///
 /// ⚠️ **The foot never changes height.** While an account's page is up, the line of lesser ways in
-/// under the buttons becomes Cancel; why it did not finish is said under the picture — so the
-/// picture, in the same place on every onboarding screen ([OnboardingFrame]), never moves for it.
+/// under the buttons becomes Cancel; why it did not finish is said under the headline, in room
+/// kept for it — so the picture, in the same place on every onboarding screen ([OnboardingFrame]),
+/// never moves for it.
 class PhoneWelcome extends StatefulWidget {
   const PhoneWelcome({
     super.key,
@@ -96,7 +97,7 @@ class _PhoneWelcomeState extends State<PhoneWelcome> {
 
   String? _error;
 
-  /// A line under the picture that is neither a failure nor a sign-out: what to do next.
+  /// A line under the headline that is neither a failure nor a sign-out: what to do next.
   String? _notice;
 
   int _resendIn = 0;
@@ -116,7 +117,7 @@ class _PhoneWelcomeState extends State<PhoneWelcome> {
   }
 
   /// "Continue with Google / Apple": the account's own sign-in page, in the app. Its failure is
-  /// said under the picture; a cancel says nothing ([AppNotifier.signInWithProvider]).
+  /// said under the headline; a cancel says nothing ([AppNotifier.signInWithProvider]).
   Future<void> _signInWith(SignInProvider provider) async {
     if (widget.notifier.signingIn) return;
     setState(() => _error = null);
@@ -627,7 +628,7 @@ class _Dot extends StatelessWidget {
   }
 }
 
-/// A line under the picture, in the status line's place: why an account's sign-in did not finish
+/// A line under the headline, in the status line's place: why an account's sign-in did not finish
 /// (the terminal's red ✗), why a phone that was signed in is back here (the sign-out mark in its
 /// yellow — not red: the person did nothing wrong, and signing in again is the whole of what to do),
 /// or what to do next ([icon] in place of the sign-out mark).
@@ -668,7 +669,8 @@ class _Said extends StatelessWidget {
             TextSpan(text: text),
           ],
         ),
-        textAlign: TextAlign.center,
+        // Left, on the headline's edge, as the words above it are.
+        textAlign: TextAlign.start,
         maxLines: 2,
         overflow: TextOverflow.ellipsis,
         style: style.copyWith(color: error ? tty.red : tty.text),
