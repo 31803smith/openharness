@@ -933,7 +933,8 @@ class _TerminalPageState extends State<TerminalPage>
         break;
       }
     }
-    last ??= (entries..sort(compareMonitorOrder))
+    // Sorted as a copy: [visibleAgents] hands back its memo, unmodifiable.
+    last ??= ([...entries]..sort(compareMonitorOrder))
         .where((entry) => !here(entry) && entry.isOpenable)
         .firstOrNull;
     if (last == null) {

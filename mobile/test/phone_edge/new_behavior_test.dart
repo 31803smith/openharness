@@ -152,6 +152,8 @@ void main() {
     tester,
   ) async {
     final (:app, :conn) = await openNew(tester);
+    // The harness's page comes once its terminal is asked for, which waits for the socket.
+    conn.handshaken = true;
     final start = tester.getCenter(find.text('Start'));
     await tester.tapAt(start);
     await tester.pump(const Duration(milliseconds: 40));
