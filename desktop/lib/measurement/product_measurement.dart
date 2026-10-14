@@ -3,22 +3,34 @@ import 'dart:math';
 
 import 'package:flutter/foundation.dart';
 
+/// Mirrors `PRODUCT_USAGE_FLOWS` in backend/src/types/productUsage.ts; a wire name the backend
+/// does not list rejects the whole report.
 enum ProductFlow {
-  setup('setup'),
-  setupHarness('setup_harness'),
-  setupTmux('setup_tmux'),
-  setupClipboard('setup_clipboard'),
-  signIn('sign_in'),
+  setup('setup', beforeSignIn: true),
+  setupHarness('setup_harness', beforeSignIn: true),
+  setupTmux('setup_tmux', beforeSignIn: true),
+  setupClipboard('setup_clipboard', beforeSignIn: true),
+  signIn('sign_in', beforeSignIn: true),
+  signInScan('sign_in_scan', beforeSignIn: true),
+  signInGoogle('sign_in_google', beforeSignIn: true),
+  signInApple('sign_in_apple', beforeSignIn: true),
+  signInEmail('sign_in_email', beforeSignIn: true),
   workspaceConnect('workspace_connect'),
   computerLink('computer_link'),
   remoteConnect('remote_connect'),
   viewerOpen('viewer_open'),
   updateCheck('update_check'),
-  updateStage('update_stage');
+  updateStage('update_stage'),
+  computerWait('computer_wait'),
+  sessionOpen('session_open'),
+  firstMessage('first_message'),
+  notifyPermission('notify_permission');
 
-  const ProductFlow(this.wire);
+  const ProductFlow(this.wire, {this.beforeSignIn = false});
   final String wire;
-  bool get beforeSignIn => index <= ProductFlow.signIn.index;
+
+  /// Whether a signed-out session that opted in may count it.
+  final bool beforeSignIn;
 }
 
 enum ProductOutcome { ok, failed, cancelled, unknown }
@@ -127,7 +139,11 @@ class ProductMeasurement extends ChangeNotifier {
     _active.removeWhere((_, value) => value == channel);
   }
 
-  void Function(ProductOutcome) begin(ProductFlow flow) {
+  /// [elapsed] is time the flow already ran before it could be counted; it lands in the duration.
+  void Function(ProductOutcome) begin(
+    ProductFlow flow, {
+    Duration elapsed = Duration.zero,
+  }) {
     final channel = sharing
         ? 'ui'
         : flow.beforeSignIn && _setupAllowed
@@ -155,7 +171,7 @@ class ProductMeasurement extends ChangeNotifier {
         return;
       }
       _count(channel, day, '$prefix${outcome.name}');
-      final ms = watch.elapsedMilliseconds;
+      final ms = watch.elapsedMilliseconds + elapsed.inMilliseconds;
       _count(
         channel,
         day,
@@ -167,6 +183,16 @@ class ProductMeasurement extends ChangeNotifier {
             ? '10s_to_1m'
             : 'over_1m'}',
       );
+    };
+  }
+
+  /// One attempt counted under several flows at once — `sign_in` and the button that started it.
+  void Function(ProductOutcome) beginEach(List<ProductFlow> flows) {
+    final finishers = [for (final flow in flows) begin(flow)];
+    return (outcome) {
+      for (final finish in finishers) {
+        finish(outcome);
+      }
     };
   }
 

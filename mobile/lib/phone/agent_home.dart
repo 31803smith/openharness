@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:harness_mobile/demo/sample_mode.dart';
 import 'package:harness_mobile/logging/startup_trace.dart';
 import 'package:harness_mobile/logging/typing_trace.dart';
+import 'package:harness_mobile/measurement/product_measurement.dart';
 import 'package:harness_mobile/shared/theme/app_theme.dart';
 import 'package:harness_mobile/core/models.dart';
 import 'package:harness_mobile/state/app_state.dart';
@@ -944,6 +945,7 @@ class _AgentHomeState extends State<AgentHome>
       _endLaunchWait();
       // The onboarding handing over to the session it was waiting for: it grows in, once.
       final handOver = _onboarding && _joining != null;
+      if (_onboarding) _measureHandOver(handOver);
       // Nothing remembered, nothing picked: the sessions, each a tap from its terminal — but not at
       // the end of the onboarding, which opens the computer's own session ([_target]).
       if (!handOver &&
@@ -1120,7 +1122,10 @@ class _AgentHomeState extends State<AgentHome>
   /// and this screen moves on; with one of the person's other Google accounts, and it never does.
   Widget _goToYourComputer() {
     final notifier = widget.notifier;
-    if (_onboarding) _awaitedComputer = true;
+    if (_onboarding) {
+      _awaitedComputer = true;
+      notifier.onboardingMeasurement.start(ProductFlow.computerWait);
+    }
     return OnboardingStage(
       headline: OnboardingCopy.goToHeadline,
       headlineKey: const ValueKey('home-go-to'),
@@ -1157,6 +1162,10 @@ class _AgentHomeState extends State<AgentHome>
       final machine = notifier.machines.firstOrNull;
       if (machine == null) return;
       _joining = (machineId: machine.machineId, name: machine.displayName);
+      notifier.onboardingMeasurement.end(
+        ProductFlow.computerWait,
+        ProductOutcome.ok,
+      );
       // After the frame: it may take a "New device" down, which notifies — not during a build.
       final welcomed = machine.machineId;
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -1175,6 +1184,7 @@ class _AgentHomeState extends State<AgentHome>
         name: ready.machine.displayName,
       );
     }
+    notifier.onboardingMeasurement.start(ProductFlow.sessionOpen);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) _moment.start();
     });
@@ -1206,10 +1216,25 @@ class _AgentHomeState extends State<AgentHome>
     };
   }
 
+  /// The onboarding ends: its session opened by itself, and the first message there is next — or
+  /// the person went on to another session without it.
+  void _measureHandOver(bool handOver) {
+    final onboarding = widget.notifier.onboardingMeasurement;
+    onboarding.end(
+      ProductFlow.sessionOpen,
+      handOver ? ProductOutcome.ok : ProductOutcome.cancelled,
+    );
+    if (handOver) onboarding.start(ProductFlow.firstMessage);
+  }
+
   /// Arms [_firstSessionPatience] on the first frame that waits for it. Called from build: a timer,
   /// not a rebuild.
   bool _waitForFirstSession() {
     _firstSessionWait ??= Timer(_firstSessionPatience, () {
+      widget.notifier.onboardingMeasurement.end(
+        ProductFlow.sessionOpen,
+        ProductOutcome.failed,
+      );
       if (!mounted) return;
       setState(() => _firstSessionGaveUp = true);
     });

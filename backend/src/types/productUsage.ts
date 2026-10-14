@@ -13,15 +13,23 @@ export const PRODUCT_USAGE_ACTIONS = ['create', 'resume', 'restart', 'model_chan
 export const PRODUCT_USAGE_AUTOMATIC_ACTIONS: readonly typeof PRODUCT_USAGE_ACTIONS[number][] = ['history', 'history_page', 'store_list', 'model_list']
 export const PRODUCT_USAGE_FEATURE_MEASURES = ['installation_days', 'first_installations', 'repeat_installation_days'] as const
 export const PRODUCT_USAGE_SURFACES = ['desktop', 'phone', 'web'] as const
-export const PRODUCT_USAGE_FLOWS = ['setup', 'setup_harness', 'setup_tmux', 'setup_clipboard', 'sign_in',
-  'workspace_connect', 'computer_link', 'remote_connect', 'viewer_open', 'update_check', 'update_stage'] as const
+/** Flows that can finish before an account exists, so a signed-out report may carry them. The
+ * sign_in_<method> flows split the phone's welcome screen by the button used; sign_in stays the total. */
+export const PRODUCT_USAGE_SETUP_FLOWS = ['setup', 'setup_harness', 'setup_tmux', 'setup_clipboard', 'sign_in',
+  'sign_in_scan', 'sign_in_google', 'sign_in_apple', 'sign_in_email'] as const
+/** Phone onboarding after sign-in: waiting for a computer, opening its session, the first message
+ * sent there and the notification prompt that follows. Counts and duration buckets only. */
+export const PRODUCT_USAGE_ONBOARDING_FLOWS = ['computer_wait', 'session_open', 'first_message', 'notify_permission'] as const
+export const PRODUCT_USAGE_FLOWS = [...PRODUCT_USAGE_SETUP_FLOWS,
+  'workspace_connect', 'computer_link', 'remote_connect', 'viewer_open', 'update_check', 'update_stage',
+  ...PRODUCT_USAGE_ONBOARDING_FLOWS] as const
 export const PRODUCT_USAGE_FLOW_MEASURES = ['started', 'ok', 'failed', 'cancelled', 'unknown',
   'under_1s', '1s_to_10s', '10s_to_1m', 'over_1m'] as const
 export const PRODUCT_USAGE_UI_METRICS = PRODUCT_USAGE_SURFACES.flatMap(surface =>
   PRODUCT_USAGE_FLOWS.flatMap(flow => PRODUCT_USAGE_FLOW_MEASURES.map(measure => `ui_${surface}_${flow}_${measure}` as const)))
 // A signed-out report is explicitly enabled on this app. It cannot carry account/work metrics.
 export const PRODUCT_USAGE_SETUP_METRICS = PRODUCT_USAGE_SURFACES.flatMap(surface =>
-  (['setup', 'setup_harness', 'setup_tmux', 'setup_clipboard', 'sign_in'] as const).flatMap(flow =>
+  PRODUCT_USAGE_SETUP_FLOWS.flatMap(flow =>
     PRODUCT_USAGE_FLOW_MEASURES.map(measure => `setup_${surface}_${flow}_${measure}` as const)))
 export const PRODUCT_USAGE_ACTION_MEASURES = ['requests', 'ok', 'failed', 'pending', 'unknown',
   'error_setup', 'error_auth', 'error_unavailable', 'error_invalid', 'error_other',
