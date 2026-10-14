@@ -87,7 +87,7 @@ class PrivacySharedFields extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     return Card(
-      margin: const EdgeInsets.only(top: 4),
+      margin: const EdgeInsets.only(top: 8),
       child: Padding(
         padding: const EdgeInsets.fromLTRB(16, 14, 16, 6),
         child: Column(

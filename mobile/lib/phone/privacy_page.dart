@@ -100,6 +100,7 @@ class _PrivacyPageState extends State<PrivacyPage> {
               child: const Text('Reload'),
             ),
           ],
+          const SizedBox(height: 8),
           Align(
             alignment: Alignment.centerLeft,
             child: TextButton(
