@@ -44,6 +44,17 @@ static void pet_test_frames_advance(void)
     pod_pet_draw(&h, 0, 0, 270, "claude", POD_SCENE_WORK, p->working_scene->step_ms, 0);
     CHECK(memcmp(&a.runs[0], &h.runs[0], sizeof a.runs[0]) != 0 || frame_of(&a) == frame_of(&h));
 }
+// Fo (the round's fifth pet, imported 2026-10-14) plays its own scenes on the Pro: work, listen and send, not the pet-less cover.
+static void pet_test_fo(void)
+{
+    const ht_pet_t *p = pod_pet_for("fo");
+    CHECK(p && p->working_scene && p->listening_scene && p->sending_scene);
+    CHECK(pod_pet_has("fo", POD_SCENE_WORK) && pod_pet_has("fo", POD_SCENE_REST) && pod_pet_has("fo", POD_SCENE_LISTEN));
+    ht_scene_t s;
+    ht_scene_clear(&s, 0);
+    pod_pet_draw(&s, 0, 0, 206, "fo", POD_SCENE_WORK, 0, 0);
+    CHECK(s.count >= 1 && frame_of(&s));   // a cell frame, not the pale cover box of a pet-less engine
+}
 static void pet_test_send_once(void)
 {
     const ht_pet_t *p = pod_pet_for("claude");
@@ -135,6 +146,42 @@ static void pet_test_inside_box(void)
                     }
                 }
             }
+}
+static void pet_render_on(uint32_t ground, bool plain, uint16_t *buf)
+{
+    enum { W = 270, H = 270 };
+    ht_scene_t s; ht_scene_clear(&s, 0);
+    if (plain) pod_pet_draw(&s, 0, 0, W, "claude", POD_SCENE_LISTEN, 700, 0);
+    else pod_pet_draw_on(&s, 0, 0, W, "claude", POD_SCENE_LISTEN, 700, 0, ground);
+    for (int i = 0; i < W * H; i++) buf[i] = ht_rgb(ground);
+    ht_rect_t clip = {0, 0, W, H};
+    for (int i = 0; i < s.count; i++) {
+        if (s.runs[i].pro_kind >= POD_KIND_BASE) pod_draw_raster(&s.runs[i], clip, buf);
+        else ht_pro_raster(&s.runs[i], clip, buf);
+    }
+}
+static int luma(uint16_t p)   // 0..255*1000, from the expanded channels
+{
+    int r = (p >> 11) * 255 / 31, g = ((p >> 5) & 63) * 255 / 63, b = (p & 31) * 255 / 31;
+    return 299 * r + 587 * g + 114 * b;
+}
+static int brighter(const uint16_t *buf, uint16_t g)   // pixels lighter than the ground
+{
+    int n = 0;
+    for (int i = 0; i < 270 * 270; i++) if (luma(buf[i]) > luma(g)) n++;
+    return n;
+}
+static void pet_test_wave_ground(void)
+{
+    static uint16_t a[270 * 270], b[270 * 270], c[270 * 270];
+    uint16_t g = ht_rgb(0xf6f6f0);
+    pet_render_on(0xf6f6f0, false, a);
+    CHECK(brighter(a, g) == 0);
+    pet_render_on(0xf6f6f0, true, b);   // the white-fading default on the same ground: waves go lighter than it
+    CHECK(brighter(b, g) > 0);
+    pet_render_on(0xffffff, true, b);
+    pet_render_on(0xffffff, false, c);
+    CHECK(memcmp(b, c, sizeof b) == 0);
 }
 static void pet_test_palette_colour(void)
 {
@@ -260,12 +307,14 @@ int main(void)
     pet_test_runs_constant();
     pet_test_frames_advance();
     pet_test_send_once();
+    pet_test_fo();
     pet_test_next_step();
     pet_test_no_pet();
     pet_test_light_mark_on_dark();
     pet_test_default_mark();
     pet_test_inside_box();
     pet_test_palette_colour();
+    pet_test_wave_ground();
     pet_test_logo_exact();
     pet_test_cover_centre_exact();
     printf("test_pod_pet: %d checks ok\n", checks);

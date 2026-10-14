@@ -1009,10 +1009,17 @@ class RuntimeSupervision(unittest.TestCase):
               ('systemctl', '--user', 'is-active', '--quiet', 'hn-screen.service')]
 
     def restart(self, pids, cli_changed=True):
-        calls = []
+        """Restart against `pids` in turn, the last repeated, on a clock that only sleeping moves."""
+        calls, answers, clock = [], list(pids), [0.0]
+        ask = lambda: answers.pop(0) if len(answers) > 1 else answers[0]
         with patch.object(update, 'run', side_effect=lambda *args, **kwargs: calls.append(args) or ''), \
-             patch.object(update, 'runtime_pids', side_effect=pids):
-            update.restart(cli_changed)
+             patch.object(update, 'runtime_pids', side_effect=ask), \
+             patch.object(update.time, 'monotonic', side_effect=lambda: clock[0]), \
+             patch.object(update.time, 'sleep', side_effect=lambda seconds: clock.__setitem__(0, clock[0] + seconds)):
+            try:
+                update.restart(cli_changed)
+            finally:
+                self.waited = clock[0]
         return calls
 
     def test_the_units_daemon_is_restarted_and_must_serve_afterwards(self):
@@ -1031,6 +1038,15 @@ class RuntimeSupervision(unittest.TestCase):
         for after in [(2288, None), (2288, 43000), (None, 43000), (None, None)]:
             with self.subTest(after=after), self.assertRaisesRegex(ValueError, 'not running under harness-daemon.service'):
                 self.restart([(None, None), after])
+            self.assertGreaterEqual(self.waited, update.RUNTIME_ANSWER_SECONDS, 'it gave the daemon its time first')
+
+    def test_a_daemon_that_answers_a_few_seconds_late_is_activated(self):
+        # 2026-10-13, an Orange Pi: wait-runtime was satisfied, /api/status answered 4 s later, and a
+        # single check at once had rolled the update back.
+        calls = self.restart([(1347, 1347), (None, 43000), (None, 43000), (None, 43000), (43000, 43000)])
+        self.assertEqual(calls, [('systemctl', '--user', 'restart', 'harness-daemon.service'),
+                                 ('/usr/lib/harness-os/wait-runtime',), *self.SCREEN])
+        self.assertEqual(self.waited, 3)
 
     def test_the_unit_bounds_a_stop_and_kills_only_its_main_process(self):
         # The restart above waits for the old core to stop; systemd's default 90 s held an update

@@ -1,3 +1,5 @@
+import '../measurement/product_measurement.dart';
+import '../measurement/setup_transport.dart';
 import 'attached_task_delivery.dart';
 import 'task_route.dart';
 import '../core/permission_modes.dart';
@@ -648,6 +650,8 @@ class AppNotifier extends ChangeNotifier {
 
   AppConfig config;
   late ApiClient api;
+  late final ProductMeasurement productMeasurement;
+  final _measurementConnections = <String, void Function(ProductOutcome)>{};
 
   /// Signs in, and says whether this computer is signed in: the harness CLI in a desktop build,
   /// [ViewerServices.login] in a viewer build — which has no CLI — under one name, so every call
@@ -3194,6 +3198,7 @@ class AppNotifier extends ChangeNotifier {
     AgentPrefetch? agentPrefetch,
     this.desktopUpdater,
     this.connectionForTest,
+    ProductMeasurement? productMeasurement,
     SignInClient? cliLogin,
     CliLink? cliLink,
     PeerLinkClient? peerLinks,
@@ -3244,6 +3249,19 @@ class AppNotifier extends ChangeNotifier {
     this.peerLinks = peerLinks ?? this.viewer?.links ?? this.cliLink;
     _autonomousEnv = this.config.autonomousEnv;
     api = _newApiClient();
+    this.productMeasurement =
+        productMeasurement ??
+        ProductMeasurement(
+          surface: kIsWeb
+              ? 'web'
+              : this.viewer == null
+              ? 'desktop'
+              : 'phone',
+          automatic: !kUnderTest,
+          sendSetup: (report) =>
+              sendSetupMeasurement(this.config.apiBaseUrl, report),
+        );
+    addListener(_syncProductMeasurement);
     _initDeviceLog();
     // `grid.AppTheme.palette`, not the prefs store: main.dart copies the saved
     // choice into the palette notifier while rebuilding, so the store fires
@@ -3264,6 +3282,48 @@ class AppNotifier extends ChangeNotifier {
     addListener(_firstArrivalBehindTour);
     _autoRenameTabs = appearancePrefsStore.value.autoRenameTabs;
     appearancePrefsStore.addListener(_autoRenameChanged);
+  }
+
+  void _syncProductMeasurement() {
+    final scope =
+        signedIn &&
+            !signingIn &&
+            !signingOut &&
+            status == AppStatus.authenticated &&
+            currentUser?.id != null
+        ? (api, currentUser!.id)
+        : null;
+    productMeasurement.account(
+      scope,
+      choice: () => api.productUsageSettings(),
+      send: api.productUsageReport,
+    );
+    if (scope == null) _measurementConnections.clear();
+  }
+
+  // Connection keys already belong to the app. Only fixed outcomes reach measurement, never the key.
+  void _measureConnection(
+    String key,
+    ConnectionStatus status,
+    ProductFlow flow,
+  ) {
+    if (status == ConnectionStatus.connecting ||
+        status == ConnectionStatus.reconnecting) {
+      if (_measurementConnections.length < 64) {
+        _measurementConnections.putIfAbsent(
+          key,
+          () => productMeasurement.begin(flow),
+        );
+      }
+    } else {
+      _measurementConnections
+          .remove(key)
+          ?.call(
+            status == ConnectionStatus.connected
+                ? ProductOutcome.ok
+                : ProductOutcome.failed,
+          );
+    }
   }
 
   /// Through the local CLI in a desktop build; straight to the backend, signed, in a viewer.
@@ -4628,6 +4688,22 @@ class AppNotifier extends ChangeNotifier {
 
   /// Shared with [_prepareEnvironment]: runs the provisioner, updates
   /// [environmentReadiness] as it streams progress, and reports the outcome.
+  void _measureSetup(EnvironmentReadiness value) {
+    productMeasurement.setupFacts({
+      ProductFlow.setup: switch (value.phase) {
+        EnvironmentSetupPhase.ready => 'ready',
+        EnvironmentSetupPhase.failed => 'failed',
+        _ => 'running',
+      },
+      for (final entry in value.steps.entries)
+        switch (entry.key) {
+          EnvironmentStep.harness => ProductFlow.setupHarness,
+          EnvironmentStep.tmux => ProductFlow.setupTmux,
+          EnvironmentStep.clipboard => ProductFlow.setupClipboard,
+        }: entry.value.name,
+    });
+  }
+
   Future<EnvironmentReadiness> _runProvisioner({
     EnvironmentReadiness? resumeFrom,
     bool install = false,
@@ -4637,6 +4713,7 @@ class AppNotifier extends ChangeNotifier {
     final provisioner = environmentProvisioner ?? EnvironmentProvisioner();
     final result = await provisioner.ensureReady(
       onProgress: (value) {
+        _measureSetup(value);
         if (quiet &&
             value.phase != EnvironmentSetupPhase.ready &&
             value.phase != EnvironmentSetupPhase.failed) {
@@ -4664,6 +4741,7 @@ class AppNotifier extends ChangeNotifier {
       install: install,
       mode: mode,
     );
+    _measureSetup(result);
     environmentReadiness = result;
     return result;
   }
@@ -5832,8 +5910,16 @@ class AppNotifier extends ChangeNotifier {
   }
 
   Future<void> _checkForUpdates(Completer<ManualUpdateCheck> completion) async {
+    final finish = productMeasurement.begin(ProductFlow.updateCheck);
     try {
       final result = await _updater.check();
+      finish(
+        result.status == DesktopUpdateCheckStatus.failed
+            ? ProductOutcome.failed
+            : result.status == DesktopUpdateCheckStatus.disabled
+            ? ProductOutcome.cancelled
+            : ProductOutcome.ok,
+      );
       _recordUpdateCheck(result, manual: true);
       completion.complete(
         ManualUpdateCheck(
@@ -5844,6 +5930,7 @@ class AppNotifier extends ChangeNotifier {
         ),
       );
     } catch (error) {
+      finish(ProductOutcome.failed);
       debugPrint('AppNotifier.checkForUpdates: $error');
       const failed = DesktopUpdateCheck.failed();
       _recordUpdateCheck(failed);
@@ -5920,6 +6007,7 @@ class AppNotifier extends ChangeNotifier {
     }
     // Reassigned once the manifest has been re-read below; the failure messages
     // at the end name whichever build was actually attempted.
+    final finish = productMeasurement.begin(ProductFlow.updateStage);
     var info = chosen;
     isInstallingUpdate = true;
     updateDownloadFraction = null;
@@ -5945,6 +6033,7 @@ class AppNotifier extends ChangeNotifier {
         // one is keyed on there being an offer — which there is not any more.
         // Dropping the offer IS the state, and the dialog that asked turns
         // itself into "You're up to date" on the false return.
+        finish(ProductOutcome.cancelled);
         availableUpdate = null;
         updateError = null;
         return false;
@@ -5971,9 +6060,12 @@ class AppNotifier extends ChangeNotifier {
         },
       );
       if (staged == null) {
+        finish(ProductOutcome.failed);
         updateError = 'Could not download and verify Harness ${info.version}.';
         return false;
       }
+      // A staged download is observable; successful relaunch is not. Never delay the update for reporting.
+      finish(ProductOutcome.ok);
       final applied = await updater.applyStaged(staged, selfPid: pid);
       if (!applied) {
         updateError =
@@ -5983,9 +6075,11 @@ class AppNotifier extends ChangeNotifier {
       flushAppLog();
       exit(0);
     } catch (error) {
+      finish(ProductOutcome.failed);
       updateError = 'Could not install Harness ${info.version}: $error';
       return false;
     } finally {
+      finish(ProductOutcome.unknown);
       isInstallingUpdate = false;
       updateDownloadFraction = null;
       if (!_disposed) notifyListeners();
@@ -5996,6 +6090,7 @@ class AppNotifier extends ChangeNotifier {
   /// button of its own to name it — the browser opens on the sign-in page's chooser.
   Future<void> login([SignInProvider? provider]) async {
     if (_disposed || signingIn || signingOut || signOutError != null) return;
+    final measureSignIn = productMeasurement.begin(ProductFlow.signIn);
     final wasGuest = isGuest;
     final revision = _invalidateAuthWork();
     _closedHistory.clear();
@@ -6027,6 +6122,7 @@ class AppNotifier extends ChangeNotifier {
         },
       );
       if (!_authWorkCurrent(revision)) return;
+      measureSignIn(ProductOutcome.ok);
       _loginAuthorized = true;
       pendingAuthorizeUrl = null;
       _resetLoginBrowser();
@@ -6045,6 +6141,7 @@ class AppNotifier extends ChangeNotifier {
       // The first sign-in on this computer offers Add Phone; a later one does not.
       unawaited(_offerPhoneAfterSignIn(revision));
     } catch (error) {
+      measureSignIn(ProductOutcome.failed);
       if (!_authWorkCurrent(revision)) return;
       status = wasGuest ? AppStatus.authenticated : AppStatus.unauthenticated;
       _lastError = error.toString();
@@ -6053,6 +6150,11 @@ class AppNotifier extends ChangeNotifier {
         unawaited(_becomeGuest(revision: revision));
       }
     } finally {
+      measureSignIn(
+        _authWorkCurrent(revision)
+            ? ProductOutcome.unknown
+            : ProductOutcome.cancelled,
+      );
       // Takes the in-app browser view down once the redirect has landed; a no-op
       // where the page opened in a browser of its own.
       unawaited(closeSignInPage());
@@ -6190,6 +6292,7 @@ class AppNotifier extends ChangeNotifier {
         client is! PhoneSignInClient) {
       return;
     }
+    final finish = productMeasurement.begin(ProductFlow.signIn);
     final wasGuest = isGuest;
     final revision = _invalidateAuthWork();
     previousAccountEmail = currentUser?.email;
@@ -6222,6 +6325,7 @@ class AppNotifier extends ChangeNotifier {
         },
       );
       if (!_authWorkCurrent(revision)) return;
+      finish(ProductOutcome.ok);
       _loginAuthorized = true;
       _clearPhoneSignIn();
       notifyListeners();
@@ -6232,6 +6336,7 @@ class AppNotifier extends ChangeNotifier {
       }
       _guestDeskRestorePending = false;
     } catch (error) {
+      finish(ProductOutcome.failed);
       if (!_authWorkCurrent(revision)) return;
       status = wasGuest ? AppStatus.authenticated : AppStatus.unauthenticated;
       _lastError = error.toString();
@@ -6240,6 +6345,11 @@ class AppNotifier extends ChangeNotifier {
         unawaited(_becomeGuest(revision: revision));
       }
     } finally {
+      finish(
+        _authWorkCurrent(revision)
+            ? ProductOutcome.unknown
+            : ProductOutcome.cancelled,
+      );
       if (_authWorkCurrent(revision)) {
         _loginAuthorized = false;
         _clearPhoneSignIn();
@@ -6703,54 +6813,78 @@ class AppNotifier extends ChangeNotifier {
       onAuthFailure: _signedOutAtRuntime,
       onLocalFailure: _onLocalFailure,
       onEvent: _handleEvent,
-      onStatus: (machineId, nextStatus) {
-        final machine = machineStates[machineId];
-        if (machine == null) return;
-        // A refusal being settled against the device log ([_settleTrust]) is still connecting.
-        final settling =
-            nextStatus == ConnectionStatus.disconnected &&
-            _trustSettling.contains(machineId);
-        machine.connectionStatus = settling
-            ? ConnectionStatus.connecting
-            : nextStatus;
-        if (nextStatus == ConnectionStatus.connected) {
-          _onMachineConnected(machineId, machine);
-          _refreshDeviceLogAfterReconnect();
-        } else if (nextStatus == ConnectionStatus.reconnecting ||
-            nextStatus == ConnectionStatus.disconnected) {
-          _stopAgentSyncTimer(machineId);
-          _clearMachineActivity(machine);
-          if (machine.isLocalMachine) {
-            machine.transportMode = MachineTransportMode.localOffline;
-            dial.disconnect();
-          }
-          // Same reasoning as above, mirrored: capture pendingOfflineAgentId from the currently-open
-          // terminal (if any) so the connected branch above can reattach it, for every machine — this
-          // used to be local-only, which is why a remote machine's terminal never came back on its own
-          // after `harness start` on that machine, even though the guide screen promised it would.
-          //
-          // NOT while the machine is unlinked. NO_PEER_LINK is the local CLI failing a lookup in its
-          // own peer table (remoteRelay.ts `dial`) before anything is dialled, so neither that close
-          // nor the one `_startLinkRetry`'s `closeMachine` fires every few seconds says anything about
-          // whether the OTHER computer is up — our socket never reaches it. Forcing nodeOnline false
-          // here overwrote the REST `/api/machines` status, the one signal that does, and painted
-          // every unlinked machine as off. Keyed on the sticky flag rather than the 4404 close on
-          // purpose: the retry loop's own close() lands as a plain `disconnected` too. needsLink is
-          // set by onLocalFailure, which runs before this branch for 4404 (see WsConn._onDone).
-          if (!machine.needsLink && !settling) {
-            unawaited(
-              _applyNodeStatus(
-                machine,
-                false,
-                why: 'socket ${nextStatus.name}',
-              ),
-            );
-          }
-        }
-        notifyListeners();
-      },
+      onStatus: _onConnectionStatus,
     );
   }
+
+  void _onConnectionStatus(String machineId, ConnectionStatus nextStatus) {
+    final machine = machineStates[machineId];
+    if (machine == null) return;
+    // A refusal being settled against the device log ([_settleTrust]) is still connecting.
+    final settling =
+        nextStatus == ConnectionStatus.disconnected &&
+        _trustSettling.contains(machineId);
+    // An unlinked machine is redialled every 5 s by the link retry and refused at once each time
+    // (4404 NO_PEER_LINK): measured per dial, one such machine read as ~720 failed connects an hour,
+    // and prod's first day showed 1,197 of 1,233 remote connects "failed", nearly all under a second.
+    // The dial that found it unlinked is already open and still ends as one failure; the retry's
+    // dials are not new attempts. A dial after linking (needsLink cleared first) is measured again.
+    final retryingLink =
+        machine.needsLink &&
+        (nextStatus == ConnectionStatus.connecting ||
+            nextStatus == ConnectionStatus.reconnecting);
+    if (!retryingLink) {
+      _measureConnection(
+        machineId,
+        settling ? ConnectionStatus.connecting : nextStatus,
+        machine.isLocalMachine
+            ? ProductFlow.workspaceConnect
+            : ProductFlow.remoteConnect,
+      );
+    }
+    machine.connectionStatus = settling
+        ? ConnectionStatus.connecting
+        : nextStatus;
+    if (nextStatus == ConnectionStatus.connected) {
+      _onMachineConnected(machineId, machine);
+      _refreshDeviceLogAfterReconnect();
+    } else if (nextStatus == ConnectionStatus.reconnecting ||
+        nextStatus == ConnectionStatus.disconnected) {
+      _stopAgentSyncTimer(machineId);
+      _clearMachineActivity(machine);
+      if (machine.isLocalMachine) {
+        machine.transportMode = MachineTransportMode.localOffline;
+        dial.disconnect();
+      }
+      // Same reasoning as above, mirrored: capture pendingOfflineAgentId from the currently-open
+      // terminal (if any) so the connected branch above can reattach it, for every machine — this
+      // used to be local-only, which is why a remote machine's terminal never came back on its own
+      // after `harness start` on that machine, even though the guide screen promised it would.
+      //
+      // NOT while the machine is unlinked. NO_PEER_LINK is the local CLI failing a lookup in its
+      // own peer table (remoteRelay.ts `dial`) before anything is dialled, so neither that close
+      // nor the one `_startLinkRetry`'s `closeMachine` fires every few seconds says anything about
+      // whether the OTHER computer is up — our socket never reaches it. Forcing nodeOnline false
+      // here overwrote the REST `/api/machines` status, the one signal that does, and painted
+      // every unlinked machine as off. Keyed on the sticky flag rather than the 4404 close on
+      // purpose: the retry loop's own close() lands as a plain `disconnected` too. needsLink is
+      // set by onLocalFailure, which runs before this branch for 4404 (see WsConn._onDone).
+      if (!machine.needsLink && !settling) {
+        unawaited(
+          _applyNodeStatus(
+            machine,
+            false,
+            why: 'socket ${nextStatus.name}',
+          ),
+        );
+      }
+    }
+    notifyListeners();
+  }
+
+  @visibleForTesting
+  void connectionStatusForTest(String machineId, ConnectionStatus status) =>
+      _onConnectionStatus(machineId, status);
 
   /// The machine list is being fetched and there is nothing to show meanwhile.
   ///
@@ -7653,6 +7787,7 @@ class AppNotifier extends ChangeNotifier {
     _MachineLinkAttempt attempt,
     void Function(String)? onProgress,
   ) async {
+    final measureLink = productMeasurement.begin(ProductFlow.computerLink);
     String? error;
     try {
       final result = await peerLinks.connect(
@@ -7687,6 +7822,7 @@ class AppNotifier extends ChangeNotifier {
     } catch (_) {
       error = 'Could not link this machine. Try again.';
     } finally {
+      measureLink(error == null ? ProductOutcome.ok : ProductOutcome.failed);
       if (identical(_machineLinks[machineId], attempt)) {
         _machineLinks.remove(machineId);
       }
@@ -10515,6 +10651,10 @@ class AppNotifier extends ChangeNotifier {
         ownerAgentId: agent.id,
       );
       swarm.panes.insert(insertion, pane);
+      // Counts opening a pane with a URL or a known launch error, not rendering its private page.
+      productMeasurement.begin(ProductFlow.viewerOpen)(
+        agent.viewerError == null ? ProductOutcome.ok : ProductOutcome.failed,
+      );
       // The same bookkeeping a split does when it grows the grid by one:
       // pins past the insertion slide right, and the shape is re-derived.
       swarm.pinnedSlots.updateAll(
@@ -12925,6 +13065,63 @@ class AppNotifier extends ChangeNotifier {
       if (!request.result.isCompleted) request.result.complete(error);
       if (_authWorkCurrent(request.authRevision)) notifyListeners();
     }
+  }
+
+  /// Delete Harness: unlike Stop, which keeps the conversation to reopen, this
+  /// stops a running harness and deletes its saved conversation for good, so it
+  /// leaves Open Harness too. The daemon's reviewed deletion (`agent_purge`):
+  /// reviewed first, then deleted under that review. Project files and
+  /// worktrees are kept. Null on success, or a message for the prompt.
+  Future<String?> purgeAgent(String machineId, String agentId) async {
+    final machine = machineStates[machineId];
+    final agent = machine?.agents
+        .where((agent) => agent.id == agentId)
+        .firstOrNull;
+    final createdAt = agent?.createdAt;
+    if (machine == null || agent == null || createdAt == null) {
+      return 'This harness is no longer listed. Refresh and try again.';
+    }
+    final sessionId = agent.sessionId;
+    final target = {
+      'agentId': agentId,
+      'sessionId': sessionId == null || sessionId.isEmpty ? null : sessionId,
+      'createdAt': createdAt.millisecondsSinceEpoch,
+    };
+    String refused(Object? code, Object? detail) =>
+        'Delete failed: ${detail is String && detail.isNotEmpty ? detail : code}';
+    try {
+      final review = await _conn(machineId).request(
+        'agent_purge',
+        payload: {...target, 'mode': 'inspect'},
+        timeout: const Duration(seconds: 30),
+      );
+      if (review['error'] != null) {
+        return refused(review['error'], review['detail']);
+      }
+      final reviewId = review['reviewId'];
+      if (reviewId is! String) return 'Could not review this harness for deletion.';
+      final result = await _conn(machineId).request(
+        'agent_purge',
+        payload: {...target, 'mode': 'delete', 'reviewId': reviewId},
+        timeout: const Duration(seconds: 60),
+      );
+      if (result['error'] != null) {
+        return refused(result['error'], result['detail']);
+      }
+      if (result['deleted'] != true) {
+        return 'Could not confirm the deletion. Refresh harnesses to check.';
+      }
+    } on WsRequestFailure catch (failure) {
+      return refused(failure.code, failure.detail);
+    } on WsRequestTimeout {
+      return 'Could not confirm the deletion. Refresh harnesses to check.';
+    } catch (_) {
+      return 'Could not delete the harness. Try again.';
+    }
+    await _removeAgent(machine, agentId);
+    unawaited(_loadMachineData(machine, force: true));
+    notifyListeners();
+    return null;
   }
 
   bool _restartCurrent(AgentRestartAttempt attempt, {bool beforeSend = false}) {
@@ -17901,6 +18098,8 @@ class AppNotifier extends ChangeNotifier {
 
   @override
   void dispose() {
+    productMeasurement.dispose();
+    _measurementConnections.clear();
     if (cliLogin case final CliLogin cli) {
       cli.waitingNote.removeListener(_loginWaitingChanged);
     }
