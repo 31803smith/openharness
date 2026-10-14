@@ -6107,13 +6107,23 @@ class AppNotifier extends ChangeNotifier {
   bool machineRemoving(String machineId) =>
       _machineDeletes.containsKey(machineId);
 
-  /// Permanently deletes a machine from the account (backend `DELETE /api/machines/:id`) — not to
-  /// be confused with [unlinkMachine], which only drops this computer's local E2EE trust pin and
-  /// leaves the machine itself intact. Returns null on success, or an error message to show inline.
+  /// Permanently takes a machine off the account — not to be confused with [unlinkMachine], which
+  /// only drops this computer's local E2EE trust pin and leaves the machine itself intact. Two steps,
+  /// in the order desktop takes them (`MachineDevices.removeComputer`): the computer's key out of the
+  /// account's device log ([removeDevice]), then its machine record (backend
+  /// `DELETE /api/machines/:id`). Returns null on success, or an error message to show inline.
   ///
-  /// ⚠️ **The backend also signs that computer out.** It pushes `machine_revoked` down to a daemon
-  /// that is connected (`MachineService.destroy`), which clears its session and stops; one that is
-  /// off finds out on its next dial. The confirmation that leads here has to say so.
+  /// ⚠️ **The record alone does not take it out of Your devices.** The backend's delete pushes
+  /// `machine_revoked` down to a daemon that is connected (`MachineService.destroy`), which clears
+  /// its session and stops — one that is off finds out on its next dial — but it never touches the
+  /// device log: the computer's key stayed in Your devices, and every other device of the account
+  /// went on trusting it. The confirmation that leads here says both.
+  ///
+  /// A sign-out that fails stops before the record is touched, so the next press does the whole of
+  /// it again. A record that fails after the sign-out worked says so, and the next press finds no
+  /// key left to sign out and deletes only the record. A computer the log has no key for — an
+  /// account or a computer from before the log, one already signed out, a log this phone could not
+  /// read — loses its record alone, as before the log existed: removing it is never held up for good.
   Future<String?> deleteMachine(String machineId) {
     final inFlight = _machineDeletes[machineId];
     if (inFlight != null) return inFlight;
@@ -6134,10 +6144,34 @@ class AppNotifier extends ChangeNotifier {
 
   Future<String?> _performDeleteMachine(String machineId) async {
     final revision = _authRevision;
+    final name = machineStates[machineId]?.machine.displayName ?? 'This computer';
+    final device = await _machineDeviceKey(machineId);
+    // Signed out, or into another account, while the log was read: nothing here is theirs.
+    if (!_authWorkCurrent(revision)) return null;
+    if (device != null) {
+      String? failure;
+      try {
+        failure = await removeDevice(device.pub);
+      } catch (_) {
+        failure = 'UNREACHABLE';
+      }
+      // Signed out meanwhile: a DELETE now would go out under whoever is signed in next, and a
+      // failure is no longer anyone's to read.
+      if (!_authWorkCurrent(revision)) return null;
+      // Gone from the log already — another device signed it out after this phone read the log:
+      // what this step was for is done.
+      if (failure == 'NOT_IN_LOG') failure = null;
+      if (failure != null) return 'Couldn’t sign $name out ($failure). Try again.';
+      // The account let it go meanwhile (removed from another device): no record is left to delete.
+      if (machineStates[machineId] == null) return null;
+    }
     try {
       await api.deleteMachine(machineId: machineId);
     } catch (error) {
-      return 'Could not remove it: ${describeApiError(error)}';
+      final reason = describeApiError(error);
+      return device == null
+          ? 'Could not remove it: $reason'
+          : '$name is signed out, but its machine record could not be deleted: $reason';
     }
     if (!_authWorkCurrent(revision)) return null;
     // Any tile still showing this machine would otherwise sit forever in the "waiting to answer"
@@ -6170,6 +6204,38 @@ class AppNotifier extends ChangeNotifier {
     if (cache != null) _writeMachineCache(cache);
     notifyListeners();
     return null;
+  }
+
+  /// How long [_machineDeviceKey] waits on the device log before it goes on with what it has.
+  static const _machineKeyReadCap = Duration(seconds: 5);
+
+  /// [machineId]'s key in the account's device log, when this phone's copy of the log has one — what
+  /// [deleteMachine] signs out before the record goes. The log holds one key per computer at most
+  /// (`MACHINE_TAKEN`). Null when there is none to sign out: an account or a computer from before the
+  /// log, one already signed out, a log this phone could not read, or one that is still the account
+  /// just left (its keys are not this account's to remove).
+  ///
+  /// The log is read again first, briefly ([_connectAfterDeviceLog] waits as long): a computer that
+  /// signed in after the last read would otherwise be missed, and one signed out elsewhere since would
+  /// be signed out again, for nothing. Never throws — no answer is no key, and the record still goes.
+  Future<DevLogMember?> _machineDeviceKey(String machineId) async {
+    final log = _deviceLog;
+    if (log == null) return null;
+    await log.refresh().timeout(_machineKeyReadCap, onTimeout: () {});
+    try {
+      return await () async {
+        if (!await log.ownsLog()) return null;
+        final listing = await deviceListing();
+        for (final row in listing.members) {
+          final m = row.member;
+          if (m.kind == 'machine' && m.machineId == machineId) return m;
+        }
+        return null;
+      }().timeout(_machineKeyReadCap);
+    } catch (error) {
+      debugPrint('devices: could not read the key of ${_shortId(machineId)}: $error');
+      return null;
+    }
   }
 
   /// Computers being tried again by hand ([retryMachine]) — the row says so while it runs.
