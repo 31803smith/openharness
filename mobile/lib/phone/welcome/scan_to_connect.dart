@@ -471,6 +471,9 @@ Future<ConnectCode?> scanForCode(
 
 /// The camera over the current page, for a computer's sign-in QR only — Settings ▸ Sign in a
 /// computer. Null when the person went back.
+///
+/// The steps name the terminal's way only: the desktop app signs in on its own page and no longer
+/// shows a QR, so this is for a server or a computer without the app, `harness login --qr`.
 Future<SignInCode?> scanForSignIn(BuildContext context, {Widget? camera}) async {
   SignInCode? scanned;
   await Navigator.of(context).push(
@@ -480,8 +483,8 @@ Future<SignInCode?> scanForSignIn(BuildContext context, {Widget? camera}) async 
         body: SafeArea(
           child: ScanToConnectPage(
             camera: camera,
-            title: 'Scan the code on the computer',
-            step: 'On the computer: Sign in ▸ Scan with your phone',
+            title: 'Scan the code in the terminal',
+            step: 'On a server, run harness login --qr',
             fallbackLabel: 'Not now',
             acceptConnectCodes: false,
             onCode: (_) {},

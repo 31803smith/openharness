@@ -17,7 +17,7 @@ import 'tty.dart';
 import 'welcome/connect_code.dart';
 import 'welcome/scan_to_connect.dart';
 
-/// Settings ▸ Sign in a computer: scan the QR a computer shows (`harness login`, or the desktop
+/// Settings ▸ Sign in a computer: scan the QR a computer shows (`harness login --qr`, or the web
 /// app's "Scan with your phone") and approve its sign-in with this phone's account.
 ///
 /// Approving hands that computer the account's terminals — signing in is what makes the account's

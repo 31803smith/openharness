@@ -204,7 +204,7 @@ class _Body extends StatelessWidget {
           ),
           // Every device signed in to the account — each trusted by the others because of that, so
           // this is where one that is not yours is seen and taken out.
-          // A computer showing its sign-in QR (`harness login`, or the desktop app's "Scan with your
+          // A computer showing its sign-in QR (`harness login --qr`, or the web app's "Scan with your
           // phone"): this phone approves it with its own account.
           SettingsRow(
             key: const Key('settings-sign-in-computer'),
