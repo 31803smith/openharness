@@ -5849,16 +5849,71 @@ class AppNotifier extends ChangeNotifier {
     return null;
   }
 
-  String _creationFailureMessage(String code, String? detail, String machine) =>
+  String _creationFailureMessage(
+    String code,
+    String? detail,
+    String machine, {
+    Map<String, dynamic>? choices,
+  }) =>
       switch (code) {
+        // A New Folder named after its first task (`projectNameMode:
+        // suggested`). A current machine numbers that name past a folder that
+        // exists (`robot-2`), so only one that predates the mode refuses it, and
+        // its sentence is written for a name somebody typed. The phone has no
+        // name field to change instead, so it says the way to a fresh folder.
+        'PROJECT_EXISTS' when choices?['projectNameMode'] == 'suggested' =>
+          'A folder named after this task already exists on $machine. '
+              'Choose it from your projects, or update Harness there to make '
+              'a new one.',
+        // Making the project folder (a new one, a clone, a worktree or a
+        // branch) before anything starts in it: `cli/src/lib/projectFolder.ts`
+        // and `gitProject.ts`. The machine's sentence says what to change: the
+        // URL, the branch, Worktree.
+        'INVALID_PROJECT_SOURCE' ||
+        'INVALID_REPOSITORY' ||
+        'PROJECT_PREPARATION_FAILED' ||
+        'PROJECT_EXISTS' ||
+        'CLONE_FAILED' ||
+        'CLONE_TIMEOUT' ||
+        'GIT_PROJECT_UNAVAILABLE' ||
+        'INVALID_BRANCH' ||
+        'BRANCH_SWITCH_FAILED' ||
+        'WORKTREE_FAILED' ||
+        'GIT_UNAVAILABLE' =>
+          detail ?? 'Could not prepare the project folder on $machine.',
         'CWD_NOT_FOUND' || 'INVALID_CWD' =>
           'The project folder is unavailable on $machine. '
               'Choose another folder and try again.',
         'TMUX_UNAVAILABLE' =>
           'Harness needs tmux to start harnesses on $machine. '
               'Install tmux there, then try again.',
+        // The machine's own sentence names the engine and the flag it lacks.
+        // Without one, the phone's Approvals names the way out.
+        'CODEX_CLI_TOO_OLD' =>
+          detail ??
+              'The installed Codex CLI on $machine is too old for '
+                  'Auto-approve. Update Codex there, or choose Ask first under '
+                  'Approvals.',
         'UNSUPPORTED_ON_REMOTE' || 'UNSUPPORTED' =>
           'Update the harness CLI on this machine to create a harness',
+        'INVALID_DSH' =>
+          'This harness is not installed on $machine. '
+              '${detail ?? 'Install it there, then try again.'}',
+        'PROMPT_UNSUPPORTED' =>
+          'This engine cannot be opened with a first message on $machine.',
+        'PROMPT_TOO_LONG' =>
+          'This first task is too long for $machine. Shorten it and try again.',
+        'AGENT_UNSUPPORTED' =>
+          'This engine cannot be opened as a named agent on $machine.',
+        'INVALID_AGENT' =>
+          'This engine cannot be opened as that named agent on $machine.',
+        'INVALID_PERMISSION_MODE' =>
+          'This engine has no such permission mode on $machine.',
+        // A daemon older than the engine refuses it by name, with no detail;
+        // the fix is the update the UNSUPPORTED codes ask for. A detail is a
+        // reason of its own (the sample runs only Claude Code and Codex).
+        'INVALID_ENGINE' =>
+          detail ?? 'Update the harness CLI on $machine to start this agent.',
         // Opening a conversation Harness did not start (`resumeSessionId`). The machine says what
         // stopped it: open elsewhere, already a harness, gone.
         'SESSION_OPEN_ELSEWHERE' ||
@@ -5961,13 +6016,37 @@ class AppNotifier extends ChangeNotifier {
       }
       // Refusals that happen before a launch are safe to correct. INTERNAL,
       // spawn timeouts and connection failures cannot prove nothing started.
+      //
+      // A code missing here reads as a lost reply ("has not confirmed the new
+      // harness yet. Check status before creating another."), which asks for
+      // a second create of something the machine already turned down. The CLI
+      // checks every one before any pane exists (`create` in its
+      // core/agents/launches.ts, and core/agents/create.ts before the spawn).
+      // The desktop's set is the same list; keep the two in step.
       const refusedBeforeLaunch = {
+        // The project folder as asked for, refused before one is made or
+        // cloned.
+        'INVALID_PROJECT_SOURCE',
+        'INVALID_REPOSITORY',
+        'PROJECT_EXISTS',
         'CWD_NOT_FOUND',
         'INVALID_CWD',
         'INVALID_ENGINE',
         'INVALID_GRID',
+        'GRID_UNAVAILABLE',
         'INVALID_CODEX_HOME',
+        'INVALID_DSH',
+        // The first task, a named agent and the approval mode.
+        'PROMPT_UNSUPPORTED',
+        'PROMPT_TOO_LONG',
+        'INVALID_PROMPT',
+        'AGENT_UNSUPPORTED',
+        'INVALID_AGENT',
+        'INVALID_PERMISSION_MODE',
         'TMUX_UNAVAILABLE',
+        // An engine too old for the approval mode's flag: refused rather than
+        // left printing its help in a pane.
+        'CODEX_CLI_TOO_OLD',
         'TMUX_TOO_OLD_FOR_GRID',
         'GRID_CONFIG_FAILED',
         'UNSUPPORTED_ON_REMOTE',
@@ -5989,7 +6068,12 @@ class AppNotifier extends ChangeNotifier {
       };
       if (refusedBeforeLaunch.contains(failure.code)) {
         return creation._complete(
-          _creationFailureMessage(failure.code, failure.detail, machineName),
+          _creationFailureMessage(
+            failure.code,
+            failure.detail,
+            machineName,
+            choices: choices,
+          ),
         );
       }
       return unconfirmed;
@@ -6027,6 +6111,7 @@ class AppNotifier extends ChangeNotifier {
             failure['code'] as String,
             failure['detail'] is String ? failure['detail'] as String : null,
             machineName,
+            choices: choices,
           ),
         );
       case 'created':
