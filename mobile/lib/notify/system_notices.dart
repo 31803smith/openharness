@@ -23,8 +23,9 @@ typedef AgentNoticeMessage = ({
 /// [SilentSystemNotices].
 abstract interface class SystemNotices {
   /// Asks the person, once, whether the phone may notify them. The OS
-  /// remembers the answer; asking again is a no-op.
-  Future<void> requestPermission();
+  /// remembers the answer; asking again is a no-op. True when allowed, false
+  /// when refused, null when nothing could say.
+  Future<bool?> requestPermission();
 
   Future<void> show(AgentNoticeMessage message);
 
@@ -54,7 +55,7 @@ class SilentSystemNotices implements SystemNotices {
   final openedDevice = ValueNotifier<String?>(null);
 
   @override
-  Future<void> requestPermission() async {}
+  Future<bool?> requestPermission() async => null;
 
   @override
   Future<void> show(AgentNoticeMessage message) async {}
@@ -165,21 +166,23 @@ class LocalSystemNotices implements SystemNotices {
   }
 
   @override
-  Future<void> requestPermission() async {
+  Future<bool?> requestPermission() async {
     try {
       await _init();
-      await _plugin
+      final ios = await _plugin
           .resolvePlatformSpecificImplementation<
             IOSFlutterLocalNotificationsPlugin
           >()
           ?.requestPermissions(alert: true, sound: true);
-      await _plugin
+      final android = await _plugin
           .resolvePlatformSpecificImplementation<
             AndroidFlutterLocalNotificationsPlugin
           >()
           ?.requestNotificationsPermission();
+      return ios ?? android;
     } catch (error) {
       appLog.warn('notify', 'permission request failed', error: error);
+      return null;
     }
   }
 

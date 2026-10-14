@@ -1,3 +1,4 @@
+import '../measurement/product_measurement.dart';
 import '../measurement/task_feedback.dart';
 import 'dart:async';
 import 'dart:ui' as ui;
@@ -830,7 +831,12 @@ class _TerminalPageState extends State<TerminalPage>
     if (session?.voiceDeliver == _deliverVoice) session?.voiceDeliver = null;
     if (session?.onLineSent == _onLineSent) session?.onLineSent = null;
     // Said once: leaving the session spends the onboarding's line too.
-    _spendFirstSessionLine();
+    if (_spendFirstSessionLine()) {
+      widget.notifier.onboardingMeasurement.end(
+        ProductFlow.firstMessage,
+        ProductOutcome.cancelled,
+      );
+    }
     _barMessageTimer?.cancel();
     _barMessage.dispose();
     _scrollback.dispose();
@@ -1065,12 +1071,17 @@ class _TerminalPageState extends State<TerminalPage>
   /// Not in the sample: nothing there reaches a harness, and its notices would be for nothing.
   void _onLineSent() {
     if (!mounted || SampleMode.maybeOf(context) != null) return;
+    final onboarding = widget.notifier.onboardingMeasurement;
     unawaited(
       NotificationsAsk.shared.afterSend(
-        widget.notifier.agentNotices.system.requestPermission,
+        () => onboarding.askNotifications(
+          widget.notifier.agentNotices.system.requestPermission,
+        ),
       ),
     );
-    if (_spendFirstSessionLine()) setState(() {});
+    if (!_spendFirstSessionLine()) return;
+    onboarding.end(ProductFlow.firstMessage, ProductOutcome.ok);
+    setState(() {});
   }
 
   /// Whether [session] is a kept screen standing in while its stream attaches — drawn like the live
