@@ -10,7 +10,13 @@ import android.graphics.BitmapFactory
 import android.media.AudioAttributes
 import android.media.AudioManager
 import android.media.MediaPlayer
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
+import android.net.NetworkRequest
 import android.net.Uri
+import android.net.wifi.WifiNetworkSpecifier
+import android.os.PatternMatcher
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
@@ -112,6 +118,62 @@ class MainActivity : FlutterActivity() {
         val asset = call.arguments as? String
         result.success(asset != null && playChime(asset))
       }
+
+    // `harness/setup_wifi` — joining a new device's setup hotspot (Dart:
+    // `lib/phone/add_device/setup_hotspot.dart`). `join` asks Android for any open Wi-Fi named
+    // `Harness-…`; Android shows its own sheet listing those nearby and the person picks one.
+    // The app's traffic is then bound to that Wi-Fi — it has no Internet, and Android would
+    // otherwise send 10.42.0.1 over mobile data. `leave` drops it, and the phone
+    // returns to its own Wi-Fi by itself.
+    MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "harness/setup_wifi")
+      .setMethodCallHandler { call, result ->
+        when (call.method) {
+          "join" -> {
+            val prefix = call.argument<String>("prefix") ?: "Harness-"
+            joinSetupWifi(prefix, result)
+          }
+          "leave" -> { leaveSetupWifi(); result.success(true) }
+          else -> result.notImplemented()
+        }
+      }
+  }
+
+  private var setupNetwork: ConnectivityManager.NetworkCallback? = null
+
+  private fun joinSetupWifi(prefix: String, result: MethodChannel.Result) {
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) { result.success("unsupported"); return }
+    leaveSetupWifi()
+    val connectivity = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+    val specifier = WifiNetworkSpecifier.Builder()
+      .setSsidPattern(PatternMatcher(prefix, PatternMatcher.PATTERN_PREFIX))
+      .build()
+    val request = NetworkRequest.Builder()
+      .addTransportType(NetworkCapabilities.TRANSPORT_WIFI)
+      .removeCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+      .setNetworkSpecifier(specifier)
+      .build()
+    val main = Handler(Looper.getMainLooper())
+    var answered = false
+    fun answer(value: String) = main.post { if (!answered) { answered = true; result.success(value) } }
+    val callback = object : ConnectivityManager.NetworkCallback() {
+      override fun onAvailable(network: Network) {
+        connectivity.bindProcessToNetwork(network)
+        answer("joined")
+      }
+      override fun onUnavailable() { setupNetwork = null; answer("unavailable") }
+      override fun onLost(network: Network) { connectivity.bindProcessToNetwork(null) }
+    }
+    setupNetwork = callback
+    // The sheet waits on the person; give up after two minutes.
+    connectivity.requestNetwork(request, callback, 120_000)
+  }
+
+  private fun leaveSetupWifi() {
+    val callback = setupNetwork ?: return
+    setupNetwork = null
+    val connectivity = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+    connectivity.bindProcessToNetwork(null)
+    try { connectivity.unregisterNetworkCallback(callback) } catch (e: IllegalArgumentException) {}
   }
 
   /** Plays the Flutter asset [asset] once, as a sonification — the system's own sounds' stream —

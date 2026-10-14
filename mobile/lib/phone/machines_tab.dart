@@ -331,6 +331,15 @@ class _Body extends StatelessWidget {
       (word, color) = ('removing…', tty.faint);
     } else if (notifier.machineRetrying(machineId)) {
       (word, color) = ('trying…', tty.faint);
+    } else if (notifier.isNewMachine(machineId) &&
+        status == PhoneMachineStatus.ready) {
+      // Just set up from this phone (Set up a device): which one it is, among the rest.
+      word = 'new';
+    }
+    // Whether it runs Harness OS and has an update, for its sheet's Update and Change Wi-Fi; asked
+    // at most every few minutes, the answer redrawing the list.
+    if (status == PhoneMachineStatus.ready) {
+      unawaited(notifier.refreshOsStatus(machineId));
     }
     return FindRow(
       title: state.machine.displayName,
@@ -348,8 +357,10 @@ class _Body extends StatelessWidget {
   /// One sheet for every computer, whatever it reads — see [openMachineActions]. A locked one has
   /// "Unlock…" at its head, the act its row offers; one place decides what a computer offers, so no
   /// state can lose the rename or the removal.
-  void _open(BuildContext context, MachineState state) =>
-      openMachineActions(context, notifier, state.machine.machineId);
+  void _open(BuildContext context, MachineState state) {
+    notifier.sawMachine(state.machine.machineId);
+    openMachineActions(context, notifier, state.machine.machineId);
+  }
 }
 
 /// Over a run of computers that want the same thing: what they are, then what to do about them —
