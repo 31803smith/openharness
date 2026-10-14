@@ -13,6 +13,10 @@ export const PRODUCT_USAGE_ACTIONS = ['create', 'resume', 'restart', 'model_chan
  * lists on connect, picker previews): measured for reliability, never as a feature someone used. */
 export const PRODUCT_USAGE_AUTOMATIC_ACTIONS: readonly typeof PRODUCT_USAGE_ACTIONS[number][] = ['history', 'history_page', 'store_list', 'model_list']
 export const PRODUCT_USAGE_FEATURE_MEASURES = ['installation_days', 'first_installations', 'repeat_installation_days'] as const
+/** Of those, the lists a person also opens (the Store, a model list): the request that opening sends
+ * carries `userAction: true`, and only it counts their reach, under its own `_user_` names, because
+ * clients released before the split still send the plain names for every automatic read. */
+export const PRODUCT_USAGE_USER_OPENED_ACTIONS = ['store_list', 'model_list'] as const satisfies typeof PRODUCT_USAGE_AUTOMATIC_ACTIONS
 export const PRODUCT_USAGE_SURFACES = ['desktop', 'phone', 'web'] as const
 /** Flows that can finish before an account exists, so a signed-out report may carry them. The
  * sign_in_<method> flows split the phone's welcome screen by the button used; sign_in stays the total. */
@@ -59,6 +63,8 @@ export const PRODUCT_USAGE_METRICS = [
   ...PRODUCT_FEEDBACK.map(answer => `feedback_${answer}` as const),
   ...PRODUCT_USAGE_ACTIONS.flatMap(action => PRODUCT_USAGE_ACTION_MEASURES.map(measure => `${action}_${measure}` as const)),
   ...PRODUCT_USAGE_ACTIONS.flatMap(action => PRODUCT_USAGE_FEATURE_MEASURES.map(measure => `${action}_${measure}` as const)),
+  ...PRODUCT_USAGE_USER_OPENED_ACTIONS.flatMap(action => (['requests', ...PRODUCT_USAGE_FEATURE_MEASURES] as const)
+    .map(measure => `${action}_user_${measure}` as const)),
   ...PRODUCT_USAGE_UI_METRICS,
 ] as const
 export type ProductUsageMetric = typeof PRODUCT_USAGE_METRICS[number]
