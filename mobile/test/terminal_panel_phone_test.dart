@@ -365,6 +365,53 @@ void main() {
       expect(view(tester).controller!.selection, isNull);
       expect(find.text('Copy'), findsNothing);
     });
+
+    // Back puts the keyboard away without a word to the app: the terminal keeps its focus and its
+    // input connection. The resize keyframe that answered the keyboard rising, landing as it slid
+    // down, showed it again (a Galaxy S23, 6 of 19 dismissals, 2026-10-14).
+    testWidgets(
+      'does not show the keyboard again under a terminal holding the focus',
+      (tester) async {
+        final pane = session();
+        await pumpPanel(tester, pane, focused: true);
+        await keyframe(tester, pane, 0, 'the first screen');
+        expect(tester.testTextInput.hasAnyClients, isTrue);
+        tester.testTextInput.log.clear();
+
+        await keyframe(tester, pane, 1, 'the screen after the resize');
+        await tester.pump();
+
+        expect(identical(view(tester).terminal, pane.terminal), isTrue);
+        expect(
+          tester.testTextInput.log.map((call) => call.method),
+          isNot(contains('TextInput.show')),
+        );
+        // The connection it had is still the one keys arrive on.
+        expect(tester.testTextInput.hasAnyClients, isTrue);
+        // The session's wait for a screen of the size it asked for runs out.
+        await tester.pump(const Duration(seconds: 2));
+      },
+    );
+
+    testWidgets('claims the keyboard for a focused terminal that lost it', (
+      tester,
+    ) async {
+      final pane = session();
+      await pumpPanel(tester, pane, focused: true);
+      await keyframe(tester, pane, 0, 'the first screen');
+      expect(tester.testTextInput.hasAnyClients, isTrue);
+      // The page still asks for this terminal's keyboard; the focus went elsewhere.
+      FocusManager.instance.primaryFocus?.unfocus();
+      await tester.pump();
+      expect(tester.testTextInput.hasAnyClients, isFalse);
+
+      await keyframe(tester, pane, 1, 'the screen after the resize');
+      await tester.pump();
+
+      expect(tester.testTextInput.hasAnyClients, isTrue);
+      // The session's wait for a screen of the size it asked for runs out.
+      await tester.pump(const Duration(seconds: 2));
+    });
   });
 
   group('a long press, then Copy', () {

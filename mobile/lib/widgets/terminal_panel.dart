@@ -521,7 +521,14 @@ class _TerminalPanelState extends State<TerminalPanel>
       }
     }
     _followTail = atEnd;
-    _afterTerminalMounted(scrollToEnd: atEnd);
+    // ⚠️ **The keyboard is claimed only by a view that does not hold the focus.** One that does kept
+    // its input connection across the swap (`keepsInputAcrossTerminals`), so claiming it again can
+    // only `show()` the keyboard — and the keyboard Back had just put away was up again within
+    // 66–239ms, the resize keyframe that answered its rising landing as it slid down, while the page
+    // still read it as up (a Galaxy S23, 6 of 19 dismissals, 2026-10-14; each bounce one more resize,
+    // a full reprint by Codex and a 165 KB keyframe). A view without the focus still claims it, as
+    // before: a claim that found no laid-out view gets its second chance here.
+    _afterTerminalMounted(scrollToEnd: atEnd, claimFocus: !_focusNode.hasFocus);
   }
 
   void _handleFocusChange() {
