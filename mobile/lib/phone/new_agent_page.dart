@@ -126,6 +126,10 @@ class _NewAgentPageState extends State<NewAgentPage> {
   String? _gitFolder;
   bool _gitLoading = false;
 
+  /// The read [_gitLoading] is about, held so a Start pressed during it can wait for the same
+  /// answer — see [_gitSettled].
+  Future<void>? _gitRead;
+
   /// Set when the machine could not answer at all, as opposed to answering
   /// "not a repository".
   ///
@@ -297,7 +301,9 @@ class _NewAgentPageState extends State<NewAgentPage> {
       branchName: _branchName,
       placeholder: _placeholder,
       git: _git,
-      gitFolder: _gitFolder,
+      // Only an answer is kept. A read still out, or one that failed, comes back as no read at
+      // all, so Start asks again instead of taking "not a repository" from it — see [_gitSettled].
+      gitFolder: _gitLoading || _gitFailed ? null : _gitFolder,
       codexProfile: _codexProfile,
       model: _model,
       task: _task.text,
@@ -365,8 +371,12 @@ class _NewAgentPageState extends State<NewAgentPage> {
   /// Silent about failure. A folder that is not a repository and a machine that
   /// could not answer both come back with nothing to offer, and neither is
   /// something to interrupt a half-filled form about — the section simply does
-  /// not appear, and everything else on the page still works.
-  Future<void> _loadGit(String folder) async {
+  /// not appear, and everything else on the page still works. Start is where
+  /// it matters, and Start waits for this answer: see [_gitSettled].
+  Future<void> _loadGit(String folder) => _gitRead = _readGit(folder);
+
+  /// [_loadGit]'s read, which it keeps in [_gitRead].
+  Future<void> _readGit(String folder) async {
     final machineId = _machineId;
     setState(() {
       _gitLoading = true;
@@ -615,9 +625,62 @@ class _NewAgentPageState extends State<NewAgentPage> {
     unawaited(_loadGit(chosen));
   }
 
+  /// Waits for the Git answer about the folder Start is about to use, and says whether Start may go
+  /// on. False has already put the form back, with the reason on it.
+  ///
+  /// ⚠️ **Start does not go without the answer**, as the desktop's `create` does not
+  /// (`state/new_harness.dart`). The request is built from it: with no answer there is no
+  /// repository on hand, [_create] takes the plain path, and the harness starts on a bare `cwd` with
+  /// no worktree and no branch. The form reads Git after its first frame, so a Start pressed as it
+  /// opened used to land in exactly that gap.
+  ///
+  /// A machine that could not answer is asked again, once per Start, as the desktop asks; failing
+  /// again refuses rather than starting in the folder anyway, because whether the folder is a
+  /// repository is exactly what is not known. A folder that is simply NOT one was answered, and
+  /// starts there as it always has.
+  Future<bool> _gitSettled() async {
+    final folder = _folder;
+    if (folder == null || _project != null) return true;
+    // Never read for this folder — a draft left while its read was out — counts as unread.
+    if (!_gitLoading && (_gitFailed || _gitFolder != folder)) {
+      unawaited(_loadGit(folder));
+    }
+    // The newest read, not the first: one about a folder the form has since left ends without an
+    // answer (see [_gitFolder]), and the folder only changes by starting another.
+    Future<void>? waited;
+    while (_gitLoading &&
+        _folder != null &&
+        _project == null &&
+        !identical(waited, _gitRead)) {
+      waited = _gitRead;
+      try {
+        await waited;
+      } catch (_) {
+        // A read that threw has no answer either; it is refused below like one that failed.
+      }
+      if (!mounted) return false;
+    }
+    if (_folder == null && _project == null) {
+      setState(() => _creating = false);
+      return false;
+    }
+    if (_project == null && (_gitLoading || _gitFailed)) {
+      final machine = _machine?.machine.displayName ?? 'the computer';
+      setState(() {
+        _creating = false;
+        // The desktop's words, so the two say the same thing about the same machine.
+        _error =
+            'Could not check Git on $machine. Check the connection and Harness '
+            'CLI, then retry.';
+      });
+      return false;
+    }
+    return true;
+  }
+
   Future<void> _create() async {
-    final folder = _folder, engine = _engine, project = _project;
-    if ((folder == null && project == null) || engine == null || _creating) {
+    final engine = _engine;
+    if ((_folder == null && _project == null) || engine == null || _creating) {
       return;
     }
     // A request still waiting on its answer is asked about, never made again — see [_creation].
@@ -635,6 +698,10 @@ class _NewAgentPageState extends State<NewAgentPage> {
       );
       return;
     }
+    if (!await _gitSettled()) return;
+    // Taken after the wait, not before it: the answer can move the form to the folder's own
+    // repository (a worktree's main checkout), and Start goes where the form says now.
+    final folder = _folder, project = _project;
     // Held so the id of what it starts comes back here — see
     // [AgentCreationAttempt.agentId] — and kept as [_creation] for as long as
     // its answer is outstanding.
