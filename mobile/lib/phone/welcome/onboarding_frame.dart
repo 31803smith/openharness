@@ -11,9 +11,9 @@ import 'set_up_computer.dart' show StepsTimeline, goToSteps;
 /// which every screen after signing in shares (its wait, and the computer joining), so the picture
 /// stays put from one to the next.
 enum OnboardingLayout {
-  /// ① A headline of up to three lines and, under it, the status's two — why a sign-in did not
-  /// finish, why the phone was signed out; the two accounts and, under them, one quiet line —
-  /// Continue with email · QR code, or Cancel in their place — at the foot.
+  /// ① A headline of up to three lines — or, in its place while it is up, the status's two: why a
+  /// sign-in did not finish, why the phone was signed out; the two accounts and, under them, one
+  /// quiet line — Continue with email · QR code, or Cancel in their place — at the foot.
   welcome,
 
   /// ② The headline, the link and the steps on the computer under it — "Not you? Sign out" under
@@ -30,7 +30,7 @@ enum OnboardingLayout {
 ///
 ///   Manage all your agents on all      headline: 22pt mono semibold, up to three lines
 ///   your computers from your phone.    [underHeadline] — ②'s link and steps
-///   ⇥ You were signed out. Sign in…    status, on ① — left, under the headline
+///   ⇥ You were signed out. Sign in…    status, on ① — in the headline's place while it is up
 ///
 ///          ┌──────────────────┐
 ///          │     picture      │        the middle, the same place on every screen of a [layout]
@@ -76,8 +76,9 @@ class OnboardingFrame extends StatelessWidget {
   /// The picture, laid out in the middle at its own 320 × 300 proportions.
   final Widget picture;
 
-  /// One centred line under the picture ([OnboardingStatus]) — on the welcome, under the headline
-  /// instead, where what it says is read first. Its room is kept whether it is up or not.
+  /// One centred line under the picture ([OnboardingStatus]) — on the welcome, in the headline's
+  /// place instead while it is up (owner, 2026-10-14): what it says is what to read first, and the
+  /// headline comes back as it goes.
   final Widget? status;
 
   /// The foot: the accounts and the quiet line under them.
@@ -123,13 +124,13 @@ class OnboardingFrame extends StatelessWidget {
     final quiet = math.max(44.0, scaler.scale(quietSize) * 1.45);
     // Room for two lines of status: a sign-in's failure can run to a second.
     final statusRow = 2 * scaler.scale(quietSize) * 1.45;
-    // ① says it under the headline; ② under the picture.
-    final statusUnderHeadline = layout == OnboardingLayout.welcome;
+    // ① says it in the headline's place; ② under the picture.
+    final statusInHeadline = layout == OnboardingLayout.welcome;
     final (head, foot) = switch (layout) {
-      // The headline's three lines and the status's two; the two accounts and the quiet line under
-      // them.
+      // The headline's three lines, or the status's two in their place; the two accounts and the
+      // quiet line under them.
       OnboardingLayout.welcome => (
-        3 * line + _statusGap + statusRow,
+        math.max(3 * line, statusRow),
         2 * button + 2 * _buttonGap + quiet + 8,
       ),
       // Two lines of headline, the link and the steps; one quiet line.
@@ -143,7 +144,7 @@ class OnboardingFrame extends StatelessWidget {
         quiet + 8,
       ),
     };
-    final underPicture = statusUnderHeadline ? 0.0 : 10 + statusRow;
+    final underPicture = statusInHeadline ? 0.0 : 10 + statusRow;
 
     return LayoutBuilder(
       builder: (context, box) {
@@ -177,7 +178,7 @@ class OnboardingFrame extends StatelessWidget {
                 ),
               ),
             ),
-            if (status case final status? when !statusUnderHeadline)
+            if (status case final status? when !statusInHeadline)
               Positioned(
                 left: side,
                 right: side,
@@ -192,7 +193,7 @@ class OnboardingFrame extends StatelessWidget {
                 headline: headline,
                 headlineKey: headlineKey,
                 under: underHeadline,
-                status: statusUnderHeadline ? status : null,
+                status: statusInHeadline ? status : null,
               ),
             ),
             if (actions case final actions?)
@@ -208,9 +209,6 @@ class OnboardingFrame extends StatelessWidget {
   }
 
   static const double _underGap = 23;
-
-  /// ①'s status under the headline: the gap above it.
-  static const double _statusGap = 14;
   static const double _buttonGap = 10;
 }
 
@@ -292,7 +290,8 @@ class OnboardingStage extends StatelessWidget {
 }
 
 /// The headline, and what goes under it, changing together: the new words rise 8pt into place as
-/// the old fade. The welcome's [status] under them comes and goes on its own, the headline still.
+/// the old fade. The welcome's [status] takes their place the same way while it is up, and gives
+/// it back to the headline as it goes.
 class _Words extends StatelessWidget {
   const _Words({
     required this.headline,
@@ -310,7 +309,7 @@ class _Words extends StatelessWidget {
   Widget build(BuildContext context) {
     final tty = Tty.of(context);
     final still = MediaQuery.maybeDisableAnimationsOf(context) ?? false;
-    final words = AnimatedSwitcher(
+    return AnimatedSwitcher(
       duration: Duration(milliseconds: still ? 200 : 250),
       switchInCurve: Curves.easeOut,
       switchOutCurve: Curves.easeIn,
@@ -331,39 +330,34 @@ class _Words extends StatelessWidget {
                 ),
               ),
       ),
-      child: Column(
-        key: ValueKey(headline),
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Semantics(
-            header: true,
-            child: Text(
-              headline,
-              key: headlineKey,
-              maxLines: 3,
-              overflow: TextOverflow.ellipsis,
-              style: OnboardingFrame.headlineStyle(tty),
+      child: switch (status) {
+        // Its own key whatever it says: one message giving way to another is not a new screen.
+        final status? => KeyedSubtree(
+          key: const ValueKey(#status),
+          child: status,
+        ),
+        null => Column(
+          key: ValueKey(headline),
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Semantics(
+              header: true,
+              child: Text(
+                headline,
+                key: headlineKey,
+                maxLines: 3,
+                overflow: TextOverflow.ellipsis,
+                style: OnboardingFrame.headlineStyle(tty),
+              ),
             ),
-          ),
-          if (under case final under?) ...[
-            const SizedBox(height: OnboardingFrame._underGap),
-            under,
+            if (under case final under?) ...[
+              const SizedBox(height: OnboardingFrame._underGap),
+              under,
+            ],
           ],
-        ],
-      ),
-    );
-    // One column whether the status is up or not, so the headline is not built anew as it comes.
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        words,
-        if (status case final status?) ...[
-          const SizedBox(height: OnboardingFrame._statusGap),
-          status,
-        ],
-      ],
+        ),
+      },
     );
   }
 }
