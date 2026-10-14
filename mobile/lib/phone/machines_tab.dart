@@ -237,8 +237,8 @@ class _Body extends StatelessWidget {
   }
 
   /// [ordered]'s rows — each run of computers that want the same thing under one line that says it
-  /// once, `asleep · turn them on, or run harness start there`, rather than the same words under
-  /// every row: six asleep computers said it six times, half the screen of one sentence.
+  /// once, `offline · turn them on, or run harness start there`, rather than the same words under
+  /// every row: six offline computers said it six times, half the screen of one sentence.
   ///
   /// A run of one keeps its own second line: a header over a single row is two lines saying what
   /// one did, and in the singular. The working ones each say their own thing — how many harnesses —
@@ -270,16 +270,16 @@ class _Body extends StatelessWidget {
     return rows;
   }
 
-  /// What a run of computers in [status] is called over it, and what to do about them, said once —
-  /// null for the ones that need nothing.
+  /// What a run of computers in [status] is called over it ([phoneMachineWord]), and what to do
+  /// about them, said once — null for the ones that need nothing.
   static ({String word, String hint})? _groupOf(PhoneMachineStatus status) =>
       switch (status) {
         PhoneMachineStatus.needsPassword => (
-          word: 'locked',
+          word: phoneMachineWord(status),
           hint: 'tap one to unlock: scan its code',
         ),
         PhoneMachineStatus.offline => (
-          word: 'asleep',
+          word: phoneMachineWord(status),
           hint: 'turn them on, or run harness start there',
         ),
         PhoneMachineStatus.ready || PhoneMachineStatus.connecting => null,
@@ -307,22 +307,20 @@ class _Body extends StatelessWidget {
     final status = phoneMachineStatusOf(state);
     final count = state.agents.length;
     final machineId = state.machine.machineId;
-    var (String word, Color color, String detail) = switch (status) {
+    var word = phoneMachineWord(status);
+    var (Color color, String detail) = switch (status) {
       PhoneMachineStatus.ready => (
-        'ready',
         tty.green,
         count == 0
             ? 'nothing running'
             : '$count harness${count == 1 ? '' : 'es'}',
       ),
-      PhoneMachineStatus.connecting => ('connecting', tty.faint, 'one moment…'),
+      PhoneMachineStatus.connecting => (tty.faint, 'one moment…'),
       PhoneMachineStatus.needsPassword => (
-        'locked',
         tty.yellow,
         'tap to unlock: scan its code',
       ),
       PhoneMachineStatus.offline => (
-        'asleep',
         tty.faint,
         'turn it on, or run harness start there',
       ),
@@ -340,7 +338,7 @@ class _Body extends StatelessWidget {
       minHeight: ownLine ? FindRow.height : _gatheredRowHeight,
       state: word,
       stateColor: color,
-      // ⚠️ An asleep computer is tappable now. It used to be drawn inert, with nothing a tap could do
+      // ⚠️ An offline computer is tappable now. It used to be drawn inert, with nothing a tap could do
       // for it — and it is exactly the one somebody wants to try again, rename, or take off the
       // account.
       onTap: () => _open(context, state),
@@ -355,7 +353,7 @@ class _Body extends StatelessWidget {
 }
 
 /// Over a run of computers that want the same thing: what they are, then what to do about them —
-/// `asleep · turn them on, or run harness start there` — said once for the run.
+/// `offline · turn them on, or run harness start there` — said once for the run.
 class _GroupLine extends StatelessWidget {
   const _GroupLine({required this.word, required this.hint});
 

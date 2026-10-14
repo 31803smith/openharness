@@ -2905,7 +2905,7 @@ class _MachineAway extends StatelessWidget {
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   Text(
-                    '$name is asleep',
+                    '$name is ${phoneMachineWord(PhoneMachineStatus.offline)}',
                     textAlign: TextAlign.center,
                     style: tty.style(
                       size: TtySize.row,

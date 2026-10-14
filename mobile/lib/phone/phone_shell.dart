@@ -150,9 +150,9 @@ class _PhoneShellState extends State<PhoneShell> with WidgetsBindingObserver {
     setState(() => _canPop = false);
   }
 
-  /// The computer whose "Scan with your phone" QR the welcome screen read before this phone was
-  /// signed in ([AppNotifier.pendingComputerSignIn]): the approval it asked for, now that it can be
-  /// given. Spent here whatever the answer — a code is one computer's sign-in, once.
+  /// The computer whose sign-in QR (`harness login --qr`) the welcome screen read before this phone
+  /// was signed in ([AppNotifier.pendingComputerSignIn]): the approval it asked for, now that it can
+  /// be given. Spent here whatever the answer — a code is one computer's sign-in, once.
   ///
   /// From this shell's context and not a page's: the home page under it is still settling (the
   /// machines loading, "Waiting for your computer…" swapping with "Looking for your computers…") and

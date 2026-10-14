@@ -177,7 +177,7 @@ class _PhoneWelcomeState extends State<PhoneWelcome> {
     _go(_Step.email, error: _error);
   }
 
-  /// A computer's own sign-in code — its "Scan with your phone" — read before this phone has an
+  /// A computer's own sign-in code — its `harness login --qr` — read before this phone has an
   /// account to approve it with. Held for the sign-in this phone does first
   /// ([AppNotifier.pendingComputerSignIn]); the home screen asks for the approval once it is in.
   void _onComputerSignInCode(SignInCode code) {

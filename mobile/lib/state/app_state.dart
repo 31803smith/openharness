@@ -3300,7 +3300,7 @@ class AppNotifier extends ChangeNotifier {
 
   /// A computer's own sign-in QR (the bare `hnq_…` code, [SignInCode] in
   /// `phone/welcome/connect_code.dart`) read on the welcome screen by a phone not yet signed in —
-  /// the desktop app's "Scan with your phone". Only a signed-in phone can approve it, so the welcome
+  /// `harness login --qr`'s. Only a signed-in phone can approve it, so the welcome
   /// signs this one in first and holds the code across that sign-in; the signed-in shell then asks
   /// to approve it (`phone/phone_shell.dart`), and spends it. Null the rest of the time.
   ///

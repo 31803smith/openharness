@@ -92,6 +92,23 @@ void main() {
     expect(api.answers, ['deny:$_code']);
   });
 
+  testWidgets('a computer with no name is "a computer", never "Sign in A computer?"', (tester) async {
+    await pump(tester, {'label': '  ', 'kind': 'computer', 'sameNetwork': true, 'status': 'pending'});
+    expect(find.text('Sign in a computer?'), findsOneWidget);
+    expect(find.textContaining('A computer?'), findsNothing);
+  });
+
+  testWidgets('an app with no name is "an app", not a computer', (tester) async {
+    await pump(tester, {'kind': 'viewer', 'sameNetwork': true, 'status': 'pending'});
+    expect(find.text('Sign in an app?'), findsOneWidget);
+    expect(find.textContaining('computer?'), findsNothing);
+  });
+
+  testWidgets('an app with a name is asked by its name', (tester) async {
+    await pump(tester, {'label': 'Harness in Safari', 'kind': 'viewer', 'sameNetwork': true, 'status': 'pending'});
+    expect(find.text('Sign in Harness in Safari?'), findsOneWidget);
+  });
+
   testWidgets('a code already answered asks nothing', (tester) async {
     final api = await pump(tester, {'label': 'x', 'kind': 'computer', 'sameNetwork': true, 'status': 'approved'});
     expect(find.byKey(const Key('approve-sign-in-title')), findsNothing);

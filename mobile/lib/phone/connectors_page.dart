@@ -61,9 +61,20 @@ class _ConnectorsPageState extends State<ConnectorsPage>
   String? _machineId;
   List<_Card>? _cards;
   String _query = '';
-  String _notice = '';
   bool _loading = false;
   final Set<String> _busy = {};
+
+  /// Whether [_machineId] passes a connection on to the account's other computers (`list` `shared`):
+  /// one that keeps them to itself is used only when no other answers ([_pickReachable]), and the
+  /// messages must not promise "all your computers" for it.
+  bool _shared = false;
+
+  /// What the last action came to, or why the list could not be read. Set through [_say].
+  String _notice = '';
+  Timer? _noticeTimer;
+
+  /// How long an action's outcome stays, as on the desktop (`connectors_controller.dart`).
+  static const _noticeFor = Duration(seconds: 20);
 
   AppNotifier get _app => widget.notifier;
 
@@ -77,9 +88,23 @@ class _ConnectorsPageState extends State<ConnectorsPage>
 
   @override
   void dispose() {
+    _noticeTimer?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     _app.removeListener(_machinesMayHaveChanged);
     super.dispose();
+  }
+
+  /// Sets the notice; call inside `setState`. [fades]: an action's outcome ("Linear connected…"),
+  /// gone after [_noticeFor] — a "disconnected" from an hour ago still stood there. A list that could
+  /// not be read keeps its reason: with no list under it, that is all the page says.
+  void _say(String text, {bool fades = false}) {
+    _notice = text;
+    _noticeTimer?.cancel();
+    _noticeTimer = null;
+    if (!fades || text.isEmpty) return;
+    _noticeTimer = Timer(_noticeFor, () {
+      if (mounted) setState(() => _notice = '');
+    });
   }
 
   /// Back from the browser (or from anywhere): a sign-in may have finished while this page was
@@ -123,7 +148,7 @@ class _ConnectorsPageState extends State<ConnectorsPage>
       setState(() {
         _machineId = machineId;
         _lastMachine = machineId;
-        _notice = '';
+        _say('');
       });
       _show(reply);
     }
@@ -149,6 +174,7 @@ class _ConnectorsPageState extends State<ConnectorsPage>
   void _show(Map<String, dynamic> reply) {
     setState(() {
       _loading = false;
+      _shared = reply['shared'] == true;
       _cards = (reply['connections'] as List? ?? const [])
           .whereType<Map>()
           .map((row) => _Card(row.cast<String, dynamic>()))
@@ -173,7 +199,7 @@ class _ConnectorsPageState extends State<ConnectorsPage>
       setState(() {
         _loading = false;
         _cards = null;
-        _notice = _failure(reply);
+        _say(_failure(reply));
       });
       return;
     }
@@ -210,7 +236,7 @@ class _ConnectorsPageState extends State<ConnectorsPage>
                   _machineId = machine.machine.machineId;
                   _lastMachine = _machineId;
                   _cards = null;
-                  _notice = '';
+                  _say('');
                 });
                 unawaited(_refresh());
               },
@@ -225,7 +251,7 @@ class _ConnectorsPageState extends State<ConnectorsPage>
     if (machineId == null || _busy.contains(card.code)) return;
     setState(() {
       _busy.add(card.code);
-      _notice = '';
+      _say('');
     });
     HttpServer? loopback;
     try {
@@ -250,11 +276,11 @@ class _ConnectorsPageState extends State<ConnectorsPage>
         );
         if (!opened) throw _Notice('Could not open the browser.');
       }
-      final outcome = await _follow(machineId, flow);
+      final outcome = await _follow(machineId, flow, card.name);
       if (!mounted) return;
-      setState(() => _notice = outcome);
+      setState(() => _say(outcome, fades: true));
     } on _Notice catch (notice) {
-      if (mounted) setState(() => _notice = notice.text);
+      if (mounted) setState(() => _say(notice.text, fades: true));
     } finally {
       await loopback?.close(force: true);
       if (mounted) setState(() => _busy.remove(card.code));
@@ -331,8 +357,9 @@ class _ConnectorsPageState extends State<ConnectorsPage>
     }
   }
 
-  /// The computer finishes the sign-in on its own; this follows it for up to six minutes.
-  Future<String> _follow(String machineId, String flow) async {
+  /// The computer finishes the sign-in on its own; this follows it for up to six minutes. [name] is
+  /// the service's, for the desktop's words when it is done.
+  Future<String> _follow(String machineId, String flow, String name) async {
     final deadline = DateTime.now().add(const Duration(minutes: 6));
     while (mounted && DateTime.now().isBefore(deadline)) {
       await Future<void>.delayed(const Duration(seconds: 1));
@@ -345,8 +372,10 @@ class _ConnectorsPageState extends State<ConnectorsPage>
       if (reply['error'] == 'UNAVAILABLE') continue;
       if (reply['error'] != null) return _failure(reply);
       switch (reply['state']) {
+        // The desktop's words (`connectors_controller.dart`): no "on all your computers", which a
+        // computer that keeps its connections to itself ([_shared] false) would not make true.
         case 'connected':
-          return 'Connected on all your computers.';
+          return '$name connected. Your agents can use it now.';
         case 'failed':
           return reply['reason'] as String? ??
               'The sign-in did not finish. Try again.';
@@ -427,18 +456,42 @@ class _ConnectorsPageState extends State<ConnectorsPage>
     );
   }
 
+  /// Where a connection made or taken away through [_machineId] reaches: every computer of the
+  /// account, or that one alone ([_shared]).
+  String get _where =>
+      _shared ? 'all your computers' : _machineName(_machineId);
+
+  /// Asked first, as on the desktop (`connectors_section.dart`): it takes the account from the
+  /// agents at once, and the service itself still trusts it until revoked there.
   Future<void> _disconnect(_Card card) async {
     final machineId = _machineId;
     if (machineId == null) return;
+    // Read before the question and kept after it: the answer is about the computer it named, even if
+    // the page moved to another while it was up (back in front, it looks for one that answers).
+    final where = _where;
+    final confirmed = await confirmPhoneAction(
+      context,
+      // The sheet row's own icon — see [confirmPhoneAction].
+      icon: LucideIcons.unplug300,
+      title: 'Disconnect ${card.name}?',
+      message:
+          'Agents on $where stop using this account. To revoke it everywhere, use the '
+          'service’s settings.',
+      confirmLabel: 'Disconnect',
+    );
+    if (!confirmed || !mounted) return;
     final reply = await _app.connectors(machineId, {
       'action': 'disconnect',
       'connector': card.code,
     });
     if (!mounted) return;
     setState(
-      () => _notice = reply['error'] != null
-          ? _failure(reply)
-          : '${card.name} disconnected on all your computers.',
+      () => _say(
+        reply['error'] != null
+            ? _failure(reply)
+            : '${card.name} disconnected on $where.',
+        fades: true,
+      ),
     );
     await _refresh();
   }

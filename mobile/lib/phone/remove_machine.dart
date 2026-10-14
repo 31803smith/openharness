@@ -45,7 +45,7 @@ Future<void> confirmRemoveMachine(
       ?.showSnackBar(SnackBar(content: Text(error)));
 }
 
-/// "Try again" on a computer that reads asleep or is stuck connecting — see
+/// "Try again" on a computer that reads offline or is stuck connecting — see
 /// [AppNotifier.retryMachine]. The row's own word moves with the answer, so this says something only
 /// when the account itself could not be read.
 Future<void> retryComputer(
