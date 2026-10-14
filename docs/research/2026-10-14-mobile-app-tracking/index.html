@@ -444,10 +444,9 @@
   <div class="card"><div class="card-body">
     <ul class="plain">
       <li><b>Backend first.</b> An older backend rejects a whole report that carries a name it does not know (400). The phone then retries that same report each minute until its day is more than a day old, and the other phone counts in it are lost with it. Deploy the backend vocabulary before the phone build.</li>
-      <li>The CLI copy of the vocabulary (<code>cli/src/lib/productUsageContract.ts</code>) is identical, and a backend test enforces that. Desktop's <code>product_measurement.dart</code> is kept identical to the phone's for the same reason. Desktop sends none of the new flows.</li>
+      <li>The CLI copy of the vocabulary (<code>cli/src/lib/productUsageContract.ts</code>) is identical, and a backend test enforces that. Since #1323 the desktop's <code>product_measurement.dart</code> evolves on its own (health counters); it only has to name every flow the phone's copy does, which another backend test checks. Desktop sends none of the new flows.</li>
       <li>The phone's Privacy ▸ See what's shared now lists the sign-in buttons and the four setup steps. Desktop's copy of that text does not mention them yet.</li>
-      <li>The backend test <i>keeps the native app collectors and anonymous transport identical</i> fails on this branch since <code>d5496d2ca</code>: the phone's redesigned
-        <code>setup_usage_choice.dart</code> no longer matches desktop's. It needs a decision (mirror it to desktop, or drop that file from the test) before the PR's checks pass.</li>
+      <li>The signed-out choice is now drawn differently on each app (the phone's is one line with ⓘ), so the backend test compares its wording on both apps instead of the whole file.</li>
     </ul>
     <p class="q">Should signed-out sign-in counts stay opt-in only (small numbers), or is the sign-in split good enough from phones that tick the box?</p>
   </div></div>

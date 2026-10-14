@@ -13,7 +13,7 @@ class _Recorder extends ProductMeasurement {
   final ended = <String>[];
 
   @override
-  void Function(ProductOutcome) begin(ProductFlow flow, {Duration elapsed = Duration.zero}) =>
+  void Function(ProductOutcome) begin(ProductFlow flow) =>
       (outcome) => ended.add('${flow.name}:${outcome.name}');
 }
 

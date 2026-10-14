@@ -4,17 +4,17 @@ import 'dart:math';
 import 'package:flutter/foundation.dart';
 
 /// Mirrors `PRODUCT_USAGE_FLOWS` in backend/src/types/productUsage.ts; a wire name the backend
-/// does not list rejects the whole report.
+/// does not list rejects the whole report. Everything up to [signIn] can happen before an account.
 enum ProductFlow {
-  setup('setup', beforeSignIn: true),
-  setupHarness('setup_harness', beforeSignIn: true),
-  setupTmux('setup_tmux', beforeSignIn: true),
-  setupClipboard('setup_clipboard', beforeSignIn: true),
-  signIn('sign_in', beforeSignIn: true),
-  signInScan('sign_in_scan', beforeSignIn: true),
-  signInGoogle('sign_in_google', beforeSignIn: true),
-  signInApple('sign_in_apple', beforeSignIn: true),
-  signInEmail('sign_in_email', beforeSignIn: true),
+  setup('setup'),
+  setupHarness('setup_harness'),
+  setupTmux('setup_tmux'),
+  setupClipboard('setup_clipboard'),
+  signInScan('sign_in_scan'),
+  signInGoogle('sign_in_google'),
+  signInApple('sign_in_apple'),
+  signInEmail('sign_in_email'),
+  signIn('sign_in'),
   workspaceConnect('workspace_connect'),
   computerLink('computer_link'),
   remoteConnect('remote_connect'),
@@ -26,11 +26,11 @@ enum ProductFlow {
   firstMessage('first_message'),
   notifyPermission('notify_permission');
 
-  const ProductFlow(this.wire, {this.beforeSignIn = false});
+  const ProductFlow(this.wire);
   final String wire;
 
   /// Whether a signed-out session that opted in may count it.
-  final bool beforeSignIn;
+  bool get beforeSignIn => index <= ProductFlow.signIn.index;
 }
 
 enum ProductOutcome { ok, failed, cancelled, unknown }
