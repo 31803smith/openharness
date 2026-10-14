@@ -137,6 +137,84 @@ run('TmuxControlStream real tmux', () => {
     }
   })
 
+  // A reply laid out for a desktop's width, after a phone took the pane: tmux re-wraps its history by the cell.
+  it('seeds a conversation\'s whole history re-wrapped by word, and any other pane\'s last screens as tmux has them', async () => {
+    const opened = await TmuxControlStream.open(paneId, { cols: 120, rows: 10 }, { onData: () => {}, onClose: () => {} })
+    expect(opened.state).toBe('succeeded')
+    try {
+      if (opened.state !== 'succeeded') return
+      const reply = join(socketRoot, 'reply.txt')
+      await writeFile(reply, `• I work right on your machine: I read and edit files, and run terminal commands. The main things:\n${
+        Array.from({ length: 800 }, (_, index) => `filler ${index}`).join('\n')}\n`)
+      await tmux(['send-keys', '-t', paneId, '-l', `cat '${reply}'`])
+      await tmux(['send-keys', '-t', paneId, 'Enter'])
+      await eventually(async () => (await tmux(['capture-pane', '-p', '-t', paneId])).includes('filler 799'))
+      expect((await opened.value.resize({ cols: 40, rows: 10 })).state).toBe('succeeded')
+      const keyframe = async (options?: { conversationHistory?: boolean }) => {
+        opened.value.beginSnapshot()
+        const snapshot = await opened.value.snapshot(options)
+        opened.value.endSnapshot()
+        expect(snapshot.state).toBe('succeeded')
+        return snapshot.state === 'succeeded' ? Buffer.from(snapshot.value.bytes).toString('utf8') : ''
+      }
+      // 800 rows of filler under the reply: the last 500 rows of history leave the reply out, the conversation's all.
+      const plain = await keyframe()
+      expect(plain).not.toContain('I work right on your machine')
+      expect(plain).toContain('filler 799')
+      const conversation = await keyframe({ conversationHistory: true })
+      // tmux cut it at 40 columns as `… I read a` / `nd edit files …`.
+      expect(conversation).not.toMatch(/I read a\u001b\[0m\r\nnd edit/)
+      expect(conversation).toContain('• I work right on your machine: I read\u001b[0m\r\n  and edit files, and run terminal\u001b[0m\r\n'
+        + '  commands. The main things:\u001b[0m\r\n')
+    } finally {
+      if (opened.state === 'succeeded') await opened.value.close()
+    }
+  })
+
+  // Codex in its scrollback answers a resize about 80 ms later by clearing the screen and its scrollback, then
+  // printing its transcript again in one synchronized update; a phone drew the cleared screen at every raise and
+  // lower of its keyboard. At work it redraws its status line every few ms, so its output never pauses.
+  it('holds the keyframe after a resize until the print an engine declares ends, and the viewer never gets its clear', async () => {
+    const script = join(socketRoot, 'repaint.sh')
+    await writeFile(script, [
+      `trap 'sleep 0.08; printf "\\033[2J\\033[3J\\033[H\\033[?2026hREPAINTED\\n\\033[?2026l"' WINCH`,
+      `printf 'ready\\n'`,
+      `while :; do printf '\\033[?2026h\\rworking %s\\033[?2026l' "$RANDOM"; sleep 0.02; done`,
+    ].join('\n') + '\n')
+    await tmux(['respawn-pane', '-k', '-t', paneId, 'bash', script])
+    await eventually(async () => (await tmux(['capture-pane', '-p', '-t', paneId])).includes('ready'))
+    const live: Buffer[] = []
+    const opened = await TmuxControlStream.open(paneId, { cols: 80, rows: 20 }, { onData: (bytes) => { live.push(Buffer.from(bytes)) }, onClose: () => {} })
+    expect(opened.state).toBe('succeeded')
+    try {
+      if (opened.state !== 'succeeded') return
+      await new Promise((resolve) => setTimeout(resolve, 400))
+      const repaint = { clears: '\u001b[3J', ends: '\u001b[?2026l', withinMs: 250 }
+      for (const [rows, options] of [[12, undefined], [20, { repaint }]] as const) {
+        expect((await opened.value.resize({ cols: 80, rows })).state).toBe('succeeded')
+        live.length = 0
+        opened.value.beginSnapshot()
+        const began = Date.now()
+        const snapshot = await opened.value.snapshot(options)
+        const took = Date.now() - began
+        opened.value.endSnapshot()
+        await new Promise((resolve) => setTimeout(resolve, 400))
+        const after = Buffer.concat(live).toString('latin1')
+        expect(snapshot.state).toBe('succeeded')
+        if (options) {
+          // Ended by the print's own end, not by a pause the status line never leaves.
+          expect(took).toBeLessThan(400)
+          expect(after).not.toContain('\u001b[3J')
+          expect(snapshot.state === 'succeeded' && Buffer.from(snapshot.value.bytes).toString('utf8')).toContain('REPAINTED')
+        } else {
+          expect(after).toContain('\u001b[3J')
+        }
+      }
+    } finally {
+      if (opened.state === 'succeeded') await opened.value.close()
+    }
+  })
+
   it('streams large styled Unicode and control-byte output without losing or changing bytes', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'harness-stream-bytes-'))
     const path = join(directory, 'payload.bin')

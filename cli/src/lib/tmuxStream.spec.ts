@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import {
   ControlCommandQueue,
   decodeTmuxControlData,
+  dropOldestHistoryRows,
   literalKeyCommands,
   normalizeTmuxHistoryLines,
   normalizeTmuxCaptureLines,
@@ -239,6 +240,16 @@ describe('tmux snapshot row normalization', () => {
     expect(Buffer.from(normalizeTmuxHistoryLines(Buffer.from('\u001b[2mone \ntwo\u001b[0m\nthree\n'))).toString()).toBe(
       '\u001b[2mone \u001b[0m\r\n\u001b[2mtwo\u001b[0m\u001b[0m\r\nthree\u001b[0m\r\n',
     )
+  })
+
+  it('sheds the oldest whole history rows, each still restoring the style carried into it', () => {
+    const rows = normalizeTmuxHistoryLines(Buffer.from('\u001b[2mone \ntwo\u001b[0m\nthree\n'))
+    const first = '\u001b[2mone \u001b[0m\r\n'
+    expect(dropOldestHistoryRows(rows, 0)).toBe(rows)
+    expect(Buffer.from(dropOldestHistoryRows(rows, 1)).toString()).toBe('\u001b[2mtwo\u001b[0m\u001b[0m\r\nthree\u001b[0m\r\n')
+    expect(Buffer.from(dropOldestHistoryRows(rows, Buffer.byteLength(first))).toString()).toBe('\u001b[2mtwo\u001b[0m\u001b[0m\r\nthree\u001b[0m\r\n')
+    expect(Buffer.from(dropOldestHistoryRows(rows, Buffer.byteLength(first) + 1)).toString()).toBe('three\u001b[0m\r\n')
+    expect(dropOldestHistoryRows(rows, rows.length).length).toBe(0)
   })
 })
 

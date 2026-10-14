@@ -167,9 +167,61 @@ describe('TerminalStreamManager', () => {
     expect(sent.at(-1)?.payload.code).toBe('TERMINAL_AGENT_NOT_FOUND')
   })
 
-  it('tells a Grok snapshot not to seed tmux history, and leaves other engines alone', async () => {
+  // Codex prints its transcript again after a resize, its clear first; at work it began after the keyframe had been
+  // taken, and a phone drew the cleared screen (2026-10-13). Its clear never goes out as output.
+  it('stands a keyframe in for an engine\'s print that begins as live output after a resize', async () => {
+    const repaint = { clears: '\u001b[3J', ends: '\u001b[?2026l', withinMs: 250 }
+    const output = () => binarySent.filter(({ frame }) => frame.kind === TerminalBinaryKind.output)
+      .map(({ frame }) => Buffer.from(frame.bytes).toString('latin1')).join('')
+    await manager.handleFrame('web-1', 'terminal_open', {
+      requestId: 'open-1', protocolVersion: 3, agentId: 'agent-1', cols: 120, rows: 40,
+    })
+    const streamId = sent[0].payload.streamId as string
+    await manager.handleFrame('web-1', 'terminal_resize', { streamId, resizeSeq: 0, cols: 120, rows: 30 })
+    const taken = stream.snapshots
+
+    // Begun in one chunk and ended in another: the keyframe waits for the end.
+    sink!.onData(Buffer.from('\u001b[?2026l\u001b[H\u001b[2J\u001b[3J\u001b[H\u001b[?2026h'))
+    await vi.advanceTimersByTimeAsync(8)
+    expect(stream.snapshots).toBe(taken + 1)
+    expect(stream.snapshotOptions.at(-1)).toEqual({ conversationHistory: true, repaint: { ...repaint, cleared: true } })
+    expect(output()).not.toContain('\u001b[3J')
+
+    // Begun and ended in one chunk: the keyframe is taken at once.
+    await manager.handleFrame('web-1', 'terminal_resize', { streamId, resizeSeq: 1, cols: 120, rows: 40 })
+    sink!.onData(Buffer.from('\u001b[2J\u001b[3J\u001b[?2026htranscript\u001b[?2026l'))
+    await vi.advanceTimersByTimeAsync(8)
+    expect(stream.snapshotOptions.at(-1)).toEqual({ conversationHistory: true })
+    expect(output()).not.toContain('\u001b[3J')
+
+    // Long after a resize a clear is the engine's own business, and goes out like any output.
+    await vi.advanceTimersByTimeAsync(2_000)
+    const before = stream.snapshots
+    sink!.onData(Buffer.from('\u001b[3J'))
+    await vi.advanceTimersByTimeAsync(8)
+    expect(stream.snapshots).toBe(before)
+    expect(output()).toContain('\u001b[3J')
+  })
+
+  it('tells a Grok snapshot not to seed tmux history, an engine kept in the scrollback to seed all of it, and leaves other engines alone', async () => {
     await manager.handleFrame('web-1', 'terminal_open', {
       requestId: 'open-codex', protocolVersion: 3, agentId: 'agent-1', cols: 120, rows: 40,
+    })
+    // Codex prints its transcript again on a resize, which a keyframe after one waits for.
+    expect(stream.snapshotOptions.at(-1)).toEqual({
+      conversationHistory: true, repaint: { clears: '\u001b[3J', ends: '\u001b[?2026l', withinMs: 250 },
+    })
+
+    agents.set('claude-1', session('claude', 'claude-1'))
+    await manager.handleFrame('web-1', 'terminal_open', {
+      requestId: 'open-claude', protocolVersion: 3, agentId: 'claude-1', cols: 120, rows: 40,
+    })
+    // Claude Code runs as the person set it up: its history is sent as any pane's.
+    expect(stream.snapshotOptions.at(-1)).toBeUndefined()
+
+    agents.set('opencode-1', session('opencode', 'opencode-1'))
+    await manager.handleFrame('web-1', 'terminal_open', {
+      requestId: 'open-opencode', protocolVersion: 3, agentId: 'opencode-1', cols: 120, rows: 40,
     })
     expect(stream.snapshotOptions.at(-1)).toBeUndefined()
 
