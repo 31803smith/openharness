@@ -5793,6 +5793,27 @@ class AppNotifier extends ChangeNotifier {
     'resumeSessionId': sessionId,
   }, attempt: attempt);
 
+  /// Asks what became of [attempt] — `agent_create_status`, under the same `creationId` — with
+  /// the choices it was first made with. The New form's Check status, the desktop's.
+  ///
+  /// ⚠️ **Not [createAgent] again with the form's rows as they read now.** An answer that lands
+  /// after the first press — a Git read, a machine's only Codex profile — changes the request the
+  /// form would build, and a changed request is refused ("Check the original request…") rather
+  /// than checked, so the form would be stuck saying so. The attempt holds what was asked; this
+  /// asks about exactly that.
+  ///
+  /// Never a creation: an attempt that was not sent has nothing to check, and nothing is sent.
+  Future<String?> checkAgentCreation(AgentCreationAttempt attempt) {
+    if (attempt._finished) return Future.value(attempt._outcome);
+    final machineId = attempt._machineId, choices = attempt._choices;
+    if (!attempt.awaitingConfirmation || machineId == null || choices == null) {
+      return Future.value(
+        'This request was never sent. Start the harness again.',
+      );
+    }
+    return _create(machineId, choices, attempt: attempt);
+  }
+
   Future<String?> _create(
     String machineId,
     Map<String, dynamic> choices, {

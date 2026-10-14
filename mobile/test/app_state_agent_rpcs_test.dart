@@ -378,6 +378,61 @@ void main() {
       },
     );
 
+    test('Check status asks about the request as it was made', () async {
+      final rig = await signedInWith({'m': []});
+      addTearDown(rig.app.dispose);
+      rig.conn('m').answers['agent_create'] = (_) =>
+          throw const WsRequestTimeout('agent_create');
+      final attempt = AgentCreationAttempt();
+      await rig.app.createAgent(
+        'm',
+        engine: 'claude',
+        folder: '/work',
+        attempt: attempt,
+      );
+
+      rig.conn('m').answers['agent_create_status'] = (p) => created(p, 'new');
+      expect(
+        await measured(rig, 'm', rig.app.checkAgentCreation(attempt)),
+        isNull,
+      );
+      expect(rig.conn('m').payloadsOf('agent_create'), hasLength(1));
+      expect(rig.conn('m').payloadsOf('agent_create_status').single, {
+        'creationId': rig
+            .conn('m')
+            .payloadsOf('agent_create')
+            .single['creationId'],
+      });
+      expect(attempt.agentId, 'new');
+    });
+
+    test('Check status never makes a harness', () async {
+      final rig = await signedInWith({'m': []});
+      addTearDown(rig.app.dispose);
+      rig.conn('m').answers['agent_create'] = (_) =>
+          throw refusal('CWD_NOT_FOUND');
+
+      // Never sent: there is nothing to ask about, and asking must not send it.
+      expect(
+        await rig.app.checkAgentCreation(AgentCreationAttempt()),
+        contains('never sent'),
+      );
+      expect(rig.conn('m').payloadsOf('agent_create'), isEmpty);
+      expect(rig.conn('m').payloadsOf('agent_create_status'), isEmpty);
+
+      // Refused for good: the answer stands, and the machine is not asked again.
+      final refused = AgentCreationAttempt();
+      final error = await rig.app.createAgent(
+        'm',
+        engine: 'claude',
+        folder: '/gone',
+        attempt: refused,
+      );
+      expect(await rig.app.checkAgentCreation(refused), error);
+      expect(rig.conn('m').payloadsOf('agent_create'), hasLength(1));
+      expect(rig.conn('m').payloadsOf('agent_create_status'), isEmpty);
+    });
+
     test('two presses of one request share one answer', () async {
       final rig = await signedInWith({'m': []});
       addTearDown(rig.app.dispose);

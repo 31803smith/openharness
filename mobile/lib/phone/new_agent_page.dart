@@ -620,14 +620,25 @@ class _NewAgentPageState extends State<NewAgentPage> {
     if ((folder == null && project == null) || engine == null || _creating) {
       return;
     }
+    // A request still waiting on its answer is asked about, never made again — see [_creation].
+    final pending = _checking ? _creation : null;
     setState(() {
       _creating = true;
+      _checkingLaunch = pending != null;
       _error = null;
     });
+    if (pending != null) {
+      _answered(
+        pending,
+        engine,
+        await widget.notifier.checkAgentCreation(pending),
+      );
+      return;
+    }
     // Held so the id of what it starts comes back here — see
-    // [AgentCreationAttempt.agentId]. A fresh one per submit, which is what the
-    // call made on its own before: a retry after a refusal is a new request.
-    final creation = AgentCreationAttempt();
+    // [AgentCreationAttempt.agentId] — and kept as [_creation] for as long as
+    // its answer is outstanding.
+    final creation = _creation = AgentCreationAttempt();
     // A folder in a repository is not sent as a bare `cwd`: the branch and the
     // worktree travel with it, and [gitFolderRequest] is the desktop's own rule
     // for turning the rows above into what the machine is asked to do. A folder
@@ -675,7 +686,16 @@ class _NewAgentPageState extends State<NewAgentPage> {
       prompt: _engine != null && takesFirstTask(_engine!) ? _task.text : null,
       name: namedByTask ? taskProjectTitle(task) : null,
     );
+    _answered(creation, engine, error);
+  }
+
+  /// What the machine said to [creation], on the form: inside the new harness when one started,
+  /// otherwise the reason under the task.
+  void _answered(AgentCreationAttempt creation, String engine, String? error) {
     if (!mounted) return;
+    // Started, or refused for good: done with. The next press is a new request with an id of its
+    // own, made from the rows as they read then.
+    if (!creation.awaitingConfirmation) _creation = null;
     if (error == null) {
       // The harness exists: the draft that described it would be a second one waiting to be made
       // by accident. See [NewAgentDraft].
@@ -687,12 +707,40 @@ class _NewAgentPageState extends State<NewAgentPage> {
     setState(() {
       _creating = false;
       _error = error;
-      _failed = true;
+      _failure = error;
     });
   }
 
-  /// The last Start did not take: the button says Try Again, and every value stays.
-  bool _failed = false;
+  /// The last request this form made, kept while the machine has not said whether it started —
+  /// the desktop's `_attempt` (`state/new_harness.dart`).
+  ///
+  /// ⚠️ **A lost reply is not a refusal.** "Has not confirmed the new harness yet" and "still
+  /// starting your harness" both mean a harness may exist. Pressed again with a fresh attempt,
+  /// the button sent a new `creationId` and could start a second one; with this one it asks
+  /// `agent_create_status` about the first. Dropped by [_answered] once the answer is final.
+  ///
+  /// Only for the open form. Closing it lets the request go, and the draft it leaves is a new
+  /// request the next time — the desktop keeps the receipt in its draft, but its drafts are kept
+  /// per place, and the phone's one draft would keep every later New on Check status, with
+  /// nothing on the form to let it go.
+  AgentCreationAttempt? _creation;
+
+  /// [_creation] is waiting on its answer: the button checks on it, and the choices it was made
+  /// with are held — the desktop's `checking` and `locked`.
+  bool get _checking => _creation?.awaitingConfirmation ?? false;
+
+  /// The rows take no taps: a request is on its way, or one is waiting to be checked on.
+  bool get _locked => _creating || _checking;
+
+  /// The press under way is a check on [_creation], not a new request — the desktop's
+  /// `_checkingLaunch`, so the button says Checking rather than Starting.
+  bool _checkingLaunch = false;
+
+  /// What the last press was answered with. The button says Try Again while that answer is still
+  /// the line under the task; a choice changed since clears the line, and the button goes back to
+  /// saying what it will do.
+  String? _failure;
+  bool get _failed => _failure != null && _failure == _error;
 
   /// Where a finished creation lands: inside the agent it just started.
   ///
@@ -846,7 +894,7 @@ class _NewAgentPageState extends State<NewAgentPage> {
                                   detail: _engine == null
                                       ? null
                                       : _engineNote(_engine!),
-                                  onTap: _creating
+                                  onTap: _locked
                                       ? null
                                       : () => unawaited(_chooseAgent()),
                                 ),
@@ -859,7 +907,7 @@ class _NewAgentPageState extends State<NewAgentPage> {
                                       ? tty.green
                                       : null,
                                   detail: _machineNote,
-                                  onTap: _creating
+                                  onTap: _locked
                                       ? null
                                       : () => unawaited(_chooseComputer()),
                                 ),
@@ -873,7 +921,7 @@ class _NewAgentPageState extends State<NewAgentPage> {
                                       ? tty.green
                                       : null,
                                   detail: null,
-                                  onTap: _creating
+                                  onTap: _locked
                                       ? null
                                       : () => unawaited(_chooseProject()),
                                 ),
@@ -883,7 +931,7 @@ class _NewAgentPageState extends State<NewAgentPage> {
                                   label: 'options',
                                   value: _optionsOpen ? '[-]' : '[+]',
                                   chevron: false,
-                                  onTap: _creating
+                                  onTap: _locked
                                       ? null
                                       : () => setState(
                                           () => _optionsOpen = !_optionsOpen,
@@ -896,7 +944,7 @@ class _NewAgentPageState extends State<NewAgentPage> {
                                         _model?.id ??
                                         modelSubscriptionLabel(_engine!),
                                     detail: _model?.node,
-                                    onTap: _creating
+                                    onTap: _locked
                                         ? null
                                         : () => unawaited(_chooseModel()),
                                   ),
@@ -908,7 +956,7 @@ class _NewAgentPageState extends State<NewAgentPage> {
                                     valueColor: (mode?.risky ?? false)
                                         ? tty.red
                                         : null,
-                                    onTap: _creating
+                                    onTap: _locked
                                         ? null
                                         : () => unawaited(_chooseApprovals()),
                                   ),
@@ -916,7 +964,7 @@ class _NewAgentPageState extends State<NewAgentPage> {
                                   TtyFormRow(
                                     label: 'profile',
                                     value: _codexProfile?.label ?? 'Default',
-                                    onTap: _creating
+                                    onTap: _locked
                                         ? null
                                         : () => unawaited(_chooseProfile()),
                                   ),
@@ -936,7 +984,7 @@ class _NewAgentPageState extends State<NewAgentPage> {
                                         ? 'Choose a project'
                                         : 'Not a Git repository',
                                     detail: info == null ? null : _branchNote,
-                                    onTap: info == null || _creating
+                                    onTap: info == null || _locked
                                         ? null
                                         : () => unawaited(_pickBranch(info)),
                                   ),
@@ -951,7 +999,7 @@ class _NewAgentPageState extends State<NewAgentPage> {
                                           ? tty.faint
                                           : null,
                                       chevron: false,
-                                      onTap: info == null || _creating
+                                      onTap: info == null || _locked
                                           ? null
                                           : () => setState(() {
                                               _worktree = !_worktree;
@@ -1074,8 +1122,11 @@ class _NewAgentPageState extends State<NewAgentPage> {
                                     ),
                                   const SizedBox(height: 10),
                                   TtyPrimaryButton(
-                                    // Says what it will do: start, or choose what is still missing first.
-                                    label: _failed
+                                    // Says what it will do: check on a request still unanswered, start,
+                                    // or choose what is still missing first.
+                                    label: _checking
+                                        ? 'Check status'
+                                        : _failed
                                         ? 'Try Again'
                                         : ready
                                         ? 'Start'
@@ -1083,7 +1134,9 @@ class _NewAgentPageState extends State<NewAgentPage> {
                                         ? 'Choose an agent'
                                         : 'Choose a project',
                                     busy: _creating,
-                                    busyLabel: 'Starting…',
+                                    busyLabel: _checkingLaunch
+                                        ? 'Checking…'
+                                        : 'Starting…',
                                     // Never a dead button: with a choice missing, Start opens its chooser.
                                     onPressed: () => unawaited(_start()),
                                   ),
