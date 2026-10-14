@@ -5748,8 +5748,8 @@ class AppNotifier extends ChangeNotifier {
     final task = prompt?.trim();
     final choices = <String, dynamic>{
       'engine': engine,
-      // The harness's first task — the machine types it into the agent once it is up. Only
-      // claude, codex and opencode take one (see `kFirstTaskEngines`); an empty one is left out.
+      // The harness's first task — the machine types it into the agent once it is up. Only the
+      // engines in `kFirstTaskEngines` take one; an empty one is left out.
       if (task != null && task.isNotEmpty) 'prompt': task,
       // What the agent is called until its engine titles the session. Absent, the machine names it
       // after the engine and the time ("Codex harness 9-17 15:26").

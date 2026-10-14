@@ -199,7 +199,22 @@ class _NewAgentPageState extends State<NewAgentPage> {
   }
 
   /// The first task — `prompt` on `agent_create`. Optional: empty starts the harness idle.
+  ///
+  /// ⚠️ **No length limit on the field.** One cut whatever was typed or pasted past
+  /// [kFirstTaskMaxLength] without a word, and what the mic added went past it unchecked. Start
+  /// says so instead, and sends nothing — see [_lengthError].
   final _task = TextEditingController();
+
+  /// What Start said about the task's length, while it is the line under the task. Editing the
+  /// task keeps it true: the count follows the words, and the line goes once they fit.
+  String? _lengthError;
+
+  /// The task changed — typed, pasted or said.
+  void _taskEdited(String text) => setState(() {
+    if (_lengthError != null && _error == _lengthError) {
+      _error = _lengthError = firstTaskLengthError(text);
+    }
+  });
 
   /// Made on the first tap of the mic, not before: a recorder opens a platform channel, and a
   /// form nobody talks to should not.
@@ -226,7 +241,7 @@ class _NewAgentPageState extends State<NewAgentPage> {
             text: next,
             selection: TextSelection.collapsed(offset: next.length),
           );
-          setState(() {});
+          _taskEdited(next);
           return true;
         }),
       );
@@ -702,6 +717,18 @@ class _NewAgentPageState extends State<NewAgentPage> {
     // Taken after the wait, not before it: the answer can move the form to the folder's own
     // repository (a worktree's main checkout), and Start goes where the form says now.
     final folder = _folder, project = _project;
+    // The first task as it is sent, read after the wait too: the field stays open through it. An
+    // engine that cannot take one is sent none.
+    final task = takesFirstTask(engine) ? _task.text.trim() : '';
+    // Shortened by the person, never cut here: a machine refuses a longer one, and a task cut to
+    // fit is not the one that was written. The desktop's check, in its words.
+    if (firstTaskLengthError(task) case final tooLong?) {
+      setState(() {
+        _creating = false;
+        _error = _lengthError = tooLong;
+      });
+      return;
+    }
     // Held so the id of what it starts comes back here — see
     // [AgentCreationAttempt.agentId] — and kept as [_creation] for as long as
     // its answer is outstanding.
@@ -712,11 +739,7 @@ class _NewAgentPageState extends State<NewAgentPage> {
     // that is not a repository, or one this form never read, falls through to
     // the plain path — and `New project` / `Git…` keep the request they made.
     // A New folder is named after the first task when there is one to send — the phone has no name
-    // field, and five `codex-2026-…` folders told nobody which was which (openharness#94). The agent
-    // takes the same words until its engine titles the session.
-    final task = engine == 'terminal' || !takesFirstTask(engine)
-        ? ''
-        : _task.text;
+    // field, and five `codex-2026-…` folders told nobody which was which (openharness#94).
     final namedByTask =
         project != null &&
         project.repository == null &&
@@ -750,8 +773,12 @@ class _NewAgentPageState extends State<NewAgentPage> {
       codexHome: _showsCodexProfile ? _codexProfile?.path : null,
       model: _model,
       attempt: creation,
-      prompt: _engine != null && takesFirstTask(_engine!) ? _task.text : null,
-      name: namedByTask ? taskProjectTitle(task) : null,
+      prompt: task.isEmpty ? null : task,
+      // Whenever a first task is sent, the harness is called by its words until the engine titles
+      // the session — in any project, the desktop's rule. Named only for a New folder, a second
+      // harness in an existing one read "Untitled Pane" until then. Nothing to say leaves the name
+      // to the machine.
+      name: task.isEmpty ? null : taskProjectTitle(task),
     );
     _answered(creation, engine, error);
   }
@@ -1151,9 +1178,8 @@ class _NewAgentPageState extends State<NewAgentPage> {
                                     controller: _task,
                                     hint: 'What should it do?',
                                     lines: 6,
-                                    maxLength: kFirstTaskMaxLength,
                                     action: TextInputAction.newline,
-                                    onChanged: (_) => setState(() {}),
+                                    onChanged: _taskEdited,
                                     trailing: [
                                       Align(
                                         alignment: Alignment.bottomRight,
@@ -1549,13 +1575,13 @@ class _NewAgentPageState extends State<NewAgentPage> {
   }
 
   Future<void> _chooseProfile() async {
-    final picked = await showNewAgentChooser<LocalCodexProfile?>(
+    final picked = await showNewAgentChooser<_ProfileChoice>(
       context,
       title: 'Profile',
       hint: 'Search profiles',
       items: [
         ChooserItem(
-          value: null,
+          value: const _ProfileChoice(null),
           title: 'Default',
           subtitle: _codexProfilesLoaded ? null : 'Looking for others…',
           icon: LucideIcons.user300,
@@ -1563,7 +1589,7 @@ class _NewAgentPageState extends State<NewAgentPage> {
         ),
         for (final profile in _codexProfiles)
           ChooserItem(
-            value: profile,
+            value: _ProfileChoice(profile),
             title: profile.label,
             subtitle: profile.path,
             icon: LucideIcons.user300,
@@ -1571,8 +1597,9 @@ class _NewAgentPageState extends State<NewAgentPage> {
           ),
       ],
     );
-    if (!mounted) return;
-    setState(() => _codexProfile = picked);
+    // Put away without a pick: the profile stays what it was. Default is a pick, of no profile.
+    if (picked == null || !mounted) return;
+    setState(() => _codexProfile = picked.profile);
   }
 
   /// The branch row: the picker, and the name dialog behind its first entry.
@@ -1777,6 +1804,15 @@ class _ProjectChoice {
   final _ProjectChoiceKind kind;
   final String? machineId;
   final String? folder;
+}
+
+/// What the Profile chooser hands back: a profile, or none for Default. Wrapped because the sheet
+/// answers null when it is put away, and Default read that way reset a profile nobody unchose — the
+/// model sheet's [NewAgentModelChoice] for the same reason.
+class _ProfileChoice {
+  const _ProfileChoice(this.profile);
+
+  final LocalCodexProfile? profile;
 }
 
 /// A computer's project choice, held while the form is on another computer — see
