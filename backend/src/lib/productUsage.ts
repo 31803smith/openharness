@@ -1,3 +1,5 @@
+import { healthBreakdowns } from '../analytics/productHealth.js'
+import type { ProductUsageContext } from '../types/productHealthContract.js'
 import { createHmac } from 'node:crypto'
 import type { Prisma } from '@prisma/client'
 import { env } from '../config/env.js'
@@ -36,7 +38,7 @@ function validDay(day: string, now: Date): boolean {
 /** Identity is used for permission only. Neither it nor the report body reaches analytics storage. */
 export async function ingestProductUsage(userId: string, report: ProductUsageReport, now = new Date()) {
   if (!validDay(report.day, now)) return { accepted: false, reason: 'EXPIRED' }
-  return ingestCounters(report, userId)
+  return ingestCounters(report, userId, now)
 }
 
 export interface SetupUsageReport { id: string; day: string; counters: Record<string, number> }
@@ -47,7 +49,8 @@ export async function ingestSetupUsage(report: SetupUsageReport, now = new Date(
   return ingestCounters(report)
 }
 
-async function ingestCounters(report: SetupUsageReport & { revision?: number }, userId?: string) {
+async function ingestCounters(report: SetupUsageReport & { revision?: number; context?: ProductUsageContext }, userId?: string, now = new Date()) {
+  if (report.context?.channel === 'development') return { accepted: true, reason: 'DEVELOPMENT' }
   try {
     return await prisma.$transaction(async tx => {
       if (userId) {
@@ -60,10 +63,18 @@ async function ingestCounters(report: SetupUsageReport & { revision?: number }, 
       } })
       for (const [metric, value] of Object.entries(report.counters)) {
         if (!value) continue
-        await tx.productUsageTotal.upsert({
-          where: { dayUtc_metric: { dayUtc: new Date(report.day), metric } },
-          create: { dayUtc: new Date(report.day), metric, value }, update: { value: { increment: value } },
-        })
+        for (const name of [metric, ...healthBreakdowns(report.context, metric)]) {
+          await tx.productUsageTotal.upsert({
+            where: { dayUtc_metric: { dayUtc: new Date(report.day), metric: name } },
+            create: { dayUtc: new Date(report.day), metric: name, value }, update: { value: { increment: value } },
+          })
+        }
+      }
+      if (report.context && report.day < now.toISOString().slice(0, 10)) {
+        const dayUtc = new Date(Math.floor(now.getTime() / DAY) * DAY)
+        const metric = `health_${report.context.surface}_report_late`
+        await tx.productUsageTotal.upsert({ where: { dayUtc_metric: { dayUtc, metric } },
+          create: { dayUtc, metric, value: 1 }, update: { value: { increment: 1 } } })
       }
       return { accepted: true }
     })
