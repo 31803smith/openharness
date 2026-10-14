@@ -511,8 +511,8 @@ class _VoiceLanguageRow extends StatelessWidget {
   );
 }
 
-/// Whether this phone may notify — a harness asking something while the app is away, a new device
-/// on the account — and the way to turn it on.
+/// Whether this phone may notify — a harness finishing while the app is away, a new device on the
+/// account ([noticesWhen]) — and the way to turn it on.
 ///
 /// ⚠️ **The way back.** The OS asks once by itself, as the first terminal's tips go
 /// (`terminal_page.dart`). A "Don't Allow" there had no way back from inside the app, and the device
@@ -588,7 +588,7 @@ class _NotificationsRowState extends State<_NotificationsRow>
     return SettingsRow(
       key: const ValueKey('settings-notifications'),
       title: 'Notifications',
-      detail: 'When a harness needs you, or a new device joins your account.',
+      detail: 'When $noticesWhen.',
       value: switch (_on) {
         true => 'On',
         false => 'Off',

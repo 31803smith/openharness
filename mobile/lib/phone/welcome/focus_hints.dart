@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 
 import 'package:harness_mobile/core/harness_file_store.dart';
 import 'package:harness_mobile/core/local_key_value_store.dart';
+import 'package:harness_mobile/notify/system_notices.dart' show noticesWhen;
 
 import '../tty.dart';
 import '../tty_controls.dart';
@@ -213,8 +214,7 @@ class _FocusHintsState extends State<FocusHints> {
                       if (widget.onDone != null) ...[
                         const SizedBox(height: 28),
                         Text(
-                          'Notifications tell you when a harness needs you, '
-                          'and when a new device joins your account.',
+                          'Notifications tell you when $noticesWhen.',
                           textAlign: TextAlign.center,
                           style: tty.style(
                             size: TtySize.meta,

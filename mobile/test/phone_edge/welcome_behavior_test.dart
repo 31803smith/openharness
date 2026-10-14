@@ -317,6 +317,43 @@ void main() {
       },
     );
 
+    // ⚠️ The OS's notification prompt follows them, so they say what a notice is for — and only what
+    // reaches a phone: a question never does (`commander_question` goes to the dial and the
+    // computer's own window only).
+    testWidgets(
+      'before the notification prompt: a harness finishing, a new device — never "needs you"',
+      (tester) async {
+        setPhone(tester, largePhone);
+        Widget hints({VoidCallback? onDone}) => phoneApp(
+          FocusHints(
+            micBottom: 60,
+            store: FocusHintsSeen(
+              storage: MemoryKeyValueStore()
+                ..values['phone_focus_hints_v1'] = 'again',
+            ),
+            onDone: onDone,
+          ),
+        );
+        await tester.pumpWidget(hints(onDone: () {}));
+        await frames(tester);
+        expect(find.text('→ swipe right'), findsOneWidget);
+        expect(
+          find.text(
+            'Notifications tell you when a harness finishes, or a new device joins your account.',
+          ),
+          findsOneWidget,
+        );
+        expect(find.textContaining('needs you'), findsNothing);
+
+        // No prompt after them: no line about notices either.
+        await tester.pumpWidget(const SizedBox());
+        await tester.pumpWidget(hints());
+        await frames(tester);
+        expect(find.text('→ swipe right'), findsOneWidget);
+        expect(find.textContaining('Notifications'), findsNothing);
+      },
+    );
+
     test('nothing stored is put away; asked for, they come back; a store that fails never nags', () async {
       final storage = MemoryKeyValueStore();
       final seen = FocusHintsSeen(storage: storage);

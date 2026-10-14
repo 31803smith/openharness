@@ -212,6 +212,8 @@ void main() {
             color: Tty.of(context).ground,
             child: FocusHints(
               micBottom: 34 + 4 + 30,
+              // As the terminal has them: the notification prompt after, and its line with them.
+              onDone: () {},
               store: FocusHintsSeen(
                 storage: MemoryKeyValueStore()
                   ..values['phone_focus_hints_v1'] = 'again',
