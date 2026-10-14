@@ -500,6 +500,24 @@ void main() {
     });
   });
 
+  testWidgets('↵ breaks the prompt\'s line without sending the turn', (
+    tester,
+  ) async {
+    final focus = await _Focus.open(tester);
+    focus.fill();
+    await frames(tester);
+    await focus.tapPrompt();
+    await tester.pump();
+    raiseKeyboard(tester);
+    await frames(tester);
+    focus.typed.clear();
+    await tester.tap(find.byKey(const ValueKey('terminal-key-Newline')));
+    await frames(tester);
+    // What a hardware ⌥⏎ sends — never the bare Return that submits.
+    expect(focus.typed, ['\x1b\r']);
+    await focus.close();
+  });
+
   group('the app going away and coming back', () {
     testWidgets('the keyboard it left with is the keyboard it comes back to', (
       tester,

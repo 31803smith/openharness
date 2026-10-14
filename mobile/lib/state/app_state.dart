@@ -64,6 +64,7 @@ import 'search_when.dart';
 import 'session_content_search.dart';
 import '../usage/remote_usage.dart';
 import '../usage/usage_accounts.dart';
+import '../usage/usage_summary.dart';
 import '../phone/phone_name_store.dart';
 import '../viewer/device_log.dart';
 import '../viewer/device_history.dart';
@@ -1642,6 +1643,8 @@ class AppNotifier extends ChangeNotifier {
     unawaited(_machineCache?.clear());
     sessionPreviews.clear();
     agentNotices.reset();
+    // The Settings row's usage figure was this account's — see [lastUsageSummary].
+    lastUsageSummary.value = null;
     expandedMachines.clear();
     selectedMachineId = null;
     // ⚠️ The saved session goes too. The socket that said so (a refresh refused, 4403) is the only
@@ -1878,6 +1881,9 @@ class AppNotifier extends ChangeNotifier {
     // sign-in code: held for the sign-in it asked for, not the one after this.
     pendingPairing = null;
     pendingComputerSignIn = null;
+    // The Settings row's usage figure was this account's — see [lastUsageSummary]. Here, before the
+    // awaits below: a sign-in started meanwhile ends this early, and must not inherit the figure.
+    lastUsageSummary.value = null;
     _closedHistory.clear();
     // Best-effort and fire-and-forget: local state is cleared below regardless, but the saved
     // session goes too, so the NEXT launch doesn't silently sign back in without ever showing the
