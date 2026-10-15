@@ -1,4 +1,4 @@
-import { PRODUCT_FEEDBACK, PRODUCT_FEEDBACK_REASONS, PRODUCT_FEEDBACK_OUTCOMES, PRODUCT_USAGE_ACTIONS, PRODUCT_USAGE_AUTOMATIC_ACTIONS, PRODUCT_USAGE_FLOWS, PRODUCT_USAGE_SURFACES, PRODUCT_USAGE_USER_OPENED_ACTIONS } from '../types/productUsage.js'
+import { PRODUCT_FEEDBACK, PRODUCT_FEEDBACK_REASONS, PRODUCT_FEEDBACK_OUTCOMES, PRODUCT_USAGE_ACTIONS, PRODUCT_USAGE_AUTOMATIC_ACTIONS, PRODUCT_USAGE_FLOWS, PRODUCT_USAGE_SETUP_FLOWS, PRODUCT_USAGE_SURFACES, PRODUCT_USAGE_USER_OPENED_ACTIONS } from '../types/productUsage.js'
 import { DAILY_PRODUCT_METRICS } from './dailyProductUsage.js'
 
 type Row = { dayUtc: Date; metric: string; value: number }
@@ -90,7 +90,7 @@ export function dailyProductReview(rows: Row[], now: Date) {
       definition: 'Participating installations with work in two consecutive complete UTC calendar months; late uploads and measurement rollout affect coverage.',
     },
     flows: ['setup', 'ui'].flatMap(channel => PRODUCT_USAGE_SURFACES.flatMap(surface => PRODUCT_USAGE_FLOWS
-      .filter(flow => channel !== 'setup' || ['setup', 'setup_harness', 'setup_tmux', 'setup_clipboard', 'sign_in'].includes(flow))
+      .filter(flow => channel !== 'setup' || (PRODUCT_USAGE_SETUP_FLOWS as readonly string[]).includes(flow))
       .map(flow => {
         const prefix = `${channel}_${surface}_${flow}_`
         const started = c[`${prefix}started`] ?? null

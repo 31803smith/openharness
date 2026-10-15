@@ -231,9 +231,14 @@ it('setup ingestion never reads an account and expires after yesterday', async (
 })
 
 it('keeps anonymous transport and consent unchanged across native apps while Desktop health evolves independently', () => {
-  for (const file of ['setup_transport.dart', 'setup_usage_choice.dart']) {
-    expect(readFileSync(new URL(`../../../desktop/lib/measurement/${file}`, import.meta.url), 'utf8'))
-      .toBe(readFileSync(new URL(`../../../mobile/lib/measurement/${file}`, import.meta.url), 'utf8'))
+  expect(readFileSync(new URL('../../../desktop/lib/measurement/setup_transport.dart', import.meta.url), 'utf8'))
+    .toBe(readFileSync(new URL('../../../mobile/lib/measurement/setup_transport.dart', import.meta.url), 'utf8'))
+  // Each app draws the signed-out choice its own way (the phone's is one line with a tooltip); what it asks must not differ.
+  const choice = (app: string) => readFileSync(new URL(`../../../${app}/lib/measurement/setup_usage_choice.dart`, import.meta.url), 'utf8')
+  for (const words of ['Share setup and sign-in counts',
+    'Optional for this app session. Help us find setup problems without sharing account details, prompts, or files.']) {
+    expect(choice('desktop')).toContain(`'${words}'`)
+    expect(choice('mobile')).toContain(`'${words}'`)
   }
   const mobile = readFileSync(new URL('../../../mobile/lib/measurement/product_measurement.dart', import.meta.url), 'utf8')
   const desktop = readFileSync(new URL('../../../desktop/lib/measurement/product_measurement.dart', import.meta.url), 'utf8')

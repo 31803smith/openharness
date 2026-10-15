@@ -25,7 +25,17 @@ enum ProductFlow {
   updateRelaunch('update_relaunch'),
   connectUser('connect_user'),
   connectAuto('connect_auto'),
-  resumeRecovery('resume_recovery');
+  resumeRecovery('resume_recovery'),
+  // The phone's own flows, listed so this enum names every flow the phone's copy does; the desktop
+  // never begins them.
+  signInScan('sign_in_scan'),
+  signInGoogle('sign_in_google'),
+  signInApple('sign_in_apple'),
+  signInEmail('sign_in_email'),
+  computerWait('computer_wait'),
+  sessionOpen('session_open'),
+  firstMessage('first_message'),
+  notifyPermission('notify_permission');
 
   const ProductFlow(this.wire);
   final String wire;

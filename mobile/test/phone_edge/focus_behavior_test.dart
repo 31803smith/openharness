@@ -3,12 +3,12 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:harness_mobile/core/models.dart';
 import 'package:harness_mobile/demo/sample_mode.dart';
+import 'package:harness_mobile/phone/machines_tab.dart';
 import 'package:harness_mobile/phone/phone_search_catalog.dart'
     show phoneAgentId;
 import 'package:harness_mobile/phone/phone_shell_scope.dart';
 import 'package:harness_mobile/phone/terminal_page.dart';
 import 'package:harness_mobile/phone/terminal_search.dart';
-import 'package:harness_mobile/phone/new_agent_page.dart';
 import 'package:harness_mobile/phone/settings_page.dart';
 import 'package:harness_mobile/phone/voice_input_controller.dart';
 import 'package:harness_mobile/phone/voice_mic_button.dart';
@@ -34,14 +34,44 @@ void main() {
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(SystemChannels.platform, (call) async {
           if (call.method == 'Clipboard.getData') return _clipboard;
+          // ⚠️ Answered as well as `getData`, because the menu's Paste asks this
+          // FIRST — it is how iOS is spared a second "Allow Paste" prompt (see
+          // `phone/terminal_paste.dart`). Unanswered it reads as false, and the
+          // paste walked straight past the text to look for an image.
+          if (call.method == 'Clipboard.hasStrings') {
+            final text = _clipboard?['text'];
+            // ⚠️ Typed `<String, dynamic>`, not left to inference. Flutter reads
+            // this reply as `Map<String, dynamic>?`, and a `Map<String, bool>`
+            // fails that cast with a TypeError — which, thrown inside an
+            // unawaited paste, is swallowed whole: no paste, no message, no
+            // failure, just a Paste row that silently does nothing.
+            return <String, dynamic>{
+              'value': text is String && text.isNotEmpty,
+            };
+          }
           return null;
         });
+    // ⚠️ **Answered too, or Paste never finishes.** With no text on the
+    // clipboard the paste goes looking for an IMAGE, over this channel — and an
+    // unmocked channel in a widget test never replies at all. The await simply
+    // hangs: no paste, no message, no error, and a test that reads as "the row
+    // did nothing" when the row is in fact still waiting. Null is "no image".
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(
+          const MethodChannel('harness/clipboard_image'),
+          (call) async => null,
+        );
   });
 
   tearDown(() {
     _clipboard = null;
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(SystemChannels.platform, null);
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(
+          const MethodChannel('harness/clipboard_image'),
+          null,
+        );
   });
 
   testWidgets('a keyboard raised while the mic records puts the take away', (
@@ -171,7 +201,7 @@ void main() {
     await focus.close();
   });
 
-  testWidgets('back and forth between Focus, Find and New, quickly', (
+  testWidgets('back and forth between Focus, Find and Computers, quickly', (
     tester,
   ) async {
     final focus = await _Focus.open(tester);
@@ -193,20 +223,20 @@ void main() {
       );
       await frames(tester);
       expect(find.byType(TerminalSearchOverlay), findsNothing);
-      // Left on the terminal: New.
+      // Left on the terminal: Computers. A new harness is Find's `New Harness` now.
       await tester.dragFrom(
         centre + const Offset(120, 0),
         const Offset(-300, 0),
       );
       await frames(tester);
-      expect(find.byType(NewAgentPage), findsOneWidget);
-      // Right on New: back.
+      expect(find.byType(MachinesTab), findsOneWidget);
+      // Right on Computers: back.
       await tester.dragFrom(
-        tester.getCenter(find.byType(NewAgentPage)),
+        tester.getCenter(find.byType(MachinesTab)),
         const Offset(300, 0),
       );
       await frames(tester, count: 6);
-      expect(find.byType(NewAgentPage), findsNothing);
+      expect(find.byType(MachinesTab), findsNothing);
     }
     expect(tester.takeException(), isNull);
     expect(find.byType(TerminalView), findsOneWidget);
@@ -329,8 +359,13 @@ void main() {
       final focus = await openMenu(tester);
       _clipboard = null;
       await tester.tap(find.text('Paste from clipboard'));
-      await frames(tester, count: 1);
-      expect(find.text('the clipboard has no text'), findsOneWidget);
+      await frames(tester);
+      // No text AND no image: the sheet's Paste looks for both before it gives
+      // up, so the sentence names the clipboard rather than the text on it.
+      expect(
+        find.text('There is nothing on the clipboard to paste.'),
+        findsOneWidget,
+      );
       await focus.close();
     });
 
@@ -396,15 +431,19 @@ void main() {
       return focus;
     }
 
-    testWidgets('its keys beside the mic press its first and last answers', (
-      tester,
-    ) async {
+    // No keys beside the mic since the owner's call (2026-09-29): each answer is a band over its
+    // own lines, pressed by a tap there (the next test) — and, to a screen reader, a button named
+    // for the answer.
+    testWidgets('each answer is a button to VoiceOver, and presses its own '
+        'number', (tester) async {
+      final semantics = tester.ensureSemantics();
       final focus = await asked(tester);
-      await tester.tap(find.bySemanticsLabel(RegExp('^Answer 1')));
-      await tester.tap(find.bySemanticsLabel(RegExp('^Answer 3')));
+      tester.semantics.tap(find.semantics.byLabel(RegExp('^Answer 1 ')));
+      tester.semantics.tap(find.semantics.byLabel(RegExp('^Answer 3 ')));
       await frames(tester);
       expect(focus.typed, containsAllInOrder(['1', '3']));
       await focus.close();
+      semantics.dispose();
     });
 
     testWidgets('a tap on an answer\'s own line presses it', (tester) async {
@@ -463,6 +502,24 @@ void main() {
       expect(focus.typed, contains('\r'));
       await focus.close();
     });
+  });
+
+  testWidgets('↵ breaks the prompt\'s line without sending the turn', (
+    tester,
+  ) async {
+    final focus = await _Focus.open(tester);
+    focus.fill();
+    await frames(tester);
+    await focus.tapPrompt();
+    await tester.pump();
+    raiseKeyboard(tester);
+    await frames(tester);
+    focus.typed.clear();
+    await tester.tap(find.byKey(const ValueKey('terminal-key-Newline')));
+    await frames(tester);
+    // What a hardware ⌥⏎ sends — never the bare Return that submits.
+    expect(focus.typed, ['\x1b\r']);
+    await focus.close();
   });
 
   group('the app going away and coming back', () {
