@@ -1738,9 +1738,19 @@ class AppNotifier extends ChangeNotifier {
   /// `viewer/email_code_api.dart`.
   Future<void> sendLoginCode(String email) => viewer.emailLogin.sendCode(email);
 
-  /// A sign-in attempt, counted as `sign_in` and under the welcome-screen button that started it.
-  void Function(ProductOutcome) _measureSignIn(ProductFlow method) =>
-      productMeasurement.beginEach([ProductFlow.signIn, method]);
+  /// A sign-in attempt, counted as `sign_in` and under the welcome-screen button that started it:
+  /// every outcome for a signed-out session that opted in, and a success once more under the
+  /// account's own sharing ([OnboardingMeasurement.signedIn]).
+  void Function(ProductOutcome) _measureSignIn(ProductFlow method) {
+    final finish = productMeasurement.beginEach([ProductFlow.signIn, method]);
+    final watch = Stopwatch()..start();
+    return (outcome) {
+      finish(outcome);
+      if (outcome == ProductOutcome.ok) {
+        onboardingMeasurement.signedIn(method, watch.elapsed);
+      }
+    };
+  }
 
   /// The phone's sign-in, second step: trade the emailed [code] for a session
   /// and go in.
