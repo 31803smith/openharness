@@ -5771,6 +5771,8 @@ impl App {
                 // Fill its original tab instead of whichever tab is now active.
                 let tab = self.tab().id.clone();
                 crate::input::new_shell_from(self, None, Placement::Fill(tab), None, Some("/usr/bin/hn-os welcome".into()));
+            } else if (self.os_live || self.os_first_use) && crate::os_welcome::welcome_waits_on_wifi(self) {
+                // Asked again every tick until the Wi-Fi form gives the tab back.
             } else { self.shell_asked = true; }
             return;
         }
@@ -6658,6 +6660,27 @@ mod scroll_settle_tests {
 #[cfg(test)]
 mod recovery_tests {
     use super::*;
+
+    #[tokio::test]
+    async fn os_first_workspace_waits_while_the_wifi_form_holds_the_tabs() {
+        let (sink, _) = tokio::sync::mpsc::unbounded_channel();
+        let mut app = App::new(19789, sink, (80, 24));
+        app.handed_over = true;
+        app.os_session = true;
+        app.os_first_use = true;
+        app.desk_answered = true;
+        app.new_tab();
+        app.open_agent(crate::local::MACHINE, "wifi", Placement::Auto(None));
+        let form = app.focused().unwrap();
+        app.os_welcome.wifi_pane = Some(form);
+        app.maybe_start_shell();
+        assert!(!app.shell_asked, "the welcome must not give up while the Wi-Fi form holds the tabs");
+        app.close_pane(form);
+        app.maybe_start_shell();
+        // No local daemon in this test: the welcome is still to come rather than given up on.
+        assert!(!app.shell_asked);
+        assert_eq!(app.tabs.len(), 1);
+    }
 
     #[tokio::test]
     async fn os_starts_at_the_agent_launcher_without_creating_an_unused_shell() {
