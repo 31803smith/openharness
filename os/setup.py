@@ -9,16 +9,19 @@ Internet and signs in with `harness login --ticket`. When the Wi-Fi fails, the h
 with the reason (wrong password, out of reach, no address, no Internet), for the phone to read when
 it rejoins, and the person tries again.
 
-The hotspot comes up by itself only on a computer with no screen, and only while there is no
-network: soon after starting, and after a long outage later (a new router). A laptop keeps its own
-Wi-Fi page. While nobody is on it, saved Wi-Fi is tried again every few minutes, so a
-router that was only off brings the computer back by itself.
+The hotspot comes up by itself only while there is no network: at once on a computer not signed in
+yet (just installed or reset), screen or not, beside the screen's own Wi-Fi page; on one signed in,
+only with no screen and after a long outage (a new router). While nobody is on it, saved Wi-Fi is
+tried again every few minutes, so a router that was only off brings the computer back by itself.
+Its name ends in the Wi-Fi card's own address, the same however often the computer is flashed.
 
 The hotspot has no password, for setup to be one tap: whoever is in range of a computer in setup
 can choose its Wi-Fi, and the Wi-Fi password crosses an open network. Nothing here runs a command
 the phone names, and a computer already signed in keeps its account (`login --ticket` refuses).
 """
 import argparse
+import array
+import fcntl
 import http.server
 import importlib.util
 import json
@@ -27,6 +30,7 @@ import pwd
 import queue
 import shutil
 import socket
+import struct
 import subprocess
 import sys
 import threading
@@ -50,9 +54,11 @@ HOTSPOT = 'harness-setup'
 ADDRESS = '10.42.0.1'
 PORT = 80
 PROTOCOL = 1
-# Saved Wi-Fi gets this long to come back before the hotspot takes the radio.
+# Signed in with no screen: saved Wi-Fi gets this long to come back before the hotspot takes the radio.
 OFFLINE_AT_START = 60
 OFFLINE_LATER = 600
+# Not signed in, with saved Wi-Fi: this long for it to come back as the computer starts.
+SAVED_GRACE = 15
 # With nobody on the hotspot, saved Wi-Fi is tried again this often, for this long.
 RETRY_SAVED = 300
 SAVED_JOIN = 45
@@ -99,8 +105,42 @@ def computer_id():
     return ''
 
 
-def hotspot_name():
-    tail = ''.join(character for character in computer_id() if character.isalnum())[-4:].upper()
+SIOCETHTOOL = 0x8946
+ETHTOOL_GPERMADDR = 0x20
+
+
+def permanent_mac(device):
+    """The address burned into [device], not the one it shows now: NetworkManager gives a radio a
+    random address while it scans, and the hotspot's name must be the same every time and on the
+    label. ethtool's GPERMADDR, then the current address, then nothing."""
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+            request = struct.pack('II', ETHTOOL_GPERMADDR, 32) + bytes(32)
+            buffer = array.array('B', request)
+            pointer = buffer.buffer_info()[0]
+            ifreq = struct.pack('16sP', device.encode()[:15], pointer)
+            fcntl.ioctl(sock.fileno(), SIOCETHTOOL, ifreq)
+            size = struct.unpack_from('I', buffer, 4)[0]
+            address = bytes(buffer[8:8 + size])
+            if size == 6 and any(address):
+                return ':'.join(f'{byte:02x}' for byte in address)
+    except (OSError, ValueError, struct.error):
+        pass
+    try:
+        return (Path('/sys/class/net') / device / 'address').read_text().strip()
+    except OSError:
+        return ''
+
+
+def hotspot_name(device=None):
+    """`Harness-` and the last four of the Wi-Fi card's own address: fixed for the computer however
+    often it is flashed, so it can be printed on its label (the robots' own setup hotspots name
+    themselves after their hardware the same way). The computer id without a Wi-Fi card."""
+    device = device or wifi_device()
+    source = permanent_mac(device) if device else ''
+    if not source:
+        source = computer_id()
+    tail = ''.join(character for character in source if character.isalnum())[-4:].upper()
     return 'Harness-' + (tail or 'Setup')
 
 
@@ -466,7 +506,7 @@ def setup_mode(device, asked=False):
     was off). One not signed in still needs the phone, and one [asked] for setup by hand was taken
     off its Wi-Fi on purpose: both keep the hotspot until somebody uses it."""
     may_leave = not asked and signed_in()
-    name = hotspot_name()
+    name = hotspot_name(device)
     networks = visible_networks(name)
     try:
         while True:
@@ -491,6 +531,10 @@ def setup_mode(device, asked=False):
                     # Someone at the screen took the radio for a Wi-Fi (network.py): joined, or not.
                     if not hotspot_up():
                         elsewhere = online()
+                        break
+                    # Online another way meanwhile (a cable plugged in): the hotspot has no use.
+                    if online():
+                        elsewhere = True
                         break
                     if phones_on(device):
                         idle_since = time.monotonic()
@@ -567,16 +611,31 @@ def headless():
                    for status in DRM.glob('card*-*/status') if status.is_file())
 
 
+def offline_wait(now, started):
+    """How long this computer must be offline before its hotspot opens; None: never by itself.
+
+    Not signed in (just installed, or reset), screen or not: at once, for setup from a phone beside
+    the screen's own Wi-Fi page, which lists the Wi-Fi seen before the hotspot and takes the radio
+    back for one chosen there. Saved Wi-Fi gets a moment to come back first, as it does at boot.
+    Signed in: a computer with no screen after a long outage (a new router); one with a screen keeps
+    its Wi-Fi page, as a laptop away from its network should."""
+    if not signed_in():
+        return SAVED_GRACE if saved_wifi() and now - started < SAVED_GRACE + 5 else 0
+    if not headless():
+        return None
+    return OFFLINE_AT_START if now - started < OFFLINE_AT_START + 5 else OFFLINE_LATER
+
+
 def watch():
     started, offline_since = time.monotonic(), None
     while True:
         now = time.monotonic()
         forced = asked_now()
-        if (online() or not headless()) and not forced:
+        wait = None if forced else offline_wait(now, started)
+        if (online() or wait is None) and not forced:
             offline_since = None
         else:
             offline_since = offline_since or now
-            wait = OFFLINE_AT_START if now - started < OFFLINE_AT_START + 5 else OFFLINE_LATER
             device = wifi_device()
             if device and (forced or now - offline_since >= wait):
                 if forced:
@@ -612,7 +671,7 @@ def change(request):
     ssid = request['ssid']
     write_result(run=run, state='connecting', ssid=ssid)
     before = active_wifi(device)
-    networks = visible_networks(hotspot_name())
+    networks = visible_networks(hotspot_name(device))
     result = join(dict(ssid=ssid, password=request.get('password') or ''), networks, device)
     if result['state'] != 'done' and before:
         # Back where it was: the phone reaches it again there and reads why.
