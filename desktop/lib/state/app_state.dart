@@ -79,6 +79,7 @@ import '../autonomous_device/autonomous_device_cli.dart';
 import '../settings/config_store.dart';
 import '../settings/experimental_features.dart';
 import '../core/local_key_value_store.dart';
+import '../measurement/setup_preference_store.dart';
 import '../devices/device_hosts.dart';
 import '../stats/harness_stats.dart';
 import '../terminal/terminal_session.dart';
@@ -3290,6 +3291,9 @@ class AppNotifier extends ChangeNotifier {
               ? 'desktop'
               : 'phone',
           automatic: !kUnderTest,
+          setupStorage: !kIsWeb && this.viewer == null && !kUnderTest
+              ? SetupPreferenceStore()
+              : null,
           context: !kIsWeb && this.viewer == null
               ? ProductUsageContext(
                   release: 'unknown',
@@ -3361,7 +3365,7 @@ class AppNotifier extends ChangeNotifier {
         : null;
     productMeasurement.account(
       scope,
-      choice: () => api.productUsageSettings(),
+      choice: () => productUsageSettings(),
       send: api.productUsageReport,
     );
     productRuntimeHealth?.account(
@@ -3389,6 +3393,17 @@ class AppNotifier extends ChangeNotifier {
       _measurementResumes.clear();
     }
     _measurementGeneration = productMeasurement.observationGeneration;
+  }
+
+  /// A Settings opt-out before sign-in applies to the account once it is known.
+  /// Keep it pending locally until the server confirms it; a failed request or
+  /// a default-on account response must not silently restore sharing.
+  Future<Map<String, dynamic>> productUsageSettings({bool? enabled}) async {
+    await productMeasurement.setupChoiceReady;
+    return api.productUsageSettings(
+      enabled:
+          enabled ?? (productMeasurement.accountOptOutPending ? false : null),
+    );
   }
 
   // Connection keys already belong to the app. Only fixed outcomes reach measurement, never the key.
