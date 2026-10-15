@@ -4993,6 +4993,50 @@ class AppNotifier extends ChangeNotifier {
     unawaited(connection.forceReconnect());
   }
 
+  /// A socket that still calls itself open but has stopped bringing anything from its machine:
+  /// put its terminals down as a dropped socket's are, and dial it again. True when it did; false
+  /// leaves everything as it was, for the caller's own repair.
+  ///
+  /// Two callers, one rule each:
+  /// - a terminal stream quiet for 15s on a socket that heard nothing from the machine in that time
+  ///   ([TerminalSession.onTransportSilent]);
+  /// - the app back from the background after [resumeRedialAfter], on a socket that heard nothing
+  ///   while it was away ([handleAppResumed]).
+  ///
+  /// ⚠️ **The sessions go down first, because [WsConn.forceReconnect] does not say so.** It drops
+  /// the old channel without a close event and dials again reporting `connecting`, which
+  /// [_onConnectionStatus] — rightly — does not read as a lost socket. Without this, every
+  /// terminal would stay `controlling` on a stream that left with the old socket, and wait out its
+  /// own watchdog all over again. Marked lost here, as the `reconnecting` branch there marks them,
+  /// the new socket's `connected` puts them back: the one on screen through
+  /// [MachineState.pendingOfflineAgentId], the rest through `_attachPendingPanes`, each in place
+  /// with its screen kept ([_reattachPane]).
+  ///
+  /// ⚠️ **Not offline.** The machine may be perfectly fine — it is the phone's own line to the
+  /// relay that went (a network switch, a tunnel), so this is [_recoverStaleSession]'s redial
+  /// without its offline flag, which would flash "Offline" over a machine nobody lost.
+  ///
+  /// ⚠️ **Only a connection that is up and can redial.** One mid-dial is already on its way back,
+  /// and redialling it would throw that dial away; one that cannot redial
+  /// ([WsConn.canForceReconnect]) would leave the sessions marked lost with no socket coming.
+  bool _redialStaleTransport(
+    MachineState machine,
+    WsConn connection, {
+    required String why,
+  }) {
+    if (_disposed || !connection.isReady || !connection.canForceReconnect) {
+      return false;
+    }
+    appLog.info(
+      'ws',
+      '${_shortId(machine.machine.machineId)}: $why — dialling the relay again',
+    );
+    _markSessionsUnreachable(machine, 'Connection lost. Reconnecting…');
+    notifyListeners();
+    unawaited(connection.forceReconnect());
+    return true;
+  }
+
   bool _machineWorkCurrent(MachineState machine, int revision) =>
       _authWorkCurrent(revision) &&
       identical(machineStates[machine.machine.machineId], machine);
@@ -7840,6 +7884,19 @@ class AppNotifier extends ChangeNotifier {
         await connection.forceReconnect();
         return true;
       },
+      // A live stream gone quiet on a socket that heard nothing from the machine either — see
+      // [TerminalSession.onTransportSilent]. The socket held now, never one built for the asking:
+      // a pane whose machine has no socket has nothing to redial.
+      onTransportSilent: () {
+        final machine = machineStates[pane.machineId];
+        final connection = _heldConnection(pane.machineId);
+        if (machine == null || connection == null) return false;
+        return _redialStaleTransport(
+          machine,
+          connection,
+          why: 'a terminal stream and its socket went quiet',
+        );
+      },
       // ⚠️ **Opening IS taking, for everything a person does.** A page opened, swiped onto or
       // restored at launch claims the terminal; the one open that still asks politely is the warm
       // tile the pager builds ahead of the thumb, which is a guess and must not cost the desktop
@@ -8808,6 +8865,9 @@ class AppNotifier extends ChangeNotifier {
   ///
   /// Safe to call on every resume. [WsPool.reconnectAll] skips connections that are already open
   /// and connections somebody closed on purpose, so a tab switch that cost nothing costs nothing.
+  ///
+  /// An open socket is not always a live one, though: after [resumeRedialAfter] away, one that
+  /// heard nothing from its machine meanwhile is dialled again too — see [_redialSocketsSilentSince].
   void handleAppResumed() {
     if (kTypingTrace) {
       final pane = focusedPane;
@@ -8816,7 +8876,15 @@ class AppNotifier extends ChangeNotifier {
         ' ${pane == null ? '-' : '${_shortId(pane.machineId)}/${_shortId(pane.agentId ?? '-')}'}',
       );
     }
+    final pausedAt = _pausedAt;
+    _pausedAt = null;
     _pool?.reconnectAll();
+    // After reconnectAll, not before: a socket it has just started dialling is not ready, and is
+    // left to that dial.
+    if (pausedAt != null &&
+        DateTime.now().difference(pausedAt) >= resumeRedialAfter) {
+      _redialSocketsSilentSince(pausedAt);
+    }
     // Back in front of the agent that was on screen: whatever it finished
     // while the phone was in a pocket has now been seen.
     _seeWatchedAgent();
@@ -8847,10 +8915,66 @@ class AppNotifier extends ChangeNotifier {
   /// And write the machine cache now ([_keepMachineCache]): this is the last moment the app is sure
   /// to run, since closing it from the app switcher starts by sending it here.
   void handleAppPaused() {
+    // The first pause of this time away: a second without a resume between (the OS repeating
+    // itself) does not move the moment the phone actually left.
+    _pausedAt ??= DateTime.now();
     _desk.pause();
     _stopDeafPoll();
     // The agents this run learned between lists, for the next launch — see [_keepMachineCache].
     _keepMachineCache();
+  }
+
+  /// When the app last went into the background ([handleAppPaused]); null while it is in front.
+  DateTime? _pausedAt;
+
+  /// How long the app has to have been away before [handleAppResumed] stops trusting an open
+  /// socket that heard nothing from its machine in that time.
+  ///
+  /// ⚠️ **Thirty seconds, the daemon's terminal lease** (`HEARTBEAT_TIMEOUT_MS`,
+  /// `cli/src/lib/terminalStreamManager.ts`). A phone the OS suspended sends no `terminal_alive`, so
+  /// past this the daemon has closed this phone's terminal streams anyway, and they have to be
+  /// opened again whatever the socket: a fresh socket costs nothing they were not going to cost.
+  /// Shorter, a glance at another app would redial a socket that was fine and reopen terminals
+  /// that were still live — the "every tab switch costs a handshake" [WsConn.reconnectNow] warns
+  /// about.
+  ///
+  /// A field rather than a constant only so a test can stand in for half a minute in a pocket, as
+  /// [trustSettleRound] does for its wait.
+  @visibleForTesting
+  Duration resumeRedialAfter = const Duration(seconds: 30);
+
+  /// Back after [resumeRedialAfter] away: dial again every socket that still calls itself open
+  /// but heard nothing from its machine since [since], the moment the app left.
+  ///
+  /// ⚠️ **Why an open socket is not taken at its word.** The phone's line to the relay is lost by
+  /// being backgrounded, and above all by the network changing under it — Wi-Fi giving way to 4G
+  /// in a pocket — and the OS does not always say so: the old socket stays "open", bound to a
+  /// network that is gone, and takes every send while nothing comes back. Waited out, that was the
+  /// terminal's 15s watchdog plus its repairs, about twenty seconds of a screen that looked live
+  /// and took no keys; dialled now, the terminal is back in a couple of seconds.
+  ///
+  /// ⚠️ **Nothing heard while away is the test, not the time away alone.** A phone whose OS let it
+  /// run in the background (Android often does, for a while) kept its streams alive and heard
+  /// their sync frames: that socket is proved alive and left alone, terminals and all.
+  ///
+  /// Only a machine with a terminal attached: this exists to bring terminals back, and a machine
+  /// with none has nothing on screen waiting — its socket keeps its own repairs, as it did.
+  void _redialSocketsSilentSince(DateTime since) {
+    if (status != AppStatus.authenticated) return;
+    final away = DateTime.now().difference(since).inSeconds;
+    for (final machine in machineStates.values.toList()) {
+      final machineId = machine.machine.machineId;
+      if (!panesFor(machineId).any((pane) => pane.session != null)) continue;
+      final connection = _heldConnection(machineId);
+      if (connection == null) continue;
+      final heard = connection.lastHeardFromMachineAt;
+      if (heard != null && heard.isAfter(since)) continue;
+      _redialStaleTransport(
+        machine,
+        connection,
+        why: 'back after ${away}s away with nothing heard from it',
+      );
+    }
   }
 
   /// The app lost the foreground for a moment — the app switcher, a system sheet. Nothing stops;

@@ -22,6 +22,8 @@ void main() {
     String engine = 'claude',
     bool takeover = true,
     Future<bool> Function()? onOpenStalled,
+    DateTime? Function()? lastHeardFromMachine,
+    bool Function()? onTransportSilent,
     Duration resync = const Duration(milliseconds: 40),
     bool disposeAtEnd = true,
   }) {
@@ -34,6 +36,8 @@ void main() {
       sendBinary: wire.sendBinary,
       client: const TerminalClientDescriptor(kind: 'phone', name: 'Pat'),
       onOpenStalled: onOpenStalled,
+      lastHeardFromMachine: lastHeardFromMachine,
+      onTransportSilent: onTransportSilent,
       resyncTimeout: resync,
       takeover: takeover,
     );
@@ -482,6 +486,150 @@ void main() {
         expect(s.watching, isTrue);
         expect(wire.of('terminal_resync'), isEmpty);
         s.dispose();
+      });
+    });
+
+    // The socket heard nothing from the machine for as long as the stream was quiet: the socket is
+    // what died (a half-open line after a network switch), and a resync over it would only wait
+    // out three unanswered tries and an open's patience before anything redialled.
+    group('quiet on a socket that is quiet too', () {
+      /// The socket's last word from the machine, [heard], as the hook reports it; and every call
+      /// of the redial hook, answered [redials].
+      ({TerminalSession s, List<void> asked}) quietOn(
+        FakeAsync async, {
+        required DateTime? heard,
+        bool redials = true,
+        bool hook = true,
+      }) {
+        final asked = <void>[];
+        final s = session(
+          disposeAtEnd: false,
+          lastHeardFromMachine: () => heard,
+          onTransportSilent: hook
+              ? () {
+                  asked.add(null);
+                  return redials;
+                }
+              : null,
+        );
+        liveOn(async, s);
+        return (s: s, asked: asked);
+      }
+
+      test('the socket is dialled again at once, the stream not resynced', () {
+        fakeAsync((async) {
+          final (:s, :asked) = quietOn(async, heard: DateTime(2000));
+
+          async.elapse(const Duration(seconds: 15));
+          expect(asked, isEmpty, reason: 'three beats are not yet a silence');
+
+          async.elapse(const Duration(seconds: 5));
+          expect(asked, hasLength(1));
+          expect(wire.of('terminal_resync'), isEmpty);
+          s.dispose();
+        });
+      });
+
+      test('a socket that still hears the machine leaves the repair to the '
+          'stream: resynced, nothing redialled', () {
+        fakeAsync((async) {
+          // Heard after this stream's last frame: another agent's output, a reply.
+          final (:s, :asked) = quietOn(
+            async,
+            heard: DateTime.now().add(const Duration(hours: 1)),
+          );
+
+          async.elapse(const Duration(seconds: 20));
+
+          expect(asked, isEmpty);
+          expect(s.errorCode, 'TERMINAL_STREAM_TIMEOUT');
+          expect(wire.of('terminal_resync'), hasLength(1));
+          s.dispose();
+        });
+      });
+
+      test('a redial the app declines leaves the stream to its resync', () {
+        fakeAsync((async) {
+          final (:s, :asked) = quietOn(
+            async,
+            heard: DateTime(2000),
+            redials: false,
+          );
+
+          async.elapse(const Duration(seconds: 20));
+
+          expect(asked, hasLength(1));
+          expect(wire.of('terminal_resync'), hasLength(1));
+          s.dispose();
+        });
+      });
+
+      test('a socket that never heard the machine is no proof: resynced', () {
+        fakeAsync((async) {
+          final (:s, :asked) = quietOn(async, heard: null);
+
+          async.elapse(const Duration(seconds: 20));
+
+          expect(asked, isEmpty);
+          expect(wire.of('terminal_resync'), hasLength(1));
+          s.dispose();
+        });
+      });
+
+      test('with no redial hook, the stream is resynced as before', () {
+        fakeAsync((async) {
+          final (:s, asked: _) = quietOn(
+            async,
+            heard: DateTime(2000),
+            hook: false,
+          );
+
+          async.elapse(const Duration(seconds: 20));
+
+          expect(wire.of('terminal_resync'), hasLength(1));
+          s.dispose();
+        });
+      });
+
+      test('a redial that took the session down meanwhile is not followed by '
+          'a resync over its "Connection lost"', () {
+        fakeAsync((async) {
+          late TerminalSession s;
+          s = session(
+            disposeAtEnd: false,
+            lastHeardFromMachine: () => DateTime(2000),
+            // Declined for this stream, but another stream of the machine got there first and
+            // the app took every session of it down.
+            onTransportSilent: () {
+              s.transportLost('Connection lost. Reconnecting…');
+              return false;
+            },
+          );
+          liveOn(async, s);
+
+          async.elapse(const Duration(seconds: 20));
+
+          expect(wire.of('terminal_resync'), isEmpty);
+          expect(s.errorMessage, 'Connection lost. Reconnecting…');
+          s.dispose();
+        });
+      });
+
+      test('the stream heard from again resets it: no redial for a quiet '
+          'that ended', () {
+        fakeAsync((async) {
+          final (:s, :asked) = quietOn(async, heard: DateTime(2000));
+          final streamId = s.streamId!;
+
+          async.elapse(const Duration(seconds: 15));
+          s.handleBinary(_sync(streamId, 1));
+          async.flushMicrotasks();
+          async.elapse(const Duration(seconds: 15));
+
+          expect(asked, isEmpty);
+          expect(wire.of('terminal_resync'), isEmpty);
+          s.dispose();
+        });
       });
     });
   });

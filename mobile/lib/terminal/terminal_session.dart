@@ -169,8 +169,22 @@ class TerminalSession extends ChangeNotifier {
 
   /// When the transport last heard from this session's MACHINE — a frame it sealed, not the
   /// relay's own (`WsConn.lastHeardFromMachineAt`). Null hook: the open watchdog keeps its old,
-  /// impatient rule (see [_openPatience]).
+  /// impatient rule (see [_openPatience]), and a quiet stream is always resynced
+  /// ([_sendHeartbeat]) rather than its transport redialled.
   final DateTime? Function()? lastHeardFromMachine;
+
+  /// Takes this machine's whole transport down and dials it again, because a stream on it went
+  /// quiet and the socket heard nothing from the machine in that time either — see
+  /// [_sendHeartbeat]. Returns whether it did; false (the socket is mid-dial already, or cannot
+  /// redial) leaves the stream to its own resync.
+  ///
+  /// ⚠️ **The whole socket, not this stream.** A socket left half-open (Wi-Fi giving way to 4G)
+  /// carries every terminal of the machine, and every one of them is as dead as this one. Asking
+  /// the daemon for a resync over it would wait out three unanswered tries and an open's patience —
+  /// about twenty more seconds — before anything redialled. The caller marks the machine's
+  /// sessions lost before the redial (`AppNotifier._redialStaleTransport`), which is what puts
+  /// them back, screens kept, once the new socket is up.
+  final bool Function()? onTransportSilent;
 
   /// This client's own introduction, sent with every `terminal_open`; null
   /// for a viewer that never takes control and so is never anyone's taker.
@@ -186,6 +200,7 @@ class TerminalSession extends ChangeNotifier {
     this.client,
     this.onOpenStalled,
     this.lastHeardFromMachine,
+    this.onTransportSilent,
     this.resyncTimeout = const Duration(seconds: 4),
     this.takeover = true,
     this.scrollMemory,
@@ -385,6 +400,11 @@ class TerminalSession extends ChangeNotifier {
 
   /// Heartbeats in a row that heard nothing on this stream — see [_sendHeartbeat].
   int _quietBeats = 0;
+
+  /// When this stream was last heard from: its `terminal_ready`, then each frame of it. Set beside
+  /// every reset of [_quietBeats], and compared against [lastHeardFromMachine] — never with a
+  /// clock's duration — to tell a dead socket from a dead stream ([_transportSilentToo]).
+  DateTime? _lastHeardOnStream;
 
   /// The heartbeats a live stream cannot go without a frame: at least 15s of silence, the
   /// desktop's limit. Four, not three, because the count is of beats that heard nothing, and the
@@ -825,6 +845,7 @@ class TerminalSession extends ChangeNotifier {
         // beating after [dispose].
         _heartbeat?.cancel();
         _quietBeats = 0;
+        _lastHeardOnStream = DateTime.now();
         _heartbeat = Timer.periodic(
           const Duration(seconds: 5),
           (_) => unawaited(_sendHeartbeat()),
@@ -1012,6 +1033,7 @@ class TerminalSession extends ChangeNotifier {
     if (_disposed || frame.streamId != streamId) return;
     // Heard from: whatever the frame turns out to be, the stream is alive — see [_sendHeartbeat].
     _quietBeats = 0;
+    _lastHeardOnStream = DateTime.now();
     final generation = _generation;
     _renderTail = _renderTail
         .then((_) async {
@@ -2030,6 +2052,13 @@ class TerminalSession extends ChangeNotifier {
   ///
   /// Counted in beats, not by the clock, on purpose: an app the OS suspended runs no timers, so
   /// the gap it was away is no beat at all, and coming back is not taken for a silence.
+  ///
+  /// Which repair, once the stream has gone quiet that long:
+  /// - **The socket heard nothing from the machine either** ([_transportSilentToo]): the socket is
+  ///   what died, and every stream on it with it. It is redialled at once ([onTransportSilent]),
+  ///   skipping the resync tries and the open's patience that only a live socket could answer.
+  /// - **The socket still hears the machine** (another agent's output, its sync frames, a reply):
+  ///   only this stream is gone, and the daemon can repair it — the resync, then a reopen.
   Future<void> _sendHeartbeat() async {
     if (!acceptsInput) return;
     final generation = _generation;
@@ -2041,7 +2070,28 @@ class TerminalSession extends ChangeNotifier {
     if (!_isCurrent(generation) || !acceptsInput) return;
     if (++_quietBeats < _quietBeatsBeforeResync) return;
     _quietBeats = 0;
+    if (_transportSilentToo() && (onTransportSilent?.call() ?? false)) return;
+    // Read again: a redial the hook declined may still have taken this session down meanwhile —
+    // another stream of the machine got there first — and a resync now would overwrite its
+    // "Connection lost" with a timeout for a stream that is already being put back.
+    if (!_isCurrent(generation) || !acceptsInput) return;
     await _requestResync('TERMINAL_STREAM_TIMEOUT');
+  }
+
+  /// Whether the machine's socket has heard nothing from the machine since this stream was last
+  /// heard from — so the silence is the socket's, not this stream's alone.
+  ///
+  /// Both times are moments, compared with each other, never a duration on a clock: an app the OS
+  /// suspended keeps both where they were, and the comparison stays true across the gap. A socket
+  /// carries every frame its machine seals — this stream's sync frames among them, every five
+  /// seconds — so on a live socket the machine is heard from after this stream's last frame as
+  /// soon as anything else of it arrives. False when there is no hook to ask, or the socket has
+  /// never heard the machine at all: the resync stays the repair, as it was before this check.
+  bool _transportSilentToo() {
+    final heard = lastHeardFromMachine?.call();
+    final streamHeard = _lastHeardOnStream;
+    if (heard == null || streamHeard == null) return false;
+    return !heard.isAfter(streamHeard);
   }
 
   Future<void> _requestResync(String reason) async {
