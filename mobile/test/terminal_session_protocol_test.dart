@@ -399,6 +399,91 @@ void main() {
         });
       },
     );
+
+    /// An open answered, its first screen drawn, on [async]'s clock — a stream the session holds.
+    String liveOn(
+      FakeAsync async,
+      TerminalSession s, {
+      bool readOnly = false,
+    }) {
+      s.open();
+      async.flushMicrotasks();
+      final streamId = _streamId();
+      s.handleFrame('terminal_ready', {
+        'requestId': wire.last('terminal_open')['requestId'],
+        'agentId': 'a',
+        'protocolVersion': TerminalSession.protocolVersion,
+        'streamId': streamId,
+        if (readOnly) 'readOnly': true,
+      });
+      s.handleBinary(_keyframe(streamId));
+      async.flushMicrotasks();
+      return streamId;
+    }
+
+    // A socket left half-open (Wi-Fi giving way to 4G while the app was away) takes every send and
+    // brings nothing back: the heartbeat goes out, and the terminal looked live while taking no
+    // input for minutes. The daemon sends a sync frame every five seconds, so silence is the sign.
+    test(
+      'a stream quiet for 15s is resynced, and reopened once the resync '
+      'gets no answer',
+      () {
+        fakeAsync((async) {
+          final s = session(disposeAtEnd: false);
+          final streamId = liveOn(async, s);
+
+          // Three beats that heard nothing: the last frame may have landed just before the first.
+          async.elapse(const Duration(seconds: 15));
+          expect(wire.of('terminal_resync'), isEmpty);
+          expect(s.acceptsInput, isTrue);
+
+          // The fourth: at least fifteen seconds without the sync the daemon sends every five.
+          async.elapse(const Duration(seconds: 5));
+          expect(s.status, TerminalSessionStatus.resyncing);
+          expect(s.errorCode, 'TERMINAL_STREAM_TIMEOUT');
+          expect(wire.of('terminal_resync'), hasLength(1));
+
+          // Unanswered: two more tries, then the stream is opened again and the old one closed.
+          final opens = wire.of('terminal_open').length;
+          async.elapse(const Duration(milliseconds: 200));
+          expect(wire.of('terminal_resync'), hasLength(3));
+          expect(wire.of('terminal_open'), hasLength(opens + 1));
+          expect(wire.last('terminal_close')['streamId'], streamId);
+          s.dispose();
+        });
+      },
+    );
+
+    test('the sync frames an idle stream sends keep it from a resync', () {
+      fakeAsync((async) {
+        final s = session(disposeAtEnd: false);
+        final streamId = liveOn(async, s);
+
+        for (var seq = 1; seq <= 12; seq++) {
+          async.elapse(const Duration(seconds: 5));
+          s.handleBinary(_sync(streamId, seq));
+          async.flushMicrotasks();
+        }
+
+        expect(wire.of('terminal_alive'), hasLength(12));
+        expect(wire.of('terminal_resync'), isEmpty);
+        expect(s.acceptsInput, isTrue);
+        s.dispose();
+      });
+    });
+
+    test('a terminal only watched is not resynced for being quiet', () {
+      fakeAsync((async) {
+        final s = session(disposeAtEnd: false);
+        liveOn(async, s, readOnly: true);
+
+        async.elapse(const Duration(seconds: 60));
+
+        expect(s.watching, isTrue);
+        expect(wire.of('terminal_resync'), isEmpty);
+        s.dispose();
+      });
+    });
   });
 
   group('the screen and the output after it', () {
@@ -1221,6 +1306,67 @@ void main() {
 
       expect(await pasting, isFalse);
       expect(s.uploadProgress, isNull);
+    });
+
+    /// The rows the terminal shows, as text.
+    String screenOf(TerminalSession s) => [
+      for (var i = 0; i < s.terminal.buffer.lines.length; i++)
+        s.terminal.buffer.lines[i].getText(),
+    ].join('\n');
+
+    // The daemon no longer has the stream: it takes no input and no upload, and only this answer
+    // says so. Left alone, the picture failed and the terminal sat on as if live.
+    for (final (name, refusal) in [
+      (
+        'refused because the stream is gone',
+        {
+          'code': 'TERMINAL_STREAM_NOT_FOUND',
+          'reason':
+              'no live terminal stream for this pane (reopen it and try again)',
+        },
+      ),
+      (
+        'refused in an older daemon\'s words only',
+        {
+          'reason':
+              'no live terminal stream for this pane (reopen it and try again)',
+        },
+      ),
+    ]) {
+      test('$name: the terminal is opened again, its screen kept and the '
+          'picture not sent twice', () async {
+        final (s, streamId) = await live(screen: 'kept screen');
+        final opens = wire.of('terminal_open').length;
+
+        final pasting = s.pasteImage(Uint8List(3));
+        await Future<void>.delayed(Duration.zero);
+        await answer(s, 'terminal_chunked_upload_begin_result', {
+          'accepted': false,
+          ...refusal,
+        });
+
+        expect(await pasting, isFalse);
+        expect(wire.of('terminal_open'), hasLength(opens + 1));
+        expect(wire.last('terminal_close')['streamId'], streamId);
+        expect(screenOf(s), contains('kept screen'));
+        expect(wire.of('terminal_chunked_upload_begin'), hasLength(1));
+      });
+    }
+
+    test('refused for another reason: the stream stays as it is', () async {
+      final (s, streamId) = await live();
+      final opens = wire.of('terminal_open').length;
+
+      final pasting = s.pasteImage(Uint8List(3));
+      await Future<void>.delayed(Duration.zero);
+      await answer(s, 'terminal_chunked_upload_begin_result', {
+        'accepted': false,
+        'code': 'TERMINAL_UPLOAD_TOO_LARGE',
+      });
+
+      expect(await pasting, isFalse);
+      expect(wire.of('terminal_open'), hasLength(opens));
+      expect(s.streamId, streamId);
     });
 
     test('one at a time, and cancelling says so', () async {

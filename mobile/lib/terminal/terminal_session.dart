@@ -132,7 +132,7 @@ class _ActiveUpload {
 /// One controller stream for one remote Harness agent.
 ///
 /// Sequence corruption is recovered with bounded resync retries and one clean
-/// reopen. Transport loss still freezes input until the user opens a session.
+/// reopen, and so is a stream that goes quiet without a word ([_sendHeartbeat]).
 class TerminalSession extends ChangeNotifier {
   static const protocolVersion = 3;
   static const minCols = 40;
@@ -382,6 +382,14 @@ class TerminalSession extends ChangeNotifier {
   int _resyncAttempts = 0;
   int _autoReopenAttempts = 0;
   bool _openStallRecovered = false;
+
+  /// Heartbeats in a row that heard nothing on this stream — see [_sendHeartbeat].
+  int _quietBeats = 0;
+
+  /// The heartbeats a live stream cannot go without a frame: at least 15s of silence, the
+  /// desktop's limit. Four, not three, because the count is of beats that heard nothing, and the
+  /// last frame may have landed just before the first of them.
+  static const _quietBeatsBeforeResync = 4;
 
   /// When the open now in flight first left — kept through its resends, so its patience
   /// ([_openPatience]) counts from the first ask rather than starting over at each one.
@@ -816,6 +824,7 @@ class TerminalSession extends ChangeNotifier {
         // for the life of the process, beating twice as often and still
         // beating after [dispose].
         _heartbeat?.cancel();
+        _quietBeats = 0;
         _heartbeat = Timer.periodic(
           const Duration(seconds: 5),
           (_) => unawaited(_sendHeartbeat()),
@@ -834,6 +843,16 @@ class TerminalSession extends ChangeNotifier {
         final accepted = payload['accepted'] == true;
         if (_activeUpload?.beginAccepted.isCompleted == false) {
           _activeUpload!.beginAccepted.complete(accepted);
+        }
+        // A stream the daemon no longer has takes no input and no upload, and nothing else says
+        // so: the picture fails, and the terminal sat on as if live. Its screen is kept and it is
+        // opened once more — the desktop's recovery — without sending the picture again. Older
+        // daemons give only the reason's words.
+        if (!accepted &&
+            (payload['code'] == 'TERMINAL_STREAM_NOT_FOUND' ||
+                payload['reason'] ==
+                    'no live terminal stream for this pane (reopen it and try again)')) {
+          await _recoverByReopen(reason: 'TERMINAL_STREAM_NOT_FOUND');
         }
         return true;
       case 'terminal_chunked_upload_progress':
@@ -991,6 +1010,8 @@ class TerminalSession extends ChangeNotifier {
 
   Future<void> handleBinary(TerminalBinaryFrame frame) async {
     if (_disposed || frame.streamId != streamId) return;
+    // Heard from: whatever the frame turns out to be, the stream is alive — see [_sendHeartbeat].
+    _quietBeats = 0;
     final generation = _generation;
     _renderTail = _renderTail
         .then((_) async {
@@ -1996,13 +2017,31 @@ class TerminalSession extends ChangeNotifier {
     }
   }
 
+  /// Keeps the lease, and notices a stream that went quiet without a word.
+  ///
+  /// ⚠️ **A send that succeeds proves only that the socket takes bytes, not that THIS stream is
+  /// still there.** The daemon sends a sync frame every five seconds even while the terminal is idle
+  /// (`SYNC_INTERVAL_MS`, `cli/src/lib/terminalStreamManager.ts`), so a stream that hears nothing for
+  /// [_quietBeatsBeforeResync] beats is gone: a socket left half-open by Wi-Fi giving way to 4G
+  /// while the app was away, a stale relay session, a stream the daemon dropped and never said.
+  /// Until this, such a terminal looked live and took no input until the account's two-minute agent
+  /// poll gave up on the machine — about four minutes. It resyncs, then reopens, as the desktop does
+  /// (#432).
+  ///
+  /// Counted in beats, not by the clock, on purpose: an app the OS suspended runs no timers, so
+  /// the gap it was away is no beat at all, and coming back is not taken for a silence.
   Future<void> _sendHeartbeat() async {
     if (!acceptsInput) return;
     final generation = _generation;
     final sent = await send('terminal_alive', {'streamId': streamId});
     if (!sent && _isCurrent(generation)) {
       transportLost('Terminal heartbeat was not sent');
+      return;
     }
+    if (!_isCurrent(generation) || !acceptsInput) return;
+    if (++_quietBeats < _quietBeatsBeforeResync) return;
+    _quietBeats = 0;
+    await _requestResync('TERMINAL_STREAM_TIMEOUT');
   }
 
   Future<void> _requestResync(String reason) async {
