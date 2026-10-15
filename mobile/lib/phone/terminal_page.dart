@@ -29,6 +29,7 @@ import 'package:harness_mobile/terminal/image_transcode.dart';
 import 'package:harness_mobile/terminal/terminal_font_store.dart';
 import 'package:harness_mobile/terminal/terminal_theme.dart';
 import 'package:harness_mobile/terminal/terminal_theme_store.dart';
+import 'package:harness_mobile/terminal/elicitation_press.dart';
 import 'package:harness_mobile/terminal/key_hints.dart';
 import 'package:harness_mobile/terminal/question_pane.dart';
 import 'package:harness_mobile/terminal/question_pane_watcher.dart';
@@ -636,9 +637,9 @@ class _TerminalPageState extends State<TerminalPage>
     final view = watcher.view;
     // ⚠️ **A dialog the page can answer raises nothing.** Its answers are a tap on their own lines
     // and words said to the mic (prompt mode); a keyboard would cover both, and a tap on the pane
-    // under it is xterm's. Only a dialog the page cannot answer — multi-select — still asks for
-    // the keyboard's keys.
-    if (view != null && view.answerable && !view.multi) return;
+    // under it is xterm's. Only a dialog the page cannot answer — multi-select, or an MCP form
+    // whose field has the caret — still asks for the keyboard's keys.
+    if (view != null && view.tappable) return;
     if (view != null && view.answerable) {
       final key = view.fingerprint;
       if (_questionRaisedFor == key) return;
@@ -848,6 +849,7 @@ class _TerminalPageState extends State<TerminalPage>
     );
     _questionWatcher?.removeListener(_onQuestionPane);
     _questionWatcher?.dispose();
+    _elicitationPress.cancel();
     _cancelSettle();
     _searchHoldTimer?.cancel();
     _chrome.dispose();
@@ -968,9 +970,8 @@ class _TerminalPageState extends State<TerminalPage>
   }
 
   /// Whether [view]'s answers are each one tap: not a question that takes several answers, nor one
-  /// only partly on screen.
-  static bool _answersTappable(QuestionPaneView view) =>
-      view.answerable && !view.multi;
+  /// only partly on screen, nor an MCP form being filled in — see [QuestionPaneView.tappable].
+  static bool _answersTappable(QuestionPaneView view) => view.tappable;
 
   /// The mic's centre, up from the terminal's foot: where Siri's orb stands, just over the home
   /// strip — where the thumb already is. Fixed in points, not rows: the terminal's size must not
@@ -1126,6 +1127,7 @@ class _TerminalPageState extends State<TerminalPage>
           first: answer.first,
           last: answer.last,
           label: 'Answer ${answer.number} ${labels[answer.number] ?? ''}',
+          columns: answer.columns,
         ),
     ];
   }
@@ -1147,7 +1149,7 @@ class _TerminalPageState extends State<TerminalPage>
   /// `❯ 1. Yes`, `  2. Yes, and don't ask again` — it presses that answer.
   bool _onLineTap(String line) {
     final view = _questionWatcher?.view;
-    if (view == null || !view.answerable || view.multi) return false;
+    if (view == null || !view.tappable) return false;
     final number = _optionLine.firstMatch(line)?.group(1);
     if (number == null) return false;
     for (final key in questionKeys(view)) {
@@ -1163,15 +1165,38 @@ class _TerminalPageState extends State<TerminalPage>
   static final _optionLine = RegExp(r'^\s*(?:[❯›>]\s*)?(\d{1,2})[.)]\s');
 
   /// Presses an answer: its digit, and Return only where the dialog asks for one (Codex's
-  /// `request_user_input`) — a chosen Return, never a blind one.
+  /// `request_user_input`) — a chosen Return, never a blind one. An MCP server's Accept or Decline
+  /// has no digit: the caret is moved onto it and Enter pressed — see [ElicitationPress].
   void _answer(QuestionPaneView view, QuestionKey key) {
     final session = widget.notifier
         .paneOfAgent(widget.machineId, widget.agentId)
         ?.session;
     if (session == null) return;
+    if (view.kind == QuestionPaneKind.elicitation) {
+      _elicitationPress.press(key.number);
+      return;
+    }
     session.terminal.textInput(key.number);
     if (view.enterSubmits) session.terminal.keyInput(TerminalKey.enter);
   }
+
+  /// Accept or Decline pressed on an MCP server's question, read off and keyed into whichever
+  /// terminal this page's pane holds at the moment — a keyframe replaces it, and a press waiting on
+  /// the caret outlives one.
+  late final _elicitationPress = ElicitationPress(
+    read: () {
+      final session = widget.notifier
+          .paneOfAgent(widget.machineId, widget.agentId)
+          ?.session;
+      if (session == null) return null;
+      return readQuestionPane(session.terminal, QuestionEngine.claude);
+    },
+    send: (key) => widget.notifier
+        .paneOfAgent(widget.machineId, widget.agentId)
+        ?.session
+        ?.terminal
+        .keyInput(key),
+  );
 
   /// Where a voice take goes: to the agent's prompt — or, while the agent's question is open, to
   /// that question, as its answer or not at all. Nothing is echoed when it lands: the words appear
@@ -1209,7 +1234,7 @@ class _TerminalPageState extends State<TerminalPage>
   Future<bool> _answerByVoice(TerminalSession session, String text) async {
     final view = _questionWatcher?.view;
     if (view == null) return session.sendComposerText(text);
-    if (!view.answerable || view.multi) {
+    if (!view.tappable) {
       _flash('✗ answer on screen', error: true);
       return false;
     }
