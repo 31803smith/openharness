@@ -1962,6 +1962,30 @@ class _TerminalPageState extends State<TerminalPage>
     final placeholder = machineAway
         ? _MachineAway(name: machine.machine.displayName)
         : _Attaching(key: _skeletonKey);
+    // A screen this terminal already drew, being brought back: its stream reopening, or its socket
+    // dialling again after the stream was lost with it. Kept up under [_Reconnecting] rather than
+    // covered by the skeleton, which is for a terminal with nothing on it yet. Not while the machine
+    // is away — nothing is on its way then, and [_MachineAway] says why.
+    //
+    // ⚠️ **Lost with its socket, it counts from the drop to the reopen, with no gap between.** The
+    // socket comes back (`connected`) before the terminal is reopened: the one on screen waits as
+    // the machine's `pendingOfflineAgentId` while the app re-reads the machine's list, a round
+    // trip, and only then reopens it (`AppNotifier._recoverPendingAgent`). Read off the socket
+    // alone, the spinner went in that round trip and came back a beat later, a flicker. Waiting as
+    // the pending agent keeps it up; a session lost and NOT waiting — nothing is going to reopen
+    // it — shows its screen plainly, as it did, for a tap to reopen.
+    final waitingToReopen =
+        session != null &&
+        (machine?.connectionStatus != ConnectionStatus.connected ||
+            machine?.pendingOfflineAgentId == widget.agentId);
+    final reconnecting =
+        session != null &&
+        !agentGone &&
+        !machineAway &&
+        (session.showsEarlierScreen ||
+            (session.lostWithTransport &&
+                session.hasScreen &&
+                waitingToReopen));
     // Read-only either way — the terminal was never this pane's (a watcher) or was taken from it.
     // `_AgentGone` owns the page when the agent itself is missing, so this stays out of its way.
     final blocked =
@@ -2312,7 +2336,13 @@ class _TerminalPageState extends State<TerminalPage>
                                   // computer just restarted left the phone on it for close
                                   // to 90 seconds, read as a launch that hung. [_MachineAway]
                                   // covers the panel the same way and says why.
-                                  if (session != null && !session.hasScreen)
+                                  //
+                                  // ⚠️ **Unless the panel already shows a screen this
+                                  // terminal drew** — see `reconnecting` above. Then the
+                                  // screen stays and only [_Reconnecting] lies over it.
+                                  if (reconnecting)
+                                    const Positioned.fill(child: _Reconnecting())
+                                  else if (session != null && !session.hasScreen)
                                     Positioned.fill(child: placeholder),
                                   // The mic and Search, floating in the
                                   // terminal's bottom-right corner — see
@@ -3056,6 +3086,102 @@ class _MachineAway extends StatelessWidget {
                 ],
               ),
             ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Laid over a screen this terminal already drew while it is brought back — its stream reopened,
+/// or its socket dialled again — a light blur and a spinner, with the screen still under them.
+///
+/// ⚠️ **Over the old screen, not in its place (owner, 2026-10-15).** The skeleton ([_Attaching])
+/// stands for a terminal with nothing on it yet. Laid over one the reader was just reading — back
+/// from a network switch, a redial — it made their terminal vanish into a skeleton and come back a
+/// moment later, which read as lost work. The screen stays; this only says it is being refreshed,
+/// and goes the moment the new stream's keyframe replaces it.
+///
+/// ⚠️ **After a beat ([showAfter]).** A reopen on a good line is answered in a few hundred
+/// milliseconds; a spinner and a blur flashed over a terminal for that long read as a glitch. Only
+/// a wait that lasts gets them, faded in.
+///
+/// ⚠️ **The blur is light and short-lived, and the spinner is on its own layer.** A `BackdropFilter`
+/// re-blurs what is under it whenever the frame is drawn again, which is why the floating buttons
+/// lost theirs (`FloatingGlass`, `floating_glass.dart`): they sit over a streaming terminal all
+/// the time. This is up only for the seconds a terminal is being brought back, over a screen that
+/// is not streaming, at a small sigma; the spinner's own [RepaintBoundary] keeps its animation out
+/// of the blurred layer. With animations off it stands still, so nothing redraws at all.
+///
+/// Taps go through to the terminal, as the skeleton's do: a swipe to Find or another agent, or a tap
+/// to raise the keyboard, should not wait for the reconnect.
+class _Reconnecting extends StatefulWidget {
+  const _Reconnecting();
+
+  /// How long a reconnect may take before it is shown at all.
+  static const showAfter = Duration(milliseconds: 300);
+
+  @override
+  State<_Reconnecting> createState() => _ReconnectingState();
+}
+
+class _ReconnectingState extends State<_Reconnecting> {
+  Timer? _wait;
+  bool _shown = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _wait = Timer(_Reconnecting.showAfter, () {
+      if (mounted) setState(() => _shown = true);
+    });
+  }
+
+  @override
+  void dispose() {
+    _wait?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    // Not even the blur before the beat: a quick reopen should leave the screen exactly as it was.
+    if (!_shown) return const SizedBox.shrink();
+    final tty = Tty.of(context);
+    final still = MediaQuery.disableAnimationsOf(context);
+    return IgnorePointer(
+      child: Semantics(
+        key: const ValueKey('terminal-reconnecting'),
+        label: 'Reconnecting to the harness',
+        liveRegion: true,
+        child: TweenAnimationBuilder<double>(
+          tween: Tween(begin: 0, end: 1),
+          duration: still ? Duration.zero : const Duration(milliseconds: 180),
+          builder: (context, fade, child) => Opacity(opacity: fade, child: child),
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              ClipRect(
+                child: BackdropFilter(
+                  filter: ui.ImageFilter.blur(sigmaX: 2.5, sigmaY: 2.5),
+                  child: ColoredBox(color: tty.ground.withValues(alpha: 0.3)),
+                ),
+              ),
+              Center(
+                child: RepaintBoundary(
+                  child: SizedBox.square(
+                    dimension: 22,
+                    // The app's one spinner, as Settings ▸ Sign out and the home screen draw it.
+                    // Still with animations off: three quarters of a ring, so it reads as waiting.
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: AppPalette.accent,
+                      value: still ? 0.75 : null,
+                    ),
+                  ),
+                ),
+              ),
+            ],
           ),
         ),
       ),

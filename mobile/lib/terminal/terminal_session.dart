@@ -333,6 +333,34 @@ class TerminalSession extends ChangeNotifier {
   /// Something to show: this attach's first frame, or a kept screen standing in for it.
   bool get hasScreen => hasRenderedFrame || _showingKeptScreen;
 
+  /// Whether a new stream of this session is on its way over a screen this session itself drew —
+  /// a reopen once its socket was dialled again, a recovery — rather than an empty terminal
+  /// waiting for its first keyframe.
+  ///
+  /// ⚠️ **Why the page needs to know.** An open forgets the stream's sequence ([hasRenderedFrame]
+  /// goes false) but keeps the terminal and what is on it (`preserveTerminal`, which every reopen
+  /// asks for). Read as "no screen", the page laid its attaching skeleton over that screen: back
+  /// from a network switch, the reader saw their terminal vanish into a skeleton and come back a
+  /// moment later. The page keeps it up under a spinner instead ([TerminalPage]).
+  ///
+  /// Only a screen of this session's own streams. A kept screen seeded from another session (the
+  /// pager's, see [seedScreen]) is [hasScreen] already, and needs no word while it attaches.
+  bool get showsEarlierScreen => !hasScreen && _drewScreen;
+
+  /// Set when a keyframe of this session's lands, and cleared only when an open puts a blank
+  /// terminal in its place — see [showsEarlierScreen].
+  bool _drewScreen = false;
+
+  /// The stream was lost with its socket ([transportLost]) and waits for the socket to come back
+  /// — the one `error` the app repairs by itself, by reopening once the machine's socket is up.
+  /// Other errors stay until somebody acts on them.
+  bool get lostWithTransport =>
+      status == TerminalSessionStatus.error &&
+      errorCode == transportLostCode;
+
+  /// The [errorCode] [transportLost] leaves.
+  static const transportLostCode = 'TERMINAL_DISCONNECTED';
+
   /// Shows [kept] — the screen this agent had when the phone last left it — until the live stream's
   /// first keyframe lands and replaces it.
   ///
@@ -594,7 +622,11 @@ class TerminalSession extends ChangeNotifier {
     // blank terminal where the reader's last screen should have been, with
     // [hasScreen] telling it not to show the skeleton either.
     final keep = preserveTerminal || _showingKeptScreen;
-    if (!keep) terminal = _newTerminal()..resize(cols, rows);
+    if (!keep) {
+      terminal = _newTerminal()..resize(cols, rows);
+      // A blank terminal: whatever this session drew before is gone with the old one.
+      _drewScreen = false;
+    }
     status = TerminalSessionStatus.opening;
     _openRequestId =
         'term_${DateTime.now().microsecondsSinceEpoch}_${Random.secure().nextInt(1 << 31)}';
@@ -1347,6 +1379,7 @@ class TerminalSession extends ChangeNotifier {
     _bindTerminal(replacement);
     terminal = replacement;
     _showingKeptScreen = false;
+    _drewScreen = true;
     cols = _clampCols(nextCols);
     rows = _clampRows(nextRows);
     _utf8Tail = decoded.tail;
@@ -2227,7 +2260,7 @@ class TerminalSession extends ChangeNotifier {
     streamId = null;
     linkMode = null;
     status = TerminalSessionStatus.error;
-    errorCode = 'TERMINAL_DISCONNECTED';
+    errorCode = transportLostCode;
     errorMessage = message;
     _abortActiveUpload();
     notifyListeners();

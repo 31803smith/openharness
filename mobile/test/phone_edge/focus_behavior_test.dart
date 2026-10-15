@@ -1053,6 +1053,205 @@ void main() {
     });
   });
 
+  // Back from a network switch or a redial, the terminal being read stays on screen under a light
+  // blur and a spinner — never the attaching skeleton, which made it vanish and come back. The
+  // skeleton is for a terminal with nothing on it yet (owner, 2026-10-15).
+  group('brought back', () {
+    Finder reconnecting() =>
+        find.bySemanticsLabel('Reconnecting to the harness');
+    Finder attaching() => find.bySemanticsLabel('Attaching to the harness');
+
+    /// The terminal's socket dropping as the app sees it go: the machine dialling again, and the
+    /// terminal on screen marked lost and waiting to be reopened.
+    void socketDropped(_Focus focus) {
+      final machine = focus.app.stateOf('m')!;
+      machine.connectionStatus = ConnectionStatus.reconnecting;
+      machine.pendingOfflineAgentId = 'a';
+      focus.session.transportLost('Connection lost. Reconnecting…');
+    }
+
+    testWidgets('lost with its socket: the screen stays under a blur and a '
+        'spinner until the new screen lands', (tester) async {
+      final focus = await _Focus.open(tester);
+      socketDropped(focus);
+      await tester.pump();
+      // A beat first: a quick return leaves the screen exactly as it was.
+      expect(reconnecting(), findsNothing);
+
+      await tester.pump(const Duration(milliseconds: 350));
+      expect(reconnecting(), findsOneWidget);
+      expect(attaching(), findsNothing);
+      final overlay = find.byKey(const ValueKey('terminal-reconnecting'));
+      expect(
+        find.descendant(of: overlay, matching: find.byType(BackdropFilter)),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(
+          of: overlay,
+          matching: find.byType(CircularProgressIndicator),
+        ),
+        findsOneWidget,
+      );
+      // The screen is still the one that was read.
+      expect(focus.session.hasScreen, isTrue);
+
+      // Socket back, terminal reopened, the new screen lands: the spinner goes.
+      focus.app.stateOf('m')!
+        ..connectionStatus = ConnectionStatus.connected
+        ..pendingOfflineAgentId = null;
+      await focus.session.reopen();
+      await focus.answerOpen(screen: 'what is now');
+      await frames(tester);
+      expect(reconnecting(), findsNothing);
+      expect(attaching(), findsNothing);
+      await focus.close();
+    });
+
+    testWidgets('no gap between the socket coming back and the reopen: the '
+        'spinner stays, and does not start its beat over', (tester) async {
+      final focus = await _Focus.open(tester);
+      socketDropped(focus);
+      // One frame to put the overlay up, then its beat.
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 350));
+      expect(reconnecting(), findsOneWidget);
+
+      // The socket is back while the terminal waits its turn (the app re-reads the list first).
+      focus.app.stateOf('m')!.connectionStatus = ConnectionStatus.connected;
+      focus.app.notifyListeners();
+      await tester.pump();
+      expect(reconnecting(), findsOneWidget);
+
+      // Its turn: reopened, the old screen still on show under the same spinner.
+      focus.app.stateOf('m')!.pendingOfflineAgentId = null;
+      await focus.session.reopen();
+      await tester.pump();
+      expect(reconnecting(), findsOneWidget);
+      expect(attaching(), findsNothing);
+
+      await focus.answerOpen(screen: 'what is now');
+      await frames(tester);
+      expect(reconnecting(), findsNothing);
+      await focus.close();
+    });
+
+    testWidgets('a quick reopen leaves the screen as it was: no spinner, no '
+        'skeleton', (tester) async {
+      final focus = await _Focus.open(tester);
+
+      await focus.session.reopen(force: true);
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(focus.session.showsEarlierScreen, isTrue);
+      expect(reconnecting(), findsNothing);
+      expect(attaching(), findsNothing);
+
+      await focus.answerOpen(screen: 'what is now');
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(reconnecting(), findsNothing);
+      expect(attaching(), findsNothing);
+      await focus.close();
+    });
+
+    testWidgets('lost and not waiting to be reopened: the screen, plainly, for '
+        'a tap to reopen', (tester) async {
+      final focus = await _Focus.open(tester);
+      // The socket is up and nothing is queued to reopen this terminal.
+      focus.session.transportLost('Connection lost. Reconnecting…');
+      await frames(tester);
+
+      expect(reconnecting(), findsNothing);
+      expect(attaching(), findsNothing);
+      await focus.close();
+    });
+
+    testWidgets('a terminal with nothing on it yet still waits behind the '
+        'skeleton', (tester) async {
+      setPhone(tester, largePhone);
+      final app = edgeApp();
+      await tester.pumpWidget(
+        phoneApp(
+          TerminalPage(
+            notifier: app,
+            machineId: 'm',
+            agentId: 'a',
+            voice: edgeVoice().voice,
+          ),
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 400));
+
+      expect(attaching(), findsOneWidget);
+      expect(reconnecting(), findsNothing);
+      await tester.pumpWidget(const SizedBox());
+      await tester.pump(const Duration(seconds: 3));
+      app.dispose();
+      await tester.pump(const Duration(seconds: 30));
+    });
+
+    testWidgets('its machine away: says why, and no spinner promises anything', (
+      tester,
+    ) async {
+      setPhone(tester, largePhone);
+      final app = edgeApp(online: false);
+      final session = await liveTerminal(app, 'a');
+      await tester.pumpWidget(
+        phoneApp(
+          TerminalPage(
+            notifier: app,
+            machineId: 'm',
+            agentId: 'a',
+            voice: edgeVoice().voice,
+          ),
+        ),
+      );
+      await session.reopen(force: true);
+      // One frame to rebuild on the reopen, then longer than the spinner's beat.
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+
+      expect(reconnecting(), findsNothing);
+      expect(find.textContaining('is offline'), findsOneWidget);
+      await tester.pumpWidget(const SizedBox());
+      await tester.pump(const Duration(seconds: 3));
+      app.dispose();
+      await tester.pump(const Duration(seconds: 30));
+    });
+
+    testWidgets('with animations off, the spinner stands still', (tester) async {
+      setPhone(tester, largePhone);
+      final app = edgeApp();
+      final session = await liveTerminal(app, 'a');
+      await tester.pumpWidget(
+        phoneApp(
+          MediaQuery(
+            data: const MediaQueryData(disableAnimations: true),
+            child: TerminalPage(
+              notifier: app,
+              machineId: 'm',
+              agentId: 'a',
+              voice: edgeVoice().voice,
+            ),
+          ),
+        ),
+      );
+      await session.reopen(force: true);
+      // One frame to rebuild on the reopen, then longer than the spinner's beat.
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+
+      expect(reconnecting(), findsOneWidget);
+      final spinner = tester.widget<CircularProgressIndicator>(
+        find.byType(CircularProgressIndicator),
+      );
+      expect(spinner.value, isNotNull, reason: 'a still ring, not a spinning one');
+      await tester.pumpWidget(const SizedBox());
+      await tester.pump(const Duration(seconds: 3));
+      app.dispose();
+      await tester.pump(const Duration(seconds: 30));
+    });
+  });
+
   group('more of what a thumb does', () {
     testWidgets('a restart the machine refuses says why', (tester) async {
       final focus = await _Focus.open(

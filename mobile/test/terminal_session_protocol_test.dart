@@ -7,6 +7,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:harness_mobile/terminal/terminal_binary.dart';
 import 'package:harness_mobile/terminal/terminal_session.dart';
 import 'package:harness_mobile/terminal/terminal_viewport.dart';
+import 'package:xterm/xterm.dart' show Terminal;
 
 /// The terminal stream protocol a phone speaks with a machine's daemon, frame
 /// by frame: an open and its answer, a screen and the output after it, gaps
@@ -1204,6 +1205,82 @@ void main() {
 
       expect(s.agentName, 'api');
       expect(told, 1);
+    });
+
+    // What the page reads to keep a screen up under a spinner while it is brought back, rather
+    // than covering it with the attaching skeleton — which made a terminal vanish into a skeleton
+    // and come back, every time the phone returned from a network switch.
+    group('a screen kept through a reopen', () {
+      test('a first open has no earlier screen to keep', () async {
+        final s = session();
+        await s.open();
+
+        expect(s.hasScreen, isFalse);
+        expect(s.showsEarlierScreen, isFalse);
+      });
+
+      test('lost with its socket, the screen stays and the stream says why', () async {
+        final (s, _) = await live(screen: 'what was read');
+
+        s.transportLost('Connection lost. Reconnecting…');
+
+        expect(s.lostWithTransport, isTrue);
+        expect(s.hasScreen, isTrue);
+        expect(_screen(s), contains('what was read'));
+      });
+
+      test('reopened, it is an earlier screen until the new one lands', () async {
+        final (s, _) = await live(screen: 'what was read');
+        s.transportLost('Connection lost. Reconnecting…');
+
+        await s.reopen();
+
+        expect(s.hasScreen, isFalse, reason: 'the new stream has no frame yet');
+        expect(s.showsEarlierScreen, isTrue);
+        expect(s.lostWithTransport, isFalse);
+        expect(_screen(s), contains('what was read'));
+
+        final next = await ready(s);
+        await s.handleBinary(_keyframe(next, text: 'what is now'));
+
+        expect(s.showsEarlierScreen, isFalse);
+        expect(s.hasScreen, isTrue);
+        expect(_screen(s), contains('what is now'));
+      });
+
+      test('an open that starts on a blank terminal forgets the earlier '
+          'screen', () async {
+        final (s, _) = await live(screen: 'what was read');
+
+        await s.open();
+
+        expect(s.showsEarlierScreen, isFalse);
+        expect(_screen(s), isNot(contains('what was read')));
+      });
+
+      test('a kept screen seeded from elsewhere is a screen already, and no '
+          'earlier one', () async {
+        final s = session();
+        s.seedScreen(Terminal()..write('kept from the pager'));
+
+        await s.open();
+
+        expect(s.hasScreen, isTrue);
+        expect(s.showsEarlierScreen, isFalse);
+      });
+
+      test('an error of another kind is not a loss with the socket', () async {
+        final s = session();
+        await s.open();
+        await s.handleFrame('terminal_ready', {
+          'requestId': wire.last('terminal_open')['requestId'],
+          'agentId': 'a',
+          'protocolVersion': TerminalSession.protocolVersion,
+        });
+
+        expect(s.status, TerminalSessionStatus.error);
+        expect(s.lostWithTransport, isFalse);
+      });
     });
   });
 
