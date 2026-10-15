@@ -343,12 +343,18 @@ class NetworkPage:
                 value += key
 
     def run(self):
-        if self.first_use and connected():
+        online = connected()
+        if self.first_use and online:
             return 0
+        # Opened while offline (hn brings it forward when the network has been gone a while): done
+        # once the network is back, however it came back — chosen here, by a phone through setup.py,
+        # or a router back on. Left open, it held the first tab and OpenCode never opened there.
+        # Opened while online, to change networks, it stays until closed.
+        until_online = self.first_use or not online
         self.refresh()
         checked = time.monotonic()
         while True:
-            if self.first_use and time.monotonic() - checked >= 2:
+            if until_online and time.monotonic() - checked >= 2:
                 if connected():
                     return 0
                 checked = time.monotonic()

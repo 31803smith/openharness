@@ -157,6 +157,24 @@ class Network(unittest.TestCase):
         self.enterContext(patch.object(network, 'nmcli', return_value=result()))
         return screen, network.NetworkPage(screen, first_use=first_use)
 
+    def test_a_page_opened_offline_closes_once_the_network_is_back(self):
+        # hn brought it forward during an outage (a phone's setup hotspot): the network came back
+        # some other way, and the page gives its tab back.
+        screen, page = self.page([], first_use=False)
+        clock = iter(range(0, 1000, 3))
+        with patch.object(network, 'connected', side_effect=[False, False, True]), \
+             patch.object(network.time, 'monotonic', side_effect=lambda: next(clock)), \
+             patch.object(screen, 'get_wch', side_effect=curses.error):
+            self.assertEqual(page.run(), 0)
+
+    def test_a_page_opened_online_stays_to_change_networks(self):
+        screen, page = self.page(['\x1b'], first_use=False)
+        clock = iter(range(0, 1000, 3))
+        with patch.object(network, 'connected', return_value=True) as online, \
+             patch.object(network.time, 'monotonic', side_effect=lambda: next(clock)):
+            self.assertEqual(page.run(), 1)
+        self.assertEqual(online.call_count, 1)
+
     def test_first_page_keeps_wifi_above_wired_and_advances_only_after_connection(self):
         screen, page = self.page(['\x1b', '\x03', 'r', '\n'])
         with patch.object(network, 'connect', return_value=True):

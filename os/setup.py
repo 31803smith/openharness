@@ -25,6 +25,7 @@ import json
 from pathlib import Path
 import pwd
 import queue
+import shutil
 import socket
 import subprocess
 import sys
@@ -37,6 +38,8 @@ RESULT = STATE / 'setup-result.json'
 NOW = Path('/run/harness-os/setup-now')
 # What the radio saw before hosting the hotspot, for the screen's Wi-Fi page (network.py SETUP_NETWORKS).
 SCREEN_NETWORKS = Path('/run/harness-os/setup-networks.json')
+# Signed in from a phone: its first workspace is OpenCode alone, not with two terminals (onboarding.py).
+FROM_PHONE = STATE / 'set-up-from-phone'
 HEADLESS = Path('/etc/harness-os/headless')
 DRM = Path('/sys/class/drm')
 USER = 'me'
@@ -305,6 +308,19 @@ def forget(ssid):
 def sign_in(ticket):
     if signed_in():
         return True, ''
+    # Before the sign-in, not after: the screen's hn opens its first workspace the moment the
+    # account is there, and reads this to open OpenCode alone (onboarding.py).
+    try:
+        FROM_PHONE.touch()
+    except OSError:
+        pass
+    ok, message = run_sign_in(ticket)
+    if not ok:
+        FROM_PHONE.unlink(missing_ok=True)
+    return ok, message
+
+
+def run_sign_in(ticket):
     try:
         result = subprocess.run(['/usr/bin/runuser', '-u', USER, '--', '/usr/bin/harness', 'login', '--json',
                                  '--ticket=' + ticket],
@@ -608,10 +624,95 @@ def change(request):
     write_result(run=run, **result)
 
 
+HN = '/usr/lib/harness/harness-tui'
+RESET_UNIT = 'harness-factory-reset'
+
+
+def as_user(*command, timeout=30):
+    """A command as the person, in their session: their hn, their daemon, their systemd units."""
+    uid = pwd.getpwnam(USER).pw_uid
+    runtime = f'/run/user/{uid}'
+    try:
+        return subprocess.run(['/usr/bin/runuser', '-u', USER, '--', *command], capture_output=True, text=True,
+                              timeout=timeout, env=dict(HOME=str(HOME), USER=USER, LOGNAME=USER,
+                                                        PATH='/usr/local/bin:/usr/bin:/bin', XDG_RUNTIME_DIR=runtime,
+                                                        DBUS_SESSION_BUS_ADDRESS=f'unix:path={runtime}/bus'))
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+
+
+def wipe(folder, keep):
+    """Everything in [folder] but the [keep] names; a kept name may be a folder wiped in turn."""
+    for path in folder.iterdir() if folder.is_dir() else []:
+        if path.name in keep:
+            if isinstance(keep[path.name], dict):
+                wipe(path, keep[path.name])
+            continue
+        if path.is_dir() and not path.is_symlink():
+            shutil.rmtree(path, ignore_errors=True)
+        else:
+            path.unlink(missing_ok=True)
+
+
+def factory_reset(keep_wifi=False):
+    """This computer as it was just flashed: no account, no harnesses, the first workspace still to come,
+    and (unless [keep_wifi]) no Wi-Fi, so it opens its setup hotspot for a phone. It stays the same
+    computer: its id and its device key are kept, as a new key for the same computer is refused by the
+    account until the old one is removed. The engines' own sign-ins and ~/projects are the person's.
+    For the reset button and `harness factory-reset`."""
+    log('factory reset')
+    # Its windows first, while still signed in: the account keeps the tabs (the desk, the same on
+    # every computer), and one left there comes back at the next sign-in in the first workspace's place.
+    windows = as_user(HN, 'list-windows', '-F', '#{window_index}')
+    for index in sorted((int(n) for n in (windows.stdout.split() if windows else []) if n.isdigit()), reverse=True):
+        as_user(HN, 'kill-window', '-t', f':{index}')
+    as_user('/usr/bin/harness', 'logout', timeout=60)
+    # Every harness and terminal: the daemon, then the tmux server its panes run in.
+    as_user('systemctl', '--user', 'stop', 'harness-daemon', timeout=60)
+    as_user('tmux', 'kill-server')
+    harness = HOME / '.harness'
+    wipe(harness, {'computer-id': True, 'cli': {'data': {'e2e': True}}})
+    (HOME / '.local/state/harness-os/onboarded').unlink(missing_ok=True)
+    for path in (RESULT, FROM_PHONE):
+        path.unlink(missing_ok=True)
+    as_user('systemctl', '--user', 'start', 'harness-daemon', timeout=60)
+    # hn again from its sign-in page. Its server outlives the screen unit (KillMode=process).
+    as_user(HN, 'kill-server')
+    subprocess.run(['/usr/bin/pkill', '-u', USER, '-x', 'harness-tui'], capture_output=True)
+    as_user('systemctl', '--user', 'restart', 'hn-screen', timeout=60)
+    if not keep_wifi:
+        for row in rows('-f', 'UUID,TYPE', 'connection', 'show'):
+            if len(row) == 2 and row[1] == '802-11-wireless':
+                nmcli('connection', 'delete', 'uuid', row[0])
+    # The watcher opens the hotspot for a phone (headless or not: asked for).
+    NOW.parent.mkdir(parents=True, exist_ok=True)
+    NOW.touch()
+    log('factory reset done')
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument('command', nargs='?', choices=['watch', 'now', 'name', 'join'], default='watch')
+    parser.add_argument('command', nargs='?', choices=['watch', 'now', 'name', 'join', 'reset'], default='watch')
+    parser.add_argument('--keep-wifi', action='store_true', help='reset: keep the saved Wi-Fi')
+    parser.add_argument('--here', action='store_true', help=argparse.SUPPRESS)
     arguments = parser.parse_args()
+    if arguments.command == 'reset':
+        if arguments.here:
+            factory_reset(keep_wifi=arguments.keep_wifi)
+            return
+        # In a unit of its own: the computer leaves its Wi-Fi, and whatever asked (an SSH session, the
+        # button's handler) may go with it before the reset is done. `journalctl -u harness-factory-reset`.
+        command = ['/usr/bin/systemd-run', f'--unit={RESET_UNIT}', '--collect', '--quiet',
+                   '/usr/bin/python3', str(Path(__file__).resolve()), 'reset', '--here']
+        if arguments.keep_wifi:
+            command.append('--keep-wifi')
+        started = subprocess.run(command, capture_output=True, text=True)
+        if started.returncode:
+            raise SystemExit('Could not start the reset: ' + (started.stderr.strip() or 'systemd-run failed'))
+        print('Resetting this computer. It signs out, closes every harness'
+              + ('' if arguments.keep_wifi else ', forgets its Wi-Fi')
+              + ' and opens its setup hotspot for a phone in about a minute.')
+        return
     if arguments.command == 'join':
         # From the daemon, through sudo: the Wi-Fi as JSON on stdin, never in argv.
         try:
