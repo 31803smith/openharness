@@ -36,6 +36,44 @@ class AddDevicePage extends StatefulWidget {
 
 enum _Step { start, join, networks, password, waiting, done }
 
+/// Joining the device's hotspot, shown as it goes: the person picking it, the phone on it and
+/// asking the device, then reading its Wi-Fi list.
+enum _Progress { choosing, talking, reading }
+
+/// One line of [_Progress]: a check when done, a spinner while it is going on.
+class _Line extends StatelessWidget {
+  const _Line({required this.done, required this.text});
+
+  final bool done;
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    final tty = Tty.of(context);
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 6),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 18,
+            height: 18,
+            child: done
+                ? Icon(LucideIcons.check300, size: 18, color: tty.green)
+                : CircularProgressIndicator(strokeWidth: 2, color: tty.dim),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Text(
+              text,
+              style: tty.style(color: done ? tty.text : tty.dim),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _AddDevicePageState extends State<AddDevicePage> {
   late final SetupHotspot _hotspot = widget.hotspot ?? SetupHotspot();
   final _ssid = TextEditingController();
@@ -55,6 +93,11 @@ class _AddDevicePageState extends State<AddDevicePage> {
 
   /// Back to the hotspot right after sending a Wi-Fi: the device may still be trying it.
   bool _retrying = false;
+
+  _Progress _progress = _Progress.choosing;
+
+  /// The address the device's hotspot gave this phone, once Android says it is on it.
+  String? _address;
 
   /// The device's last failed Wi-Fi and why, read when the phone joined its hotspot again.
   ({String ssid, String why})? _failed;
@@ -117,11 +160,21 @@ class _AddDevicePageState extends State<AddDevicePage> {
 
   Future<void> _join() async {
     _show(_Step.join);
-    setState(() => _busy = true);
+    setState(() {
+      _busy = true;
+      _progress = _Progress.choosing;
+      _address = null;
+    });
     if (SetupHotspot.joinsByItself) {
       final joined = await _hotspot.join();
       if (!mounted) return;
-      if (joined == 'unavailable') {
+      if (joined.state == 'joined') {
+        setState(() {
+          _progress = _Progress.talking;
+          _address = joined.address;
+        });
+      }
+      if (joined.state == 'unavailable') {
         _show(
           _Step.join,
           error: 'No device was chosen. Check it is plugged in and nearby: its Wi-Fi is named "Harness-…".',
@@ -149,6 +202,7 @@ class _AddDevicePageState extends State<AddDevicePage> {
       _poll?.cancel();
       _device = info;
       _retrying = false;
+      setState(() => _progress = _Progress.reading);
       final networks = await _hotspot.networks();
       if (!mounted) return;
       // A failed try before this one: the device says why, once the phone is back on its hotspot.
@@ -255,7 +309,10 @@ class _AddDevicePageState extends State<AddDevicePage> {
     }
     if (!mounted) return;
     await Navigator.of(context).pushReplacement(
-      phoneRoute((_) => MachinesTab(notifier: _app, large: false)),
+      phoneRoute(
+        // Its row reads "new", with Start on it.
+        (_) => MachinesTab(notifier: _app, large: false),
+      ),
     );
   }
 
@@ -388,12 +445,34 @@ class _AddDevicePageState extends State<AddDevicePage> {
             say(
               'Open Settings ▸ Wi-Fi on this phone and choose "Harness-…". Then come back here.',
             ),
-          const SizedBox(height: 12),
-          say(
-            _retrying
-                ? 'The device is still trying the Wi-Fi. Its hotspot comes back within a minute.'
-                : 'Looking for the device…',
+          if (_retrying) ...[
+            const SizedBox(height: 12),
+            say(
+              'The device is still trying the Wi-Fi. Its hotspot comes back within a minute.',
+            ),
+          ],
+          const SizedBox(height: 16),
+          // Where it is, as a Wi-Fi settings page shows joining: what is done, and what is going on.
+          _Line(
+            done: _progress.index > _Progress.choosing.index,
+            text: _progress.index > _Progress.choosing.index
+                ? 'Joined the device\'s Wi-Fi${_address == null ? '' : ' · address $_address'}'
+                : SetupHotspot.joinsByItself
+                ? 'Choose "Harness-…" from the list…'
+                : 'Waiting for this phone to join "Harness-…"…',
           ),
+          if (_progress.index >= _Progress.talking.index)
+            _Line(
+              done: _progress.index > _Progress.talking.index,
+              text: _progress.index > _Progress.talking.index
+                  ? 'The device answered'
+                  : 'Talking to the device…',
+            ),
+          if (_progress == _Progress.reading)
+            const _Line(
+              done: false,
+              text: 'Reading the Wi-Fi the device sees…',
+            ),
         ];
       case _Step.networks:
         return [

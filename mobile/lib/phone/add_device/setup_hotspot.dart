@@ -32,17 +32,22 @@ class SetupHotspot {
   /// Whether this phone joins the hotspot by itself, or the person does in Settings.
   static bool get joinsByItself => Platform.isAndroid;
 
-  /// `joined`, `unavailable` (the person cancelled, or no device was found), or `unsupported`.
-  /// Android's list shows only the `Harness-…` Wi-Fi nearby.
-  Future<String> join() async {
-    if (!joinsByItself) return 'unsupported';
+  /// `joined` (with the address the hotspot gave this phone), `unavailable` (the person cancelled,
+  /// or no device was found), or `unsupported`. Android's list shows only the `Harness-…` Wi-Fi.
+  Future<({String state, String? address})> join() async {
+    if (!joinsByItself) return (state: 'unsupported', address: null);
     try {
-      return await _channel.invokeMethod<String>('join', {'prefix': prefix}) ??
-          'unavailable';
+      final reply = await _channel.invokeMethod<Map<Object?, Object?>>('join', {
+        'prefix': prefix,
+      });
+      return (
+        state: reply?['state'] as String? ?? 'unavailable',
+        address: reply?['address'] as String?,
+      );
     } on PlatformException {
-      return 'unavailable';
+      return (state: 'unavailable', address: null);
     } on MissingPluginException {
-      return 'unsupported';
+      return (state: 'unsupported', address: null);
     }
   }
 
