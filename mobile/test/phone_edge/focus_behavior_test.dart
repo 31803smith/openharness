@@ -504,6 +504,102 @@ void main() {
     });
   });
 
+  // openharness#1272: Claude Code's MCP elicitation has no digits and no `Enter to …`, and its
+  // cursor parks under the footer — so the page neither read it nor raised the keyboard for it,
+  // and nothing on the phone could answer it.
+  group('an MCP server asking', () {
+    String elicitation({String buttons = '  ❯ Accept    Decline'}) =>
+        '\r\n──────────────────────────────\r\n'
+        '  MCP server “db” requests your input\r\n'
+        '\r\n'
+        '  This SQL drops a table…\r\n'
+        '\r\n'
+        '$buttons\r\n'
+        '\r\n'
+        '  Esc to cancel · ↑/↓ to navigate';
+
+    Future<_Focus> asked(WidgetTester tester, {String? buttons}) async {
+      final focus = await _Focus.open(tester);
+      focus.session.terminal.write(
+        buttons == null ? elicitation() : elicitation(buttons: buttons),
+      );
+      await frames(tester);
+      return focus;
+    }
+
+    testWidgets('Accept and Decline are each a button, and Accept with the '
+        'caret on it is Enter', (tester) async {
+      final semantics = tester.ensureSemantics();
+      final focus = await asked(tester);
+      expect(find.text('tap an answer · or say it'), findsOneWidget);
+      expect(find.semantics.byLabel('Answer 2 Decline'), findsOne);
+      tester.semantics.tap(find.semantics.byLabel('Answer 1 Accept'));
+      await frames(tester);
+      expect(focus.typed, ['\r']);
+      await focus.close();
+      semantics.dispose();
+    });
+
+    testWidgets('a tap on Decline moves the caret over, and presses Enter only '
+        'once the pane shows it there', (tester) async {
+      final focus = await asked(tester);
+      await focus.tapText('Decline');
+      await frames(tester);
+      expect(focus.typed, hasLength(1));
+      expect(focus.typed.single, anyOf('\x1b[C', '\x1bOC'));
+
+      // Claude Code redraws the row with the caret on Decline.
+      focus.session.terminal.write(
+        '\x1b[2J\x1b[H${elicitation(buttons: '    Accept  ❯ Decline')}',
+      );
+      await tester.pump(const Duration(milliseconds: 200));
+      await tester.pump(const Duration(milliseconds: 400));
+      await frames(tester);
+      expect(focus.typed.last, '\r');
+      expect(focus.typed.where((key) => key == '\r'), hasLength(1));
+      await focus.close();
+    });
+
+    testWidgets('"no" said to the mic declines it', (tester) async {
+      final focus = await asked(tester);
+      focus.stt.replies.add('No.');
+      await tester.tap(find.byType(VoiceMicCore));
+      await frames(tester);
+      await tester.tap(find.byType(VoiceMicCore));
+      await frames(tester);
+      expect(focus.typed, hasLength(1));
+      expect(focus.typed.single, anyOf('\x1b[C', '\x1bOC'));
+      await focus.close();
+    });
+
+    testWidgets('a form: the keyboard comes up for its fields, Enter on its '
+        'strip', (tester) async {
+      final focus = await asked(tester, buttons: '    Accept    Decline');
+      expect(find.bySemanticsLabel(RegExp('^Answer ')), findsNothing);
+      expect(find.byKey(const ValueKey('terminal-key-Enter')), findsOneWidget);
+      await focus.close();
+    });
+  });
+
+  testWidgets('a dialog the page cannot read: a tap anywhere on it raises the '
+      'keyboard', (tester) async {
+    final focus = await _Focus.open(tester);
+    focus.session.terminal.write(
+      '\r\n──────────────────────────────\r\n'
+      '  Pick a colour\r\n'
+      '\r\n'
+      '  ❯ Red    Blue\r\n'
+      '\r\n'
+      '  Esc to cancel · ←/→ to choose',
+    );
+    await frames(tester);
+    expect(find.byKey(const ValueKey('terminal-key-esc')), findsNothing);
+    await focus.tapRow('Red');
+    await frames(tester);
+    expect(find.byKey(const ValueKey('terminal-key-esc')), findsOneWidget);
+    await focus.close();
+  });
+
   testWidgets('↵ breaks the prompt\'s line without sending the turn', (
     tester,
   ) async {
@@ -1196,6 +1292,30 @@ class _Focus {
     final scrolled = lines.length - session.terminal.viewHeight;
     final y = view.top + (row - (scrolled < 0 ? 0 : scrolled) + 0.5) * cell;
     await _widgetTester.tapAt(Offset(view.left + 40, y));
+  }
+
+  /// A tap on the middle of [text] where the terminal draws it — the lowest place it appears.
+  Future<void> tapText(String text) async {
+    final view = _widgetTester.state<TerminalViewState>(
+      find.byType(TerminalView),
+    );
+    final render = view.renderTerminal;
+    final lines = view.widget.terminal.buffer.lines;
+    var row = -1;
+    var column = -1;
+    for (var i = 0; i < lines.length; i++) {
+      final at = lines[i].getText().indexOf(text);
+      if (at < 0) continue;
+      row = i;
+      column = at;
+    }
+    expect(row, isNot(-1), reason: '"$text" is on the screen');
+    final cell = render.getOffset(CellOffset(column + text.length ~/ 2, row));
+    await _widgetTester.tapAt(
+      render.localToGlobal(
+        cell + Offset(render.cellSize.width / 2, render.lineHeight / 2),
+      ),
+    );
   }
 
   /// [agentId] stops to ask something, as its machine announces it.
