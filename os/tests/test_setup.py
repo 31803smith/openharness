@@ -323,6 +323,43 @@ class Machine(unittest.TestCase):
         self.assertFalse(any('u-hot' in args for args in calls))
         self.assertFalse(any(args[:2] == ('device', 'connect') for args in calls))
 
+    def test_the_hotspot_is_named_after_the_wifi_cards_own_address(self):
+        with patch.object(setup, 'permanent_mac', return_value='b0:60:88:e7:bd:19'):
+            self.assertEqual(setup.hotspot_name('wlo1'), 'Harness-BD19')
+        # No address to read: the computer id, as before.
+        with tempfile.TemporaryDirectory() as folder, \
+             patch.object(setup, 'permanent_mac', return_value=''), \
+             patch.object(setup, 'COMPUTER_ID', Path(folder) / 'computer-id'):
+            (Path(folder) / 'computer-id').write_text('601cb0af-9a2d-44cf-8381-df989bf4a192\n')
+            self.assertEqual(setup.hotspot_name('wlo1'), 'Harness-A192')
+
+    def test_the_permanent_address_falls_back_to_the_current_one(self):
+        with tempfile.TemporaryDirectory() as folder, \
+             patch.object(setup.fcntl, 'ioctl', side_effect=OSError('no ethtool')), \
+             patch.object(setup, 'Path', side_effect=lambda *a: Path(folder, *a[1:]) if a and a[0] == '/sys/class/net' else Path(*a)):
+            (Path(folder) / 'wlo1').mkdir()
+            (Path(folder) / 'wlo1/address').write_text('aa:bb:cc:dd:ee:ff\n')
+            self.assertEqual(setup.permanent_mac('wlo1'), 'aa:bb:cc:dd:ee:ff')
+            self.assertEqual(setup.permanent_mac('nowhere'), '')
+
+    def test_when_the_hotspot_opens_by_itself(self):
+        cases = [
+            # signed in, headless, saved Wi-Fi, seconds since start → seconds offline first (None: never)
+            (False, False, False, 0, 0),        # just installed, screen, no Wi-Fi: at once
+            (False, True, False, 0, 0),         # just installed, no screen: at once
+            (False, False, True, 3, setup.SAVED_GRACE),   # saved Wi-Fi as it starts: a moment for it
+            (False, False, True, 600, 0),       # later, still offline: at once
+            (True, False, True, 600, None),     # signed-in laptop: its Wi-Fi page, never the hotspot
+            (True, True, True, 3, setup.OFFLINE_AT_START),
+            (True, True, True, 600, setup.OFFLINE_LATER),
+        ]
+        for signed, headless, saved, since, expected in cases:
+            with patch.object(setup, 'signed_in', return_value=signed), \
+                 patch.object(setup, 'headless', return_value=headless), \
+                 patch.object(setup, 'saved_wifi', return_value=saved):
+                self.assertEqual(setup.offline_wait(1000 + since, 1000), expected,
+                                 (signed, headless, saved, since))
+
     def test_the_hotspot_is_named_after_the_computer(self):
         with tempfile.TemporaryDirectory() as folder:
             state = Path(folder)
