@@ -1,5 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { readFileSync } from 'node:fs'
+import { setTimeout as delay } from 'node:timers/promises'
+
+vi.mock('node:timers/promises', () => ({ setTimeout: vi.fn(async () => {}) }))
 
 const db = vi.hoisted(() => ({
   productUsagePreference: { findUnique: vi.fn(), upsert: vi.fn() },
@@ -23,8 +26,8 @@ it('commits release and platform margins under the same unlinked receipt and dis
   const context = { surface: 'desktop', release: '1.2.73', platform: 'macos', channel: 'production' } as const
   expect(await ingestProductUsage('PRIVATE_ACCOUNT', { ...report, context }, now)).toEqual({ accepted: true })
   expect(db.$transaction).toHaveBeenCalledOnce()
-  expect(db.productUsageTotal.upsert).toHaveBeenCalledTimes(6)
-  const stored = JSON.stringify([db.productUsageReceipt.create.mock.calls, db.productUsageTotal.upsert.mock.calls])
+  expect(db.$runCommandRaw.mock.calls[0][0].updates).toHaveLength(6)
+  const stored = JSON.stringify([db.productUsageReceipt.create.mock.calls, db.$runCommandRaw.mock.calls])
   expect(stored).not.toContain('PRIVATE_ACCOUNT')
   expect(stored).not.toContain('1.2.73:macos')
   expect(stored).toContain('breakdown:release:desktop:1.2.73:turns_started')
@@ -37,6 +40,7 @@ const report: ProductUsageReport = { schemaVersion: 1, revision: 0, id: 'cf1c5a0
 const now = new Date('2026-10-13T12:00:00Z')
 beforeEach(() => {
   vi.resetAllMocks()
+  db.$runCommandRaw.mockImplementation(async command => ({ ok: 1, n: command.updates?.length ?? 0 }))
   db.$transaction.mockImplementation((fn: (tx: typeof db) => unknown) => fn(db))
   db.productUsagePreference.findUnique.mockResolvedValue(null)
   db.analyticsMachineState.findFirst.mockResolvedValue(null)
@@ -69,12 +73,14 @@ describe('aggregate ingestion', () => {
   it('stores only totals and an unlinked receipt, in one transaction', async () => {
     expect(await ingestProductUsage('private-account', report, now)).toEqual({ accepted: true })
     expect(db.$transaction).toHaveBeenCalledOnce()
-    expect(db.productUsageTotal.upsert).toHaveBeenCalledTimes(2)
-    expect(db.productUsageTotal.upsert.mock.calls[0][0]).toEqual({
-      where: { dayUtc_metric: { dayUtc: new Date('2026-10-13'), metric: 'turns_started' } },
-      create: { dayUtc: new Date('2026-10-13'), metric: 'turns_started', value: 4 }, update: { value: { increment: 4 } },
+    expect(db.$runCommandRaw).toHaveBeenCalledOnce()
+    expect(db.$runCommandRaw.mock.calls[0][0]).toEqual({
+      update: 'product_usage_totals', ordered: true, updates: [
+        { q: { dayUtc: { $date: '2026-10-13T00:00:00.000Z' }, metric: 'turns_started' }, u: { $inc: { value: 4 } }, upsert: true },
+        { q: { dayUtc: { $date: '2026-10-13T00:00:00.000Z' }, metric: 'turns_ended' }, u: { $inc: { value: 3 } }, upsert: true },
+      ],
     })
-    const stored = JSON.stringify([db.productUsageTotal.upsert.mock.calls, db.productUsageReceipt.create.mock.calls])
+    const stored = JSON.stringify([db.$runCommandRaw.mock.calls, db.productUsageReceipt.create.mock.calls])
     for (const forbidden of ['private-account', 'userId', 'machineId', 'agentId', 'revision', 'counters', 'receivedAt']) expect(stored).not.toContain(forbidden)
   })
   it('rejects opted-out and stale queued uploads without receipts or counters', async () => {
@@ -83,7 +89,7 @@ describe('aggregate ingestion', () => {
     db.productUsagePreference.findUnique.mockResolvedValue({ enabled: true, revision: 2 })
     expect(await ingestProductUsage('a', report, now)).toMatchObject({ accepted: false, reason: 'CHOICE_CHANGED' })
     expect(db.productUsageReceipt.create).not.toHaveBeenCalled()
-    expect(db.productUsageTotal.upsert).not.toHaveBeenCalled()
+    expect(db.$runCommandRaw).not.toHaveBeenCalled()
   })
   it.each(['2026-09-08', '2026-10-14', '2026-02-30', 'bad'])('refuses expired/future/invalid day %s', async day => {
     expect(await ingestProductUsage('a', { ...report, day }, now)).toEqual({ accepted: false, reason: 'EXPIRED' })
@@ -93,12 +99,57 @@ describe('aggregate ingestion', () => {
     db.productUsageReceipt.create.mockRejectedValue({ code: 'P2002' })
     db.productUsageReceipt.findUnique.mockResolvedValue({ id: report.id })
     expect(await ingestProductUsage('a', report, now)).toEqual({ accepted: true })
-    expect(db.productUsageTotal.upsert).not.toHaveBeenCalled()
+    expect(db.$runCommandRaw).not.toHaveBeenCalled()
   })
   it('does not mistake a rolled-back aggregate creation race for a received report', async () => {
-    db.productUsageTotal.upsert.mockRejectedValue({ code: 'P2002' })
+    db.$runCommandRaw.mockRejectedValue({ code: 'P2002' })
     db.productUsageReceipt.findUnique.mockResolvedValue(null)
     await expect(ingestProductUsage('a', report, now)).rejects.toMatchObject({ code: 'P2002' })
+    expect(db.$transaction).toHaveBeenCalledTimes(4)
+    expect(delay).toHaveBeenCalledTimes(3)
+  })
+  it.each(['P2034', 'P2002'])('retries a fast %s conflict with the same receipt and a fresh permission check', async code => {
+    db.$runCommandRaw.mockRejectedValueOnce({ code })
+    expect(await ingestProductUsage('private-account', report, now)).toEqual({ accepted: true })
+    expect(db.$transaction).toHaveBeenCalledTimes(2)
+    expect(db.productUsagePreference.findUnique).toHaveBeenCalledTimes(2)
+    expect(db.productUsageReceipt.create.mock.calls[0]).toEqual(db.productUsageReceipt.create.mock.calls[1])
+    expect(delay).toHaveBeenCalledExactlyOnceWith(expect.any(Number))
+    expect(vi.mocked(delay).mock.calls[0][0]).toBeGreaterThanOrEqual(25)
+    expect(vi.mocked(delay).mock.calls[0][0]).toBeLessThan(75)
+  })
+  it('rechecks a sharing-off choice before retrying the transaction', async () => {
+    db.$runCommandRaw.mockRejectedValueOnce({ code: 'P2034' })
+    db.productUsagePreference.findUnique.mockResolvedValueOnce({ enabled: true, revision: 0 })
+      .mockResolvedValueOnce({ enabled: false, revision: 1 })
+    expect(await ingestProductUsage('a', report, now)).toMatchObject({ accepted: false, reason: 'CHOICE_CHANGED' })
+    expect(db.$transaction).toHaveBeenCalledTimes(2)
+    expect(db.productUsageReceipt.create).toHaveBeenCalledOnce()
+  })
+  it('bounds persistent conflicts and does not retry unrelated storage errors', async () => {
+    db.$transaction.mockRejectedValue({ code: 'P2034' })
+    await expect(ingestProductUsage('a', report, now)).rejects.toMatchObject({ code: 'P2034' })
+    expect(db.$transaction).toHaveBeenCalledTimes(4)
+    expect(delay).toHaveBeenCalledTimes(3)
+    vi.mocked(delay).mockClear(); db.$transaction.mockClear().mockRejectedValue({ code: 'P2028' })
+    await expect(ingestProductUsage('a', report, now)).rejects.toMatchObject({ code: 'P2028' })
+    expect(db.$transaction).toHaveBeenCalledOnce(); expect(delay).not.toHaveBeenCalled()
+  })
+  it('does not extend an already slow conflict with another transaction', async () => {
+    const clock = vi.spyOn(performance, 'now').mockReturnValueOnce(0).mockReturnValue(1000)
+    try {
+      db.$transaction.mockRejectedValue({ code: 'P2034' })
+      await expect(ingestProductUsage('a', report, now)).rejects.toMatchObject({ code: 'P2034' })
+      expect(db.$transaction).toHaveBeenCalledOnce(); expect(delay).not.toHaveBeenCalled()
+    } finally { clock.mockRestore() }
+  })
+  it('checks the retry window again after a delayed timer wakes', async () => {
+    const clock = vi.spyOn(performance, 'now').mockReturnValueOnce(0).mockReturnValueOnce(0).mockReturnValue(1000)
+    try {
+      db.$transaction.mockRejectedValue({ code: 'P2034' })
+      await expect(ingestProductUsage('a', report, now)).rejects.toMatchObject({ code: 'P2034' })
+      expect(db.$transaction).toHaveBeenCalledOnce(); expect(delay).toHaveBeenCalledOnce()
+    } finally { clock.mockRestore() }
   })
   it('fails closed when the preference cannot be checked', async () => {
     db.productUsagePreference.findUnique.mockRejectedValue(new Error('unavailable'))
@@ -180,9 +231,14 @@ it('setup ingestion never reads an account and expires after yesterday', async (
 })
 
 it('keeps anonymous transport and consent unchanged across native apps while Desktop health evolves independently', () => {
-  for (const file of ['setup_transport.dart', 'setup_usage_choice.dart']) {
-    expect(readFileSync(new URL(`../../../desktop/lib/measurement/${file}`, import.meta.url), 'utf8'))
-      .toBe(readFileSync(new URL(`../../../mobile/lib/measurement/${file}`, import.meta.url), 'utf8'))
+  expect(readFileSync(new URL('../../../desktop/lib/measurement/setup_transport.dart', import.meta.url), 'utf8'))
+    .toBe(readFileSync(new URL('../../../mobile/lib/measurement/setup_transport.dart', import.meta.url), 'utf8'))
+  // Each app draws the signed-out choice its own way (the phone's is one line with a tooltip); what it asks must not differ.
+  const choice = (app: string) => readFileSync(new URL(`../../../${app}/lib/measurement/setup_usage_choice.dart`, import.meta.url), 'utf8')
+  for (const words of ['Share setup and sign-in counts',
+    'Optional for this app session. Help us find setup problems without sharing account details, prompts, or files.']) {
+    expect(choice('desktop')).toContain(`'${words}'`)
+    expect(choice('mobile')).toContain(`'${words}'`)
   }
   const mobile = readFileSync(new URL('../../../mobile/lib/measurement/product_measurement.dart', import.meta.url), 'utf8')
   const desktop = readFileSync(new URL('../../../desktop/lib/measurement/product_measurement.dart', import.meta.url), 'utf8')
