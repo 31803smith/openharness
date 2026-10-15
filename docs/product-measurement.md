@@ -61,6 +61,11 @@ Weekly bins cover completed weeks from installations that report again, so non-r
 
 Native Desktop observes main-frame/first-frame viewer loading, updater apply acknowledgements and
 the next observed version, explicit versus automatic connections, and resume-to-observed-work.
+Known-unlinked native Desktop retry probes do not start additional automatic connection
+observations: the initial refusal remains one outcome, and an explicit Connect is measured
+separately. Older releases counted every probe in the health totals. A drop across this
+measurement change is not evidence that fewer people encountered linking trouble; these
+counters do not count affected people. Retry suppression adds no identifiers or stored history.
 The startup bucket measures launch to the first consented observation of a connected workspace,
 including preference/sign-in delay. One in 60 rendered frames supplies a coarse duration bucket;
 it cannot reliably detect an idle freeze. Error hooks pass only framework/async categories.
@@ -90,6 +95,15 @@ and stay below 8 KiB. One sync runs at a time, with five-second network deadline
 report interval. Unknown or failed preference checks stop collection. Slow or failed reporting can
 lose counts and cannot become a product dependency. A failed disk write also disables collection.
 
+`health_cli_report_rejected` counts unsuccessful delivery attempts, including retries; it is not
+a count of lost reports. New `health_cli_report_failure_*` counters split those attempts into fixed
+invalid, too-large, authentication, rate-limit, timeout, unreachable, write-conflict, transaction,
+server and other categories. A transaction failure does not by itself prove a timeout. No raw error
+message, database detail, URL or unknown error code is collected. These diagnostics share the same
+privacy choice and bounded queue, so a delivery outage can delay its own diagnostic counters.
+The local app proxy accepts only bounded UI counts, or Desktop health/UI counts with the exact
+public release, OS and channel context. It does not accept daemon counters or arbitrary context.
+
 Desktop and phone collectors keep only fixed counters in RAM, at most 64 in-flight observations,
 with at most 32 counters per report, one pending report per channel and one flush at a time.
 Callbacks from product actions never await measurement I/O. Reports retry no faster than once per
@@ -106,6 +120,22 @@ Exhaustion drops measurement rather than affecting sign-in. Public counts remain
 fabrication; they are directional diagnostics, not trusted account acquisition metrics.
 
 Both ingestion paths atomically add only UTC-day/metric totals plus an unlinked random retry receipt.
+Fast database write conflicts retry that complete transaction up to three times with short jitter,
+rechecking the sharing choice each time. No retry starts after the first second; existing transaction
+deadlines still apply to each attempt. Slow or exhausted conflicts return to the client's normal
+immutable-report retry. Receipts prevent both immediate and later retries from counting twice.
+Reports update their counters and separate margins in one Mongo update command inside
+that transaction. A partial write aborts the receipt and all counts; no per-report body is stored.
+This shortens shared-row contention without adding a daemon timer or delaying product actions.
+The public `/api/health` response includes validated release tag/SHA coordinates so a successful
+image build can be distinguished from the version actually serving requests.
+
+Resume diagnostics add fixed conditions by request source: runtime unavailable, saved state missing,
+project missing, harness missing, credentials missing, busy, changed, unconfirmed, preparation failed,
+launch failed, invalid and other. These come only from known error codes, never error text or paths.
+From CLI 0.4.3, an unconfirmed runtime counts as unknown and a concurrently changed harness as
+cancelled (legacy aggregate: unknown), rather than failed. Compare releases separately across this
+definition change; a lower failure rate alone is not proof the product improved.
 Receipts expire within 36 days and totals within 396 days through the existing Mongo TTL indexes.
 No account deduplication markers or stable hashes enter these totals. People-based daily counts and
 D1/D2/D3/D7 returns come from one mark per sharing person per day under an HMAC pseudonym (no time,
