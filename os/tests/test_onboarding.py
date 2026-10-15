@@ -32,6 +32,19 @@ class Onboarding(unittest.TestCase):
             execute.assert_called_once_with('/usr/bin/hn-os', ['hn-os', 'try'])
             self.assertTrue((Path(temp) / '.local/state/harness-os/onboarded').exists())
 
+    def test_a_computer_set_up_from_a_phone_asks_for_opencode_alone(self):
+        with tempfile.TemporaryDirectory() as temp:
+            marker = Path(temp) / 'set-up-from-phone'
+            marker.touch()
+            with patch.object(onboarding, 'FROM_PHONE', marker), \
+                 patch.object(onboarding.Path, 'home', return_value=Path(temp)), \
+                 patch.object(onboarding.subprocess, 'run', return_value=result()) as command, \
+                 patch.object(onboarding.os, 'execv') as execute, \
+                 patch.dict(os.environ, {'TMUX_PANE': '%4'}):
+                onboarding.welcome()
+            self.assertEqual(command.call_args_list[0].args[0], ['hn', 'os-action', 'ready', '%4', 'bare'])
+            execute.assert_called_once_with('/usr/bin/hn-os', ['hn-os', 'try'])
+
     def test_usb_never_opens_networking_or_an_agent(self):
         with patch.object(onboarding.Path, 'is_file', return_value=True), \
              patch.object(onboarding.subprocess, 'run') as command, \
