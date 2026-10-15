@@ -44,6 +44,7 @@ import { isLocalOnly, withoutUpdate } from '../lib/cardUpdate.js'
 import { elapsedSecondsOf } from '../lib/footerTimer.js'
 import { sqlitePreflightMessage } from '../lib/sqliteAvailability.js'
 import { warmLoginShellEnvironment } from '../lib/loginShellEnv.js'
+import { enableOffThreadExec } from '../lib/offThreadExec.js'
 import type { AppSwarms } from '../cable/cableSession.js'
 import type { UnreadNotification } from '../lib/notificationRead.js'
 import { registry, projectDisplayName, validTranscriptPath, type RegisteredSession } from '../lib/registry.js'
@@ -441,6 +442,8 @@ async function runForeground(session: AuthSession | null): Promise<void> {
   // move (it tears down two dozen subsystems declared further down). Until it is ready, a staged update is
   // applied by `bootHandoff`, which hands the machine over without finishing start-up.
   coreLink.onUpdate((version) => { void daemonBoot.applyStagedUpdate(version) })
+  // The core's probes spawn from a worker, so a terminal's keystrokes never wait behind one (lib/offThreadExec.ts).
+  enableOffThreadExec()
   // What the master told this core, read from here: runCore took it out of process.env before anything
   // could hand it to a child (lib/harnessdEnv.ts).
   const harnessd = harnessdEnv()
