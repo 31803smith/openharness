@@ -1139,7 +1139,7 @@ class _TerminalPageState extends State<TerminalPage>
     for (final key in questionKeys(view)) {
       if (key.number == band.key) {
         HapticFeedback.selectionClick();
-        _answer(view, key);
+        _tapAnswer(view, key);
         return;
       }
     }
@@ -1155,7 +1155,7 @@ class _TerminalPageState extends State<TerminalPage>
     for (final key in questionKeys(view)) {
       if (key.number == number) {
         HapticFeedback.selectionClick();
-        _answer(view, key);
+        _tapAnswer(view, key);
         return true;
       }
     }
@@ -1163,6 +1163,65 @@ class _TerminalPageState extends State<TerminalPage>
   }
 
   static final _optionLine = RegExp(r'^\s*(?:[❯›>]\s*)?(\d{1,2})[.)]\s');
+
+  /// A tapped answer: pressed at once on a terminal this phone holds, else once it is taken back.
+  ///
+  /// ⚠️ **A tap on an answer is a claim on the terminal, as speaking one is ([_sessionForInput]).**
+  /// The bands are drawn on a terminal only being watched too — after the computer took it, or
+  /// when it opened watching on a reconnect — and a tap there used to buzz and send nothing: the
+  /// band answers before the panel's own tap could take control, and a session that is not
+  /// [TerminalSession.acceptsInput] drops the keys.
+  void _tapAnswer(QuestionPaneView view, QuestionKey key) {
+    final session = widget.notifier
+        .paneOfAgent(widget.machineId, widget.agentId)
+        ?.session;
+    if (session != null && session.acceptsInput) {
+      _answer(view, key);
+      return;
+    }
+    unawaited(_answerOnceTaken(view, key));
+  }
+
+  /// Set while a tapped answer waits for the terminal to come back, so a second tap in that wait
+  /// does not press a second answer once it has.
+  bool _answerWaiting = false;
+
+  /// Takes the terminal back, then presses [key] — only on the same question still open: one
+  /// answered on the computer meanwhile has closed, and a digit then would land in the prompt.
+  ///
+  /// ⚠️ **Read off the screen the stream came back with, not the watcher's view.** Taking the
+  /// terminal back answers with a keyframe of the screen as it is now, and the watcher keeps a
+  /// dialog it no longer finds for one more read (its close debounce) — so a question the computer
+  /// answered in the meantime would still be the watcher's at the moment the press goes out.
+  Future<void> _answerOnceTaken(QuestionPaneView view, QuestionKey key) async {
+    if (_answerWaiting) return;
+    _answerWaiting = true;
+    try {
+      final session = await _sessionForInput(why: 'answer');
+      if (!mounted) return;
+      if (session == null) {
+        _flash('✗ not sent', error: true);
+        return;
+      }
+      final engine = _questionEngine;
+      final now = engine == null
+          ? null
+          : readQuestionPane(session.terminal, engine);
+      if (now == null ||
+          now.fingerprint != view.fingerprint ||
+          !_answersTappable(now)) {
+        return;
+      }
+      for (final pressed in questionKeys(now)) {
+        if (pressed.number == key.number) {
+          _answer(now, pressed);
+          return;
+        }
+      }
+    } finally {
+      _answerWaiting = false;
+    }
+  }
 
   /// Presses an answer: its digit, and Return only where the dialog asks for one (Codex's
   /// `request_user_input`) — a chosen Return, never a blind one. An MCP server's Accept or Decline
@@ -1213,12 +1272,13 @@ class _TerminalPageState extends State<TerminalPage>
 
   /// The pane's session, able to take input — taken back first when another client took the
   /// terminal (the desktop, on a click there) while the take was being spoken. Speaking to a
-  /// harness is as plain a claim on it as a tap or a scroll. Null when it cannot be had in 6s.
-  Future<TerminalSession?> _sessionForInput() async {
+  /// harness is as plain a claim on it as a tap or a scroll, and so are a tapped answer and
+  /// Interrupt; [why] names which in the log. Null when it cannot be had in 6s.
+  Future<TerminalSession?> _sessionForInput({String why = 'voice'}) async {
     TerminalSession? current() =>
         widget.notifier.paneOfAgent(widget.machineId, widget.agentId)?.session;
     if (current() case final session? when session.acceptsInput) return session;
-    appLog.info('voice', 'terminal not ours at send — taking it back');
+    appLog.info(why, 'terminal not ours at send — taking it back');
     await _takeControl();
     for (var waited = 0; waited < 60 && mounted; waited++) {
       if (current() case final session? when session.acceptsInput) {
@@ -1226,7 +1286,7 @@ class _TerminalPageState extends State<TerminalPage>
       }
       await Future<void>.delayed(const Duration(milliseconds: 100));
     }
-    appLog.warn('voice', 'terminal not back in 6s — take kept');
+    appLog.warn(why, 'terminal not back in 6s — take kept');
     return null;
   }
 
@@ -2722,12 +2782,7 @@ class _TerminalPageState extends State<TerminalPage>
         icon: LucideIcons.octagonPause300,
         label: 'Interrupt',
         value: 'esc',
-        onTap: () {
-          final session = widget.notifier
-              .paneOfAgent(widget.machineId, widget.agentId)
-              ?.session;
-          session?.terminal.keyInput(TerminalKey.escape);
-        },
+        onTap: () => unawaited(_interrupt()),
       ),
     // Where this agent runs, above the actions that act ON it: the desktop
     // keeps it in the pane header, and this sheet is the phone's pane header.
@@ -2814,6 +2869,39 @@ class _TerminalPageState extends State<TerminalPage>
   /// agent was withdrawn).
   Future<void> _takeControl() =>
       widget.notifier.selectAgent(widget.machineId, widget.agentId);
+
+  /// The sheet's Interrupt: Esc, on a terminal taken back first when another client holds it.
+  ///
+  /// ⚠️ **Offered while the terminal is only watched, so it takes it.** The row shows whenever the
+  /// agent works, and a terminal held by the computer drops a key the phone sends — so Interrupt,
+  /// wanted most when something has to stop now, used to do nothing there and say nothing.
+  Future<void> _interrupt() async {
+    final held = widget.notifier
+        .paneOfAgent(widget.machineId, widget.agentId)
+        ?.session;
+    if (held != null && held.acceptsInput) {
+      held.terminal.keyInput(TerminalKey.escape);
+      return;
+    }
+    if (_interruptWaiting) return;
+    _interruptWaiting = true;
+    try {
+      final session = await _sessionForInput(why: 'interrupt');
+      if (!mounted) return;
+      if (session == null) {
+        _flash('✗ not sent', error: true);
+        return;
+      }
+      session.terminal.keyInput(TerminalKey.escape);
+    } finally {
+      _interruptWaiting = false;
+    }
+  }
+
+  /// Set while an Interrupt waits for the terminal to come back, so a second one pressed in that
+  /// wait — the sheet opened again because nothing seemed to happen — adds no second Esc once it
+  /// has: on Claude Code's empty prompt, Esc twice opens the rewind to an earlier message.
+  bool _interruptWaiting = false;
 
   /// Restarting is a round trip that can fail, and the phone has no status rail to fail into — so
   /// the answer lands as a snackbar, which is the one surface a pushed page here always has.

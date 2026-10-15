@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -15,6 +17,7 @@ import 'package:harness_mobile/phone/voice_mic_button.dart';
 import 'package:harness_mobile/phone/voice_mic_face.dart';
 import 'package:harness_mobile/state/app_state.dart';
 import 'package:harness_mobile/state/pending_question.dart';
+import 'package:harness_mobile/terminal/terminal_binary.dart';
 import 'package:harness_mobile/terminal/terminal_font_store.dart';
 import 'package:harness_mobile/terminal/terminal_session.dart';
 import 'package:xterm/xterm.dart';
@@ -386,6 +389,47 @@ void main() {
       await focus.close();
     });
 
+    // Offered whenever the agent works — the one row wanted most when something must stop — and on
+    // a terminal the computer took its Esc used to be dropped without a word.
+    testWidgets('Interrupt on a terminal the computer took takes it back, '
+        'then sends esc', (tester) async {
+      final focus = await openMenu(tester, working: true);
+      await focus.takenByComputer();
+      await frames(tester);
+      final before = focus.opens;
+
+      await tester.tap(find.text('Interrupt'));
+      await frames(tester);
+      expect(focus.opens, greaterThan(before));
+      expect(focus.typed, isNot(contains('\x1b')));
+      // Nothing seemed to happen: the sheet opened again, Interrupt pressed again in the wait.
+      await tester.tap(find.byKey(const ValueKey('terminal-title')));
+      await frames(tester);
+      await tester.tap(find.text('Interrupt'));
+      await frames(tester);
+
+      await focus.answerOpen();
+      await tester.pump(const Duration(milliseconds: 250));
+      await frames(tester);
+      expect(focus.session.acceptsInput, isTrue);
+      // One Esc: a second, on Claude Code's empty prompt, opens its rewind.
+      expect(focus.typed.where((key) => key == '\x1b'), hasLength(1));
+      await focus.close();
+    });
+
+    testWidgets('Interrupt pressed twice on a terminal the phone holds sends '
+        'esc twice, as before', (tester) async {
+      final focus = await openMenu(tester, working: true);
+      await tester.tap(find.text('Interrupt'));
+      await frames(tester);
+      await tester.tap(find.byKey(const ValueKey('terminal-title')));
+      await frames(tester);
+      await tester.tap(find.text('Interrupt'));
+      await frames(tester);
+      expect(focus.typed.where((key) => key == '\x1b'), hasLength(2));
+      await focus.close();
+    });
+
     testWidgets('Restart that the machine refuses says why', (tester) async {
       final focus = await openMenu(tester);
       await tester.tap(find.text('Restart'));
@@ -451,6 +495,69 @@ void main() {
       await focus.tapRow("don't ask again");
       await frames(tester);
       expect(focus.typed, contains('2'));
+      await focus.close();
+    });
+
+    // The answers stay drawn on a terminal the computer took, and a tap there used to buzz and
+    // press a digit the session then dropped. A tapped answer is a claim, as a spoken one is.
+    testWidgets('an answer tapped on a terminal the computer took takes it '
+        'back, then presses it, once', (tester) async {
+      final focus = await asked(tester);
+      await focus.takenByComputer();
+      await frames(tester);
+      expect(focus.session.acceptsInput, isFalse);
+      final before = focus.opens;
+
+      await focus.tapRow("don't ask again");
+      await frames(tester);
+      // Asked for again, and nothing pressed into a terminal that would drop it.
+      expect(focus.opens, greaterThan(before));
+      expect(focus.typed, isNot(contains('2')));
+      // A second tap while it comes back adds no second answer.
+      await focus.tapRow("don't ask again");
+      await frames(tester);
+
+      // Still asking: the screen it comes back with is the same question.
+      await focus.answerOpen(screen: permissionDialog);
+      await tester.pump(const Duration(milliseconds: 250));
+      await frames(tester);
+      expect(focus.session.acceptsInput, isTrue);
+      expect(focus.typed.where((key) => key == '2'), hasLength(1));
+      await focus.close();
+    });
+
+    testWidgets('a terminal that does not come back: the tapped answer says it '
+        'was not sent', (tester) async {
+      final focus = await asked(tester);
+      await focus.takenByComputer();
+      await frames(tester);
+
+      await focus.tapRow("don't ask again");
+      await frames(tester);
+      // No answer to the open: the take gives up after six seconds, and says so.
+      await tester.pump(const Duration(seconds: 6));
+      await tester.pump(const Duration(milliseconds: 200));
+      expect(find.text('✗ not sent'), findsOneWidget);
+      expect(focus.typed, isNot(contains('2')));
+      await focus.close();
+    });
+
+    testWidgets('a question answered on the computer while the phone takes '
+        'the terminal back: nothing is pressed', (tester) async {
+      final focus = await asked(tester);
+      await focus.takenByComputer();
+      await frames(tester);
+
+      await focus.tapRow("don't ask again");
+      await frames(tester);
+      // Answered there meanwhile: the screen the terminal comes back with is the agent's prompt.
+      // The watcher still holds the dialog for one more read, so only the screen itself can say.
+      await focus.answerOpen(screen: '\x1b[2J\x1b[Hprompt> ');
+      await tester.pump(const Duration(milliseconds: 250));
+      await frames(tester);
+      expect(focus.session.acceptsInput, isTrue);
+      // A digit now would have been typed into the agent's prompt.
+      expect(focus.typed, isNot(contains('2')));
       await focus.close();
     });
 
@@ -1204,11 +1311,7 @@ class _Focus {
     final sent = <(String, Map<String, dynamic>)>[];
     final session = await liveTerminal(app, 'a', sent: sent);
     final typed = <String>[];
-    final forward = session.terminal.onOutput;
-    session.terminal.onOutput = (data) {
-      typed.add(data);
-      forward?.call(data);
-    };
+    _record(session.terminal, typed);
     final voice = edgeVoice();
     final opened = <(String, String)>[];
     final pushed = <Route<dynamic>>[];
@@ -1258,6 +1361,49 @@ class _Focus {
   /// How many times the terminal was asked to open — by the machine's socket or by the session.
   int get opens =>
       conn.opens + sent.where((frame) => frame.$1 == 'terminal_open').length;
+
+  /// The computer taking the terminal: the daemon closes this phone's stream as taken over.
+  Future<void> takenByComputer() => session.handleFrame('terminal_closed', {
+    'streamId': session.streamId,
+    'code': 'TERMINAL_TAKEN_OVER',
+    'reason': 'another client connected',
+    'takenBy': {'machineId': 'm', 'label': 'MacBook'},
+  });
+
+  /// The daemon answering the session's latest open: a new stream, and its first screen — [screen],
+  /// the terminal as it stands on the computer now — after which the session holds the terminal.
+  Future<void> answerOpen({String screen = 'prompt> '}) async {
+    final open = sent.lastWhere((frame) => frame.$1 == 'terminal_open').$2;
+    final streamId = 'stream-${session.agentId}-again';
+    await session.handleFrame('terminal_ready', {
+      'requestId': open['requestId'],
+      'agentId': session.agentId,
+      'protocolVersion': TerminalSession.protocolVersion,
+      'streamId': streamId,
+    });
+    await session.handleBinary(
+      TerminalBinaryFrame(
+        kind: TerminalBinaryKind.keyframe,
+        streamId: streamId,
+        seq: 0,
+        bytes: Uint8List.fromList(utf8.encode(screen)),
+        compressed: false,
+        cols: session.terminal.viewWidth,
+        rows: session.terminal.viewHeight,
+      ),
+    );
+    // A keyframe swaps in a fresh terminal: what is typed into it is recorded too.
+    _record(session.terminal, typed);
+  }
+
+  /// Records into [typed] everything typed into [terminal], and passes it on.
+  static void _record(Terminal terminal, List<String> typed) {
+    final forward = terminal.onOutput;
+    terminal.onOutput = (data) {
+      typed.add(data);
+      forward?.call(data);
+    };
+  }
 
   /// A screenful of output, so the terminal fills the page rather than sitting anchored at its
   /// foot — where a tap on its middle would land on nothing.

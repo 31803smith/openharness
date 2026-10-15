@@ -5766,6 +5766,56 @@ class AppNotifier extends ChangeNotifier {
     }
   }
 
+  /// A Harness OS computer, managed from here (CLI services/osDevice.ts): `status`, `update`,
+  /// `wifi_scan`, `wifi_join` {ssid, password}, `wifi_result`. `{error: 'UNAVAILABLE'}` while it
+  /// cannot be reached — as it is for a while after `update` and `wifi_join`.
+  Future<Map<String, dynamic>> osDevice(
+    String machineId,
+    Map<String, dynamic> payload, {
+    Duration timeout = const Duration(seconds: 25),
+  }) async {
+    final machine = machineStates[machineId];
+    if (machine == null || machine.needsLink) return {'error': 'UNAVAILABLE'};
+    try {
+      return await _conn(
+        machineId,
+      ).request('os_device', payload: payload, timeout: timeout);
+    } catch (_) {
+      return {'error': 'UNAVAILABLE'};
+    }
+  }
+
+  /// What each computer's `os_device` `status` said: whether it runs Harness OS, its update and its
+  /// Wi-Fi. Asked again at most every few minutes ([refreshOsStatus]).
+  final Map<String, Map<String, dynamic>> osStatus = {};
+  final Map<String, DateTime> _osAsked = {};
+
+  bool runsHarnessOs(String machineId) => osStatus[machineId]?['harnessOs'] == true;
+
+  bool updateAvailable(String machineId) {
+    final update = osStatus[machineId]?['update'];
+    return update is Map && update['available'] == true;
+  }
+
+  /// Asks [machineId] what it is and whether it has an update, unless asked lately ([force] asks now).
+  Future<void> refreshOsStatus(String machineId, {bool force = false}) async {
+    final asked = _osAsked[machineId];
+    if (!force &&
+        asked != null &&
+        DateTime.now().difference(asked) < const Duration(minutes: 5)) {
+      return;
+    }
+    _osAsked[machineId] = DateTime.now();
+    final status = await osDevice(machineId, {'action': 'status'});
+    // An older CLI answers it UNSUPPORTED/SERVICE_UNAVAILABLE: not Harness OS as far as the phone knows.
+    if (status['error'] == 'UNAVAILABLE') {
+      _osAsked.remove(machineId);
+      return;
+    }
+    osStatus[machineId] = status;
+    notifyListeners();
+  }
+
   Future<Map<String, dynamic>> connectors(
     String machineId,
     Map<String, dynamic> payload, {
@@ -6362,6 +6412,20 @@ class AppNotifier extends ChangeNotifier {
   /// The longest name the backend keeps for a computer — `renameBody` in
   /// `backend/src/routes/machines.ts` refuses anything longer.
   static const machineNameMaxLength = 40;
+
+  /// Computers this phone just set up (Settings ▸ Set up a device): Computers marks them "new" until
+  /// one is opened. This run only.
+  final Set<String> _newMachines = {};
+
+  bool isNewMachine(String machineId) => _newMachines.contains(machineId);
+
+  void markMachineNew(String machineId) {
+    if (_newMachines.add(machineId)) notifyListeners();
+  }
+
+  void sawMachine(String machineId) {
+    if (_newMachines.remove(machineId)) notifyListeners();
+  }
 
   /// Renames a machine via `PATCH /api/machines/:machineId` (control-plane REST — the machine's
   /// `name` is backend-owned, unlike an agent's, which lives on the harness CLI). Returns null on

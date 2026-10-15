@@ -5,6 +5,9 @@ from pathlib import Path
 import subprocess
 import sys
 
+# Written by setup.py when a phone signed this computer in (os/setup.py FROM_PHONE).
+FROM_PHONE = Path('/var/lib/harness-os/set-up-from-phone')
+
 
 def prepare():
     if Path('/etc/harness-live').is_file() or (Path.home() / '.local/state/harness-os/onboarded').is_file():
@@ -24,8 +27,11 @@ def welcome():
     # Initial networking finished before hn launched. This pane is created only
     # after hn's shared account gate has opened.
     pane = os.environ.get('TMUX_PANE', '')
+    # Set up from a phone (setup.py): OpenCode alone, without the two starter terminals; nobody
+    # was at this screen to start with three panes.
+    bare = ['bare'] if FROM_PHONE.is_file() else []
     try:
-        result = subprocess.run(['hn', 'os-action', 'ready', pane], check=False, timeout=15)
+        result = subprocess.run(['hn', 'os-action', 'ready', pane, *bare], check=False, timeout=15)
         if result.returncode == 0:
             state = Path.home() / '.local/state/harness-os'
             state.mkdir(parents=True, exist_ok=True)
