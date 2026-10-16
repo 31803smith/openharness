@@ -34,6 +34,11 @@ const Set<String> encryptedDownTypes = {
   'agent_resume',
   // Carries the fork's name and first task — what the person typed — like agent_create's prompt.
   'agent_fork',
+  // Change agent (`AppNotifier.changeAgent`): the machine writes the conversation's record into the
+  // project, then the old agent is saved and stopped. Both `MACHINE_REQUESTS` types in the CLI, which
+  // refuses them unsealed (E2EE_REQUIRED) — without them the switch could never start.
+  'agent_handoff_prepare',
+  'agent_close',
   'agent_recent',
   'agent_update',
   'agent_files',

@@ -212,6 +212,20 @@ class Agent {
   /// the field.
   final String? resumeMode;
 
+  /// When the machine registered this harness — the desktop's `Agent.createdAt`. With [sessionId]
+  /// it names one harness exactly: `agent_close` takes both, so a close meant for a harness that has
+  /// since been replaced under the same id is refused rather than closing the replacement.
+  final DateTime? createdAt;
+
+  /// Whether its machine can save and stop it on request (`agent_close`) — false from a daemon
+  /// older than the request, which Change agent then asks to be updated rather than guess at.
+  final bool closeSupported;
+
+  /// The permission mode it was launched in (`plan`, `readOnly`, …), as its machine recorded it;
+  /// null from a daemon older than the field, or an agent Harness did not launch. Read by Change
+  /// agent, so the new agent is given the same freedom when its engine has that mode.
+  final String? permissionMode;
+
   const Agent({
     required this.id,
     this.sessionId,
@@ -241,6 +255,9 @@ class Agent {
     this.tokensUpdatedAt,
     this.outputStats,
     this.resumeMode,
+    this.createdAt,
+    this.closeSupported = false,
+    this.permissionMode,
   });
 
   factory Agent.fromJson(Map<String, dynamic> j) {
@@ -310,6 +327,9 @@ class Agent {
           : null,
       outputStats: AgentOutputStats.fromJson(j['outputStats']),
       resumeMode: _safeResumeMode(j['resumeMode']),
+      createdAt: _safeTime(j['createdAt']),
+      closeSupported: j['closeSupported'] == true,
+      permissionMode: _safePermissionMode(j['permissionMode']),
     );
   }
 
@@ -342,6 +362,9 @@ class Agent {
     tokensUpdatedAt: tokensUpdatedAt,
     outputStats: outputStats,
     resumeMode: resumeMode,
+    createdAt: createdAt,
+    closeSupported: closeSupported,
+    permissionMode: permissionMode,
   );
 
   /// Saved work the daemon is no longer running, as the desktop's [Agent] reads
@@ -406,6 +429,20 @@ class Agent {
 
   static String? _safeResumeMode(Object? raw) =>
       raw is String && _resumeModes.contains(raw) ? raw : null;
+
+  /// A mode id as the CLI writes one — the desktop's `_safePermissionMode`, character for character.
+  static String? _safePermissionMode(Object? raw) =>
+      raw is String && RegExp(r'^[A-Za-z]{1,32}$').hasMatch(raw) ? raw : null;
+
+  /// Whether this listing is [reviewed] still: the same registration in the same conversation, or
+  /// one that had no conversation when it was reviewed and has bound its first since — the
+  /// desktop's `continuesSession`. Codex binds none for its first seconds, so a harness looked at
+  /// then is still the same one a moment later; the machine is the judge of the close itself
+  /// (cli `closeAgentService.ts` `matches`). Another conversation once one was bound is a change.
+  bool continuesSession(Agent reviewed) =>
+      createdAt == reviewed.createdAt &&
+      (sessionId == reviewed.sessionId ||
+          (reviewed.sessionId?.isEmpty ?? true));
 
   static String? _safeEngine(Object? raw) {
     if (raw is! String || raw.isEmpty || raw.length > 64) return null;

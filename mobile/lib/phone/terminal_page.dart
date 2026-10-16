@@ -34,6 +34,8 @@ import 'package:harness_mobile/terminal/key_hints.dart';
 import 'package:harness_mobile/terminal/question_pane.dart';
 import 'package:harness_mobile/terminal/question_pane_watcher.dart';
 import 'package:harness_mobile/terminal/terminal_session.dart';
+import 'package:harness_mobile/core/agent_handoff.dart'
+    show supportsAgentHandoff;
 import 'package:harness_mobile/widgets/engine_identity.dart'
     show engineIdentity;
 import 'package:harness_mobile/widgets/rename_agent_dialog.dart';
@@ -46,6 +48,7 @@ import 'daemon_scope.dart';
 import 'delete_agent.dart';
 import 'held_height.dart';
 import 'machines_tab.dart';
+import 'new_agent_chooser.dart';
 import 'phone_sheet.dart';
 import 'phone_status.dart';
 import 'settings_page.dart';
@@ -62,6 +65,7 @@ import 'question_keys.dart';
 import 'voice_bar_line.dart';
 import 'voice_mic_button.dart';
 import 'phone_navigation.dart';
+import 'phone_shell_scope.dart';
 import 'phone_search_catalog.dart' show phoneAgentId;
 import 'agent_index.dart';
 import 'terminal_title.dart';
@@ -961,12 +965,56 @@ class _TerminalPageState extends State<TerminalPage>
 
   /// Says what went wrong, above the mic for two seconds, the way tmux's `display-message` does.
   /// Nothing that went right is said: its effect is on screen, and a tap is felt.
+  ///
+  /// Over a [_hold], which comes back once the two seconds are up.
   void _flash(String text, {bool error = false}) {
     _barMessageTimer?.cancel();
     _barMessage.value = (text: text, error: error);
     _barMessageTimer = Timer(const Duration(seconds: 2), () {
-      if (mounted) _barMessage.value = null;
+      if (mounted) _barMessage.value = _held;
     });
+  }
+
+  /// What the line above the mic says for as long as something is on its way, rather than for a
+  /// [_flash]'s two seconds — a Change agent, which is several round trips to the computer. Null
+  /// when nothing is.
+  ///
+  /// ⚠️ **Two seconds were not enough to say it.** The first switch tried waited half a minute on
+  /// the computer, and "switching to Claude…" had gone after two seconds: the terminal looked as if
+  /// nothing had been asked, and the only sign left was a menu row nobody had open.
+  String? _barHold;
+
+  ({String text, bool error})? get _held =>
+      _barHold == null ? null : (text: _barHold!, error: false);
+
+  /// Says [text] above the mic until it is held no more (null). A flash showing now keeps its two
+  /// seconds and hands back to this.
+  void _hold(String? text) {
+    _barHold = text;
+    if (_barMessageTimer?.isActive ?? false) return;
+    _barMessage.value = _held;
+  }
+
+  /// This page's `⋯` menu while it is up — see [_putMenuAway].
+  Route<void>? _menu;
+
+  /// Takes the `⋯` menu down, when something it describes has just ended under it.
+  ///
+  /// ⚠️ **The menu's rows are read once, as it opens.** Opened mid-switch, Change agent said
+  /// `switching…` — true then — and went on saying it after the switch had ended, with the answer in
+  /// a snackbar the menu itself covered. A menu on a harness the switch has just stopped would also
+  /// still offer its Restart. So the menu goes, and what happened is said where it can be seen.
+  void _putMenuAway() {
+    final menu = _menu;
+    _menu = null;
+    if (menu == null || !menu.isActive) return;
+    final navigator = menu.navigator;
+    if (navigator == null) return;
+    if (menu.isCurrent) {
+      navigator.pop();
+    } else {
+      navigator.removeRoute(menu);
+    }
   }
 
   /// Whether [view]'s answers are each one tap: not a question that takes several answers, nor one
@@ -2660,8 +2708,10 @@ class _TerminalPageState extends State<TerminalPage>
     TerminalSession? session,
   }) {
     final agentName = agent.displayName;
-    showPhoneSheet(
+    Route<void>? shown;
+    final closed = showPhoneSheet(
       context,
+      onShown: (route) => _menu = shown = route,
       // Where it runs, written as everywhere else: `hn` over `M2:autonomous-harness ⑂ main`.
       title: [
         '$agentName · $machineName',
@@ -2725,6 +2775,11 @@ class _TerminalPageState extends State<TerminalPage>
         ),
         PhoneSheetSection(actions: [_stopAction(agent)]),
       ],
+    );
+    unawaited(
+      closed.whenComplete(() {
+        if (identical(_menu, shown)) _menu = null;
+      }),
     );
   }
 
@@ -2858,6 +2913,22 @@ class _TerminalPageState extends State<TerminalPage>
           ),
         ),
       ),
+    // Another engine on the same project — what to reach for when a subscription runs out. The
+    // desktop's pane agent selector. Named by the agent it is on now, as the Model row is.
+    if (AppNotifier.canChangeAgent(agent))
+      PhoneSheetAction(
+        icon: LucideIcons.arrowLeftRight300,
+        label: 'Change agent',
+        value: _changing
+            ? 'switching…'
+            : engineIdentity(
+                agent.engine,
+                displayName: agent.engineDisplayName,
+              ).label,
+        enabled: !_changing,
+        chevron: !_changing,
+        onTap: () => unawaited(_changeAgent(agent)),
+      ),
     PhoneSheetAction(
       icon: LucideIcons.pencil300,
       label: 'Rename…',
@@ -2886,6 +2957,73 @@ class _TerminalPageState extends State<TerminalPage>
   /// it, until it is opened again.
   bool get _restarting =>
       widget.notifier.agentRestarting(widget.machineId, widget.agentId);
+
+  /// Whether this agent has a switch on its way — see [AppNotifier.agentChanging].
+  bool get _changing =>
+      widget.notifier.agentChanging(widget.machineId, widget.agentId);
+
+  /// Change agent: pick the engine, and the harness goes on there with the conversation handed
+  /// over — then the new one opens in place of this one. See [AppNotifier.changeAgent].
+  ///
+  /// The choices are the desktop picker's rows in its words: the agent it is on now, and for each
+  /// other whether the conversation goes with it or it starts a new one in the same project.
+  ///
+  /// ⚠️ **What opens the new agent is captured before the wait.** The switch stops this agent, and
+  /// this page can leave on its own while the answer is still out (its pane goes — see
+  /// `_hadPane`); the shell, which puts an agent on the home screen, is still there to open it.
+  Future<void> _changeAgent(Agent agent) async {
+    final current = agent.engine;
+    final picked = await showNewAgentChooser<String>(
+      context,
+      title: 'Change agent',
+      hint: 'Search agents',
+      items: [
+        for (final id in AppNotifier.agentChangeEngines())
+          ChooserItem(
+            value: id,
+            title: id == 'claude' ? 'Claude Code' : engineIdentity(id).label,
+            subtitle: id == current
+                ? 'Current agent'
+                : id == 'opencode'
+                ? 'Muse Spark 1.3 · continue with recent context'
+                : supportsAgentHandoff(id)
+                ? 'Continue this project with recent context'
+                : 'New conversation in the same project',
+            selected: id == current,
+          ),
+      ],
+    );
+    if (picked == null || picked == current || !mounted) return;
+    final messenger = ScaffoldMessenger.maybeOf(context);
+    final shell = PhoneShellScope.maybeOf(context);
+    // Held for the whole switch — see [_barHold].
+    _hold('switching to ${engineIdentity(picked).label}…');
+    final result = await widget.notifier.changeAgent(
+      widget.machineId,
+      widget.agentId,
+      picked,
+    );
+    if (mounted) {
+      _hold(null);
+      // Before the answer is said: a menu opened in the wait would cover it — see [_putMenuAway].
+      _putMenuAway();
+    }
+    final said = result.error ?? result.notice;
+    if (said != null) messenger?.showSnackBar(SnackBar(content: Text(said)));
+    final next = result.agentId;
+    if (result.error != null || next == null || next == widget.agentId) return;
+    if (mounted) {
+      openAgent(
+        context,
+        widget.notifier,
+        widget.machineId,
+        next,
+        replacingCurrentPage: true,
+      );
+    } else {
+      shell?.onOpenAgent(widget.machineId, next);
+    }
+  }
 
   /// Stopping the agent: the last card of its sheet, alone.
   ///

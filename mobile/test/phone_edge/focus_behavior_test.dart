@@ -451,6 +451,203 @@ void main() {
       await focus.close();
     });
 
+    /// A harness its machine can save and stop — what Change agent needs of one.
+    Agent switchable() => Agent(
+      id: 'a',
+      name: 'a',
+      engine: 'claude',
+      sessionId: 'session-a',
+      project: const AgentProject(name: 'web', cwd: '/code/web'),
+      terminalAvailable: true,
+      createdAt: DateTime.utc(2026, 10, 16, 1),
+      closeSupported: true,
+    );
+
+    /// The switch's own requests, in the order the machine got them.
+    List<String> switchSteps(EdgeConn conn) => [
+      for (final type in conn.requests)
+        if (const {
+          'agent_handoff_prepare',
+          'agent_recent',
+          'agent_close',
+          'agent_create',
+        }.contains(type))
+          type,
+    ];
+
+    /// Change agent ▸ [label], picked by searching for it: the list is longer than a screen.
+    Future<void> switchTo(WidgetTester tester, String label) async {
+      await tester.tap(find.text('Change agent'));
+      await frames(tester);
+      await tester.enterText(find.byType(TextField).last, label);
+      await frames(tester);
+      await tester.tap(find.text(label, findRichText: true).last);
+      await frames(tester);
+    }
+
+    testWidgets('Change agent is named by the agent it is on, and offered to '
+        'an agent only', (tester) async {
+      var focus = await openMenu(tester);
+      final row = find
+          .ancestor(of: find.text('Change agent'), matching: find.byType(Row))
+          .first;
+      expect(
+        find.descendant(of: row, matching: find.text('Claude')),
+        findsOneWidget,
+      );
+      await focus.close();
+
+      focus = await openMenu(tester, engine: 'terminal');
+      expect(find.text('Change agent'), findsNothing);
+      await focus.close();
+    });
+
+    testWidgets('Change agent: the desktop picker’s rows, then the agent picked '
+        'opens in place of this one', (tester) async {
+      final conn = EdgeConn({
+        'agent_handoff_prepare': {
+          'agentId': 'a',
+          'file': null,
+          'gitRepo': true,
+          'cwd': '/code/web',
+          'degraded': <String>[],
+        },
+        'agent_close': {'closed': true},
+      }, startsAgents)..handshaken = true;
+      final focus = await _Focus.open(
+        tester,
+        agents: [switchable()],
+        connection: conn,
+      );
+      await tester.tap(find.byKey(const ValueKey('terminal-title')));
+      await frames(tester);
+      await tester.tap(find.text('Change agent'));
+      await frames(tester);
+
+      expect(find.text('Current agent'), findsOneWidget);
+      expect(
+        find.text('Continue this project with recent context'),
+        findsWidgets,
+      );
+      expect(find.text('New conversation in the same project'), findsWidgets);
+      await tester.enterText(find.byType(TextField).last, 'Codex');
+      await frames(tester);
+      await tester.tap(find.text('Codex', findRichText: true).last);
+      for (var i = 0; i < 120 && focus.opened.isEmpty; i++) {
+        await tester.pump(const Duration(milliseconds: 250));
+      }
+
+      expect(switchSteps(conn), [
+        'agent_handoff_prepare',
+        'agent_close',
+        'agent_create',
+      ]);
+      expect(conn.payloads['agent_create']!.single['engine'], 'codex');
+      expect(focus.opened, [('m', 'new-agent')]);
+      // Nothing to hand over: the desktop's line for a switch without history.
+      expect(
+        find.text(
+          'Switched to Codex without history: no earlier conversation from '
+          'Claude was found to hand off.',
+        ),
+        findsOneWidget,
+      );
+      await focus.close();
+    });
+
+    testWidgets('Change agent that cannot go on says why, and opens nothing', (
+      tester,
+    ) async {
+      // A machine older than `agent_close`: the old agent could not be saved and stopped safely.
+      final focus = await openMenu(tester);
+      await switchTo(tester, 'Codex');
+      await frames(tester);
+
+      expect(
+        find.text(
+          'Update the Harness CLI on this machine to close saved sessions safely.',
+        ),
+        findsOneWidget,
+      );
+      expect(switchSteps(focus.conn), isEmpty);
+      expect(focus.opened, isEmpty);
+      await focus.close();
+    });
+
+    testWidgets('Change agent, while it runs, says so and cannot be pressed '
+        'again', (tester) async {
+      final handoff = Completer<Map<String, dynamic>>();
+      final conn = _SwitchConn(() => handoff.future)..handshaken = true;
+      final focus = await _Focus.open(
+        tester,
+        agents: [switchable()],
+        connection: conn,
+      );
+      await tester.tap(find.byKey(const ValueKey('terminal-title')));
+      await frames(tester);
+      await switchTo(tester, 'Codex');
+      expect(conn.handoffs, 1);
+
+      await tester.tap(find.byKey(const ValueKey('terminal-title')));
+      await frames(tester);
+      expect(find.text('switching…'), findsOneWidget);
+      await tester.tap(find.text('Change agent'));
+      await frames(tester);
+      expect(
+        find.text('Current agent'),
+        findsNothing,
+        reason: 'the row took no tap, so no second chooser opened',
+      );
+      expect(conn.handoffs, 1);
+
+      await tester.tapAt(const Offset(200, 40));
+      await frames(tester);
+      handoff.complete({'error': 'BUSY'});
+      await frames(tester);
+      await focus.close();
+    });
+
+    // The first switch tried on a phone waited half a minute on the computer: its two-second line
+    // had gone, the menu opened to check said `switching…` long after, and the answer was in a
+    // snackbar under that menu.
+    testWidgets('Change agent says it is switching for as long as it is, and '
+        'when it ends under an open menu the menu goes and the answer shows', (
+      tester,
+    ) async {
+      final handoff = Completer<Map<String, dynamic>>();
+      final conn = _SwitchConn(() => handoff.future)..handshaken = true;
+      final focus = await _Focus.open(
+        tester,
+        agents: [switchable()],
+        connection: conn,
+      );
+      await tester.tap(find.byKey(const ValueKey('terminal-title')));
+      await frames(tester);
+      await switchTo(tester, 'Codex');
+
+      // Past the two seconds a flash lasts.
+      await tester.pump(const Duration(seconds: 3));
+      expect(find.text('switching to Codex…'), findsOneWidget);
+
+      await tester.tap(find.byKey(const ValueKey('terminal-title')));
+      await frames(tester);
+      expect(find.text('switching…'), findsOneWidget);
+
+      handoff.completeError(
+        const WsRequestFailure(responseType: 'result', code: 'BUSY'),
+      );
+      await frames(tester);
+
+      expect(find.text('Rename…'), findsNothing, reason: 'the menu went');
+      expect(
+        find.text('Waiting for the conversation handoff. Try switching again.'),
+        findsOneWidget,
+      );
+      expect(find.text('switching to Codex…'), findsNothing);
+      expect(switchSteps(conn), ['agent_handoff_prepare']);
+      await focus.close();
+    });
+
     /// The menu again, over the terminal, as a second look at it opens it.
     Future<void> reopen(WidgetTester tester) async {
       await tester.tap(find.byKey(const ValueKey('terminal-title')));
@@ -2069,6 +2266,30 @@ class _RestartConn extends EdgeConn {
     requests.add(type);
     (payloads[type] ??= []).add(payload);
     return restart();
+  }
+}
+
+/// A machine whose every `agent_handoff_prepare` waits on [handoff] — a Change agent held mid-way.
+class _SwitchConn extends EdgeConn {
+  _SwitchConn(this.handoff);
+
+  final Future<Map<String, dynamic>> Function() handoff;
+
+  /// How many handoffs were asked for.
+  int get handoffs => payloads['agent_handoff_prepare']?.length ?? 0;
+
+  @override
+  Future<Map<String, dynamic>> request(
+    String type, {
+    Map<String, dynamic> payload = const {},
+    Duration timeout = const Duration(seconds: 20),
+  }) {
+    if (type != 'agent_handoff_prepare') {
+      return super.request(type, payload: payload, timeout: timeout);
+    }
+    requests.add(type);
+    (payloads[type] ??= []).add(payload);
+    return handoff();
   }
 }
 

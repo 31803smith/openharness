@@ -33,6 +33,7 @@ import '../core/agent_git_context.dart';
 import '../core/agent_preference.dart';
 import '../core/engine_availability.dart';
 import '../core/device_name.dart';
+import '../core/agent_handoff.dart';
 import '../core/permission_modes.dart';
 import '../core/last_opened_agent.dart';
 import '../core/phone_search_history.dart';
@@ -97,6 +98,20 @@ class RestartAgentResult {
   const RestartAgentResult({this.error, this.resumed = true});
 }
 
+/// What became of a Change agent ([AppNotifier.changeAgent]).
+///
+/// [error] is a sentence to show as it is; with it the old agent is either still running or saved
+/// and stopped, and choosing the same agent again carries the same switch on (it never starts a
+/// second harness). Without it [agentId] is the harness to open now, and [notice], when set, is the
+/// desktop's line for a switch that carried no history.
+class AgentChangeResult {
+  final String? error;
+  final String? agentId;
+  final String? notice;
+
+  const AgentChangeResult({this.error, this.agentId, this.notice});
+}
+
 /// One deliberate creation, retained by the form if its reply is lost. Reusing
 /// it checks the original request; opening New agent starts a fresh intent.
 /// The id a lifecycle request is checked by when its reply is lost — see `agent_create_status`.
@@ -138,6 +153,57 @@ class AgentCreationAttempt {
     _awaitingConfirmation = false;
     return _outcome = error;
   }
+}
+
+/// One Change agent: the harness it moves off, the engine it moves to, and what it has done so far
+/// — the desktop's `_AgentChange`.
+///
+/// ⚠️ **Kept across a retry, receipt and all.** The switch is several round trips (write the record,
+/// save and stop the old agent, start the new one), and any of them can lose its reply. Choosing
+/// the same agent again carries THIS switch on: the same [creation] asks `agent_create_status`
+/// about the harness it may already have started instead of starting a second, and the same
+/// [creation] id names the same handoff file. See [AppNotifier.changeAgent] for when it is let go.
+class _AgentChange {
+  _AgentChange(this.source, this.engine, this.revision);
+
+  /// The harness as it was when the switch was chosen. Every step checks the machine still lists
+  /// this one — same registration, same conversation — before acting on it.
+  final Agent source;
+  final String engine;
+
+  /// The account session the switch belongs to; signing out ends it.
+  final int revision;
+
+  /// The new harness's creation receipt. Its id is also the handoff's `changeId`.
+  final AgentCreationAttempt creation = AgentCreationAttempt();
+  Future<AgentChangeResult>? pending;
+
+  /// The new agent's first message: the machine's record of the conversation, or, from an older
+  /// machine, the last requests and answer. Null when there was nothing to hand off.
+  String? handoff;
+
+  /// The handoff was settled (the record written, or confirmed empty), so a retry reads nothing.
+  bool contextLoaded = false;
+
+  /// The switch is held on the handoff, with the old agent still running: only the same engine
+  /// carries it on.
+  bool handoffHeld = false;
+
+  /// Settled with nothing to hand off, and whether that is because the reads failed rather than
+  /// because there was no conversation — which notice the switch ends on.
+  bool handoffEmpty = false, handoffFailed = false;
+
+  /// The old agent is being, or has been, saved and stopped: the switch must be finished, never
+  /// dropped, or the person is left with neither agent.
+  bool preservingViews = false;
+
+  /// The machine said the old agent is saved and stopped. A retry starts the new one without
+  /// closing again: this phone's list can still show the old one running until the machine's
+  /// update arrives, and a second Stop of it is not this switch's to send.
+  bool closed = false;
+
+  /// The new agent's launch failed: another engine may be chosen.
+  bool launchFailed = false;
 }
 
 class MachineState {
@@ -2965,7 +3031,11 @@ class AppNotifier extends ChangeNotifier {
           prev.tokensUpdatedAt != agent.tokensUpdatedAt ||
           prev.outputStats != agent.outputStats ||
           // Whether a stopped row can be opened at all ([Agent.canPauseAndResume]).
-          prev.resumeMode != agent.resumeMode);
+          prev.resumeMode != agent.resumeMode ||
+          // What Change agent closes the harness by, and the mode it carries over.
+          prev.createdAt != agent.createdAt ||
+          prev.closeSupported != agent.closeSupported ||
+          prev.permissionMode != agent.permissionMode);
 
   /// Public retry hook used by the offline join guide's "Retry now" action.
   Future<void> retryOfflineMachine(String machineId) =>
@@ -7245,6 +7315,508 @@ class AppNotifier extends ChangeNotifier {
           'RESUME_FAILED' => 'The harness did not come back. Its output and conversation are kept.',
           _ => 'Restart failed: $code',
         };
+
+  /// Change agent's switches, by machine and agent — see [_AgentChange] for why one outlives a
+  /// failed step.
+  final Map<(String, String), _AgentChange> _agentChanges = {};
+
+  /// Whether a switch of this agent is on its way: the terminal menu's Change agent row says so
+  /// and takes no tap, as Restart does.
+  bool agentChanging(String machineId, String agentId) =>
+      _agentChanges[(machineId, agentId)]?.pending != null;
+
+  /// Whether Change agent is offered for [agent] — the desktop's pane agent selector.
+  ///
+  /// ⚠️ **Plain engines only, on the phone.** A domain-specific harness can run only the engines its
+  /// package lists (`dsh_list`, the desktop's `agentSwitchEngines`), and this app carries no Store
+  /// catalog to read that from (deliberately off, `agent_model_sections.dart`): offered here, the
+  /// switch would close the harness and start one the machine then refuses. A terminal is a shell,
+  /// not an agent to switch (the desktop offers it none either).
+  static bool canChangeAgent(Agent agent) =>
+      agent.engine != null && agent.dsh == null && agent.engine != 'terminal';
+
+  /// The engines a harness can be switched to, in the desktop picker's order: OpenCode first, the
+  /// rest by name. The current one is listed too, as the one it is on.
+  static List<String> agentChangeEngines() {
+    final ids = [for (final engine in allEngines) engine.id]
+      ..sort(
+        (a, b) => a == 'opencode'
+            ? -1
+            : b == 'opencode'
+            ? 1
+            : engineIdentity(a).label.compareTo(engineIdentity(b).label),
+      );
+    return ids;
+  }
+
+  /// Change agent: the same project, carried on by another engine — the desktop's `changeAgent`.
+  /// Mostly for a subscription that ran out: Claude Code to Codex, and back.
+  ///
+  /// The steps, in the desktop's order, each one only if the one before it held:
+  /// 1. The machine writes a record of the conversation into the project (`agent_handoff_prepare`)
+  ///    and the new agent is told to read it. An older machine answers UNSUPPORTED, and the last
+  ///    requests and answer are handed over instead (`agent_recent`). An engine that takes no first
+  ///    message gets neither: it starts a new conversation in the same folder.
+  /// 2. The old agent is saved and stopped (`agent_close`, `now`). Never before step 1: a switch
+  ///    that cannot carry the conversation leaves the old agent running.
+  /// 3. The new agent starts in the same folder, in the same permission mode where it has one.
+  ///
+  /// One switch per harness at a time. Choosing the same engine again while one runs joins it;
+  /// once one fails it is carried on by the same choice, receipt and all, until it is safe to drop
+  /// — see [_AgentChange].
+  Future<AgentChangeResult> changeAgent(
+    String machineId,
+    String agentId,
+    String engine,
+  ) {
+    final machine = machineStates[machineId];
+    final source = machine?.agents.where((a) => a.id == agentId).firstOrNull;
+    if (machine == null || source == null) {
+      return Future.value(
+        const AgentChangeResult(error: 'This harness is no longer available.'),
+      );
+    }
+    if (source.engine == engine) {
+      return Future.value(AgentChangeResult(agentId: agentId));
+    }
+    if (!canChangeAgent(source) || !allEngines.any((e) => e.id == engine)) {
+      return Future.value(
+        const AgentChangeResult(
+          error: 'This agent is not supported by the installed harness.',
+        ),
+      );
+    }
+    final key = (machineId, agentId);
+    var change = _agentChanges[key];
+    if (change?.pending case final pending?) {
+      return change!.engine == engine
+          ? pending
+          : Future.value(
+              const AgentChangeResult(error: 'The agent is already switching.'),
+            );
+    }
+    // Let go of a switch that left nothing to finish: the old agent still running and the handoff
+    // not held for this engine, or a launch that failed, or a creation refused for good. One whose
+    // old agent was already stopped is never let go — only finished.
+    if (change != null &&
+        ((!change.preservingViews &&
+                (!change.handoffHeld || change.engine != engine)) ||
+            change.launchFailed ||
+            (change.creation._finished && change.creation.agentId == null))) {
+      _agentChanges.remove(key);
+      change = null;
+    }
+    if (change != null && change.engine != engine) {
+      return Future.value(
+        AgentChangeResult(
+          error:
+              'Check the pending switch to '
+              '${engineIdentity(change.engine).label} before choosing another agent.',
+        ),
+      );
+    }
+    final operation = change ?? _AgentChange(source, engine, _authRevision);
+    _agentChanges[key] = operation;
+    _logChange(
+      operation,
+      change == null
+          ? 'switching from ${source.engine} to $engine'
+          : 'carrying the switch to $engine on',
+    );
+    late final Future<AgentChangeResult> run;
+    run = _changeAgent(machineId, operation)
+        .then((result) {
+          _logChange(
+            operation,
+            result.error == null
+                ? 'switched; ${result.agentId} opens'
+                : 'stopped: ${result.error}',
+          );
+          return result;
+        })
+        .whenComplete(() {
+          if (identical(operation.pending, run)) operation.pending = null;
+          if (!_disposed) notifyListeners();
+        });
+    operation.pending = run;
+    notifyListeners();
+    return run;
+  }
+
+  /// The steps of [changeAgent], for the switch [change] holds.
+  Future<AgentChangeResult> _changeAgent(
+    String machineId,
+    _AgentChange change,
+  ) async {
+    final machine = machineStates[machineId];
+    final source = change.source;
+    const inactive = AgentChangeResult(
+      error: 'This switch is no longer active.',
+    );
+    const changed = AgentChangeResult(
+      error: 'The conversation changed. Reopen Change agent.',
+    );
+    bool live() =>
+        machine != null &&
+        machineStates[machineId] == machine &&
+        _machineWorkCurrent(machine, change.revision);
+    // The harness as the machine lists it now, if it is still the one chosen.
+    Agent? same() {
+      final now = machine?.agents.where((a) => a.id == source.id).firstOrNull;
+      return now != null &&
+              now.createdAt == source.createdAt &&
+              now.sessionId == source.sessionId
+          ? now
+          : null;
+    }
+
+    if (!live()) return inactive;
+    final current = same();
+    if (current == null) {
+      change.handoffHeld = false;
+      return changed;
+    }
+    final folder = source.project?.cwd;
+    if (folder == null || folder.isEmpty) {
+      return const AgentChangeResult(
+        error: 'This harness has no project folder to open with another agent.',
+      );
+    }
+    // Asked before anything is written on the machine: one that cannot save and stop the old agent
+    // safely cannot finish the switch, and a handoff file left behind for nothing helps nobody.
+    if (!current.isStopped &&
+        !change.closed &&
+        (current.createdAt == null || !current.closeSupported)) {
+      return const AgentChangeResult(
+        error: 'Update the Harness CLI on this machine to close saved sessions safely.',
+      );
+    }
+    if (supportsAgentHandoff(change.engine) && !change.contextLoaded) {
+      final error = await _loadSwitchHandoff(machineId, change, folder);
+      if (error != null) return AgentChangeResult(error: error);
+      if (!live()) return inactive;
+    }
+    // The handoff can outlive a binding, an engine or a project change: close only the same one.
+    final latest = same();
+    if (latest == null ||
+        latest.engine != source.engine ||
+        latest.project?.cwd != folder) {
+      return changed;
+    }
+    change.preservingViews = true;
+    if (!latest.isStopped && !change.closed) {
+      _logChange(change, 'saving and stopping the old agent');
+      final refused = await _closeAgentNow(machineId, latest);
+      if (refused != null) {
+        change.preservingViews = false;
+        return AgentChangeResult(error: refused);
+      }
+      change.closed = true;
+      _logChange(change, 'the old agent is saved and stopped');
+      if (!live()) return inactive;
+    }
+    // The old agent's mode where the new engine has it; otherwise asking first, never more freedom
+    // than it had. An engine with no modes is sent none (the CLI refuses a mode an engine lacks).
+    final modes = permissionModesOf(change.engine);
+    final mode = modes.isEmpty
+        ? null
+        : modes.any((m) => m.id == source.permissionMode)
+        ? source.permissionMode
+        : 'ask';
+    _logChange(
+      change,
+      'starting ${change.engine} in the same folder '
+      '(${change.handoff == null ? 'no first message' : 'with the handoff'})',
+    );
+    final error = await createAgent(
+      machineId,
+      engine: change.engine,
+      folder: folder,
+      permissionMode: mode,
+      name: source.displayName,
+      prompt: change.handoff,
+      attempt: change.creation,
+    );
+    if (error != null) return AgentChangeResult(error: error);
+    final nextId = change.creation.agentId;
+    if (nextId == null) {
+      return const AgentChangeResult(
+        error: 'The new agent has not confirmed its start yet. Choose it again to check.',
+      );
+    }
+    if (!live()) return inactive;
+    final target = machine!.agents.where((a) => a.id == nextId).firstOrNull;
+    if (target?.launchState == 'failed') {
+      change.launchFailed = true;
+      return AgentChangeResult(
+        error: target!.launchDetail ?? 'The new agent could not start.',
+      );
+    }
+    _agentChanges.remove((machineId, source.id));
+    unawaited(agentPreference.select(change.engine));
+    String? notice;
+    if (change.handoffEmpty) {
+      final from = engineIdentity(source.engine).label;
+      final to = engineIdentity(change.engine).label;
+      notice = change.handoffFailed
+          ? agentSwitchHandoffFailedHint(from, to)
+          : agentSwitchNoHistoryHint(from, to);
+    }
+    return AgentChangeResult(agentId: nextId, notice: notice);
+  }
+
+  /// Fills [change]'s handoff for the new agent, or says why the switch must not go on — the
+  /// desktop's `_loadSwitchHandoff`. Both reads happen BEFORE the old agent is closed.
+  ///
+  /// First choice: the machine writes the whole conversation into the project and the new agent is
+  /// told to read it. A reply that does not hold up ([acceptAgentHandoffReply]) holds the switch with
+  /// the old agent still running. Only an explicit UNSUPPORTED — a machine older than the request —
+  /// falls back to the last requests and answer.
+  Future<String?> _loadSwitchHandoff(
+    String machineId,
+    _AgentChange change,
+    String folder,
+  ) async {
+    const waiting =
+        'Waiting for the conversation handoff. Try switching again.';
+    const unreadable =
+        'Could not read the conversation for the handoff. Try switching again.';
+    final source = change.source;
+    change.handoffHeld = true;
+    try {
+      final reply = await _conn(machineId).request(
+        'agent_handoff_prepare',
+        payload: {
+          'agentId': source.id,
+          'changeId': change.creation._id,
+          'targetEngine': change.engine,
+        },
+        timeout: const Duration(seconds: 6),
+      );
+      final accepted = acceptAgentHandoffReply(
+        reply,
+        agentId: source.id,
+        changeId: change.creation._id,
+        folder: folder,
+        sourceLabel: engineIdentity(source.engine).label,
+      );
+      if (!accepted.accepted) {
+        _logChange(
+          change,
+          'handoff reply did not hold up; the old agent keeps running',
+        );
+        return waiting;
+      }
+      _logChange(
+        change,
+        accepted.prompt == null
+            ? 'handoff: nothing to hand over'
+            : 'handoff: the machine wrote the record',
+      );
+      change
+        ..handoff = accepted.prompt
+        ..handoffEmpty = accepted.prompt == null
+        ..handoffFailed = false
+        ..contextLoaded = true
+        ..handoffHeld = false;
+      return null;
+    } on WsRequestFailure catch (failure) {
+      if (failure.code == 'CHANGE_CONFLICT') {
+        change.handoffHeld = false;
+        _logChange(change, 'handoff: the conversation changed');
+        return 'The conversation changed. Choose the agent again to start a new switch.';
+      }
+      if (failure.code != 'UNSUPPORTED') {
+        _logChange(
+          change,
+          'handoff refused (${failure.code}); the old agent keeps running',
+        );
+        return waiting;
+      }
+      _logChange(
+        change,
+        'handoff: an older machine; reading the last requests instead',
+      );
+    } catch (error) {
+      _logChange(
+        change,
+        'handoff unanswered ($error); the old agent keeps running',
+      );
+      return waiting;
+    }
+    try {
+      final recent = await _conn(machineId).request(
+        'agent_recent',
+        payload: {'agentId': source.id, 'n': 5},
+        timeout: const Duration(seconds: 4),
+      );
+      if (recent['agentId'] != null && recent['agentId'] != source.id) {
+        return unreadable;
+      }
+      final handoff = agentSwitchHandoff(
+        source.engine ?? 'the previous agent',
+        recent,
+      );
+      _logChange(
+        change,
+        handoff == null
+            ? 'handoff: no excerpt to hand over'
+            : 'handoff: excerpt read',
+      );
+      change
+        ..handoff = handoff
+        ..handoffEmpty = handoff == null
+        ..handoffFailed = handoff == null
+        ..contextLoaded = true
+        ..handoffHeld = false;
+      return null;
+    } catch (error) {
+      _logChange(
+        change,
+        'excerpt unreadable ($error); the old agent keeps running',
+      );
+      return unreadable;
+    }
+  }
+
+  /// One line of a switch's progress in the app log: which harness, and what just happened. Never
+  /// the conversation itself — no prompt, no excerpt, no path — only the steps, so a switch that
+  /// stopped somewhere can be followed afterwards (the first one on a phone stopped on a close that
+  /// never came back, and nothing said where).
+  void _logChange(_AgentChange change, String step) => appLog.info(
+    'agents',
+    'change agent ${_shortId(change.source.id)}: $step',
+  );
+
+  /// Saves and stops [agent] at once (`agent_close`, `now`) — the desktop's session close, for
+  /// Change agent. Null once the machine says it closed; otherwise what to tell the person.
+  ///
+  /// ⚠️ **A lost reply never sends a second Stop.** The machine's own list is read instead, and only
+  /// a harness it lists as stopped, the same one, counts as closed.
+  Future<String?> _closeAgentNow(String machineId, Agent agent) async {
+    const notChanged =
+        'Could not save and stop this conversation. Its agent has not been changed.';
+    final machine = machineStates[machineId];
+    final revision = _authRevision;
+    try {
+      final result = await _conn(machineId).request(
+        'agent_close',
+        payload: {
+          'agentId': agent.id,
+          'sessionId': agent.sessionId ?? '',
+          'createdAt': agent.createdAt!.toUtc().toIso8601String(),
+          'mode': 'now',
+        },
+        // Saving the conversation and letting the engine exit can take seconds on the machine.
+        timeout: const Duration(seconds: 30),
+      );
+      if (result['closed'] == true) return null;
+      final detail = result['detail'];
+      return detail is String && detail.isNotEmpty ? detail : notChanged;
+    } on WsRequestFailure catch (failure) {
+      appLog.info(
+        'agents',
+        'change agent ${_shortId(agent.id)}: close refused (${failure.code})',
+      );
+      if (failure.code == 'AGENT_CHANGED') {
+        return 'The conversation changed. Reopen Change agent.';
+      }
+      final detail = failure.detail;
+      return detail != null && detail.isNotEmpty ? detail : notChanged;
+    } catch (error) {
+      appLog.warn(
+        'agents',
+        'change agent ${_shortId(agent.id)}: close reply lost ($error); '
+            'asking the machine whether it stopped',
+      );
+      if (machine == null) return _closeUnconfirmed;
+      final stopped = await _stoppedAfterLostClose(machine, agent, revision);
+      final now = switch (stopped) {
+        true => 'stopped',
+        false => 'still running',
+        null => 'unknown',
+      };
+      appLog.info(
+        'agents',
+        'change agent ${_shortId(agent.id)}: after the lost reply the old '
+            'agent is $now',
+      );
+      return switch (stopped) {
+        true => null,
+        false =>
+          'The computer did not confirm the close, and the old agent is still '
+              'running. Try switching again.',
+        null => _closeUnconfirmed,
+      };
+    }
+  }
+
+  static const _closeUnconfirmed =
+      'Could not confirm the close. Check the machine connection and try again.';
+
+  /// How long a lost close waits for its socket to come back before it reads the machine's list.
+  static const _closeRecheckReady = Duration(seconds: 15);
+
+  /// How long between the reads of the machine's list after a lost close. A field only so a test
+  /// need not wait it out, as [resumeRedialAfter] is.
+  @visibleForTesting
+  Duration closeRecheckEvery = const Duration(seconds: 3);
+
+  /// After an `agent_close` whose reply never came: whether the machine stopped [agent], read from
+  /// its own list once the socket is back. True stopped, false still running, null not known (no
+  /// socket, a harness gone or replaced, the account changed).
+  ///
+  /// ⚠️ **Why the switch asks rather than giving up.** The first switch tried on a phone sent its
+  /// close and heard nothing for 28s, until the relay dropped the socket (2026-10-16, a Codex
+  /// harness). Whether the close ran at all could not be told from the phone, and "could not
+  /// confirm" left the person with nothing to go on. The machine's list says it: stopped, and the
+  /// switch carries on as if the reply had come; still running, and it says so, with the old agent
+  /// untouched. Read three times, [closeRecheckEvery] apart, because saving a conversation can
+  /// still be finishing when the socket comes back. Read straight from the machine rather than from
+  /// this phone's list, which the reconnect may still be refreshing.
+  Future<bool?> _stoppedAfterLostClose(
+    MachineState machine,
+    Agent agent,
+    int revision,
+  ) async {
+    final connection = _conn(machine.machine.machineId);
+    try {
+      await connection.waitUntilReady(timeout: _closeRecheckReady);
+    } catch (_) {
+      return null;
+    }
+    bool? stopped;
+    for (var read = 0; read < 3; read++) {
+      if (read > 0) await Future<void>.delayed(closeRecheckEvery);
+      if (!_machineWorkCurrent(machine, revision)) return null;
+      try {
+        final listed = await connection.request(
+          'agents_list',
+          payload: kAgentsListPayload,
+          timeout: const Duration(seconds: 10),
+        );
+        final raw = (listed['agents'] as List?)
+            ?.whereType<Map>()
+            .map((m) => Map<String, dynamic>.from(m))
+            .where((m) => m['id'] == agent.id)
+            .firstOrNull;
+        final observed = raw == null ? null : Agent.fromJson(raw);
+        // Gone, or another harness under the id now: not this close's to call either way.
+        if (observed == null || !observed.continuesSession(agent)) return null;
+        if (observed.isStopped) {
+          if (_machineWorkCurrent(machine, revision)) {
+            _upsertAgent(machine, observed, json: raw);
+            notifyListeners();
+          }
+          return true;
+        }
+        stopped = false;
+      } catch (_) {
+        // No answer this time: the next read may get one.
+      }
+    }
+    return stopped;
+  }
 
   /// Live models on every harness grid this machine is signed into, for the
   /// model sheet.
