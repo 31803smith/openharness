@@ -3,6 +3,7 @@ import 'package:harness_mobile/core/models.dart';
 import 'package:harness_mobile/measurement/product_measurement.dart';
 
 import 'viewer_app_fixture.dart';
+import 'voice_fakes.dart' show MemoryKeyValueStore;
 
 /// The flows the phone counts as the desktop does — its dials, a stopped harness resumed — as the
 /// app itself reports them, through the account's own sharing.
@@ -166,6 +167,53 @@ void main() {
           ))['ui_phone_resume_recovery_started'],
           2,
         );
+      },
+    );
+  });
+
+  group('the signed-out choice, carried to the account as on the desktop', () {
+    String? kept(MemoryKeyValueStore storage) =>
+        storage.values[ProductMeasurement.setupPreferenceKey];
+
+    test(
+      'an opt-out made signed out turns the account off, asked once',
+      () async {
+        final storage = MemoryKeyValueStore()
+          ..values[ProductMeasurement.setupPreferenceKey] =
+              ProductMeasurement.pendingSetupOptOut;
+        final rig = await signedInWith({'m': []}, storage: storage);
+        addTearDown(rig.app.dispose);
+        final usage = rig.app.productMeasurement;
+
+        await usage.flush();
+        await usage.setupChoiceSaved;
+        expect(rig.api.usageChoiceAsks, [false]);
+        expect(usage.accountOptOutPending, isFalse);
+        expect(usage.sharing, isFalse);
+        expect(kept(storage), 'false');
+
+        await usage.flush();
+        expect(rig.api.usageChoiceAsks, [
+          false,
+          null,
+        ], reason: 'then only read');
+      },
+    );
+
+    test(
+      'left on, the account keeps its own choice, and the phone remembers it',
+      () async {
+        final storage = MemoryKeyValueStore();
+        final rig = await signedInWith({'m': []}, storage: storage);
+        addTearDown(rig.app.dispose);
+        rig.api.usageChoice = {'enabled': false, 'revision': 2};
+        final usage = rig.app.productMeasurement;
+
+        await usage.flush();
+        await usage.setupChoiceSaved;
+        expect(rig.api.usageChoiceAsks, [null]);
+        expect(usage.signedOutSharing, isFalse);
+        expect(kept(storage), 'false');
       },
     );
   });

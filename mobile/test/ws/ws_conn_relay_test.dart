@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -386,6 +387,55 @@ void main() {
         expect(utf8.decode(sealed.frame.bytes), 'pwd');
       },
     );
+
+    test('what a daemon counts says it is the phone\'s, inside the seal; nothing else does', () async {
+      final (conn, link) = await connected();
+      // Never answered here: what matters is what reached the machine.
+      void ask(String type, Map<String, dynamic> payload) => unawaited(
+        conn.request(type, payload: payload).then((_) {}, onError: (_) {}),
+      );
+      ask('agent_create', {'engine': 'claude'});
+      ask('agents_list', {'scope': 'all'});
+      conn.sendRaw('message', {'content': 'hi', 'agentId': 'a'});
+      conn.sendRaw('app_presence', {'focused': true});
+      await eventually(
+        () => [
+          'agent_create',
+          'agents_list',
+          'message',
+          'app_presence',
+        ].every((type) => link.frames.any((f) => f['type'] == type)),
+      );
+
+      final create = link.frames.firstWhere((f) => f['type'] == 'agent_create');
+      expect((create['payload'] as Map).keys, [
+        '__e2e',
+      ], reason: 'the relay sees no more than before');
+      expect(link.opened('agent_create').single['usageSurface'], 'phone');
+      expect(link.opened('message').single['usageSurface'], 'phone');
+      expect(
+        link.opened('agents_list').single.containsKey('usageSurface'),
+        isFalse,
+      );
+      expect(link.opened('app_presence').single, {'focused': true});
+      final hello = link.frames.firstWhere((f) => f['type'] == 'e2e_hello');
+      expect(jsonEncode(hello), isNot(contains('usageSurface')));
+    });
+
+    test('the phone marks exactly the requests the daemon counts', () {
+      final signals = File('../cli/src/lib/productUsageSignals.ts')
+          .readAsStringSync();
+      final actions = RegExp(r'const actions = \{([^}]*)\}')
+          .firstMatch(signals)!
+          .group(1)!;
+      final counted = {
+        for (final match in RegExp(r'(\w+):').allMatches(actions))
+          match.group(1)!,
+        // Counted by its own name there, not through the table.
+        'message',
+      };
+      expect(WsConn.usageMeasuredRequests, counted);
+    });
 
     test('sendRaw goes out as it is when its type is not sealed', () async {
       final (conn, link) = await connected();

@@ -157,9 +157,20 @@ class FakeApi extends ApiClient {
   Map<String, dynamic> usageChoice = const {'enabled': true, 'revision': 0};
   final List<Map<String, dynamic>> usageReports = [];
 
+  /// What each read or save of the choice asked: null for a read, the setting for a save.
+  final List<bool?> usageChoiceAsks = [];
+
   @override
-  Future<Map<String, dynamic>> productUsageSettings({bool? enabled}) async =>
-      Map.of(usageChoice);
+  Future<Map<String, dynamic>> productUsageSettings({bool? enabled}) async {
+    usageChoiceAsks.add(enabled);
+    if (enabled != null) {
+      usageChoice = {
+        'enabled': enabled,
+        'revision': (usageChoice['revision'] as int) + 1,
+      };
+    }
+    return Map.of(usageChoice);
+  }
 
   @override
   Future<Map<String, dynamic>> productUsageReport(

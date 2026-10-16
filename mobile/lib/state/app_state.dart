@@ -1135,6 +1135,9 @@ class AppNotifier extends ChangeNotifier {
         ProductMeasurement(
           surface: kIsWeb ? 'web' : 'phone',
           automatic: !kUnderTest,
+          // Signed-out counts start on, as the desktop's do, where an opt-out can be kept: the app's
+          // own store. A test or the sample (`demo/`) has none, and stays off.
+          setupStorage: paneLayoutStore?.storage,
           sendSetup: (report) =>
               sendSetupMeasurement(this.config.apiBaseUrl, report),
         );
@@ -1182,7 +1185,7 @@ class AppNotifier extends ChangeNotifier {
         : null;
     productMeasurement.account(
       scope,
-      choice: () => api.productUsageSettings(),
+      choice: () => productUsageSettings(),
       send: api.productUsageReport,
     );
     launchMeasurement?.account(
@@ -1194,6 +1197,17 @@ class AppNotifier extends ChangeNotifier {
       productConnections.clear();
       productResumes.clear();
     }
+  }
+
+  /// The account's product-usage choice — or, while an opt-out made before sign-in waits to be
+  /// carried to the account, set off: the desktop's rule. Pending until the server confirms it, so a
+  /// failed request or a default-on answer never quietly restores sharing.
+  Future<Map<String, dynamic>> productUsageSettings({bool? enabled}) async {
+    await productMeasurement.setupChoiceReady;
+    return api.productUsageSettings(
+      enabled:
+          enabled ?? (productMeasurement.accountOptOutPending ? false : null),
+    );
   }
 
   // Connection keys already belong to the app. Only fixed outcomes reach measurement, never the key.
