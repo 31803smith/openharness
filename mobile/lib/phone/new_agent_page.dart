@@ -92,6 +92,17 @@ class _NewAgentPageState extends State<NewAgentPage> {
 
   /// Claude until somebody picks another — the engine most agents are started with.
   String? _engine = 'claude';
+
+  /// A plain shell is chosen rather than an agent — the desktop's `isTerminal`.
+  ///
+  /// ⚠️ **A terminal takes none of an agent's choices, so the form asks for none.** The machine opens
+  /// it in a folder that exists, or at home with none (`cli/src/core/agents/launches.ts`): a project
+  /// is optional, New Folder and Clone are refused (`INVALID_PROJECT_SOURCE`, it does not prepare
+  /// one), and a shell has no model, approvals, Codex profile, branch, worktree or first task. Each
+  /// of those is left out of the request rather than sent and refused, and its row is not drawn.
+  /// The choices themselves are kept, as the desktop keeps them, so picking an agent again finds
+  /// the form as it was.
+  bool get _terminal => isTerminalEngine(_engine);
   String? _error;
   bool _creating = false;
   bool _optionsOpen = false;
@@ -489,6 +500,8 @@ class _NewAgentPageState extends State<NewAgentPage> {
   /// and "Claude" alone reads there as a model.
   String _engineName(String id) => id == 'claude'
       ? 'Claude Code'
+      : isTerminalEngine(id)
+      ? terminalIdentity.label
       : allEngines.where((identity) => identity.id == id).firstOrNull?.label ??
             id;
 
@@ -769,7 +782,9 @@ class _NewAgentPageState extends State<NewAgentPage> {
 
   Future<void> _create() async {
     final engine = _engine;
-    if ((_folder == null && _project == null) || engine == null || _creating) {
+    if ((_folder == null && _project == null && !_terminal) ||
+        engine == null ||
+        _creating) {
       return;
     }
     // A request still waiting on its answer is asked about, never made again — see [_creation].
@@ -785,6 +800,22 @@ class _NewAgentPageState extends State<NewAgentPage> {
         engine,
         await widget.notifier.checkAgentCreation(pending),
       );
+      return;
+    }
+    if (isTerminalEngine(engine)) {
+      // No Git wait and no branch guard: a terminal is sent its folder alone, never a branch or a
+      // worktree, so there is nothing to read first and nothing it could switch. No task either —
+      // the shell is typed into once it opens. See [_terminal].
+      final creation = _creation = AgentCreationAttempt();
+      final error = await widget.notifier.createAgent(
+        _machineId,
+        engine: engine,
+        // The folder chosen, or none for home — never [_project], which a terminal cannot make.
+        folder: _folder,
+        deskTabId: widget.deskTabId,
+        attempt: creation,
+      );
+      _answered(creation, engine, error);
       return;
     }
     if (!await _gitSettled()) return;
@@ -957,7 +988,11 @@ class _NewAgentPageState extends State<NewAgentPage> {
       _applyDefaultProject();
       final info = _repository;
       final mode = _permissionModeChoice;
-      final ready = _engine != null && (_folder != null || _project != null);
+      // A terminal needs no project: with none it opens at home.
+      final ready =
+          _engine != null && (_terminal || _folder != null || _project != null);
+      // Only an agent's form is missing its project; a terminal's says where it opens.
+      final needsProject = !_terminal && _folder == null && _project == null;
       final nothingRunning = _machines.every((m) => m.agents.isEmpty);
       final count = _task.text.trim().length;
       // Typing the task, the keyboard leaves room for one line of the choices, not four cut ones.
@@ -1096,31 +1131,33 @@ class _NewAgentPageState extends State<NewAgentPage> {
                                 ),
                                 TtyFormRow(
                                   label: 'project',
-                                  value: _folder == null && _project == null
+                                  value: needsProject
                                       ? 'Choose a project'
                                       : _projectName,
-                                  valueColor:
-                                      _folder == null && _project == null
-                                      ? tty.green
-                                      : null,
+                                  valueColor: needsProject ? tty.green : null,
                                   detail: null,
                                   onTap: _locked
                                       ? null
                                       : () => unawaited(_chooseProject()),
                                 ),
                                 // The owner's default flow matches desktop: choose agent and project.
-                                // Worktree, approvals and profile stay behind Options.
-                                TtyFormRow(
-                                  label: 'options',
-                                  value: _optionsOpen ? '[-]' : '[+]',
-                                  chevron: false,
-                                  onTap: _locked
-                                      ? null
-                                      : () => setState(
-                                          () => _optionsOpen = !_optionsOpen,
-                                        ),
-                                ),
-                                if (_optionsOpen && _engine != null)
+                                // Worktree, approvals and profile stay behind Options. A terminal has
+                                // none of them ([_terminal]), so it has no Options either: a row that
+                                // opened onto nothing, or onto rows that would be ignored, is noise.
+                                if (!_terminal)
+                                  TtyFormRow(
+                                    label: 'options',
+                                    value: _optionsOpen ? '[-]' : '[+]',
+                                    chevron: false,
+                                    onTap: _locked
+                                        ? null
+                                        : () => setState(
+                                            () => _optionsOpen = !_optionsOpen,
+                                          ),
+                                  ),
+                                if (_optionsOpen &&
+                                    _engine != null &&
+                                    !_terminal)
                                   TtyFormRow(
                                     label: 'model',
                                     value:
@@ -1151,7 +1188,7 @@ class _NewAgentPageState extends State<NewAgentPage> {
                                         ? null
                                         : () => unawaited(_chooseProfile()),
                                   ),
-                                if (_optionsOpen) ...[
+                                if (_optionsOpen && !_terminal) ...[
                                   TtyFormRow(
                                     label: 'branch',
                                     valueColor: info == null ? tty.faint : null,
@@ -1219,6 +1256,7 @@ class _NewAgentPageState extends State<NewAgentPage> {
                                   // running, somebody knows what to ask, and the
                                   // chips were filler over the form.
                                   if (nothingRunning &&
+                                      !_terminal &&
                                       _task.text.trim().isEmpty &&
                                       !_creating)
                                     Padding(
@@ -1247,54 +1285,68 @@ class _NewAgentPageState extends State<NewAgentPage> {
                                         ],
                                       ),
                                     ),
-                                  Row(
-                                    children: [
-                                      Expanded(
-                                        child: TtyText(
-                                          'task (optional)',
-                                          color: tty.faint,
-                                          size: TtySize.meta,
+                                  // A shell has no first task: in place of a field whose words would
+                                  // never be sent, the desktop's line for it. What was typed stays in
+                                  // [_task], so picking an agent again finds it — the desktop's rule.
+                                  if (_terminal)
+                                    TtyText(
+                                      'A terminal opens straight on your shell; '
+                                      'type there.',
+                                      color: tty.faint,
+                                      size: TtySize.meta,
+                                    )
+                                  else ...[
+                                    Row(
+                                      children: [
+                                        Expanded(
+                                          child: TtyText(
+                                            'task (optional)',
+                                            color: tty.faint,
+                                            size: TtySize.meta,
+                                          ),
                                         ),
-                                      ),
-                                      if (count > 1800)
-                                        TtyText(
-                                          '$count/$kFirstTaskMaxLength',
-                                          color: count > kFirstTaskMaxLength
-                                              ? tty.red
-                                              : tty.faint,
-                                          size: TtySize.meta,
+                                        if (count > 1800)
+                                          TtyText(
+                                            '$count/$kFirstTaskMaxLength',
+                                            color: count > kFirstTaskMaxLength
+                                                ? tty.red
+                                                : tty.faint,
+                                            size: TtySize.meta,
+                                          ),
+                                      ],
+                                    ),
+                                    const SizedBox(height: 6),
+                                    TtyField(
+                                      controller: _task,
+                                      hint: 'What should it do?',
+                                      lines: 6,
+                                      action: TextInputAction.newline,
+                                      onChanged: _taskEdited,
+                                      trailing: [
+                                        Align(
+                                          alignment: Alignment.bottomRight,
+                                          child: ListenableBuilder(
+                                            listenable:
+                                                _voiceIfAny ?? const _Silent(),
+                                            builder: (context, _) {
+                                              final status =
+                                                  _voiceIfAny?.status;
+                                              return TtyFieldMic(
+                                                live:
+                                                    status ==
+                                                        VoiceInputStatus
+                                                            .listening ||
+                                                    status ==
+                                                        VoiceInputStatus
+                                                            .starting,
+                                                onTap: _creating ? null : _talk,
+                                              );
+                                            },
+                                          ),
                                         ),
-                                    ],
-                                  ),
-                                  const SizedBox(height: 6),
-                                  TtyField(
-                                    controller: _task,
-                                    hint: 'What should it do?',
-                                    lines: 6,
-                                    action: TextInputAction.newline,
-                                    onChanged: _taskEdited,
-                                    trailing: [
-                                      Align(
-                                        alignment: Alignment.bottomRight,
-                                        child: ListenableBuilder(
-                                          listenable:
-                                              _voiceIfAny ?? const _Silent(),
-                                          builder: (context, _) {
-                                            final status = _voiceIfAny?.status;
-                                            return TtyFieldMic(
-                                              live:
-                                                  status ==
-                                                      VoiceInputStatus
-                                                          .listening ||
-                                                  status ==
-                                                      VoiceInputStatus.starting,
-                                              onTap: _creating ? null : _talk,
-                                            );
-                                          },
-                                        ),
-                                      ),
-                                    ],
-                                  ),
+                                      ],
+                                    ),
+                                  ],
                                   if (_error != null)
                                     Padding(
                                       padding: const EdgeInsets.only(top: 8),
@@ -1422,6 +1474,9 @@ class _NewAgentPageState extends State<NewAgentPage> {
   /// path is in the chooser.
   String get _projectName {
     if (_folder case final folder?) return _basename(folder);
+    // Where a terminal with no folder opens, as the desktop's project pill writes it. Before
+    // [_project]: a terminal never makes one, so naming it would say where the shell will not be.
+    if (_terminal) return '~';
     if (_project?.repository case final repository?) return repository.name;
     if (_project != null) return 'New folder';
     return 'Choose project';
@@ -1458,7 +1513,7 @@ class _NewAgentPageState extends State<NewAgentPage> {
       await _chooseAgent();
       return;
     }
-    if (_folder == null && _project == null) {
+    if (_folder == null && _project == null && !_terminal) {
       setState(() => _error = 'Choose a project.');
       await _chooseProject();
       return;
@@ -1471,12 +1526,21 @@ class _NewAgentPageState extends State<NewAgentPage> {
     if (!mounted) return;
     final machine = _machine;
     final recent = widget.notifier.agentPreference.recent;
-    final ids = {for (final identity in _engines) identity.id, ?_engine};
+    final ids = {
+      for (final identity in _engines) identity.id,
+      ?_engine,
+      kTerminalEngine,
+    };
     final ordered = [
       for (final id in recent)
         if (ids.contains(id)) id,
-      ...(ids.where((id) => !recent.contains(id)).toList()
+      ...(ids
+          .where((id) => !recent.contains(id) && !isTerminalEngine(id))
+          .toList()
         ..sort((a, b) => _engineName(a).compareTo(_engineName(b)))),
+      // After every agent, as the desktop lists it: a plain shell, for when none of them is wanted.
+      // Among the recents instead once it has been started here, as any agent is.
+      if (!recent.contains(kTerminalEngine)) kTerminalEngine,
     ];
     final picked = await showNewAgentChooser<String>(
       context,
@@ -1487,7 +1551,10 @@ class _NewAgentPageState extends State<NewAgentPage> {
           ChooserItem(
             value: id,
             title: _engineName(id),
-            subtitle: _engineNote(id),
+            // The desktop's line for it: every machine has a shell, so there is never a note to give.
+            subtitle: isTerminalEngine(id)
+                ? 'Your shell on ${machine?.machine.displayName ?? 'the computer'}'
+                : _engineNote(id),
             leading: EngineMark(engine: id, size: 18),
             selected: id == _engine,
             enabled:
@@ -1587,7 +1654,10 @@ class _NewAgentPageState extends State<NewAgentPage> {
       }
     }
     final here = _machine?.machine.displayName ?? 'this machine';
-    final canMake = _canMakeProject;
+    // A terminal opens in a folder that is there; the machine refuses to make one for it
+    // (INVALID_PROJECT_SOURCE), so Clone and New Folder are not offered to one — the chooser leaves
+    // an action that cannot be taken out rather than drawing it dead.
+    final canMake = _canMakeProject && !_terminal;
     final picked = await showNewAgentChooser<_ProjectChoice>(
       context,
       title: 'Project',

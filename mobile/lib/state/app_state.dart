@@ -6101,7 +6101,11 @@ class AppNotifier extends ChangeNotifier {
   Future<String?> createAgent(
     String machineId, {
     required String engine,
-    required String folder,
+
+    /// Where the harness works. Null only for a terminal (`kTerminalEngine`), which the machine
+    /// then opens at its home folder, as a terminal app would — the desktop's rule. The CLI refuses
+    /// every other engine without one (`INVALID_CWD`), so null is never a way to mean "anywhere".
+    required String? folder,
     ProjectFolderRequest? projectFolder,
     String? permissionMode,
     String? codexHome,
@@ -6122,7 +6126,9 @@ class AppNotifier extends ChangeNotifier {
       // What the agent is called until its engine titles the session. Absent, the machine names it
       // after the engine and the time ("Codex harness 9-17 15:26").
       if (name != null && name.trim().isNotEmpty) 'name': name.trim(),
-      if (projectFolder == null) 'cwd': folder,
+      // ⚠️ Left out, not sent empty, when there is no folder: the CLI opens a terminal at home only
+      // when `cwd` is ABSENT (`launches.ts`), and refuses an empty one as INVALID_CWD.
+      if (projectFolder == null && folder != null) 'cwd': folder,
       ...?projectFolder?.payload,
       'permissionMode': ?permissionMode,
       // ⚠️ **Both keys, and the older one is not redundant.** `permissionMode`

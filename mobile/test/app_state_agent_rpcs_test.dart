@@ -98,6 +98,48 @@ void main() {
       },
     );
 
+    test('a terminal with no folder is sent no cwd at all, and the machine '
+        'opens it at home', () async {
+      final rig = await signedInWith({'m': []});
+      addTearDown(rig.app.dispose);
+      rig.conn('m').answers['agent_create'] = (p) => created(p, 'shell');
+
+      final error = await measured(
+        rig,
+        'm',
+        rig.app.createAgent('m', engine: 'terminal', folder: null),
+      );
+
+      expect(error, isNull);
+      final asked = rig.conn('m').payloadsOf('agent_create').single;
+      expect(asked['engine'], 'terminal');
+      // Absent, not empty: the CLI opens a terminal at home only when cwd is missing, and
+      // refuses an empty one as INVALID_CWD.
+      expect(asked.containsKey('cwd'), isFalse);
+      expect(asked['bypassPermission'], isFalse);
+      expect(asked.containsKey('permissionMode'), isFalse);
+    });
+
+    test('a given folder is sent as it is, an empty one too', () async {
+      final rig = await signedInWith({'m': []});
+      addTearDown(rig.app.dispose);
+      rig.conn('m').answers['agent_create'] = (p) =>
+          p['cwd'] == '' ? throw refusal('INVALID_CWD') : created(p, 'shell');
+
+      await measured(
+        rig,
+        'm',
+        rig.app.createAgent('m', engine: 'terminal', folder: '/work'),
+      );
+      // An agent with no folder and nothing to make one is sent the empty cwd it always was, and
+      // the machine refuses it — null is a terminal's, never "anywhere".
+      await rig.app.createAgent('m', engine: 'claude', folder: '');
+
+      final [terminal, agent] = rig.conn('m').payloadsOf('agent_create');
+      expect(terminal['cwd'], '/work');
+      expect(agent['cwd'], '');
+    });
+
     test(
       'a Codex profile is sent only where the machine can take one',
       () async {
