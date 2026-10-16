@@ -2294,7 +2294,9 @@ class _TerminalPageState extends State<TerminalPage>
                                                       : null,
                                                   onBandTap: _onAnswerBand,
                                                   // A long press on the prompt offers Paste, as
-                                                  // a text field's does — see [_paste].
+                                                  // a text field's does; a hardware ⌘V (Ctrl+V
+                                                  // on Android) and a right- or middle-click
+                                                  // paste through it too — see [_paste].
                                                   onPaste: () =>
                                                       _paste(session),
                                                   // Where the reader is in the history —
@@ -2738,8 +2740,9 @@ class _TerminalPageState extends State<TerminalPage>
     onTap: () => _paste(session),
   );
 
-  /// The clipboard into [session] — the sheet's Paste row, and the Paste of a long press on the
-  /// prompt (`TerminalPanel.onPaste`). One path for both, so both read the image as well as the
+  /// The clipboard into [session] — the sheet's Paste row, the key bar's paste, and the panel's
+  /// own pastes (`TerminalPanel.onPaste`): a long press on the prompt, a hardware ⌘V (Ctrl+V on
+  /// Android), a right- or middle-click. One path for all, so all read the image as well as the
   /// text, ask iOS once, and send only into the terminal still on screen.
   void _paste(TerminalSession session) {
     final messenger = ScaffoldMessenger.maybeOf(context);

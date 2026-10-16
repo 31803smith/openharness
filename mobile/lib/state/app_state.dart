@@ -188,7 +188,8 @@ class MachineState {
   bool terminalPasteRawAvailable = false;
   // Whether this machine's CLI daemon understands TerminalBinaryKind.imagePaste (a native clipboard
   // IMAGE paste — see TerminalSession.pasteImage). False for any CLI published before this existed;
-  // the panel falls back to forwarding a bare Ctrl+V, today's only option for an image paste.
+  // the phone then says the machine is too old to receive images (phone/terminal_paste.dart) and
+  // never forwards a bare Ctrl+V, which would paste the far machine's clipboard, not the phone's.
   bool terminalImagePasteAvailable = false;
   // Whether this machine's CLI daemon understands TerminalBinaryKind.pasteFile (a dropped non-image
   // file, written to disk on that machine and pasted as a path — see TerminalSession.pasteFile).

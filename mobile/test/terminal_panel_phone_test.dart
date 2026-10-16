@@ -73,7 +73,16 @@ class _Platform {
         switch (call.method) {
           case 'Clipboard.setData':
             copied = (call.arguments as Map)['text'] as String?;
+          // ⚠️ Answered as well as `getData`: a paste asks it FIRST, which is how iOS is spared an
+          // "Allow Paste" prompt for a clipboard with no text on it. Unanswered it reads as false,
+          // and the paste never reads the text. Typed `<String, dynamic>`, the type Flutter casts
+          // the reply to.
+          case 'Clipboard.hasStrings':
+            return <String, dynamic>{
+              'value': clipboard != null && clipboard!.isNotEmpty,
+            };
           case 'Clipboard.getData':
+            onRead?.call();
             return clipboard == null ? null : {'text': clipboard};
         }
         return null;
@@ -90,6 +99,10 @@ class _Platform {
   final calls = <MethodCall>[];
   String? clipboard;
   String? copied;
+
+  /// Runs while the clipboard's text is being read — the window in which iOS can be showing its
+  /// paste prompt.
+  void Function()? onRead;
 }
 
 /// A download that finishes when the test says so.
@@ -489,6 +502,8 @@ void main() {
     });
   });
 
+  // On a pane whose host gave it no paste of its own (`TerminalPanel.onPaste`): the clipboard's text
+  // and nothing else. With the phone page's paste hooked up, ⌘V is `terminal_panel_paste_test.dart`.
   group('a hardware keyboard\'s ⌘V', () {
     Future<void> commandV(WidgetTester tester, {bool shift = false}) async {
       await tester.sendKeyDownEvent(LogicalKeyboardKey.metaLeft);
@@ -535,17 +550,22 @@ void main() {
       expect(wire.input, contains('git status'));
     }, variant: TargetPlatformVariant.only(TargetPlatform.iOS));
 
+    // ⚠️ It used to hand the agent a ⌃V here, for its engine to read a picture itself — off the FAR
+    // machine's clipboard, not this phone's. An image is the host's paste to send, or nothing.
     testWidgets(
-      'an empty clipboard hands the agent its own ⌃V, to read a picture itself',
+      'a clipboard with no text pastes nothing, and never a ⌃V for the far '
+      'machine',
       (tester) async {
-        _Platform(tester);
-        // What the image reader answers on a phone: nothing, at once. The
-        // test host is a Mac, where it would ask a channel nobody answers.
+        final platform = _Platform(tester);
+        // A picture on the clipboard, as the phone's native side would answer for one.
         const images = MethodChannel('harness/clipboard_image');
-        tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
-          images,
-          (_) async => null,
-        );
+        var imageReads = 0;
+        tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(images, (
+          _,
+        ) async {
+          imageReads++;
+          return Uint8List.fromList([0x89, 0x50, 0x4e, 0x47]);
+        });
         addTearDown(
           () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
             images,
@@ -559,7 +579,35 @@ void main() {
 
         await commandV(tester);
 
-        expect(wire.input, '\x16');
+        expect(wire.input, isNot(contains('\x16')));
+        expect(wire.binaries, isEmpty);
+        expect(wire.types, isNot(contains('terminal_chunked_upload_begin')));
+        expect(imageReads, 0);
+        // No text, so it was never read: iOS asks nobody about it.
+        expect(
+          platform.calls.map((c) => c.method),
+          isNot(contains('Clipboard.getData')),
+        );
+      },
+      variant: TargetPlatformVariant.only(TargetPlatform.iOS),
+    );
+
+    testWidgets(
+      'a terminal that reconnected during the read is not pasted into',
+      (tester) async {
+        final pane = session();
+        _Platform(tester)
+          ..clipboard = 'git status'
+          // The read waits on iOS's prompt, and the stream came back as another one meanwhile.
+          ..onRead = () => pane.streamId = 's2';
+        _machine(notifier, pasteRaw: true);
+        await pumpPanel(tester, pane, focused: true);
+        await tester.pump();
+
+        await commandV(tester);
+
+        expect(wire.ofKind(TerminalBinaryKind.paste), isEmpty);
+        expect(wire.input, isEmpty);
       },
       variant: TargetPlatformVariant.only(TargetPlatform.iOS),
     );

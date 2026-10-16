@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -643,6 +644,61 @@ void main() {
       expect(find.byType(SettingsPage), findsOneWidget);
       await focus.close();
     });
+  });
+
+  // ⌘V on an iPad's keyboard, Ctrl+V on an Android one: the menu's own Paste, not the desktop's —
+  // which ended in a ⌃V that pasted the far machine's clipboard rather than this phone's.
+  group('a hardware keyboard\'s paste', () {
+    final phones = TargetPlatformVariant({
+      TargetPlatform.iOS,
+      TargetPlatform.android,
+    });
+
+    /// The page, typing into its terminal.
+    Future<_Focus> typing(WidgetTester tester) async {
+      final focus = await _Focus.open(tester);
+      await focus.tapPrompt();
+      await tester.pump();
+      raiseKeyboard(tester);
+      await frames(tester);
+      return focus;
+    }
+
+    Future<void> pasteChord(WidgetTester tester) async {
+      final ios = defaultTargetPlatform == TargetPlatform.iOS;
+      final platform = ios ? 'ios' : 'android';
+      final modifier = ios
+          ? LogicalKeyboardKey.metaLeft
+          : LogicalKeyboardKey.controlLeft;
+      await tester.sendKeyDownEvent(modifier, platform: platform);
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyV, platform: platform);
+      await tester.sendKeyUpEvent(modifier, platform: platform);
+      await frames(tester);
+    }
+
+    testWidgets('pastes the clipboard\'s text as the menu\'s Paste does', (
+      tester,
+    ) async {
+      final focus = await typing(tester);
+      _clipboard = {'text': 'git status'};
+      await pasteChord(tester);
+      expect(focus.typed.join(), contains('git status'));
+      await focus.close();
+    }, variant: phones);
+
+    testWidgets('with nothing on the clipboard says so, and sends no ⌃V', (
+      tester,
+    ) async {
+      final focus = await typing(tester);
+      _clipboard = null;
+      await pasteChord(tester);
+      expect(focus.typed.join(), isNot(contains('\x16')));
+      expect(
+        find.text('There is nothing on the clipboard to paste.'),
+        findsOneWidget,
+      );
+      await focus.close();
+    }, variant: phones);
   });
 
   group('a question', () {

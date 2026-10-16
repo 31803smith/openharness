@@ -9,7 +9,6 @@ import 'package:flutter/semantics.dart';
 import 'package:flutter/services.dart';
 import 'package:xterm/xterm.dart';
 
-import '../clipboard/native_clipboard.dart';
 import '../logging/typing_trace.dart';
 import '../state/app_state.dart';
 
@@ -119,8 +118,13 @@ class TerminalPanel extends StatefulWidget {
   /// [onLineTap], and whether or not [onInputTap] is set: a band is drawn to be pressed.
   final void Function(TerminalLineBand band)? onBandTap;
 
-  /// Pastes the phone's clipboard into the session — the Paste of a long press on the prompt
-  /// (see `_TerminalPanelState._openPromptMenu`). Null offers no Paste there.
+  /// Pastes the phone's clipboard into the session — every paste the pane itself is asked for: the
+  /// Paste of a long press on the prompt (see `_TerminalPanelState._openPromptMenu`), a hardware
+  /// keyboard's ⌘V (Ctrl+V on Android), and a right- or middle-click with nothing selected (see
+  /// `_TerminalPanelState._paste`). Only called while the session takes input.
+  ///
+  /// Null offers no Paste on the prompt, and leaves the keys and clicks a paste of the clipboard's
+  /// text alone — see `_TerminalPanelState._pasteTextOnly` for why only the text.
   final VoidCallback? onPaste;
 
   /// Test seam for OS actions; normal panes use the platform launcher.
@@ -869,9 +873,9 @@ class _TerminalPanelState extends State<TerminalPanel>
   /// Paste while the session takes input.
   ///
   /// ⚠️ **Paste is the page's, not the panel's.** What it reads and how it sends lives in
-  /// `phone/terminal_paste.dart`, behind [TerminalPanel.onPaste]: the panel's own [_paste] is the
-  /// desktop's ⌘V, whose last resort is a Ctrl+V for the engine to read ITS clipboard — on a
-  /// phone that is the far machine's clipboard, not the one the person just copied to.
+  /// `phone/terminal_paste.dart`, behind [TerminalPanel.onPaste] — the same path a hardware ⌘V and
+  /// a right-click take (see [_paste]), so every way into a paste reads THIS phone's clipboard,
+  /// never the far machine's, and tells the person when there was nothing to send.
   bool _openPromptMenu(CellOffset cell) {
     final buffer = _viewTerminal.buffer;
     if (!_canPasteHere &&
@@ -1172,6 +1176,9 @@ class _TerminalPanelState extends State<TerminalPanel>
     _scheduleMenu();
   }
 
+  /// A right-click — or a middle-click, which xterm's gesture handler routes to this same callback
+  /// — on a mouse or trackpad: copies the selection when there is one, and otherwise pastes exactly
+  /// as a hardware ⌘V does ([_paste]).
   Future<void> _copyOrPaste() async {
     final terminal = widget.session.terminal;
     final selection = _controller.selection;
@@ -1184,28 +1191,13 @@ class _TerminalPanelState extends State<TerminalPanel>
     await _paste();
   }
 
-  /// Paste — including the kinds of clipboard this app cannot fully read.
-  ///
-  /// ⚠️ FLUTTER'S OWN `Clipboard` API ONLY SEES `text/plain`. A screenshot has no
-  /// text at all, so a naive body finds `null` and returns, silently: the single
-  /// most common thing anyone pastes into a coding agent did nothing, with no
-  /// error and nothing in a log. [NativeClipboard] closes that gap with a native
-  /// platform-channel read for an actual image (all but Windows; see its doc).
-  ///
-  /// The engines running in these panes read the system clipboard THEMSELVES —
-  /// Claude Code attaches an image on Ctrl+V — so on a LOCAL pane that is already
-  /// true with zero help from us: a bare Ctrl+V is all that ever ran here, before
-  /// native image paste existed, and it still works because the engine and this
-  /// app share the exact same OS clipboard. The wire-based `pasteImage` (chunked
-  /// upload, daemon writes the far side's OS clipboard, daemon replays Ctrl+V) is
-  /// reserved for a genuinely REMOTE pane, whose engine reads a DIFFERENT
-  /// clipboard than this one — which, on a phone, is every pane.
   /// An image handed over by the software keyboard's own clipboard.
   ///
   /// Flutter's [Clipboard] reads `text/plain` and nothing else, and Gboard hands
   /// the bytes over directly, so there is no clipboard to read at all. (The
-  /// actions sheet's Paste reads the system clipboard's image instead, through
-  /// [NativeClipboard]: see `phone/terminal_paste.dart`.)
+  /// actions sheet's Paste — and a hardware ⌘V, see [_paste] — reads the system
+  /// clipboard's image instead, through `NativeClipboard`: see
+  /// `phone/terminal_paste.dart`.)
   ///
   /// ⚠️ A pane on a phone is ALWAYS remote — the agent runs on another machine,
   /// whose engine reads a different OS clipboard — so unlike the desktop there is
@@ -1220,39 +1212,86 @@ class _TerminalPanelState extends State<TerminalPanel>
     unawaited(widget.session.pasteImage(bytes));
   }
 
+  /// The paste of a hardware keyboard's ⌘V (Ctrl+V on Android) and of a right- or middle-click:
+  /// the host's [TerminalPanel.onPaste] — on the phone the page's paste, `phone/terminal_paste.dart`,
+  /// the one the prompt's long-press Paste, the key bar's paste and the actions sheet's Paste run.
+  /// So a key does exactly what the on-screen Paste does: the text pasted, an image scaled under
+  /// the upload's ceiling and sent, and a word to the person when there was nothing to send.
+  ///
+  /// ⚠️ **Never a Ctrl+V for the engine to read its own clipboard.** That was this method's last
+  /// resort while it was the desktop's ⌘V, where the engine and the app share one OS clipboard. A
+  /// pane on a phone is ALWAYS remote, so the Ctrl+V reached the far machine and its engine pasted
+  /// THAT machine's clipboard — something the person never copied on this phone, with nothing on
+  /// screen to say why. The desktop's paste also sent the clipboard's image as it came, unscaled,
+  /// and iOS hands it over at full size: a photo from the library easily went over the upload's
+  /// ceiling and fell through to that same Ctrl+V.
+  ///
+  /// ⚠️ **Not asked while the pane cannot take input** — a watcher, a stream taken over or closed.
+  /// The host's paste reads the clipboard first and checks only after, so asked here it would raise
+  /// iOS's "Allow Paste" prompt for a paste that could only be refused, and then say the terminal
+  /// changed when it did not. The prompt's Paste is held to the same rule by [_canPasteHere].
   Future<void> _paste() async {
-    if (!widget.session.acceptsInput) return;
-    final text = (await Clipboard.getData(Clipboard.kTextPlain))?.text;
-    if (text != null && text.isNotEmpty) {
-      // A binary TerminalBinaryKind.paste frame rides the same AEAD channel as every other terminal
-      // byte, so this works identically for a local or a relayed machine — see pasteText's doc. Only
-      // the CLI's own version gates it: an older daemon never advertises the capability.
-      final machine = widget.notifier.stateOf(widget.session.machineId);
-      if (machine != null && machine.terminalPasteRawAvailable) {
-        await widget.session.pasteText(text);
-      } else {
-        widget.session.terminal.paste(text);
-      }
+    final session = widget.session;
+    if (!session.acceptsInput) return;
+    final paste = widget.onPaste;
+    if (paste != null) {
+      paste();
       return;
     }
-    final machine = widget.notifier.stateOf(widget.session.machineId);
-    if (machine != null && machine.terminalImagePasteAvailable) {
-      final imageBytes = await NativeClipboard.readImagePng();
-      if (imageBytes != null &&
-          imageBytes.isNotEmpty &&
-          imageBytes.length <= terminalLocalImagePasteMaxPayloadBytes) {
-        await widget.session.pasteImage(imageBytes);
-        return;
-      }
-    }
-    widget.session.terminal.keyInput(TerminalKey.keyV, ctrl: true);
+    await _pasteTextOnly(session);
   }
 
-  /// ⌘V (Ctrl+V off Apple) — taken from xterm so the fallthrough above applies.
+  /// The paste of a pane whose host gave it no [TerminalPanel.onPaste]: the clipboard's TEXT, as
+  /// one paste, and nothing else. The phone's own page always gives one; this is for any other
+  /// host of the panel — today, only tests.
   ///
-  /// xterm binds paste itself, but only ever to its text-only action. `onKeyEvent`
-  /// is the one hook that runs BEFORE its shortcut map (terminal_view.dart), so
-  /// this is where the binding has to be replaced rather than added.
+  /// ⚠️ **Text only, and that is the safe half, not a shortcut.** An image needs what only a host
+  /// has: the transcode that scales a photo under the upload's ceiling, a place to tell the person
+  /// why nothing went, and its own word on whether it still shows this terminal. Without them a
+  /// clipboard with no text on it pastes nothing — never the Ctrl+V that pasted the far machine's
+  /// clipboard instead (see [_paste]).
+  ///
+  /// Text is asked about first with [Clipboard.hasStrings], which iOS answers without its "Allow
+  /// Paste" prompt, so a clipboard holding only an image is never read at all. And the text lands
+  /// only where the key was pressed: the read can wait on that prompt, and in that time the pane can
+  /// have been handed another session, or its stream reconnected or taken over — the same rule
+  /// `phone/terminal_paste.dart` holds the page's paste to.
+  Future<void> _pasteTextOnly(TerminalSession session) async {
+    final streamId = session.streamId;
+    final String? text;
+    try {
+      if (!await Clipboard.hasStrings()) return;
+      text = (await Clipboard.getData(Clipboard.kTextPlain))?.text;
+    } on PlatformException {
+      // Nothing was sent and there is nobody to tell: the same as an empty clipboard.
+      return;
+    }
+    if (text == null || text.isEmpty) return;
+    if (!mounted ||
+        !identical(widget.session, session) ||
+        !session.acceptsInput ||
+        session.streamId != streamId) {
+      return;
+    }
+    // A binary TerminalBinaryKind.paste frame rides the same AEAD channel as every other terminal
+    // byte, so this works identically for a local or a relayed machine — see pasteText's doc. Only
+    // the CLI's own version gates it: an older daemon never advertises the capability.
+    final machine = widget.notifier.stateOf(session.machineId);
+    if (machine != null && machine.terminalPasteRawAvailable) {
+      await session.pasteText(text);
+    } else {
+      session.terminal.paste(text);
+    }
+  }
+
+  /// ⌘V (Ctrl+V on Android) from a hardware keyboard — taken from xterm so it pastes what [_paste]
+  /// pastes: the phone's clipboard, through the host's paste.
+  ///
+  /// xterm binds paste itself, but only ever to its text-only action, which reads no image and says
+  /// nothing when there is nothing to paste. `onKeyEvent` is the one hook that runs BEFORE its
+  /// shortcut map (terminal_view.dart), so this is where the binding has to be replaced rather than
+  /// added. Only this chord is taken: ⇧⌘V, iOS's ⌃V (a keystroke for the far program, like any
+  /// other control key) and every other key go on to xterm as they always did.
   KeyEventResult _onTerminalKey(FocusNode node, KeyEvent event) {
     if (event is! KeyDownEvent) return KeyEventResult.ignored;
     if (event.logicalKey != LogicalKeyboardKey.keyV) {
