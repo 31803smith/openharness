@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
@@ -20,6 +21,7 @@ import 'package:harness_mobile/state/pending_question.dart';
 import 'package:harness_mobile/terminal/terminal_binary.dart';
 import 'package:harness_mobile/terminal/terminal_font_store.dart';
 import 'package:harness_mobile/terminal/terminal_session.dart';
+import 'package:harness_mobile/ws/ws_conn.dart';
 import 'package:xterm/xterm.dart';
 
 import '../voice_fakes.dart';
@@ -335,10 +337,20 @@ void main() {
       WidgetTester tester, {
       bool working = false,
       bool raw = false,
+      String engine = 'claude',
+      EdgeConn? connection,
     }) async {
       final focus = await _Focus.open(
         tester,
-        agents: [edgeAgent('a', project: longProject, branch: longBranch)],
+        agents: [
+          edgeAgent(
+            'a',
+            engine: engine,
+            project: longProject,
+            branch: longBranch,
+          ),
+        ],
+        connection: connection,
       );
       if (working) focus.app.stateOf('m')!.processingAgentIds.add('a');
       focus.app.stateOf('m')!.terminalPasteRawAvailable = raw;
@@ -435,6 +447,172 @@ void main() {
       await tester.tap(find.text('Restart'));
       await frames(tester);
       expect(focus.conn.requests, contains('agent_restart'));
+      await focus.close();
+    });
+
+    /// The menu again, over the terminal, as a second look at it opens it.
+    Future<void> reopen(WidgetTester tester) async {
+      await tester.tap(find.byKey(const ValueKey('terminal-title')));
+      await frames(tester);
+    }
+
+    /// The menu put away by a tap above it, on the veil.
+    Future<void> putAway(WidgetTester tester) async {
+      await tester.tapAt(const Offset(200, 40));
+      await frames(tester);
+    }
+
+    // ⚠️ A second press is a second restart: the machine runs it once the first is done, and the
+    // engine that just came back is replaced again.
+    testWidgets('Restart, while it runs, says so and cannot be pressed again', (
+      tester,
+    ) async {
+      final reply = Completer<Map<String, dynamic>>();
+      final conn = _RestartConn(() => reply.future);
+      final focus = await openMenu(tester, connection: conn);
+      await tester.tap(find.text('Restart'));
+      await frames(tester);
+      expect(conn.restarts, 1);
+
+      // Nothing seemed to happen: the menu opened again, Restart pressed again.
+      await reopen(tester);
+      expect(find.text('restarting…'), findsOneWidget);
+      await tester.tap(find.text('Restart'));
+      await frames(tester);
+      expect(conn.restarts, 1);
+      expect(
+        find.text('restarting…'),
+        findsOneWidget,
+        reason: 'the row took no tap, so the menu is still up',
+      );
+
+      await putAway(tester);
+      reply.complete({'resumed': true});
+      await frames(tester);
+      await reopen(tester);
+      expect(find.text('restarting…'), findsNothing);
+      await tester.tap(find.text('Restart'));
+      await frames(tester);
+      expect(
+        conn.restarts,
+        2,
+        reason: 'once it is over, it can be asked again',
+      );
+      await focus.close();
+    });
+
+    testWidgets('Restart that came back on a new conversation says so', (
+      tester,
+    ) async {
+      final focus = await openMenu(
+        tester,
+        connection: EdgeConn(const {
+          'agent_restart': {'resumed': false},
+        }),
+      );
+      await tester.tap(find.text('Restart'));
+      await frames(tester);
+      expect(find.text('Restarted with a new conversation.'), findsOneWidget);
+      await focus.close();
+    });
+
+    testWidgets('Restart that came back where it was says nothing', (
+      tester,
+    ) async {
+      final focus = await openMenu(
+        tester,
+        connection: EdgeConn(const {
+          'agent_restart': {'resumed': true},
+        }),
+      );
+      await tester.tap(find.text('Restart'));
+      await frames(tester);
+      expect(find.byType(SnackBar), findsNothing);
+      await focus.close();
+    });
+
+    testWidgets('Restart from a machine too old to say how it came back says '
+        'nothing', (tester) async {
+      final focus = await openMenu(tester);
+      await tester.tap(find.text('Restart'));
+      await frames(tester);
+      expect(focus.conn.requests, contains('agent_restart'));
+      expect(find.byType(SnackBar), findsNothing);
+      await focus.close();
+    });
+
+    // A terminal always restarts as a fresh shell, which is what its Restart promised.
+    testWidgets('Restart of a terminal, a fresh shell, says nothing', (
+      tester,
+    ) async {
+      final focus = await openMenu(
+        tester,
+        engine: 'terminal',
+        connection: EdgeConn(const {
+          'agent_restart': {'resumed': false},
+        }),
+      );
+      await tester.tap(find.text('Restart'));
+      await frames(tester);
+      expect(focus.conn.requests, contains('agent_restart'));
+      expect(find.byType(SnackBar), findsNothing);
+      await focus.close();
+    });
+
+    testWidgets('Restart the machine refuses says why in a sentence, not as '
+        'the socket\'s error', (tester) async {
+      final conn = _RestartConn(
+        () async => throw const WsRequestFailure(
+          responseType: 'agent_restart_result',
+          code: 'AGENT_BUSY',
+        ),
+      );
+      final focus = await openMenu(tester, connection: conn);
+      await tester.tap(find.text('Restart'));
+      await frames(tester);
+      expect(
+        find.text(
+          'Another operation is changing this harness. Wait for it to finish, then retry.',
+        ),
+        findsOneWidget,
+      );
+      expect(find.textContaining('agent_restart_result'), findsNothing);
+      await putAway(tester);
+      await reopen(tester);
+      expect(find.text('restarting…'), findsNothing);
+      await focus.close();
+    });
+
+    // The machine may be restarting it still: "failed" would send the person to press Restart
+    // again, over a restart that is about to finish.
+    testWidgets('Restart whose reply never came does not say it failed', (
+      tester,
+    ) async {
+      final conn = _RestartConn(
+        () async => throw const WsRequestTimeout('agent_restart'),
+      );
+      final focus = await openMenu(tester, connection: conn);
+      await tester.tap(find.text('Restart'));
+      await frames(tester);
+      expect(
+        find.text(
+          'Could not confirm the restart. Check the terminal before restarting again.',
+        ),
+        findsOneWidget,
+      );
+      expect(find.textContaining('failed'), findsNothing);
+      expect(find.textContaining('timed out'), findsNothing);
+
+      await putAway(tester);
+      await reopen(tester);
+      expect(find.text('restarting…'), findsNothing);
+      await tester.tap(find.text('Restart'));
+      await frames(tester);
+      expect(
+        conn.restarts,
+        2,
+        reason: 'not held for good by a reply that never came',
+      );
       await focus.close();
     });
 
@@ -1613,13 +1791,15 @@ class _Focus {
   /// Every frame the session sent — a reopen among them.
   final List<(String, Map<String, dynamic>)> sent;
 
+  /// [connection], when given, is the machine instead of one answering from [answers].
   static Future<_Focus> open(
     WidgetTester tester, {
     List<Agent>? agents,
     Map<String, Map<String, dynamic>> answers = const {},
+    EdgeConn? connection,
   }) async {
     setPhone(tester, largePhone);
-    final conn = EdgeConn(answers);
+    final conn = connection ?? EdgeConn(answers);
     final app = edgeApp(conn: conn, agents: agents ?? [edgeAgent('a')]);
     final sent = <(String, Map<String, dynamic>)>[];
     final session = await liveTerminal(app, 'a', sent: sent);
@@ -1806,6 +1986,33 @@ class _Focus {
     await tester.pump(const Duration(seconds: 3));
     app.dispose();
     await tester.pump(const Duration(seconds: 30));
+  }
+}
+
+/// A machine whose answer to `agent_restart` the test writes: held until the test gives it, or
+/// thrown — the way a real socket hands the page a refusal ([WsRequestFailure]) and a reply that
+/// never came ([WsRequestTimeout]).
+class _RestartConn extends EdgeConn {
+  _RestartConn(this.restart);
+
+  /// What every `agent_restart` gets back.
+  final Future<Map<String, dynamic>> Function() restart;
+
+  /// How many restarts were sent.
+  int get restarts => payloads['agent_restart']?.length ?? 0;
+
+  @override
+  Future<Map<String, dynamic>> request(
+    String type, {
+    Map<String, dynamic> payload = const {},
+    Duration timeout = const Duration(seconds: 20),
+  }) {
+    if (type != 'agent_restart') {
+      return super.request(type, payload: payload, timeout: timeout);
+    }
+    requests.add(type);
+    (payloads[type] ??= []).add(payload);
+    return restart();
   }
 }
 

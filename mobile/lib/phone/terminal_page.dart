@@ -2866,12 +2866,23 @@ class _TerminalPageState extends State<TerminalPage>
         agent.name,
       ),
     ),
+    // Still immediate, no question first — the desktop's rule too ("Restart is an immediate
+    // action"). While one runs it says so and takes no tap, the way Settings ▸ Computers' Try again
+    // reads `trying…`: a second press is a second restart (see `AppNotifier._agentRestarts`).
     PhoneSheetAction(
       icon: LucideIcons.refreshCw300,
       label: 'Restart',
-      onTap: () => unawaited(_restart()),
+      value: _restarting ? 'restarting…' : null,
+      enabled: !_restarting,
+      onTap: () => unawaited(_restart(agent)),
     ),
   ];
+
+  /// Whether this agent has a restart on its way — from this menu, or from Connectors. Read as the
+  /// menu opens, like the rest of its rows: a menu left open while the restart finishes still says
+  /// it, until it is opened again.
+  bool get _restarting =>
+      widget.notifier.agentRestarting(widget.machineId, widget.agentId);
 
   /// Stopping the agent: the last card of its sheet, alone.
   ///
@@ -2945,15 +2956,26 @@ class _TerminalPageState extends State<TerminalPage>
 
   /// Restarting is a round trip that can fail, and the phone has no status rail to fail into — so
   /// the answer lands as a snackbar, which is the one surface a pushed page here always has.
-  Future<void> _restart() async {
+  ///
+  /// Said only when there is something to say. A restart that came back on its own conversation
+  /// says nothing: the terminal shows it. One that came back on a NEW conversation says so, in the
+  /// desktop's words — the engine could not reopen the old one, which is kept as a stopped harness
+  /// (`cli/src/core/agents/restart.ts`), and an empty prompt is easily taken for the conversation
+  /// it replaced. Except on a terminal, which always restarts as a fresh shell (the desktop does not
+  /// say it there either). Anything else is [RestartAgentResult.error], already a sentence.
+  Future<void> _restart(Agent agent) async {
     final messenger = ScaffoldMessenger.maybeOf(context);
     final result = await widget.notifier.restartAgent(
       widget.machineId,
       widget.agentId,
     );
-    final error = result.error;
-    if (error == null || messenger == null || !mounted) return;
-    messenger.showSnackBar(SnackBar(content: Text(error)));
+    final said =
+        result.error ??
+        (result.resumed || agent.engine == 'terminal'
+            ? null
+            : 'Restarted with a new conversation.');
+    if (said == null || messenger == null || !mounted) return;
+    messenger.showSnackBar(SnackBar(content: Text(said)));
   }
 }
 

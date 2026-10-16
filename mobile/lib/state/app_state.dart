@@ -87,6 +87,9 @@ enum AgentLoadStatus { idle, needsLink, loading, loaded, error }
 /// whether the daemon reattached the agent's prior session or fell back to a fresh one (e.g. the
 /// engine's resume flag wasn't recognized) — worth telling the user about, since it's not a failure
 /// but the conversation may not have continued the way "Restart" implies.
+///
+/// A non-null [error] is a sentence to show as it is, and not always a failure: a restart whose
+/// reply never came says it could not be confirmed (see `AppNotifier._restartUnconfirmed`).
 class RestartAgentResult {
   final String? error;
   final bool resumed;
@@ -6922,13 +6925,6 @@ class AppNotifier extends ChangeNotifier {
     return null;
   }
 
-  /// Restarts an agent via `agent_restart` — exits its current engine process and relaunches it
-  /// daemon-side, resuming its session where possible.
-  ///
-  /// The reply carries the same fresh `Agent` shape `agent_synced` pushes once the new process is
-  /// confirmed, so this upserts from the reply directly — idempotent on `agent.id`, same as
-  /// [createAgent], and safe even if the CLI's own `agent_synced` push for the restart arrives
-  /// separately (fire-and-forget on the CLI side, unordered relative to this reply).
   /// Bring a stopped agent back, so something can be opened on it.
   ///
   /// The desktop's `resumeAgent`: a thin guard over [restartAgent], which is the
@@ -7099,7 +7095,74 @@ class AppNotifier extends ChangeNotifier {
           _ => 'Could not open this harness: $code',
         };
 
-  Future<RestartAgentResult> restartAgent(
+  /// Restarts on their way, by machine and agent ([restartAgent]) — the Restart row of the
+  /// terminal's menu says so while one runs ([agentRestarting]).
+  ///
+  /// ⚠️ **A second `agent_restart` is a second restart, not a duplicate.** The machine works
+  /// through what one connection sends in order, so a press that came while the first restart
+  /// ran — the menu opened again because nothing seemed to happen — waited behind it and then
+  /// replaced the engine that had only just come back, cutting it off as it started. So a restart
+  /// of an agent that already has one on its way joins that one and sends nothing; Connectors'
+  /// restart button guards itself the same way (`_restarting` in `connectors_page.dart`), and
+  /// joins here too.
+  final Map<(String, String), Future<RestartAgentResult>> _agentRestarts = {};
+
+  /// Whether a restart of this agent is on its way — see [_agentRestarts].
+  bool agentRestarting(String machineId, String agentId) =>
+      _agentRestarts.containsKey((machineId, agentId));
+
+  /// How long a restart's reply is waited for: longer than the machine can take to answer one.
+  ///
+  /// ⚠️ **Not the 20s every other request waits.** The machine answers once the new engine is up,
+  /// and getting there can take more than that: up to 5s asking the shell whether the engine is
+  /// still installed, up to 3s for the old process to go, up to 8s for the new one to show — and,
+  /// when the resumed one never shows, another 8s for a fresh one (`cli/src/core/agents/restart.ts`,
+  /// `swap.ts`). At 20s the phone gave up on a restart still running, said it had failed, and
+  /// offered Restart again — which would have restarted it a second time.
+  static const _restartReplyWait = Duration(seconds: 45);
+
+  /// What the phone says when it cannot know how a restart ended: the desktop's sentence for the
+  /// same case (`restart_agent_action.dart`), word for word.
+  ///
+  /// ⚠️ **Not knowing is not failing.** A reply that did not come in time, a socket that dropped
+  /// under the request, a machine that lost track of its own answer — in all of these the restart
+  /// may have happened, or may be happening still. "Restart failed" sent people to press Restart
+  /// again; this sends them to the terminal first, which shows what really happened.
+  static const _restartUnconfirmed =
+      'Could not confirm the restart. Check the terminal before restarting again.';
+
+  /// Restarts an agent via `agent_restart` — exits its current engine process and relaunches it
+  /// daemon-side, resuming its session where possible.
+  ///
+  /// The reply carries the same fresh `Agent` shape `agent_synced` pushes once the new process is
+  /// confirmed, so this upserts from the reply directly — idempotent on `agent.id`, same as
+  /// [createAgent], and safe even if the CLI's own `agent_synced` push for the restart arrives
+  /// separately (fire-and-forget on the CLI side, unordered relative to this reply).
+  ///
+  /// A restart of an agent that already has one on its way returns that one's future and sends
+  /// nothing — see [_agentRestarts]. Listeners hear when one starts and when it ends.
+  ///
+  /// [RestartAgentResult.error] is a sentence to show as it is: why the machine refused, in the
+  /// desktop's words ([_restartRefused]), or [_restartUnconfirmed] when the outcome is not known.
+  Future<RestartAgentResult> restartAgent(String machineId, String agentId) {
+    final key = (machineId, agentId);
+    final inFlight = _agentRestarts[key];
+    if (inFlight != null) return inFlight;
+    // Answered before anything is held, so a machine that is not there never reads as restarting.
+    if (machineStates[machineId] == null) {
+      return Future.value(const RestartAgentResult(error: 'Machine not found'));
+    }
+    late final Future<RestartAgentResult> run;
+    run = _performRestartAgent(machineId, agentId).whenComplete(() {
+      if (identical(_agentRestarts[key], run)) _agentRestarts.remove(key);
+      if (!_disposed) notifyListeners();
+    });
+    _agentRestarts[key] = run;
+    notifyListeners();
+    return run;
+  }
+
+  Future<RestartAgentResult> _performRestartAgent(
     String machineId,
     String agentId,
   ) async {
@@ -7109,20 +7172,24 @@ class AppNotifier extends ChangeNotifier {
     }
     Map<String, dynamic> result;
     try {
-      result = await _conn(machineId)
-          .request('agent_restart', payload: {'agentId': agentId});
-    } catch (error) {
-      return RestartAgentResult(error: 'Restart failed: $error');
+      result = await _conn(machineId).request(
+        'agent_restart',
+        payload: {'agentId': agentId},
+        timeout: _restartReplyWait,
+      );
+    } on WsRequestFailure catch (failure) {
+      // How a refusal really arrives: the socket throws it rather than handing back the map.
+      return _restartRefused(failure.code, failure.detail);
+    } catch (_) {
+      // A timeout, a socket that dropped or could not send: no answer, so no outcome to report.
+      return const RestartAgentResult(error: _restartUnconfirmed);
     }
     final error = result['error'];
-    if (error is String) {
-      final detail = result['detail'];
-      return RestartAgentResult(
-        error: detail is String ? detail : 'Restart failed: $error',
-      );
-    }
+    if (error is String) return _restartRefused(error, result['detail']);
     final raw = result['agent'];
-    if (raw is Map) {
+    // Not after the app let go of its state: with [_restartReplyWait] a reply can land long after
+    // the tap, and a disposed notifier cannot notify.
+    if (raw is Map && !_disposed) {
       try {
         final json = Map<String, dynamic>.from(raw);
         _upsertAgent(machine, Agent.fromJson(json), json: json);
@@ -7136,6 +7203,41 @@ class AppNotifier extends ChangeNotifier {
     final resumed = result['resumed'];
     return RestartAgentResult(resumed: resumed is bool ? resumed : true);
   }
+
+  /// A restart the machine answered with an error code, as the desktop reads one
+  /// (`AppNotifier._runAgentRestart` there).
+  ///
+  /// ⚠️ **Three of the codes are not refusals.** `RESTART_FAILED` can follow a relaunch that did
+  /// happen but was not seen in time — the machine itself files it as "unconfirmed" when it keeps a
+  /// receipt (`cli/src/core/agents/launches.ts`) — and `INTERNAL` and `CREATION_STORAGE_FAILED`
+  /// say nothing about the pane at all. Telling those as a failure would invite the second restart
+  /// the terminal may not need; the desktop calls them unconfirmed, and so does this.
+  RestartAgentResult _restartRefused(String code, Object? detail) =>
+      const {
+        'INTERNAL',
+        'CREATION_STORAGE_FAILED',
+        'RESTART_FAILED',
+      }.contains(code)
+      ? const RestartAgentResult(error: _restartUnconfirmed)
+      : RestartAgentResult(error: _restartFailure(code, detail));
+
+  /// The desktop's `_restartFailure` wording for a restart the machine refused: the machine's own
+  /// [detail] when it sends one — already a sentence (`That harness has already exited.`) — or a
+  /// sentence for the code.
+  ///
+  /// Not [_resumeFailure], which words the same codes for opening saved work.
+  String _restartFailure(String code, Object? detail) =>
+      detail is String && detail.isNotEmpty
+      ? detail
+      : switch (code) {
+          'UNSUPPORTED_ON_REMOTE' || 'UNSUPPORTED' =>
+            'Update the harness CLI on this machine to restart a harness.',
+          'AGENT_BUSY' => 'Another operation is changing this harness. Wait for it to finish, then retry.',
+          'RESUME_UNAVAILABLE' => 'The saved conversation is unavailable. The harness can still be started fresh.',
+          'RESUME_SESSION_MISMATCH' => 'The harness came back on a different conversation. The saved one is still kept.',
+          'RESUME_FAILED' => 'The harness did not come back. Its output and conversation are kept.',
+          _ => 'Restart failed: $code',
+        };
 
   /// Live models on every harness grid this machine is signed into, for the
   /// model sheet.
