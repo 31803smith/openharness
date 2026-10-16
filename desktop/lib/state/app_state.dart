@@ -1376,6 +1376,10 @@ class AppNotifier extends ChangeNotifier {
   ({String name, String owner})? sharingEnded(String machineId) =>
       _sharingEnded[machineId];
 
+  /// The "stopped sharing" message [lastError] shows, and for which machine: taken down once that
+  /// machine is shared again, rather than left saying something no longer true.
+  ({String machineId, String text})? _sharingEndedError;
+
   void _noteSharingEnded(Machine machine) {
     final share = machine.machineShare;
     if (share == null) return;
@@ -7928,6 +7932,14 @@ class AppNotifier extends ChangeNotifier {
     }
     final visible = machines.map((machine) => machine.machineId).toSet();
     _sharingEnded.removeWhere((id, _) => visible.contains(id));
+    // Seen 2026-10-16: "Tuan stopped sharing Mac Auto with you." stayed up after Tuan shared it again.
+    final ended = _sharingEndedError;
+    if (ended != null &&
+        !machinesAreStale &&
+        visible.contains(ended.machineId)) {
+      _sharingEndedError = null;
+      if (_lastError == ended.text) _lastError = null;
+    }
     for (final entry in machineStates.entries) {
       if (!visible.contains(entry.key)) {
         // A shared machine that left the list was taken back by its owner (a fresh list says so).
@@ -18876,6 +18888,10 @@ class AppNotifier extends ChangeNotifier {
           _lastError =
               '${machine.machine.machineShare!.owner} stopped sharing $name with you.';
           _lastErrorRetryable = false;
+          _sharingEndedError = (
+            machineId: machine.machine.machineId,
+            text: _lastError!,
+          );
           unawaited(refreshMachines());
         } else {
           _lastError = machineSelectErrorText(code, name);
