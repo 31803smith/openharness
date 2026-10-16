@@ -1441,6 +1441,120 @@ void main() {
       await focus.close();
     });
   });
+
+  // The keys a pane's chrome offers and a phone cannot press, read off this
+  // page's own buffer and drawn on its key strip — and taken off it again the
+  // moment the pane cannot type.
+  group('the pane\'s own keys on the strip', () {
+    const queued = '\r\n  ? 1 question\r\n    shift+← to answer';
+    const cycle = '\r\n  ⏵⏵ auto mode on (shift+tab to cycle)';
+    final esc = find.byKey(const ValueKey('terminal-key-esc'));
+
+    Future<_Focus> offered(
+      WidgetTester tester, {
+      String engine = 'codex',
+      String screen = queued,
+    }) async {
+      final focus = await _Focus.open(
+        tester,
+        agents: [edgeAgent('a', engine: engine)],
+      );
+      raiseKeyboard(tester);
+      await frames(tester);
+      focus.session.terminal.write(screen);
+      await frames(tester);
+      return focus;
+    }
+
+    testWidgets('a Codex agent\'s queued question: its key on the strip, and '
+        'the key answers it', (tester) async {
+      final focus = await offered(tester);
+      expect(esc, findsOneWidget);
+      expect(find.text('answer'), findsOneWidget);
+      expect(
+        tester.getTopRight(find.text('answer')).dx,
+        lessThan(tester.getTopLeft(esc).dx),
+        reason: 'it leads the strip',
+      );
+
+      await tester.tap(find.text('answer'));
+      await frames(tester);
+      expect(focus.typed, contains('\x1b[1;2D'));
+      await focus.close();
+    });
+
+    testWidgets('Claude Code\'s cycle: on the strip, past its own keys', (
+      tester,
+    ) async {
+      final focus = await offered(tester, engine: 'claude', screen: cycle);
+      expect(find.text('cycle'), findsOneWidget);
+      expect(
+        tester.getTopLeft(find.text('cycle')).dx,
+        greaterThan(tester.getTopRight(esc).dx),
+      );
+      await focus.close();
+    });
+
+    testWidgets('taken by the computer: the pane\'s keys leave the strip', (
+      tester,
+    ) async {
+      final focus = await offered(tester);
+      expect(find.text('answer'), findsOneWidget);
+
+      await focus.takenByComputer();
+      await frames(tester);
+      expect(focus.session.acceptsInput, isFalse);
+      expect(find.text('answer'), findsNothing);
+      await focus.close();
+    });
+
+    testWidgets('a stream that died: the pane\'s keys leave the strip', (
+      tester,
+    ) async {
+      final focus = await offered(tester);
+      expect(find.text('answer'), findsOneWidget);
+
+      await focus.session.handleFrame('terminal_closed', {
+        'streamId': focus.session.streamId,
+        'code': 'TERMINAL_CLOSED',
+        'reason': 'the daemon restarted',
+      });
+      await frames(tester);
+      expect(focus.session.status, TerminalSessionStatus.closed);
+      expect(find.text('answer'), findsNothing);
+      await focus.close();
+    });
+
+    testWidgets('the agent is gone: no key of its pane is left', (
+      tester,
+    ) async {
+      final focus = await offered(tester);
+      expect(find.text('answer'), findsOneWidget);
+
+      focus.app.stateOf('m')!
+        ..agentsFromCache = false
+        ..agents = [edgeAgent('other')];
+      await focus.app.syncAgentsForTest('m');
+      await frames(tester);
+      expect(find.text('a is gone'), findsOneWidget);
+      expect(find.text('answer'), findsNothing);
+      await focus.close();
+    });
+
+    testWidgets('the hint goes once the pane stops offering it', (
+      tester,
+    ) async {
+      final focus = await offered(tester);
+      expect(find.text('answer'), findsOneWidget);
+
+      // Answered: Codex redraws its bottom pane without the queue.
+      focus.session.terminal.write('\x1b[2J\x1b[H› ');
+      await frames(tester, count: 8);
+      expect(find.text('answer'), findsNothing);
+      expect(esc, findsOneWidget, reason: 'the strip itself stays');
+      await focus.close();
+    });
+  });
 }
 
 /// The clipboard's contents as `Clipboard.getData` reports them.
