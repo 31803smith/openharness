@@ -1662,7 +1662,25 @@ class _PaneContent extends StatelessWidget {
           notifier.zoomedPaneId == null &&
           terminalPaneCount >= 3;
       final TerminalNotice? notice;
-      if (machine == null) {
+      final sharingEnded = machine == null
+          ? notifier.sharingEnded(pane.machineId)
+          : null;
+      if (sharingEnded != null) {
+        // Its owner stopped sharing the machine: say who, and the one thing left to do here.
+        final tab = notifier.swarms
+            .where((swarm) => swarm.panes.contains(pane))
+            .firstOrNull;
+        notice = terminalNotice(
+          label: 'No longer shared',
+          icon: AppIcons.unlink,
+          detail:
+              '${sharingEnded.owner} stopped sharing ${sharingEnded.name} with you. The harness stays on their machine; what is shown here is read only.',
+          actionLabel: 'Close',
+          onAction: () =>
+              notifier.closePane(pane.id, swarmId: tab?.id).ignore(),
+          banner: true,
+        );
+      } else if (machine == null) {
         notice = terminalNotice(
           label: 'Unavailable',
           icon: AppIcons.cloudOff,
