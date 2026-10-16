@@ -1353,6 +1353,24 @@ class AppNotifier extends ChangeNotifier {
   /// Machines other accounts share with this one's domain, not added yet: Add machine lists them, and
   /// [addSharedMachine] adds one.
   List<Machine> machinesToAdd = const [];
+
+  /// Machines another account shared with this one and no longer does, by id: what a pane left on one
+  /// says once the machine itself has left the list. Forgotten when it is shared again.
+  final Map<String, ({String name, String owner})> _sharingEnded = {};
+
+  /// Who stopped sharing [machineId] with this account, and its name, if they did.
+  ({String name, String owner})? sharingEnded(String machineId) =>
+      _sharingEnded[machineId];
+
+  void _noteSharingEnded(Machine machine) {
+    final share = machine.machineShare;
+    if (share == null) return;
+    _sharingEnded[machine.machineId] = (
+      name: machine.displayName,
+      owner: share.owner,
+    );
+  }
+
   final Map<String, MachineState> machineStates = {};
   final Set<String> expandedMachines = {};
   String? selectedMachineId;
@@ -7451,8 +7469,11 @@ class AppNotifier extends ChangeNotifier {
       );
     }
     final visible = machines.map((machine) => machine.machineId).toSet();
+    _sharingEnded.removeWhere((id, _) => visible.contains(id));
     for (final entry in machineStates.entries) {
       if (!visible.contains(entry.key)) {
+        // A shared machine that left the list was taken back by its owner (a fresh list says so).
+        if (!machinesAreStale) _noteSharingEnded(entry.value.machine);
         _clearMachineActivity(entry.value);
         _stopOfflineRetry(entry.key);
         _stopLinkRetry(entry.key);
@@ -18094,9 +18115,21 @@ class AppNotifier extends ChangeNotifier {
         await _applyNodeStatus(machine, online, why: 'node_status');
         break;
       case 'machine_select_error':
-        _lastError =
-            'Machine selection failed: ${payload['error'] ?? 'unknown error'}';
-        _lastErrorRetryable = true;
+        final code = '${payload['error'] ?? ''}';
+        final name = machine.machine.displayName;
+        if (code == 'NOT_YOUR_MACHINE' &&
+            machine.machine.machineShare != null) {
+          // Its owner stopped sharing it: no retry brings it back, and the list drops it.
+          _noteSharingEnded(machine.machine);
+          _lastError =
+              '${machine.machine.machineShare!.owner} stopped sharing $name with you.';
+          _lastErrorRetryable = false;
+          unawaited(refreshMachines());
+        } else {
+          _lastError = machineSelectErrorText(code, name);
+          _lastErrorRetryable =
+              code != 'NOT_YOUR_MACHINE' && code != 'MACHINE_ENV_MISMATCH';
+        }
         machine.connectionStatus = ConnectionStatus.disconnected;
         break;
       case 'agent_synced':
@@ -18579,3 +18612,14 @@ final appStateProvider = Provider<AppNotifier>((ref) {
   app.bootstrap();
   return app;
 });
+
+/// What a refused `machine_select` means, in words a person can act on (backend lib/webWs.ts codes).
+String machineSelectErrorText(String code, String machine) => switch (code) {
+  'NOT_YOUR_MACHINE' => '$machine is no longer on your account.',
+  'MACHINE_ENV_MISMATCH' =>
+    '$machine belongs to another Autonomous environment. Sign in to that one to use it.',
+  'MACHINE_PAYMENT_PENDING' => '$machine is waiting for its payment to finish.',
+  'MACHINE_SUBSCRIPTION_REQUIRED' =>
+    'The subscription for $machine has ended. Renew it to use it again.',
+  _ => 'Could not connect to $machine. Try again in a moment.',
+};
