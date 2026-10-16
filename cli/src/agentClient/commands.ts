@@ -22,6 +22,9 @@ import { readAgentSettings } from '../lib/agentSettings.js'
 import { MAX_FIRST_PROMPT_CHARS } from '../lib/engineLaunch.js'
 import { NewUsageError, resolveNewMachine, type NewMachine, type NewOrigin } from '../lib/newCommand.js'
 import { engineName } from '../messages/model.js'
+import { machineListCachePath } from '../device/machineList.js'
+import { readAuthSession } from '../lib/authSession.js'
+import { buildContext, formatContext, type Context, type SpawnCount, type SpawnReason } from './context.js'
 import { AgentClientError, openDaemon, whereFor, type Daemon, type Where } from './daemon.js'
 import { Ledger, ledgerPath, type Pending, type Started } from './ledger.js'
 import { messagesRpc, type Rpc } from '../messages/rpc.js'
@@ -69,6 +72,10 @@ export const CLOSE_USAGE = `Usage: harness close [--machine <name>] <name> [--no
 Saves the harness's screen and stops it. Its conversation is kept: the person can resume it.
 It is refused while the harness is working, unless --now. An agent may close only harnesses it started.
 ${ON_MACHINE}`
+export const WHOAMI_USAGE = `Usage: harness whoami [--json]
+
+Who you are to Harness: which agent, on which machine, inside Harness or not; whether you may start harnesses now
+and, if not, who can change that; how many of yours are open, and how many starts are left.`
 
 export const EXIT = { ok: 0, failed: 1, usage: 2, needsInput: 3, stopped: 4, timeout: 124 } as const
 
@@ -468,7 +475,7 @@ const wantsJson = (argv: readonly string[]): boolean => argv.includes('--json')
 
 // ── ps ─────────────────────────────────────────────────────────────────────────────────────────────
 
-export function formatRows(rows: Row[], caller: Caller | null, now: number, on = 'this machine'): string {
+export function formatRows(rows: Row[], now: number, on = 'this machine'): string {
   if (!rows.length) return `No harnesses on ${on}.`
   const width = Math.min(32, Math.max(4, ...rows.map((r) => r.name.length)))
   const head = `${'NAME'.padEnd(width)}  ${'AGENT'.padEnd(11)}  ${'STATE'.padEnd(11)}  ${'STARTED BY'.padEnd(12)}  ${'ACTIVE'.padEnd(6)}  FOLDER`
@@ -478,8 +485,7 @@ export function formatRows(rows: Row[], caller: Caller | null, now: number, on =
     const about = r.about ?? (r.asks?.length ? `asked: ${r.asks[0]}` : '')
     return about ? `${line}\n${' '.repeat(2)}${clip(about.replace(/\s+/g, ' '), 200)}` : line
   })
-  const you = !caller ? null : caller.outside ? `You are ${caller.name}, outside Harness.` : `You are "${caller.name}" (${caller.agentId.slice(0, 8)}).`
-  return [you, head, ...lines].filter((l) => l !== null).join('\n')
+  return [head, ...lines].join('\n')
 }
 
 export function psCommand(argv: readonly string[], deps: ClientDeps = {}): Promise<number> {
@@ -515,8 +521,10 @@ export function psCommand(argv: readonly string[], deps: ClientDeps = {}): Promi
         folder: null, branch: null, startedBy: 'you', yours: true, self: false, lastActive: new Date(a.row.at).toISOString(), about: askedLine(s.env, a, away),
       })))
       const note = o.caller ? openNote(s.env, rows) : null
-      s.out(flags.has('--json') ? JSON.stringify({ you: o.caller ? o.caller.name : null, machine: on.machine, harnesses: rows }, null, 1)
-        : [formatRows(rows, o.caller, s.now(), away ? away.label : undefined), note].filter(Boolean).join('\n'))
+      // An agent is told where it is and what it may do before the list; a person's ps is as it was.
+      const agent = !!o.caller || o.orphan
+      s.out(flags.has('--json') ? JSON.stringify({ you: o.caller ? o.caller.name : null, machine: on.machine, context: contextFor(s, o), harnesses: rows }, null, 1)
+        : [agent ? formatContext(contextFor(s, o)) : null, formatRows(rows, s.now(), away ? away.label : undefined), note].filter(Boolean).join('\n'))
       return EXIT.ok
     } finally { line?.close(); o.daemon.close() }
   })
@@ -533,6 +541,56 @@ export function openNote(env: NodeJS.ProcessEnv, rows: readonly Row[]): string |
   const idle = open.filter((r) => r.state === 'idle').length
   return `You have ${open.length} harness${open.length === 1 ? '' : 'es'} of your own open${idle ? `, ${idle} idle` : ''}. `
     + `Close each once you have its answer: ${step(env, 'close', '<name>')}.`
+}
+
+/**
+ * The account's machines for the context block, as this computer's daemon keeps them (`<data>/machines.json`,
+ * device/machineList.ts, read again every minute), or none. Never the backend: a request still open after the block
+ * printed held the process 10 to 35 s, and a person's `ps` waited on the network for nothing (review, 2026-10-15).
+ * Only a list kept for the account signed in now, as the daemon serves it (`MachineListCache.lastResponse`).
+ */
+function machinesForContext(where: Where): NewMachine[] {
+  const owner = readAuthSession()?.machineId
+  try {
+    const kept = JSON.parse(readFileSync(machineListCachePath(where.dataDir), 'utf8')) as { machines?: unknown; bodyOwner?: unknown }
+    if (!owner || kept.bodyOwner !== owner || !Array.isArray(kept.machines)) return []
+    return (kept.machines as Array<Record<string, unknown>>).filter((m) => typeof m.machineId === 'string').map((m) => ({
+      machineId: String(m.machineId), label: typeof m.name === 'string' && m.name.trim() ? m.name.trim() : '(unnamed)',
+      // The daemon's `ready` is what `harness machines` calls running.
+      status: m.state === 'ready' ? 'running' : typeof m.state === 'string' ? m.state : 'unknown',
+      current: m.local === true || m.machineId === where.machineId || m.machineId === owner,
+    }))
+  } catch { return [] }
+}
+
+/** Where the caller is and what it may do (context.ts), from what `opened` read: this machine's live harnesses only,
+ *  so it costs no other machine a question; `new` still counts the other machines' exactly. */
+function contextFor(s: Setup, o: Opened): Context {
+  const live = new Set(o.frames.filter((f) => f.status === 'active').map((f) => memberKey(o.where.machineId, f.id)))
+  const waiting = o.asked.filter((a) => a.state !== 'failed').map((a) => a.row)
+  const caller = o.caller
+  return buildContext({
+    caller, orphan: o.orphan, machine: o.machine,
+    signedIn: !!readAuthSession(), switchOn: readAgentSettings(o.where.dataDir).agentsStartAgents,
+    check: caller ? spawnCheck(caller, live, o.ledger, o.where.machineId, s.now(), waiting) : null,
+    count: caller ? spawnCount(caller, live, o.ledger, s.now(), waiting) : null,
+    limits: SPAWN_LIMITS, machines: machinesForContext(o.where), closeStep: step(s.env, 'close', '<name>'),
+  })
+}
+
+// ── whoami ─────────────────────────────────────────────────────────────────────────────────────────
+
+export function whoamiCommand(argv: readonly string[], deps: ClientDeps = {}): Promise<number> {
+  return run(WHOAMI_USAGE, deps, wantsJson, argv, async (s) => {
+    const { names, flags, machine } = words(argv, { '--json': 'flag' })
+    if (names.length || machine !== null) throw new UsageError('harness whoami takes no names and no --machine: it is about you, here.')
+    const o = await opened(s)
+    try {
+      const context = contextFor(s, o)
+      s.out(flags.has('--json') ? JSON.stringify({ context }, null, 1) : formatContext(context))
+      return EXIT.ok
+    } finally { o.daemon.close() }
+  })
 }
 
 // ── show ───────────────────────────────────────────────────────────────────────────────────────────
@@ -825,29 +883,46 @@ export const DUPLICATE_WITHIN_MS = 10 * 60_000
 const memberKey = (machineId: string, agentId: string): string => `${machineId}/${agentId}`
 
 /**
- * Why [caller] may not start another harness now, or null. [live] holds the live harnesses the limits count: this
- * machine's, and the caller's on the other machines it reached.
+ * What the limits count for [caller]: its live harnesses, and those asked for and not started yet ([waiting]), its
+ * starts in the window, and its depth.
  */
-export function spawnRefusal(caller: Caller, live: ReadonlySet<string>, ledger: Ledger, localMachineId: string, now: number, waiting: readonly Pending[] = []): string | null {
-  // Its depth by the record, or by the core's row when the record has no line for it: rotated away, a write that failed,
-  // or a start from another machine or from outside Harness, recorded only where the starter ran.
-  if (Math.max(ledger.depthOf(caller), caller.startedByAgent ? 1 : 0) >= SPAWN_LIMITS.depth) return DEPTH_REFUSAL
-  // Harnesses asked for and not started yet ([waiting]) count as running: each starts by itself once its engine is
-  // installed, and an agent asking for more meanwhile would otherwise pass every limit until they all started at once.
+export function spawnCount(caller: Caller, live: ReadonlySet<string>, ledger: Ledger, now: number, waiting: readonly Pending[] = []): SpawnCount {
   const mine = ledger.childrenOf(caller)
   const liveMine = new Set(mine.filter((row) => live.has(memberKey(row.child.machineId, row.child.agentId))).map((row) => memberKey(row.child.machineId, row.child.agentId)))
-  const running = liveMine.size + waiting.length
-  if (running >= SPAWN_LIMITS.livePerHarness) {
-    return `You have ${running} harnesses running${waiting.length ? ' or starting' : ''}. Close one you are done with first (harness close <name>).`
+  const recent = [...mine, ...waiting].map((row) => row.at).filter((at) => now - at < SPAWN_LIMITS.windowMs)
+  // Its depth by the record, or by the core's row when the record has no line for it: rotated away, a write that failed,
+  // or a start from another machine or from outside Harness, recorded only where the starter ran.
+  return {
+    open: liveMine.size + waiting.length, starts: recent.length, depth: Math.max(ledger.depthOf(caller), caller.startedByAgent ? 1 : 0),
+    oldestStartAt: recent.length ? Math.min(...recent) : null,
+  }
+}
+
+/**
+ * Which limit refuses [caller] another harness now, and what it is told, or null. [live] holds the live harnesses the
+ * limits count: this machine's, and the caller's on the other machines it reached.
+ */
+export function spawnCheck(caller: Caller, live: ReadonlySet<string>, ledger: Ledger, localMachineId: string, now: number, waiting: readonly Pending[] = []): { reason: SpawnReason; message: string } | null {
+  const count = spawnCount(caller, live, ledger, now, waiting)
+  if (count.depth >= SPAWN_LIMITS.depth) return { reason: 'DEPTH', message: DEPTH_REFUSAL }
+  // Harnesses asked for and not started yet ([waiting]) count as running: each starts by itself once its engine is
+  // installed, and an agent asking for more meanwhile would otherwise pass every limit until they all started at once.
+  if (count.open >= SPAWN_LIMITS.livePerHarness) {
+    return { reason: 'OPEN_LIMIT', message: `You have ${count.open} harnesses running${waiting.length ? ' or starting' : ''}. Close one you are done with first (harness close <name>).` }
   }
   const machineWide = new Set(ledger.all().filter((row) => row.child.machineId === localMachineId && live.has(memberKey(localMachineId, row.child.agentId))).map((row) => row.child.agentId))
   if (machineWide.size + waiting.filter((row) => row.creation.machineId === localMachineId).length >= SPAWN_LIMITS.livePerMachine) {
-    return `Agents have ${machineWide.size} harnesses running on this machine, the most allowed. Close some first.`
+    return { reason: 'MACHINE_LIMIT', message: `Agents have ${machineWide.size} harnesses running on this machine, the most allowed. Close some first.` }
   }
-  if (mine.filter((row) => now - row.at < SPAWN_LIMITS.windowMs).length + waiting.filter((row) => now - row.at < SPAWN_LIMITS.windowMs).length >= SPAWN_LIMITS.perWindow) {
-    return `You started ${SPAWN_LIMITS.perWindow} harnesses in 10 minutes. Wait, or work with the ones you have.`
+  if (count.starts >= SPAWN_LIMITS.perWindow) {
+    return { reason: 'START_RATE', message: `You started ${SPAWN_LIMITS.perWindow} harnesses in 10 minutes. Wait, or work with the ones you have.` }
   }
   return null
+}
+
+/** Why [caller] may not start another harness now, or null: `spawnCheck`'s message. */
+export function spawnRefusal(caller: Caller, live: ReadonlySet<string>, ledger: Ledger, localMachineId: string, now: number, waiting: readonly Pending[] = []): string | null {
+  return spawnCheck(caller, live, ledger, localMachineId, now, waiting)?.message ?? null
 }
 
 /** How long a harness started on another machine counts toward the limits when that machine cannot be asked. */

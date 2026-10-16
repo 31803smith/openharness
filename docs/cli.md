@@ -109,6 +109,17 @@ auto|ask|plan|full`, `--name`, `--new [name]` and `--json` are the rest. There i
 harness on another of your machines: `harness new claude --machine office --name check -- …`, then
 `harness wait --machine office check` and `harness show --machine office check`.
 
+`harness whoami` says, for an agent, where it is and what it may do before it acts (`--json` gives the same as
+`context`); the top of an agent's `harness ps` begins with it, and `harness mcp` puts it in its instructions:
+
+```
+You: <agent> "<name>" (<id>), inside Harness, on <machine>.
+Can start harnesses: <yes, or no and why>. <who can change it, and the command>
+Yours: <open> open of <max> · <starts> of <max starts> starts in the last <minutes> minutes · other machines: <machine> (<state>), …
+```
+
+Run by the person, it prints the first line only: `You: the person, on <machine>.`
+
 ## Your devices
 
 Signing in is what makes a device trusted: every computer and app signed in to the account adds its
