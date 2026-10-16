@@ -888,11 +888,13 @@ class WsConn {
   @visibleForTesting
   static bool worthLogging(String type) => !_unlogged.contains(type);
 
-  /// The requests a machine's daemon counts by who sent them — `actions` and `message` in
-  /// cli/src/lib/productUsageSignals.ts. Over the relay the phone is a remote app client like the
-  /// browser, so these carry `usageSurface: 'phone'` (as a model list a person opened carries
-  /// `userAction`) and are counted as the phone's. Nothing else gets the word: not the E2EE handshake,
-  /// not the relay's own frames. A daemon from before it reads past it.
+  /// The requests this phone sends that a machine's daemon counts by who sent them — of `actions` and
+  /// `message` in cli/src/lib/productUsageSignals.ts, the ones it sends (never a type it does not:
+  /// every machine request named in `lib/` must be sealed, `encrypted_down_types_test.dart`). Over the
+  /// relay the phone is a remote app client like the browser, so these carry `usageSurface: 'phone'`
+  /// (as a model list a person opened carries `userAction`) and are counted as the phone's. Nothing
+  /// else gets the word: not the E2EE handshake, not the relay's own frames. A daemon from before it
+  /// reads past it.
   @visibleForTesting
   static const usageMeasuredRequests = {
     'agent_create',
@@ -901,7 +903,6 @@ class WsConn {
     'agent_retarget',
     'agent_recent',
     'agent_fork',
-    'agent_close',
     'agent_delete',
     'session_search',
     'session_tail',
@@ -911,9 +912,6 @@ class WsConn {
     'dsh_remove',
     'models_list',
     'grid_models_list',
-    'grid_fleet_model_download',
-    'grid_fleet_model_start',
-    'grid_fleet_model_stop',
     'browser_open',
     'message',
   };

@@ -422,7 +422,7 @@ void main() {
       expect(jsonEncode(hello), isNot(contains('usageSurface')));
     });
 
-    test('the phone marks exactly the requests the daemon counts', () {
+    test('the phone marks every request it sends that the daemon counts, and no other', () {
       final signals = File('../cli/src/lib/productUsageSignals.ts')
           .readAsStringSync();
       final actions = RegExp(r'const actions = \{([^}]*)\}')
@@ -434,7 +434,23 @@ void main() {
         // Counted by its own name there, not through the table.
         'message',
       };
-      expect(WsConn.usageMeasuredRequests, counted);
+      // Sent: named anywhere in the app outside the list itself.
+      final sent = <String>{};
+      for (final file in Directory('lib').listSync(recursive: true)) {
+        if (file is! File || !file.path.endsWith('.dart')) continue;
+        if (file.path.endsWith('ws/ws_conn.dart')) continue;
+        final source = file.readAsStringSync();
+        for (final type in counted) {
+          if (source.contains("'$type'")) sent.add(type);
+        }
+      }
+      expect(WsConn.usageMeasuredRequests.difference(counted), isEmpty);
+      expect(sent.difference(WsConn.usageMeasuredRequests), isEmpty);
+      expect(
+        WsConn.usageMeasuredRequests.difference(sent),
+        isEmpty,
+        reason: 'a type the phone never sends is not named in lib/',
+      );
     });
 
     test('sendRaw goes out as it is when its type is not sealed', () async {
