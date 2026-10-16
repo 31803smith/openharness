@@ -21,6 +21,11 @@ enum ProductFlow {
   viewerOpen('viewer_open'),
   updateCheck('update_check'),
   updateStage('update_stage'),
+  // From the backend's `HEALTH_FLOWS` (productHealthContract.ts), counted as the desktop counts them.
+  appStart('app_start'),
+  connectUser('connect_user'),
+  connectAuto('connect_auto'),
+  resumeRecovery('resume_recovery'),
   computerWait('computer_wait'),
   sessionOpen('session_open'),
   firstMessage('first_message'),
@@ -87,6 +92,9 @@ class ProductMeasurement extends ChangeNotifier {
   final _setupFacts = <ProductFlow, String>{};
 
   bool get sharing => _account != null && _enabled == true;
+
+  /// Moves with every account or choice change: an observation begun before one never counts after.
+  int get observationGeneration => _accountEpoch;
 
   /// The account's choice has read off: what waits to be counted for it never is.
   bool get declined => _account != null && _enabled == false;
