@@ -424,6 +424,17 @@ class _NewAgentPageState extends State<NewAgentPage> {
     // machine names the main checkout, and new work starts from the branch that is on. One the
     // person browsed to stays itself, mainFolder and all ([_inWorktree]).
     if (info.mainFolder case final main? when !exact) {
+      // The main checkout itself, which is where its branch is checked out: [main] when the
+      // worktree was opened at its top, the checkout above it when opened on a subfolder. That
+      // whole checkout moves if Start switches its branch, so a harness anywhere in it must count
+      // — see [_branchSwitchRefusal]. [main] when the checkout is on no branch to find it by.
+      final mainBranch = info.mainBranch;
+      final checkout =
+          info.branches
+              .where((branch) => !branch.remote && branch.name == mainBranch)
+              .firstOrNull
+              ?.worktree ??
+          main;
       _folder = main;
       _gitFolder = main;
       info = GitProjectInfo(
@@ -431,7 +442,7 @@ class _NewAgentPageState extends State<NewAgentPage> {
         branch: info.mainBranch,
         branches: info.branches,
         defaultRef: info.defaultRef,
-        root: main,
+        root: checkout,
       );
     }
     setState(() {
@@ -709,6 +720,53 @@ class _NewAgentPageState extends State<NewAgentPage> {
     return true;
   }
 
+  /// Why Start may not move [folder] onto another branch, or null when nothing stops it. [info] is
+  /// [folder]'s repository, as the machine answered for it.
+  ///
+  /// ⚠️ **With Worktree off the machine switches the folder's own branch, and nothing there asks
+  /// what else is working in it.** `cli/src/lib/gitProject.ts` runs `git switch` in a folder with
+  /// nothing uncommitted, or makes a typed new branch there — and a harness already at work in that
+  /// checkout had its files change branch under it, then went on editing and committing on a branch
+  /// nobody chose for it. The easy way in was the branch row's default: Worktree starts on with the
+  /// default branch picked, turning it off kept that pick, and Start moved a folder on another
+  /// branch to `main`. The desktop refuses before sending (`state/new_harness.dart`, `create`); this
+  /// is its check, in its words. Like the Git-read refusal in [_gitSettled], it leaves the button
+  /// saying Start: nothing was sent, so there is nothing to try again.
+  ///
+  /// What counts, and why:
+  /// - Only a choice that moves the folder ([switchesFolderBranch]). The branch it is already on, a
+  ///   branch with a worktree of its own (opened there instead) and Worktree on all start as before.
+  /// - Only harnesses on THIS machine. The same path on another computer is another folder.
+  /// - Every harness the machine lists, a stopped one included, as the desktop counts them:
+  ///   resumed, it would carry on in a checkout that changed branch while it was away.
+  /// - A harness anywhere in the checkout ([GitProjectInfo.root]), a subfolder as much as the root,
+  ///   because the switch moves every file in it. A machine that names no root leaves the folder
+  ///   itself, as the desktop does.
+  /// - Where a harness works is read as the desktop reads it: where its machine last saw it working
+  ///   ([Agent.displayProject]), which is where it was started until it is seen anywhere else.
+  ///
+  /// "Stay on" names the branch the folder is on now, since that is what keeping it there means; a
+  /// folder on no branch is called what the desktop's branch row calls it, Detached HEAD.
+  String? _branchSwitchRefusal(String folder, GitProjectInfo info) {
+    if (!switchesFolderBranch(
+      info,
+      worktree: _worktree,
+      branchRef: _branchRef,
+      branchName: _branchName,
+    )) {
+      return null;
+    }
+    final root = info.root ?? folder;
+    final busy = (_machine?.agents ?? const <Agent>[]).any((agent) {
+      final cwd = agent.displayProject?.cwd;
+      return cwd != null && withinCheckout(root, cwd);
+    });
+    if (!busy) return null;
+    return 'A harness is working in this folder, so its branch can’t be '
+        'switched. Turn Worktree on, or stay on '
+        '${info.branch ?? 'Detached HEAD'}.';
+  }
+
   Future<void> _create() async {
     final engine = _engine;
     if ((_folder == null && _project == null) || engine == null || _creating) {
@@ -733,6 +791,20 @@ class _NewAgentPageState extends State<NewAgentPage> {
     // Taken after the wait, not before it: the answer can move the form to the folder's own
     // repository (a worktree's main checkout), and Start goes where the form says now.
     final folder = _folder, project = _project;
+    // Read after the wait for the same reason, and before the first task is looked at — the
+    // desktop's order. Only a folder sent with its repository can be switched; `New project` and
+    // `Git…` make a folder nothing is working in yet.
+    final switchRefusal =
+        project == null && folder != null && _repository != null
+        ? _branchSwitchRefusal(folder, _repository!)
+        : null;
+    if (switchRefusal != null) {
+      setState(() {
+        _creating = false;
+        _error = switchRefusal;
+      });
+      return;
+    }
     // The first task as it is sent, read after the wait too: the field stays open through it. An
     // engine that cannot take one is sent none.
     final task = takesFirstTask(engine) ? _task.text.trim() : '';
