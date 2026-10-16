@@ -217,7 +217,7 @@ terminal,tmux,ssh,claude,codex,cursor,coding,agent,developer,remote,shell,devops
 | --- | --- |
 | Support URL | `https://www.autonomous.ai/harness` |
 | Marketing URL | `https://www.autonomous.ai/harness` |
-| Privacy Policy URL | **required — use the real Autonomous policy URL; there is none in this repo to copy** |
+| Privacy Policy URL | `https://www.autonomous.ai/privacy` — the address every Harness listing names, and the one Settings ▸ About ▸ Privacy Policy opens (`lib/phone/privacy_policy.dart`) |
 
 **What's New** — leave empty for 1.0.0; it is only shown for updates.
 
@@ -325,7 +325,8 @@ team's password manager.**
 
 1. **Create app** (Play Console ▸ *Create app*): name `OpenHarness`, default language, *App*, *Free*.
 2. **App content** — Play will not publish anything to production while one of these is open:
-   - *Privacy policy*: required (the app asks for the camera and microphone). Same URL as iOS.
+   - *Privacy policy*: required (the app asks for the camera and microphone). Same URL as iOS:
+     `https://www.autonomous.ai/privacy`.
    - *App access*: sign-in is required → give the demo account from the iOS review notes, and keep a
      machine paired to it online, for the same reason as [App Review notes](#app-review-notes--the-part-that-gets-10-rejected).
    - *Ads*: no. *Content rating*: fill the questionnaire (a utility, no user-generated content shown
