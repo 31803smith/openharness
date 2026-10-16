@@ -22,6 +22,7 @@ import '../terminal/remote_scroll_physics.dart';
 import '../terminal/terminal_links.dart';
 import '../terminal/output_blocks.dart';
 import '../terminal/terminal_prompt_zone.dart';
+import '../phone/media_preview_page.dart';
 import '../phone/tty.dart';
 import '../terminal/terminal_session.dart';
 import '../terminal/terminal_theme.dart';
@@ -1585,6 +1586,10 @@ class _TerminalPanelState extends State<TerminalPanel>
             },
           );
         },
+        // Over this pane's own page, on its navigator, so Back lands on the terminal again. The
+        // opener has already checked [isCancelled], so the pane is still mounted and on this agent.
+        showLocal: (localPath) =>
+            unawaited(openMediaPreview(context, localPath)),
       );
       if (!mounted || !identical(session, widget.session) || message == null) {
         return;

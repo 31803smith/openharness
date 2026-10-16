@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:harness_mobile/core/models.dart';
+import 'package:harness_mobile/phone/media_preview_page.dart';
 import 'package:harness_mobile/state/app_state.dart';
 import 'package:harness_mobile/terminal/remote_media_download.dart';
 import 'package:harness_mobile/terminal/terminal_binary.dart';
@@ -766,7 +767,8 @@ void main() {
     }, variant: TargetPlatformVariant.only(TargetPlatform.iOS));
 
     testWidgets(
-      'a picture on the far machine is fetched with a bar, then opened',
+      'a picture on the far machine is fetched with a bar, then shown in the '
+      'app',
       (tester) async {
         final launched = <Uri>[];
         final downloader = _Downloader();
@@ -801,8 +803,77 @@ void main() {
         await tester.pump();
         await tester.pump();
 
-        expect(launched, [Uri.file('/tmp/preview/shot.png')]);
+        // On its own page in the app, never handed to the launcher: a phone's
+        // `url_launcher` cannot open a `file:` URL, so that always failed.
+        expect(launched, isEmpty);
         expect(find.textContaining('Downloading'), findsNothing);
+        expect(find.textContaining('Could not open'), findsNothing);
+        await tester.pump(const Duration(seconds: 1));
+        final page = find.byType(MediaPreviewPage);
+        expect(page, findsOneWidget);
+        expect(
+          tester.widget<MediaPreviewPage>(page).path,
+          '/tmp/preview/shot.png',
+        );
+
+        // Back is the terminal again, as it was.
+        await tester.tap(find.byKey(const ValueKey('tty-back')));
+        await tester.pump();
+        await tester.pump(const Duration(seconds: 1));
+        expect(page, findsNothing);
+        expect(find.byType(TerminalView), findsOneWidget);
+        expect(launched, isEmpty);
+      },
+      variant: TargetPlatformVariant.only(TargetPlatform.iOS),
+    );
+
+    testWidgets(
+      'a video on the far machine is shown in the app, the same way',
+      (tester) async {
+        final launched = <Uri>[];
+        final downloader = _Downloader();
+        final pane = session();
+        pane.terminal.write('${_blank}recorded /work/demo.mp4');
+        await pumpPanel(
+          tester,
+          pane,
+          mediaDownloader: downloader,
+          linkOpener: TerminalLinkOpener(
+            launch: (uri) async {
+              launched.add(uri);
+              return true;
+            },
+            fileExists: (_) async => true,
+          ),
+        );
+
+        await tester.tapAt(cellOf(tester, pane, '/work/demo.mp4', offset: 3));
+        await tester.pump(kDoubleTapTimeout);
+        await tester.pump();
+        downloader.result.complete('/tmp/preview/demo.mp4');
+        await tester.pump();
+        await tester.pump(const Duration(seconds: 1));
+
+        expect(launched, isEmpty);
+        final page = find.byType(MediaPreviewPage);
+        expect(
+          tester.widget<MediaPreviewPage>(page).path,
+          '/tmp/preview/demo.mp4',
+        );
+        // No player answers in a test: the page says so rather than breaking.
+        await tester.pump();
+        expect(find.text('Could not open this preview.'), findsOneWidget);
+        expect(
+          find.byKey(const ValueKey('media-preview-share')),
+          findsOneWidget,
+        );
+        expect(tester.takeException(), isNull);
+
+        await tester.tap(find.byKey(const ValueKey('tty-back')));
+        await tester.pump();
+        await tester.pump(const Duration(seconds: 1));
+        expect(page, findsNothing);
+        expect(find.byType(TerminalView), findsOneWidget);
       },
       variant: TargetPlatformVariant.only(TargetPlatform.iOS),
     );
@@ -836,6 +907,8 @@ void main() {
 
       expect(launched, isEmpty);
       expect(find.textContaining('preview'), findsNothing);
+      await tester.pump(const Duration(seconds: 1));
+      expect(find.byType(MediaPreviewPage), findsNothing);
     }, variant: TargetPlatformVariant.only(TargetPlatform.iOS));
   });
 
