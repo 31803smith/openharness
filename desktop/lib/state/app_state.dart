@@ -3743,6 +3743,7 @@ class AppNotifier extends ChangeNotifier {
               sendDesktopSetupMeasurement(this.config.apiBaseUrl, report),
         );
     productConnections = ProductConnections(this.productMeasurement);
+    this.agentPrefetch?.onDownload ??= this.productMeasurement.setupDownload;
     this.productMeasurement.addListener(_measurementChoiceChanged);
     if (!kUnderTest && this.productMeasurement.healthEnabled) {
       productRuntimeHealth = ProductRuntimeHealth(this.productMeasurement);
@@ -5301,12 +5302,18 @@ class AppNotifier extends ChangeNotifier {
         EnvironmentSetupPhase.failed => 'failed',
         _ => 'running',
       },
+      // A check marks a tool that is not installed yet as failed, and setup then installs it. That
+      // is `missing`, not a failure: on Oct 16 every new computer counted its Harness CLI and tmux
+      // as failed steps while 0 setups failed. Only a setup that ends failed fails its step.
       for (final entry in value.steps.entries)
         switch (entry.key) {
           EnvironmentStep.harness => ProductFlow.setupHarness,
           EnvironmentStep.tmux => ProductFlow.setupTmux,
           EnvironmentStep.clipboard => ProductFlow.setupClipboard,
-        }: entry.value.name,
+        }: entry.value == EnvironmentStepStatus.failed &&
+                value.phase != EnvironmentSetupPhase.failed
+            ? 'missing'
+            : entry.value.name,
     });
   }
 
