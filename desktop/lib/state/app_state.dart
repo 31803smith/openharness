@@ -1577,6 +1577,11 @@ class AppNotifier extends ChangeNotifier {
     },
     foreground: foreground,
     onActivity: applySharedActivity,
+    // Off (the account default), every daemon refuses `shares`: not asked.
+    messagesSwitch: ExperimentChoice(
+      experimentalFeatures,
+      ExperimentalFeature.agentMessages,
+    ),
   );
 
   /// `tab_activity` on the computer [sharedTabs] asks: every harness of a desk
@@ -6697,7 +6702,7 @@ class AppNotifier extends ChangeNotifier {
             'This copy of Harness cannot install updates automatically.';
         return false;
       }
-      flushAppLog();
+      flushAppLog(durable: true);
       productRuntimeHealth?.cleanExit();
       exit(0);
     } catch (error) {
