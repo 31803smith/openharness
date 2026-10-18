@@ -54,6 +54,10 @@ export function daemonAddress(core: Pick<CoreApi, 'daemon'>): Payload {
 /** The answer to an experiment's query, or null when it is not one of these. */
 export async function answerExperimentQuery(core: Core, experiments: ReadonlySet<string>, service: string, query: string, payload: Payload): Promise<Payload | null> {
   if (!QUERIES.has(query)) return null
+  // `account` is also what models asks for the account's grid name, of its own link (core/modelsLink.ts): only
+  // Share's is answered here. Seen 2026-10-18: since #1376 models got NOT_AN_EXPERIMENT back instead, so the
+  // backend's grid name never reached it, and the picker said "Sign in to find models" to a signed-in person.
+  if (query === 'account' && service !== 'sharing') return null
   if (!experiments.has(service)) return { error: 'NOT_AN_EXPERIMENT' }
   switch (query) {
     case 'shown':
@@ -102,7 +106,6 @@ export async function answerExperimentQuery(core: Core, experiments: ReadonlySet
       return {}
     }
     case 'account': {
-      if (service !== 'sharing') return { error: 'NOT_SHARING' }
       const known = await core.account.identity()
       return known ? { ...known } : { error: 'ACCOUNT_UNAVAILABLE' }
     }
