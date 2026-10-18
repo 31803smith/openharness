@@ -110,7 +110,9 @@ describe('what an experiment in its own process may ask of the core', () => {
     expect(await answerExperimentQuery(core, withShare, 'sharing', 'account', {})).toEqual({ accountId: 'u-bob', email: 'bob@x.io' })
     identity.mockResolvedValueOnce(null)
     expect(await answerExperimentQuery(core, withShare, 'sharing', 'account', {})).toEqual({ error: 'ACCOUNT_UNAVAILABLE' })
-    expect(await answerExperimentQuery(core, withShare, 'orchestrator', 'account', {})).toEqual({ error: 'NOT_SHARING' })
+    // Any other service's `account` is its own link's to answer: models asks it for the grid name.
+    expect(await answerExperimentQuery(core, withShare, 'orchestrator', 'account', {})).toBeNull()
+    expect(await answerExperimentQuery(core, withShare, 'models', 'account', {})).toBeNull()
     expect(identity).toHaveBeenCalledTimes(2)
   })
 
