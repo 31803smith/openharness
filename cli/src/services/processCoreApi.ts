@@ -18,11 +18,13 @@ import { CONNECTOR_VAULT_OFF, CONVERSATIONS_OFF, DAEMON_UNKNOWN, DELIVERIES_OFF,
 import type { AgentDshContext } from '../lib/agentFrame.js'
 import type { RegisteredSession } from '../lib/registry.js'
 import type { turnsLink } from './turnsLink.js'
+import { creationObservation } from '../lib/creationObservation.js'
+import { nativeTurnPageIn } from '../lib/nativeTurnObservations.js'
 
 type Payload = Record<string, unknown>
 
 /** An agent as the core shows it to an experiment (core/experimentQueries.ts `shown`). */
-export type ShownAgent = RegisteredSession & { displayName?: string; terminalAvailable?: boolean; dshContext?: AgentDshContext | null }
+export type ShownAgent = RegisteredSession & { displayName?: string; terminalAvailable?: boolean; selectedModel?: string | null; dshContext?: AgentDshContext | null }
 
 /** The agents a process was last told of, and how it asks the core to act. Those it is never told of read
  *  as none, and with no way to ask, it acts on nothing. */
@@ -111,12 +113,18 @@ export function processCoreApi(dataDir: string, service: string, view: AgentsVie
       live,
       displayName: (session) => (session as ShownAgent).displayName ?? '',
       byAgent: (agentId) => live().find((session) => session.agentId === agentId),
+      stopped: async agentId => (await ask?.('stopped', { agentId }).catch(() => null))?.stopped === true,
+      creationStatus: async creationId => creationObservation(creationId,
+        (await ask?.('creation_status', { creationId }).catch(() => null))?.observation),
       resolve: (id) => resolveAgent(live(), id),
       advertised: () => view.advertised?.() ?? [],
       terminalAvailable: (agentId) => live().find((session) => session.agentId === agentId)?.terminalAvailable === true,
       sync: () => {},
       runtimeModels: async () => [],
-      runtimeProfile: () => null,
+      runtimeProfile: session => {
+        const profile = (session as ShownAgent).selectedModel
+        return typeof profile === 'string' ? profile : null
+      },
       setRuntime: () => {},
       fork: async () => ({ ok: false, error: 'UNSUPPORTED' }),
       create: async (request) => {
@@ -148,9 +156,16 @@ export function processCoreApi(dataDir: string, service: string, view: AgentsVie
       recent: async () => [],
       asks: async () => [],
       ...(view.deliveries?.turns ?? DELIVERIES_OFF),
+      // The connected service identity decides the namespace; the payload cannot
+      // grant another process permission to write a queued instruction.
+      leaseDeliveries: async (maker, leases) => maker === service &&
+        (await ask?.('lease_deliveries', { leases }).catch(() => null))?.leased === true,
     },
     questions: { answer: () => {}, answerReviewed: async () => false },
-    transcripts: { databaseHistory: () => undefined, lastTurn: UNASKED.lastTurn },
+    transcripts: { databaseHistory: () => undefined, lastTurn: UNASKED.lastTurn,
+      nativeTurns: async (agentId, cursor) => nativeTurnPageIn(
+        (await ask?.('native_turns', { agentId, ...(cursor ? { cursor } : {}) }).catch(() => null))?.page),
+    },
 
     account: {
       mintGridName: async () => null,
