@@ -9,6 +9,8 @@ import 'package:harness_mobile/core/models.dart';
 import 'package:harness_mobile/core/permission_modes.dart';
 import 'package:harness_mobile/shared/theme/app_theme.dart';
 import 'package:harness_mobile/state/app_state.dart';
+import 'package:harness_mobile/state/attached_task_delivery.dart';
+import 'package:harness_mobile/state/harness_attachments.dart';
 import 'package:harness_mobile/widgets/engine_identity.dart';
 import 'package:harness_mobile/core/git_project.dart';
 import 'package:harness_mobile/core/project_folder.dart';
@@ -18,6 +20,7 @@ import '../demo/sample_mode.dart' show SampleMode;
 import 'agent_index.dart';
 import 'branch_picker_sheet.dart';
 import 'phone_navigation.dart';
+import 'new_agent_attachments.dart';
 import 'new_agent_draft.dart';
 import 'new_agent_model_sheet.dart';
 import 'phone_status.dart';
@@ -210,8 +213,29 @@ class _NewAgentPageState extends State<NewAgentPage> {
   void dispose() {
     _keepDraft();
     _task.dispose();
+    _attachments.dispose();
     _ownVoice?.dispose();
     super.dispose();
+  }
+
+  /// The files the harness will be handed — the desktop's `HarnessAttachments` behind its 📎. Only
+  /// for this open form: the draft a closed form leaves keeps the words, not the bytes.
+  final _attachments = HarnessAttachments();
+
+  /// Files can go to this machine's harnesses, and this agent takes the task they lead: the 📎 is
+  /// drawn only then, never as a button that is refused at Start.
+  bool get _canAttach {
+    final engine = _engine;
+    return engine != null &&
+        takesFirstTask(engine) &&
+        canAttachFiles(widget.notifier, _machineId);
+  }
+
+  /// The 📎: the system's picker, then the files under the task.
+  Future<void> _attach() async {
+    final problem = await addPickedAttachments(_attachments);
+    if (!mounted) return;
+    setState(() => _error = problem);
   }
 
   /// The first task — `prompt` on `agent_create`. Optional: empty starts the harness idle.
@@ -848,10 +872,33 @@ class _NewAgentPageState extends State<NewAgentPage> {
       });
       return;
     }
+    // Files ride into the live terminal after creation, and the task follows them there (see
+    // [deliverAttachedTask]), so neither is a launch argument then — the desktop's order.
+    final files = _attachments.files;
+    // Files picked before the agent or the machine changed under them: said, never dropped.
+    final cannotTake = files.isEmpty
+        ? null
+        : !takesFirstTask(engine)
+        ? 'This agent cannot be handed files. Remove them to start it.'
+        : !canAttachFiles(widget.notifier, _machineId)
+        ? 'Update Harness CLI on '
+              '${_machine?.machine.displayName ?? 'this computer'} to attach '
+              'files, or remove them.'
+        : null;
+    if (cannotTake != null) {
+      setState(() {
+        _creating = false;
+        _error = cannotTake;
+      });
+      return;
+    }
     // Held so the id of what it starts comes back here — see
     // [AgentCreationAttempt.agentId] — and kept as [_creation] for as long as
     // its answer is outstanding.
     final creation = _creation = AgentCreationAttempt();
+    _delivery = files.isEmpty
+        ? null
+        : (creation: creation, files: files, task: task);
     // A folder in a repository is not sent as a bare `cwd`: the branch and the
     // worktree travel with it, and [gitFolderRequest] is the desktop's own rule
     // for turning the rows above into what the machine is asked to do. A folder
@@ -893,7 +940,7 @@ class _NewAgentPageState extends State<NewAgentPage> {
       model: _model,
       deskTabId: widget.deskTabId,
       attempt: creation,
-      prompt: task.isEmpty ? null : task,
+      prompt: task.isEmpty || files.isNotEmpty ? null : task,
       // Whenever a first task is sent, the harness is called by its words until the engine titles
       // the session — in any project, the desktop's rule. Named only for a New folder, a second
       // harness in an existing one read "Untitled Pane" until then. Nothing to say leaves the name
@@ -934,6 +981,7 @@ class _NewAgentPageState extends State<NewAgentPage> {
       // by accident. See [NewAgentDraft].
       newAgentDraft = null;
       unawaited(widget.notifier.agentPreference.select(engine));
+      _deliverFiles(creation);
       _open(creation.agentId);
       return;
     }
@@ -942,6 +990,40 @@ class _NewAgentPageState extends State<NewAgentPage> {
       _error = error;
       _failure = error;
     });
+  }
+
+  /// The files [creation] is to be handed once it exists, and the task that follows them — kept
+  /// beside [_creation] so a Check status that finds it started still hands them over.
+  ({AgentCreationAttempt creation, List<HarnessAttachment> files, String task})?
+  _delivery;
+
+  /// Hands a started harness its files and then its task, detached from this form, which is
+  /// replaced by the harness's page at once — the desktop's `_deliverFiles`. A problem is said on
+  /// the app's own messenger, which outlives the form.
+  void _deliverFiles(AgentCreationAttempt creation) {
+    final delivery = _delivery;
+    if (delivery == null || !identical(delivery.creation, creation)) return;
+    _delivery = null;
+    _attachments.clear();
+    final messenger = ScaffoldMessenger.maybeOf(context);
+    void report(String message) =>
+        messenger?.showSnackBar(SnackBar(content: Text(message)));
+    final agentId = creation.agentId;
+    if (agentId == null) {
+      report('The harness started without its files. Attach them in its pane.');
+      return;
+    }
+    unawaited(
+      deliverAttachedTask(
+        widget.notifier,
+        machineId: _machineId,
+        agentId: agentId,
+        files: delivery.files,
+        task: delivery.task,
+      ).then((problem) {
+        if (problem != null) report(problem);
+      }),
+    );
   }
 
   /// The last request this form made, kept while the machine has not said whether it started —
@@ -1342,6 +1424,15 @@ class _NewAgentPageState extends State<NewAgentPage> {
                                       action: TextInputAction.newline,
                                       onChanged: _taskEdited,
                                       trailing: [
+                                        if (_canAttach)
+                                          Align(
+                                            alignment: Alignment.bottomRight,
+                                            child: AttachmentButton(
+                                              onTap: _creating
+                                                  ? null
+                                                  : () => unawaited(_attach()),
+                                            ),
+                                          ),
                                         Align(
                                           alignment: Alignment.bottomRight,
                                           child: ListenableBuilder(
@@ -1365,6 +1456,17 @@ class _NewAgentPageState extends State<NewAgentPage> {
                                         ),
                                       ],
                                     ),
+                                    // Shown while there are files even where none can go now — the
+                                    // machine or the agent changed under them — so they can be taken
+                                    // back off.
+                                    if (_canAttach || !_attachments.isEmpty)
+                                      Padding(
+                                        padding: const EdgeInsets.only(top: 4),
+                                        child: AttachmentList(
+                                          attachments: _attachments,
+                                          enabled: !_creating,
+                                        ),
+                                      ),
                                   ],
                                   if (_error != null)
                                     Padding(
