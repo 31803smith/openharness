@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:ui' show AppLifecycleState, FrameTiming;
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:harness/measurement/product_measurement.dart';
@@ -240,6 +241,138 @@ void main() {
       runtime.dispose();
       await tester.pump();
       expect(saved, isEmpty);
+    },
+  );
+
+  testWidgets(
+    'frames sample every 60th visible frame, never the first or a hidden one',
+    (tester) async {
+      var lifecycle = AppLifecycleState.resumed;
+      final runtime = ProductRuntimeHealth(
+        usage,
+        readState: () async => {},
+        writeState: (_) async {},
+        readVersion: () async => '1.2.73',
+        lifecycle: () => lifecycle,
+      );
+      runtime.account('PRIVATE_ACCOUNT');
+      await usage.flush();
+      await tester.pump();
+      FrameTiming frame(int ms) => FrameTiming(
+        vsyncStart: 0,
+        buildStart: 0,
+        buildFinish: 0,
+        rasterStart: 0,
+        rasterFinish: ms * 1000,
+        rasterFinishWallTime: ms * 1000,
+      );
+      // A launch's first frame is its heavy workspace restore: not a sample
+      // (frames 1–59 are not sampled; the 60th is).
+      runtime.framesForTest([frame(900), for (var i = 1; i < 59; i++) frame(5)]);
+      // Minimised, then shown: the first frame back is the catch-up, and would
+      // otherwise be the 60th, the sampled one.
+      runtime.lifecycleChanged(AppLifecycleState.hidden);
+      runtime.lifecycleChanged(AppLifecycleState.inactive);
+      runtime.framesForTest([frame(700), frame(5)]);
+      // A batch reported while hidden is the OS's throttling: none of it counts.
+      lifecycle = AppLifecycleState.hidden;
+      runtime.framesForTest([for (var i = 0; i < 120; i++) frame(400)]);
+      // Visible but without focus (inactive) still counts: a person sees it.
+      lifecycle = AppLifecycleState.inactive;
+      runtime.framesForTest([frame(700), for (var i = 0; i < 60; i++) frame(5)]);
+      await usage.flush();
+      expect(totals()['health_desktop_frame_under_16ms'], 2);
+      expect(totals()['health_desktop_frame_over_250ms'], isNull);
+      runtime.dispose();
+      await tester.pump();
+    },
+  );
+
+  testWidgets(
+    'a slow sample counts its longest phase, and a long one once a day, '
+    'only once the CLI forwards the names',
+    (tester) async {
+      final runtime = ProductRuntimeHealth(
+        usage,
+        readState: () async => {},
+        writeState: (_) async {},
+        readVersion: () async => '1.2.73',
+        lifecycle: () => AppLifecycleState.resumed,
+      );
+      runtime.account('PRIVATE_ACCOUNT');
+      await usage.flush();
+      await tester.pump();
+      // Milliseconds from vsync: waiting for the UI thread, building, the
+      // raster thread's queue, rastering.
+      FrameTiming frame({
+        int wait = 0,
+        int build = 0,
+        int queue = 0,
+        int raster = 0,
+      }) {
+        final buildStart = wait * 1000;
+        final buildFinish = buildStart + build * 1000;
+        final rasterStart = buildFinish + queue * 1000;
+        final rasterFinish = rasterStart + raster * 1000;
+        return FrameTiming(
+          vsyncStart: 0,
+          buildStart: buildStart,
+          buildFinish: buildFinish,
+          rasterStart: rasterStart,
+          rasterFinish: rasterFinish,
+          rasterFinishWallTime: rasterFinish,
+        );
+      }
+
+      // The 60th frame is the sample.
+      void sample(FrameTiming timing) => runtime.framesForTest([
+        for (var i = 0; i < 59; i++) frame(build: 1),
+        timing,
+      ]);
+      Iterable<String> newNames() => totals().keys.where(
+        (key) => key.contains('_slow_') || key.contains('_long_'),
+      );
+      // A CLI that has not said it forwards them would refuse the report.
+      sample(frame(wait: 300));
+      await usage.flush();
+      expect(totals()['health_desktop_frame_over_250ms'], 1);
+      expect(newNames(), isEmpty);
+      usage.proxyVocabulary = 2;
+      for (final timing in [
+        frame(wait: 40, build: 10, raster: 5),
+        frame(wait: 20, build: 20, raster: 20), // a tie: the earlier phase
+        frame(wait: 5, build: 60, raster: 20),
+        frame(wait: 10, build: 300), // the day's first long sample
+        frame(wait: 5, build: 10, queue: 30, raster: 20),
+        frame(raster: 400), // long again: the day is counted already
+        frame(wait: 10, build: 30), // 40 ms is not slow
+      ]) {
+        sample(timing);
+      }
+      await usage.flush();
+      expect(totals()['health_desktop_frame_slow_wait'], 2);
+      expect(totals()['health_desktop_frame_slow_build'], 2);
+      expect(totals()['health_desktop_frame_slow_raster'], 2);
+      expect(totals()['health_desktop_frame_long_collector'], 1);
+      // Every slow sample since has one phase.
+      expect(
+        totals()['health_desktop_frame_50ms_to_250ms']! +
+            totals()['health_desktop_frame_over_250ms']! -
+            1,
+        6,
+      );
+      // The next UTC day's first long sample counts again, once.
+      now = now.add(const Duration(days: 1));
+      sample(frame(wait: 260));
+      sample(frame(wait: 260));
+      // One report a flush: yesterday's expired workspace observation first.
+      await usage.flush();
+      await usage.flush();
+      expect(totals()['health_desktop_frame_long_collector'], 2);
+      expect(totals()['health_desktop_collector_days'], 2);
+      expect(jsonEncode(reports), isNot(contains('PRIVATE')));
+      runtime.dispose();
+      await tester.pump();
     },
   );
 

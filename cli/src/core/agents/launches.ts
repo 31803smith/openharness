@@ -107,7 +107,9 @@ export function createLaunchRequests({ receipts, createAgent, prepareCreate, pre
       }
       catch (error) {
         return { state: 'failed', error: error instanceof ProjectFolderError ? error.code : 'PROJECT_PREPARATION_FAILED',
-          detail: error instanceof ProjectFolderError ? error.message : 'Could not prepare the project folder.' }
+          detail: error instanceof ProjectFolderError ? error.message : 'Could not prepare the project folder.',
+          // The folder a typed name found already there: the apps offer to start in it, and `harness new` names it.
+          ...(error instanceof ProjectFolderError && error.folder ? { existingFolder: error.folder } : {}) }
       }
       // Only a folder this daemon just made EMPTY is one the engine need not ask about. A clone or
       // the person's own repo is theirs to answer for (engines/kit/folderTrust.ts); a worktree gets only
@@ -234,12 +236,13 @@ export function createLaunchRequests({ receipts, createAgent, prepareCreate, pre
       const session = byAgent(status.agentId)
       return session
         ? { state: 'created', agent: await toProject(session), ...(status.level ? { level: status.level } : {}), ...(status.resumed !== undefined ? { resumed: status.resumed } : {}) }
-        : { state: 'unavailable' }
+        : { state: 'unavailable', createdAgentId: status.agentId }
     }
     // A recorded refusal is a completed outcome. Keep it separate from transport/dispatch errors
     // so clients can distinguish "safe to correct the choices" from "outcome still unknown".
     if (status.state === 'failed') {
-      return { state: 'failed', ...(status.preparedFolder ? { preparedFolder: status.preparedFolder } : {}), failure: { code: status.error, ...(status.detail ? { detail: status.detail } : {}) } }
+      return { state: 'failed', ...(status.preparedFolder ? { preparedFolder: status.preparedFolder } : {}), failure: { code: status.error,
+        ...(status.detail ? { detail: status.detail } : {}), ...(status.existingFolder ? { existingFolder: status.existingFolder } : {}) } }
     }
     return status
   }

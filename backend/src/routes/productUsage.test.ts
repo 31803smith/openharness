@@ -5,6 +5,7 @@ const methods = vi.hoisted(() => ({ ingestProductUsage: vi.fn(), ingestSetupUsag
 vi.mock('../lib/productUsage.js', () => methods)
 import { productUsageRoutes } from './productUsage.js'
 import { PRODUCT_USAGE_METRICS, PRODUCT_USAGE_MAX_COUNT } from '../types/productUsage.js'
+import { HUB_METRICS, HUB_REPORT_MAX_COUNTERS, HUB_REPORT_MAX_VALUE } from '../lib/hubMetricsContract.js'
 let app: ReturnType<typeof Fastify>
 beforeEach(async () => {
   vi.resetAllMocks()
@@ -33,6 +34,22 @@ it.each([
   expect(response.statusCode).toBe(400)
   expect(response.body).not.toContain('PRIVATE_CANARY')
   expect(methods.ingestProductUsage).not.toHaveBeenCalled()
+})
+it('keeps a report with a name this backend does not know yet, without that name', async () => {
+  const context = { surface: 'cli', release: '0.4.18', platform: 'macos', channel: 'production' }
+  const response = await submit({ ...good, context, counters: { turns_started: 2, PRIVATE_CANARY_from_a_newer_client: 1 } })
+  expect(response.statusCode).toBe(200)
+  expect(response.body).not.toContain('PRIVATE_CANARY')
+  expect(methods.ingestProductUsage).toHaveBeenCalledExactlyOnceWith('account',
+    { ...good, context, counters: { turns_started: 2, health_cli_report_unknown_metric: 1 } })
+})
+it('keeps a setup report with a name this backend does not know yet, without that name', async () => {
+  const setup = { schemaVersion: 1, id: good.id, day: good.day, sharing: 'default',
+    counters: { setup_desktop_sign_in_started: 1, setup_desktop_PRIVATE_CANARY: 1 } }
+  const response = await app.inject({ method: 'POST', url: '/api/product-usage/setup', payload: setup })
+  expect(response.statusCode).toBe(200)
+  expect(methods.ingestSetupUsage).toHaveBeenCalledExactlyOnceWith(
+    { ...setup, counters: { setup_desktop_sign_in_started: 1 } })
 })
 it('does not reflect a database error or report contents', async () => {
   methods.ingestProductUsage.mockRejectedValue(new Error('PRIVATE_CANARY'))
@@ -90,6 +107,28 @@ it('the complete vocabulary fits bounded chunks, including the longest metric ke
     const payload = { ...good, context: { surface: 'desktop', release: '999.999.999', platform: 'windows', channel: 'production' }, counters: Object.fromEntries(PRODUCT_USAGE_METRICS.slice(i, i + 64).map(k => [k, PRODUCT_USAGE_MAX_COUNT])) }
     expect(Buffer.byteLength(JSON.stringify(payload))).toBeLessThan(8192)
     expect((await submit(payload)).statusCode).toBe(200)
+  }
+})
+
+it('takes the CLI\'s launch codes, late launch failures and first launches by engine, and still no name outside the list', async () => {
+  const context = { surface: 'cli', release: '0.4.9', platform: 'macos', channel: 'production' }
+  const counters = { launch_failed_other: 2, launch_failed_code_invalid_prompt: 1, launch_failed_code_unlisted: 1,
+    launch_late_failed: 1, launch_late_failed_code_engine_did_not_start: 1, create_error_code_none: 1,
+    resume_error_code_session_not_found: 1, first_launch_engine_claude: 1, first_launch_claude_signed_in: 1,
+    first_launch_engine_other: 1, first_launch_codex_unknown: 1 }
+  expect((await submit({ ...good, context, counters })).statusCode).toBe(200)
+  expect(methods.ingestProductUsage).toHaveBeenCalledWith('account', expect.objectContaining({ counters }))
+  methods.ingestProductUsage.mockClear()
+  // A name outside the list is never stored: the report keeps its known counters without it (an unknown
+  // name no longer refuses the whole report), and alone it is still refused.
+  for (const name of ['launch_failed_code_PRIVATE_CANARY', 'launch_failed_code_ENGINE_DID_NOT_START', 'restart_error_code_internal',
+    'first_launch_engine_cursor', 'first_launch_opencode_signed_in', 'launch_late_failed_other']) {
+    const response = await submit({ ...good, context, counters: { launch_late_failed: 1, [name]: 1 } })
+    expect(response.statusCode, name).toBe(200)
+    expect(response.body).not.toContain('PRIVATE_CANARY')
+    expect(methods.ingestProductUsage).toHaveBeenLastCalledWith('account', expect.objectContaining(
+      { counters: { launch_late_failed: 1, health_cli_report_unknown_metric: 1 } }))
+    expect((await submit({ ...good, context, counters: { [name]: 1 } })).statusCode, name).toBe(400)
   }
 })
 
@@ -177,6 +216,70 @@ it('bounds untrusted setup writes independently of signed-in reports', async () 
   expect((await submit(good)).statusCode).toBe(200)
   finish({ accepted: true })
   expect(await Promise.all(pending)).toEqual([200, 200, 200, 200])
+})
+
+const hub = { schemaVersion: 1, id: good.id, day: good.day, counters: { hub_view_harness_visitor: 3, hub_entry_search: 1, hub_fork: 1, hub_harness_dwell_over_1m: 2 } }
+const sendHub = (payload: unknown = hub, headers = {}) => app.inject({ method: 'POST', url: '/api/product-usage/hub', payload: payload as Record<string, unknown>, headers })
+it('accepts anonymous Hub totals through the setup receipt path without an account lookup', async () => {
+  expect((await sendHub()).statusCode).toBe(200)
+  expect(methods.ingestSetupUsage).toHaveBeenCalledExactlyOnceWith(hub)
+  expect(methods.productUsageChoice).not.toHaveBeenCalled()
+  expect(methods.ingestProductUsage).not.toHaveBeenCalled()
+  // The whole vocabulary fits one report under the key cap and body limit at the largest values,
+  // so the cap cannot be exceeded with valid names until the vocabulary outgrows it.
+  const all = { ...hub, counters: Object.fromEntries(HUB_METRICS.map(k => [k, HUB_REPORT_MAX_VALUE])) }
+  expect(HUB_METRICS.length).toBeLessThanOrEqual(HUB_REPORT_MAX_COUNTERS)
+  expect(Buffer.byteLength(JSON.stringify(all))).toBeLessThan(4096)
+  expect((await sendHub(all)).statusCode).toBe(200)
+})
+it('refuses Hub reports with credentials, foreign or malformed counters, or extra fields, without echoing them', async () => {
+  for (const headers of [{ authorization: 'fixture' }, { cookie: 'PRIVATE_CANARY' }]) expect((await sendHub(hub, headers)).statusCode).toBe(400)
+  for (const payload of [{ ...hub, counters: {} },
+    { ...hub, counters: { PRIVATE_CANARY: 1 } }, { ...hub, counters: { hub_view_harness_PRIVATE_CANARY: 1 } },
+    // Signed-in and setup counters have their own routes; they never arrive as anonymous Hub totals.
+    { ...hub, counters: { turns_started: 1 } }, { ...hub, counters: { setup_desktop_sign_in_started: 1 } },
+    { ...hub, counters: { hub_fork: 0 } }, { ...hub, counters: { hub_fork: HUB_REPORT_MAX_VALUE + 1 } }, { ...hub, counters: { hub_fork: 1.5 } },
+    { ...hub, day: '2026-10-1' }, { ...hub, day: 'PRIVATE_CANARY' }, { ...hub, id: 'PRIVATE_CANARY' }, { ...hub, schemaVersion: 2 },
+    { ...hub, url: 'https://PRIVATE_CANARY' }, { ...hub, referrer: 'PRIVATE_CANARY' }, { ...hub, consent: true }]) {
+    const response = await sendHub(payload)
+    expect(response.statusCode).toBe(400)
+    expect(response.body).not.toContain('PRIVATE_CANARY')
+  }
+  expect(methods.ingestSetupUsage).not.toHaveBeenCalled()
+  // Nor do Hub counters ride the signed-in or setup reports.
+  expect((await submit({ ...good, counters: { hub_fork: 1 } })).statusCode).toBe(400)
+  expect((await sendSetup({ ...setup, counters: { hub_fork: 1 } })).statusCode).toBe(400)
+})
+it('does not reflect a Hub storage error', async () => {
+  methods.ingestSetupUsage.mockRejectedValue(new Error('PRIVATE_CANARY'))
+  const response = await sendHub()
+  expect(response.statusCode).toBe(503)
+  expect(response.body).not.toContain('PRIVATE_CANARY')
+})
+it('bounds Hub writes with a budget of their own, so they never starve setup measurement', async () => {
+  let finish!: (value: unknown) => void
+  const done = new Promise(resolve => { finish = resolve })
+  methods.ingestSetupUsage.mockReturnValue(done)
+  const pending = Array.from({ length: 4 }, () => sendHub().then((r: { statusCode: number }) => r.statusCode))
+  await vi.waitFor(() => expect(methods.ingestSetupUsage).toHaveBeenCalledTimes(4))
+  const busy = await sendHub()
+  expect(busy.statusCode).toBe(429)
+  expect(busy.json().error.code).toBe('USAGE_UNAVAILABLE')
+  const setupWhileHubBusy = sendSetup()
+  await vi.waitFor(() => expect(methods.ingestSetupUsage).toHaveBeenCalledTimes(5))
+  finish({ accepted: true })
+  expect(await Promise.all(pending)).toEqual([200, 200, 200, 200])
+  expect((await setupWhileHubBusy).statusCode).toBe(200)
+})
+it('caps Hub writes per minute', async () => {
+  vi.useFakeTimers({ now: new Date('2026-10-13T12:00:00Z'), toFake: ['Date'] })
+  try {
+    for (let i = 0; i < 240; i++) expect((await sendHub()).statusCode).toBe(200)
+    expect((await sendHub()).statusCode).toBe(429)
+    expect((await sendSetup()).statusCode).toBe(200)
+    vi.setSystemTime(new Date('2026-10-13T12:01:00Z'))
+    expect((await sendHub()).statusCode).toBe(200)
+  } finally { vi.useRealTimers() }
 })
 
 it('feedback reduces a voluntary fixed choice to one unlinked, retry-safe count', async () => {

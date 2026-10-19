@@ -5,7 +5,7 @@ import { communityLimits, missingMarker } from '@/lib/community/contract';
 import { validateDraft } from '@/lib/community/drafts';
 import { previewDocument } from '@/lib/community/preview';
 import { outsideResources } from '@/lib/community/outputCheck';
-import { findSecrets } from '@/lib/community/secrets';
+import { secretsInConversation, secretsInFiles } from '@/lib/community/secrets';
 import { Header, SignIn } from '../components/Header';
 import { useSignedIn } from '../components/useSignedIn';
 import { ConversationEditor } from './components/ConversationEditor';
@@ -17,6 +17,9 @@ import { PublishChecks } from './components/PublishChecks';
 import { PublishTarget } from './components/PublishTarget';
 import { UnpublishAction } from './components/UnpublishAction';
 import { originalOutput, readCover, readProjectFolder } from './projectFiles';
+import { harnessPath } from '@/lib/community/slug';
+import { countHub } from '@/lib/community/hubMeasure';
+import { useHubView } from '../components/useHubView';
 import { submitPublication, unpublishPublication } from './publication';
 import { usePublishDraft, type PublishDraft } from './usePublishDraft';
 import { useEnglishDraft } from './useEnglishDraft';
@@ -26,10 +29,13 @@ const reviewInputs = ['confirmation', 'secrets'];
 
 export default function PublishPage() {
   const router = useRouter(), signedIn = useSignedIn();
+  useHubView('publish');
   const { draft, update, applyBundle, saveError, loadError, publishOnce } = usePublishDraft();
   const english = useEnglishDraft(draft, update, signedIn);
   const [confirmed, setConfirmed] = useState(false), [checkedSecrets, setCheckedSecrets] = useState(''), [busy, setBusy] = useState(false), [error, setError] = useState('');
-  const findings = useMemo(() => findSecrets(draft.files, draft.conversation), [draft.files, draft.conversation]);
+  const fileFindings = useMemo(() => secretsInFiles(draft.files), [draft.files]);
+  const turnFindings = useMemo(() => secretsInConversation(draft.conversation), [draft.conversation]);
+  const findings = useMemo(() => [...fileFindings, ...turnFindings], [fileFindings, turnFindings]);
   // The acknowledgement is for these findings: a new one needs checking again.
   const findingsKey = JSON.stringify(findings), secretsChecked = !findings.length || checkedSecrets === findingsKey;
   const marker = missingMarker(draft.harnessId, draft.files.map(file => file.path));
@@ -63,9 +69,12 @@ export default function PublishPage() {
   function publish(event: FormEvent) {
     event.preventDefault();
     if (!ready || busy) return;
-    setBusy(true); setError('');
-    void publishOnce(async clientId => { router.push(`/hub/${await submitPublication(draft, clientId)}`); })
-      .catch(e => setError(e instanceof Error ? e.message : 'Publication failed. Your draft is still here.')).finally(() => setBusy(false));
+    setBusy(true); setError(''); countHub('hub_publish_started');
+    void publishOnce(async clientId => {
+      const id = await submitPublication(draft, clientId);
+      countHub('hub_publish_ok');
+      router.push(harnessPath({ id, title: draft.title }));
+    }).catch(e => { countHub('hub_publish_failed'); setError(e instanceof Error ? e.message : 'Publication failed. Your draft is still here.'); }).finally(() => setBusy(false));
   }
   function unpublish() {
     if (!draft.updateId || busy) return;
@@ -98,8 +107,10 @@ export default function PublishPage() {
       <PublishChecks noOutput={!!draft.files.length && html === undefined} unchanged={unchanged ? draft.viewerPath : null} outside={outside} missingMarker={marker} findings={findings} acknowledged={secretsChecked} onAcknowledge={value => setCheckedSecrets(value ? findingsKey : '')} />
       <label className={styles.check}><input required type="checkbox" name="confirmation" checked={confirmed} onChange={event => setConfirmed(event.target.checked)} /><span>I have permission to publish these files and this conversation under the MIT license. I have reviewed them for private information.</span></label>
       {(error || loadError || saveError) && <p className={styles.error} role="alert">{error || loadError || saveError}</p>}
-      <button className={styles.primary} disabled={busy || !ready}>{updating ? (busy ? 'Saving…' : 'Save changes') : (busy ? 'Publishing…' : 'Publish harness')}</button>
+      <div className={styles.submitRow}>
+        <button className={styles.primary} disabled={busy || !ready}>{updating ? (busy ? 'Saving…' : 'Save changes') : (busy ? 'Publishing…' : 'Publish harness')}</button>
+        {updating && <UnpublishAction busy={busy} onUnpublish={unpublish} />}
+      </div>
     </form>
-    {updating && <UnpublishAction busy={busy} onUnpublish={unpublish} />}
   </main></>;
 }

@@ -202,10 +202,45 @@ export function newAgentPayload(args: NewArgs, cwd: string | null, baseEngine = 
   }
 }
 
-export interface NewMachine { machineId: string; label: string; status: string; current: boolean }
+export interface NewMachine {
+  machineId: string; label: string; status: string; current: boolean
+  /** Another account's machine shared with this one: whose it is. */
+  sharedBy?: string
+  /** Shared with everyone at the account's domain and not added yet: named only to say how to add it. */
+  toAdd?: true
+}
 
-/** The machine `--machine <word>` means: an exact id, else a label, case-blind; ambiguity is an error, not a guess. */
-export function resolveNewMachine(word: string, machines: NewMachine[]): NewMachine {
+/** One row of `GET /api/machines`, as far as `--machine` reads it; a shared one carries its `share`. */
+export interface MachineRow {
+  machineId: string
+  name?: string | null
+  hostname?: string | null
+  status?: string | null
+  share?: { ownerName?: string | null; added?: boolean | null } | null
+}
+
+/** The machines `--machine` resolves among: the account's own, then those other accounts share with it that it
+ *  may use — named in the share, or added from one at its domain (`share.added`, as the backend decides). A domain
+ *  share not added yet is listed as `toAdd`: its machine refuses this account until it is added
+ *  (backend lib/machineAccess.ts `sharedMachineAccess`), so it is never chosen, only named. */
+export function machineChoices(data: { machines?: MachineRow[]; sharedMachines?: MachineRow[] }, currentId: string | null): NewMachine[] {
+  const label = (machine: MachineRow): string => machine.name?.trim() || machine.hostname?.trim() || '(unnamed)'
+  const choice = (machine: MachineRow): NewMachine => ({
+    machineId: machine.machineId, label: label(machine), status: machine.status || 'unknown', current: machine.machineId === currentId,
+  })
+  return [
+    ...(data.machines ?? []).map(choice),
+    ...(data.sharedMachines ?? []).map((machine) => ({
+      ...choice(machine), current: false, sharedBy: machine.share?.ownerName?.trim() || 'another account',
+      ...(machine.share?.added === true ? {} : { toAdd: true as const }),
+    })),
+  ]
+}
+
+/** The machine `--machine <word>` means: an exact id, else a label, case-blind; ambiguity is an error, not a guess.
+ *  A machine shared with the account answers its name too, but the account's own wins a name both have. */
+export function resolveNewMachine(word: string, choices: NewMachine[]): NewMachine {
+  const machines = choices.filter((machine) => !machine.toAdd)
   const byId = machines.find((machine) => machine.machineId === word)
   if (byId) return byId
   const wanted = word.toLowerCase()
@@ -218,11 +253,21 @@ export function resolveNewMachine(word: string, machines: NewMachine[]): NewMach
   let matches: NewMachine[] = []
   for (const tier of tiers) {
     matches = machines.filter((machine) => tier(machine.label.toLowerCase()))
+    const own = matches.filter((machine) => machine.sharedBy === undefined)
+    if (own.length > 0) matches = own
     if (matches.length > 0) break
   }
   if (matches.length === 1) return matches[0]!
   if (matches.length === 0) {
-    throw new NewUsageError(`No machine called “${word}”. Yours: ${machines.map((machine) => machine.label).join(', ') || 'none'}.`)
+    // Seen 2026-10-16: Mac Auto, shared with everyone at autonomous.ai and not added, read as no machine at all.
+    const team = choices.find((machine) => machine.toAdd && (machine.machineId === word || machine.label.toLowerCase() === word.toLowerCase()))
+    if (team) {
+      throw new NewUsageError(`${team.sharedBy} shared “${team.label}” with everyone at your company. Add it first: Machines › Shared with your team, in the app or hn.`)
+    }
+    const labels = (shared: boolean) => machines.filter((machine) => (machine.sharedBy !== undefined) === shared).map((machine) => machine.label)
+    const shared = labels(true)
+    throw new NewUsageError(`No machine called “${word}”. Yours: ${labels(false).join(', ') || 'none'}.`
+      + (shared.length ? ` Shared with you: ${shared.join(', ')}.` : ''))
   }
   throw new NewUsageError(`“${word}” could be ${matches.map((machine) => machine.label).join(' or ')}. Type more of the name.`)
 }
@@ -291,7 +336,7 @@ const ERRORS: Record<string, string> = {
   INVALID_CWD: 'That folder does not exist on the machine.',
   INVALID_ENGINE: 'That agent is not one this machine knows.',
   INVALID_DSH: 'That harness is not in the machine\'s catalog, or does not run on that engine.',
-  PROJECT_EXISTS: 'A project with that name already exists. Name its folder instead.',
+  PROJECT_EXISTS: 'A project with that name already exists. Choose another name, or name its folder to start in it.',
   PROMPT_UNSUPPORTED: 'That agent cannot be started with a first message.',
   PROMPT_TOO_LONG: 'A first message holds at most 2,000 characters. Put the rest in a file and name the file in it.',
   SPAWN_FAILED: 'The agent could not be started.',
@@ -357,6 +402,30 @@ function projectStep(args: NewArgs, project: string, env: NodeJS.ProcessEnv): st
   if (env[VIA_MCP_ENV] === '1') return `harness_start (project: "${project}", …)`
   const name = args.name === null ? '' : ` --name ${/^[\w.-]+$/.test(args.name) ? args.name : JSON.stringify(args.name)}`
   return `harness new ${args.agent} ${project}${name} -- …`
+}
+
+/** How the caller starts [args] in the existing [folder] instead: the shell's words, or the tool `harness mcp` offers. */
+function folderStep(args: NewArgs, folder: string, env: NodeJS.ProcessEnv): string {
+  if (env[VIA_MCP_ENV] === '1') return `harness_start (folder: "${folder}"${args.machine === null ? '' : `, machine: "${args.machine}"`}, …)`
+  const name = args.name === null ? '' : ` --name ${/^[\w.-]+$/.test(args.name) ? args.name : JSON.stringify(args.name)}`
+  const machine = args.machine === null ? '' : ` ${machineOption(args.machine)}`
+  // Quoted, `~/` still means the home: parseNewArgs reads it, not the shell.
+  return `harness new ${args.agent}${machine} ${/^[\w./~-]+$/.test(folder) ? folder : JSON.stringify(folder)}${name}${args.prompt ? ' -- …' : ''}`
+}
+
+/**
+ * What `harness new` says when the new project it was to make is already there. A name the person chose is never quietly
+ * changed (lib/projectFolder.ts), so the ways on are that folder or another name. "Name its folder instead", followed by
+ * the app's "Select that folder from your projects", left out where the folder was and how to name one (PROJECT_EXISTS
+ * was 4 of 7 failed starts on Oct 18). The machine names the folder when it is one to start in (`existingFolder`).
+ */
+function projectExists(args: NewArgs, folder: string | null, at: { local: boolean; machine: string; home: string }, env: NodeJS.ProcessEnv): string {
+  const slug = args.projectName ? projectFolderSlug(args.projectName) : null
+  const called = slug ? `“${slug}”` : 'A project with that name'
+  if (!folder) return `${called} already exists on ${at.machine}. Choose another name for the new project.`
+  const shown = at.local ? tildeOf(folder, at.home) : folder
+  return `${called} already exists on ${at.machine}: ${shown}. Choose another name for the new project, or start in that folder: `
+    + folderStep(args, shown, env)
 }
 
 /** One loopback session with the daemon: select the machine, then ask, one request at a time. */
@@ -593,9 +662,11 @@ export async function newCommand(deps: NewCommandDeps): Promise<number> {
         const failure = (result.failure ?? {}) as Record<string, unknown>
         const code = typeof failure.code === 'string' ? failure.code : ''
         const detail = typeof failure.detail === 'string' && failure.detail ? failure.detail : ''
+        const existing = typeof failure.existingFolder === 'string' && failure.existingFolder ? failure.existingFolder : null
         throw new Error(result.state === 'failed'
+          ? code === 'PROJECT_EXISTS' ? projectExists(args, existing, { local, machine: machineLabel, home: deps.home }, env)
           // A code this has no words for is shown by the daemon's own detail, which names the engine and why.
-          ? (ERRORS[code] ? `${ERRORS[code]}${detail ? ` (${detail})` : ''}` : detail || code || 'The harness could not be started.')
+          : ERRORS[code] ? `${ERRORS[code]}${detail ? ` (${detail})` : ''}` : detail || code || 'The harness could not be started.'
           : `Harness could not confirm the harness started (${String(result.state)}). Check with \`${psThere}\` before starting another.`)
       }
       const agent = (result.agent ?? {}) as Record<string, unknown>

@@ -341,6 +341,31 @@ describe('TerminalStreamManager', () => {
     expect(stream.sizes.at(-1)).toEqual({ cols: 140, rows: 50 })
   })
 
+  it('carries an opaque native input context without letting it grant terminal control', async () => {
+    const onInput = vi.fn(), inputContext = 'fixture-native-input-context'
+    manager = newManager({ onInput })
+    await manager.handleFrame('web-1', 'terminal_open', {
+      requestId: 'context', protocolVersion: 3, agentId: 'agent-1', cols: 80, rows: 24, inputContext,
+    })
+    const streamId = sent.find(frame => frame.type === 'terminal_ready' && frame.connId === 'web-1')!.payload.streamId as string
+    await manager.handleFrame('web-2', 'terminal_open', {
+      requestId: 'watch-context', protocolVersion: 3, agentId: 'agent-1', cols: 80, rows: 24, watch: true, inputContext,
+    })
+    const watchId = sent.find(frame => frame.type === 'terminal_ready' && frame.connId === 'web-2')!.payload.streamId as string
+    await manager.handleBinary('web-2', { kind: TerminalBinaryKind.input, streamId: watchId, seq: 0, compressed: false, bytes: Buffer.from('\r') })
+    expect(onInput).not.toHaveBeenCalled()
+    await manager.handleBinary('web-1', { kind: TerminalBinaryKind.input, streamId, seq: 0, compressed: false, bytes: Buffer.from('hello') })
+    expect(onInput).toHaveBeenLastCalledWith('agent-1', true, { connId: 'web-1', kind: null, inputContext })
+    await manager.handleBinary('web-1', { kind: TerminalBinaryKind.input, streamId, seq: 1, compressed: false, bytes: Buffer.from('\r') })
+    expect(onInput).toHaveBeenLastCalledWith('agent-1', true, { connId: 'web-1', kind: null, inputContext, submitted: true })
+    await manager.handleFrame('web-3', 'terminal_open', {
+      requestId: 'invalid-context', protocolVersion: 3, agentId: 'agent-1', cols: 80, rows: 24, inputContext: { userId: 'do-not-trust' },
+    })
+    const other = sent.find(frame => frame.type === 'terminal_ready' && frame.connId === 'web-3')!.payload.streamId as string
+    await manager.handleBinary('web-3', { kind: TerminalBinaryKind.input, streamId: other, seq: 0, compressed: false, bytes: Buffer.from('hello') })
+    expect(onInput).toHaveBeenLastCalledWith('agent-1', true, { connId: 'web-3', kind: null })
+  })
+
   it.each([[1, 1], [30, 30], [80, 8], [300, 120]])(
     'opens and resizes a terminal at its actual %i×%i pane size', async (cols, rows) => {
       const open = vi.spyOn(terminals, 'openStream')
@@ -768,6 +793,41 @@ describe('TerminalStreamManager', () => {
     expect(sent.some((frame) => frame.connId === 'web-2'
       && frame.type === 'terminal_closed'
       && frame.payload.reason === 'heartbeat timeout')).toBe(true)
+  })
+
+  // A host that lost its backend link closes its remote streams without telling anyone; the client
+  // only found out after 15 s of silence and three ignored resyncs, then gave up (2026-10-16). A
+  // client that asks is now told at its next heartbeat.
+  describe('a heartbeat or resync for a stream this connection does not hold', () => {
+    const errors = () => sent.filter((frame) => frame.type === 'terminal_error')
+
+    it('is answered with TERMINAL_STREAM_NOT_FOUND when the client asks', async () => {
+      await manager.handleFrame('web-1', 'terminal_alive', { streamId: 'gone-1', reportMissing: true })
+      await manager.handleFrame('web-1', 'terminal_resync', { streamId: 'gone-2', attempt: 1, reportMissing: true })
+      expect(errors().map((frame) => [frame.connId, frame.payload.code, frame.payload.streamId])).toEqual([
+        ['web-1', 'TERMINAL_STREAM_NOT_FOUND', 'gone-1'],
+        ['web-1', 'TERMINAL_STREAM_NOT_FOUND', 'gone-2'],
+      ])
+    })
+
+    it('stays silent for a client that does not ask, as every older client', async () => {
+      await manager.handleFrame('web-1', 'terminal_alive', { streamId: 'gone-1' })
+      await manager.handleFrame('web-1', 'terminal_resync', { streamId: 'gone-1', attempt: 1 })
+      expect(errors()).toEqual([])
+    })
+
+    it('counts a stream held by another connection as missing for this one, and leaves it alone', async () => {
+      await manager.handleFrame('web-1', 'terminal_open', {
+        requestId: 'open-1', protocolVersion: 3, agentId: 'agent-1', cols: 100, rows: 30,
+      })
+      const streamId = sent.findLast((frame) => frame.type === 'terminal_ready')?.payload.streamId as string
+      await manager.handleFrame('web-2', 'terminal_alive', { streamId, reportMissing: true })
+      expect(errors().at(-1)).toMatchObject({
+        connId: 'web-2',
+        payload: { code: 'TERMINAL_STREAM_NOT_FOUND', streamId },
+      })
+      expect(stream.closed).toBe(false)
+    })
   })
 
   // Node's clock keeps running while a Mac sleeps, so a lid closed for forty minutes reached the next

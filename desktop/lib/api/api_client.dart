@@ -2,6 +2,7 @@ import 'dart:collection';
 
 import 'package:dio/dio.dart';
 
+import '../agent_messages/tab_settings.dart' show AgentMessageLeader;
 import '../auth/auth_session.dart';
 import '../core/config.dart';
 import '../core/models.dart';
@@ -117,10 +118,27 @@ class ApiClient {
     return dio;
   }
 
+  /// The header the local CLI's report proxy answers with: the revision of
+  /// the counter names it forwards (cli/src/lib/appProductUsageReport.ts).
+  static const usageVocabularyHeader = 'x-harness-usage-vocabulary';
+
+  /// [usageVocabularyHeader]'s value, or 1 — the names every proxy knows —
+  /// from a CLI that predates it (or the backend, which never sends it).
+  static int usageVocabulary(Headers headers) {
+    final values = headers[usageVocabularyHeader];
+    final value = int.tryParse(
+      values == null || values.isEmpty ? '' : values.first,
+    );
+    return value != null && value > 1 ? value : 1;
+  }
+
   // -- auth (proxied by the local CLI — no credential on this leg) --
+  /// [onVocabulary] hears [usageVocabulary] from every answer, a refusal
+  /// included; a request that got no answer says nothing.
   Future<Map<String, dynamic>> productUsageReport(
-    Map<String, dynamic> report,
-  ) async {
+    Map<String, dynamic> report, {
+    void Function(int vocabulary)? onVocabulary,
+  }) async {
     try {
       final response = await _dio.post(
         '/api/product-usage/report',
@@ -131,6 +149,7 @@ class ApiClient {
           sendTimeout: const Duration(seconds: 5),
         ),
       );
+      onVocabulary?.call(usageVocabulary(response.headers));
       final body = response.data;
       if (response.statusCode != 200 ||
           body is! Map ||
@@ -222,6 +241,26 @@ class ApiClient {
     final res = await _dio.get('/api/agent-messages');
     if (res.statusCode == 404) return null;
     return unwrapApiResponse(res) as Map<String, dynamic>?;
+  }
+
+  /// A desk tab's Agent Messages settings (backend PATCH /api/agent-messages/tabs/:tabId): [leader]
+  /// sets it, [clearLeader] removes it. Answers `{tabId, enabled, leader, revision}`; a refusal
+  /// (400 `INVALID_LEADER` "Choose a harness in this tab.") throws [ApiException].
+  Future<Map<String, dynamic>> setAgentMessageTab(
+    String tabId, {
+    bool? enabled,
+    AgentMessageLeader? leader,
+    bool clearLeader = false,
+  }) async {
+    final res = await _dio.patch(
+      '/api/agent-messages/tabs/${Uri.encodeComponent(tabId)}',
+      data: {
+        'enabled': ?enabled,
+        if (leader != null) 'leader': leader.toJson() else if (clearLeader) 'leader': null,
+      },
+      options: Options(headers: {'x-adapter-local': '1'}),
+    );
+    return Map<String, dynamic>.from(unwrapApiResponse(res) as Map);
   }
 
   // -- account-wide Experimental preferences --

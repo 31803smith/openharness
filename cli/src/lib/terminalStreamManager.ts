@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { typedByPerson } from './typedInput.js'
+import { inputContextIn, nativeSubmitKey } from './nativeTurnObservations.js'
 import { unlink } from 'node:fs/promises'
 import { deflateSync } from 'node:zlib'
 import { ENGINES } from '../engines/types.js'
@@ -114,6 +115,8 @@ interface ActiveStream {
   ownerId: string
   /** What the client declared on open, or what `describeClient` could tell; absent when neither knew. */
   client?: TerminalClientDescriptor
+  /** Opaque input provenance only. It does not affect the control lease. */
+  inputContext?: string
   streamId: string
   /** A stream opened as a WATCHER: it renders, but it never took the control lease and its input is
    *  refused. See the `takeover: false` branch of `open()`. */
@@ -191,7 +194,7 @@ export interface TerminalStreamManagerDeps {
    * `from`: the stream's connection and what its client said it is on `terminal_open`, so a page a program in the
    * pane opens can go to the phone the person is typing on (core/terminals/browser.ts).
    */
-  onInput?: (agentId: string, typed: boolean, from: { connId: string, kind: string | null }) => void
+  onInput?: (agentId: string, typed: boolean, from: { connId: string, kind: string | null; inputContext?: string; submitted?: boolean }) => void
 }
 
 function sizeFrom(payload: FramePayload): TerminalStreamSize | null {
@@ -561,6 +564,7 @@ export class TerminalStreamManager {
         connId,
         ownerId,
         ...(client ? { client } : {}),
+        ...(inputContextIn(payload.inputContext) ? { inputContext: payload.inputContext as string } : {}),
         streamId,
         watching,
         watchOnly: watching && watchOnly,
@@ -639,8 +643,19 @@ export class TerminalStreamManager {
 
   private alive(connId: string, payload: FramePayload): void {
     const state = this.streamFor(connId, payload)
-    if (!state) return
+    if (!state) { this.reportMissing(connId, payload); return }
     state.expiresAt = this.now() + HEARTBEAT_TIMEOUT_MS
+  }
+
+  /**
+   * Tell a client that asked (`reportMissing`) that the stream it names is gone. A host that lost its
+   * backend link closes its remote streams without notice, and the client used to learn it only after
+   * 15 s of silence and three resyncs this manager ignored, then gave up on the pane (2026-10-16). Opt-in,
+   * so an older client keeps the silence its own recovery was built around.
+   */
+  private reportMissing(connId: string, payload: FramePayload): void {
+    if (payload.reportMissing !== true || typeof payload.streamId !== 'string') return
+    this.sendError(connId, 'TERMINAL_STREAM_NOT_FOUND', { streamId: payload.streamId, message: 'no live terminal stream' })
   }
 
   private ack(connId: string, payload: FramePayload): void {
@@ -679,7 +694,7 @@ export class TerminalStreamManager {
     }
     state.lastInputSeq = inputSeq
     state.expiresAt = this.now() + HEARTBEAT_TIMEOUT_MS
-    this.tookInput(state, typedByPerson(bytes))
+    this.tookInput(state, typedByPerson(bytes), nativeSubmitKey(bytes))
     // Not awaited. `writeRaw` hands its `send-keys` to the control client's FIFO synchronously, so
     // keystroke order is already fixed by the time it returns its promise — and the seq above is
     // spent, so the next frame cannot race this one. Awaiting the reply held the whole local
@@ -707,8 +722,9 @@ export class TerminalStreamManager {
   }
 
   /** See `TerminalStreamManagerDeps.onInput`. A listener's failure is its own: input is never held by it. */
-  private tookInput(state: ActiveStream, typed: boolean): void {
-    try { this.deps.onInput?.(state.agentId, typed, { connId: state.connId, kind: state.client?.kind ?? null }) } catch (error) {
+  private tookInput(state: ActiveStream, typed: boolean, submitted = false): void {
+    try { this.deps.onInput?.(state.agentId, typed, { connId: state.connId, kind: state.client?.kind ?? null,
+      ...(state.inputContext ? { inputContext: state.inputContext } : {}), ...(submitted ? { submitted: true } : {}) }) } catch (error) {
       this.diagnostic(state, 'input_listener_failed', { reason: error instanceof Error ? error.message : String(error) })
     }
   }
@@ -1010,11 +1026,10 @@ export class TerminalStreamManager {
 
   private async resyncRequested(connId: string, payload: FramePayload): Promise<void> {
     const state = this.streamFor(connId, payload)
-    if (state) {
-      state.resyncs++
-      this.diagnostic(state, 'resync_requested', { attempt: payload.attempt })
-      await this.sendKeyframe(state, 'resync')
-    }
+    if (!state) { this.reportMissing(connId, payload); return }
+    state.resyncs++
+    this.diagnostic(state, 'resync_requested', { attempt: payload.attempt })
+    await this.sendKeyframe(state, 'resync')
   }
 
   private async closeRequested(connId: string, payload: FramePayload): Promise<void> {

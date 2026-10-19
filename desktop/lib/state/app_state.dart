@@ -4,6 +4,7 @@ import '../measurement/product_connections.dart';
 import '../core/crash_log.dart';
 import '../measurement/desktop_setup_report.dart';
 import 'attached_task_delivery.dart';
+import 'harness_attachments.dart';
 import 'task_route.dart';
 import '../core/permission_modes.dart';
 
@@ -37,6 +38,8 @@ import '../agent_messages/shared_tab_errors.dart';
 import '../agent_messages/shared_tab_placement.dart';
 import '../agent_messages/shared_tabs.dart';
 import '../agent_messages/shared_tabs_model.dart';
+import '../agent_messages/tab_activity.dart';
+import '../agent_messages/tab_settings.dart';
 import '../api/api_client.dart';
 import '../viewer/sign_in_browser.dart';
 import '../viewer/direct_link.dart';
@@ -84,6 +87,9 @@ import '../autonomous_device/autonomous_device_cli.dart';
 import '../settings/config_store.dart';
 import '../settings/experimental_features.dart';
 import '../core/local_key_value_store.dart';
+import '../core/harness_file_store.dart';
+import '../super_tabs/client.dart';
+import '../super_tabs/controller.dart';
 import '../measurement/setup_preference_store.dart';
 import '../devices/device_hosts.dart';
 import '../stats/harness_stats.dart';
@@ -273,12 +279,15 @@ class AgentCreationAttempt {
     this.background = false,
     String? creationId,
     this.holdWait,
+    this.beforeSubmit,
   }) : _id = creationId ?? _newCreationId();
 
   /// How long a request the machine holds is waited for before the create
   /// answers ([AppNotifier._createFollowingHold]). Null answers at once with
   /// what it waits for, as a form wants: the person reads it and may cancel.
   final Duration? holdWait;
+  final Future<void> Function(String machineId, String creationId)?
+  beforeSubmit;
   String _id;
   String? _machineId, _targetId;
   Map<String, dynamic>? _choices;
@@ -320,6 +329,13 @@ class AgentCreationAttempt {
   /// A completed folder survives a refused agent launch, so correcting the
   /// agent choice does not clone or create the same project again.
   String? get preparedFolder => _preparedFolder;
+
+  /// On `PROJECT_EXISTS` for a new project's name the person typed: the
+  /// folder already there, when it is one to start in. Unlike
+  /// [preparedFolder] it is only offered ("Use the existing folder"), never
+  /// used until the person chooses it.
+  String? _existingFolder;
+  String? get existingFolder => _existingFolder;
 
   String? _complete(String? error) {
     _finished = true;
@@ -369,8 +385,7 @@ class MachineState {
   /// another account shares (`isShared`) or a whole machine another account
   /// shares (`isSharedMachine`). Its daemon answers as its owner, so shared
   /// tabs never ask it, and a harness on it is never this account's own.
-  bool get belongsToOtherAccount =>
-      machine.isShared || machine.isSharedMachine;
+  bool get belongsToOtherAccount => machine.isShared || machine.isSharedMachine;
   int _agentRevision = 0;
   final _agentRemovals = <String, int>{};
   final _agentStopRevisions = <String, int>{};
@@ -979,6 +994,31 @@ class AppNotifier extends ChangeNotifier {
   );
 
   final Map<String, Timer> _offlineRetryTimers = {};
+  final Map<TerminalPane, Timer> _paneRetryTimers = {};
+  final Map<TerminalPane, int> _paneRetryAttempts = {};
+
+  /// What the pane sweep saw of each session when it last ran (see [_retryPhase]).
+  final Map<TerminalSession, int> _sweptRetryPhases = {};
+  int _paneSweeps = 0;
+
+  /// How many times the pane sweep ([_schedulePaneRetries]) has run.
+  @visibleForTesting
+  int get paneSweepsForTest => _paneSweeps;
+
+  /// When [_forceRedial] last redialled each machine, on [redialClock].
+  final Map<String, Duration> _lastForcedRedial = {};
+
+  /// Machines whose socket a forced redial has taken down and not yet brought back, with when it began.
+  final Map<String, Duration> _forcedRedials = {};
+
+  /// Monotonic, so a wall-clock change can neither hold redials off nor let a burst through.
+  @visibleForTesting
+  Duration Function() redialClock = _monotonicClock();
+
+  static Duration Function() _monotonicClock() {
+    final watch = Stopwatch()..start();
+    return () => watch.elapsed;
+  }
 
   /// One reload per machine, owed after this computer's daemon was too slow to answer its list while
   /// still on the socket — the error strip says "retrying", and this is the retry.
@@ -1069,6 +1109,7 @@ class AppNotifier extends ChangeNotifier {
       !_disposed && revision == _authRevision;
 
   int _invalidateAuthWork() {
+    _closeAttachmentSessions();
     _phoneOffer = false;
     _closeOwnerMemories();
     _stopMachineRecovery();
@@ -1330,12 +1371,14 @@ class AppNotifier extends ChangeNotifier {
   CurrentUserProfile? get currentUser => _currentUser;
   set currentUser(CurrentUserProfile? profile) {
     if (_currentUser?.id != profile?.id) {
+      _closeAttachmentSessions();
       _closeOwnerMemories();
       deviceHosts.clear();
       _deviceReads.clear();
     }
     _currentUser = profile;
     final id = profile?.id;
+    superTabs.bind(id);
     experimentalFeatures.bind(
       id,
       transport: id == null ? null : _experimentTransport,
@@ -1373,6 +1416,10 @@ class AppNotifier extends ChangeNotifier {
   /// Who stopped sharing [machineId] with this account, and its name, if they did.
   ({String name, String owner})? sharingEnded(String machineId) =>
       _sharingEnded[machineId];
+
+  /// The "stopped sharing" message [lastError] shows, and for which machine: taken down once that
+  /// machine is shared again, rather than left saying something no longer true.
+  ({String machineId, String text})? _sharingEndedError;
 
   void _noteSharingEnded(Machine machine) {
     final share = machine.machineShare;
@@ -1515,7 +1562,7 @@ class AppNotifier extends ChangeNotifier {
     orElse: () => swarms.first,
   );
   List<TerminalPane> get panes => activeSwarm.panes;
-  Iterable<TerminalPane> get allPanes => swarms.expand((s) => s.panes).toSet();
+  Set<TerminalPane> get allPanes => swarms.expand((s) => s.panes).toSet();
   String get activeSwarmId => activeSwarm.id;
 
   /// Agent Messages (docs/design/2026-10-10-agent-messages.md): whether the
@@ -1569,7 +1616,16 @@ class AppNotifier extends ChangeNotifier {
     },
     foreground: foreground,
     onActivity: applySharedActivity,
+    // Off (the account default), every daemon refuses `shares`: not asked.
+    messagesSwitch: ExperimentChoice(
+      experimentalFeatures,
+      ExperimentalFeature.agentMessages,
+    ),
   );
+
+  /// `tab_activity` on the computer [sharedTabs] asks: every harness of a desk
+  /// tab with its state and summary.
+  late final tabActivity = TabActivityReader(request: sharedTabs.request);
 
   /// The machine [sharedTabs] asks: this computer natively; on the web one of
   /// the account's own online machines, never a shared one.
@@ -1589,6 +1645,147 @@ class AppNotifier extends ChangeNotifier {
       }
     }
     return best;
+  }
+
+  late final superTabs = SuperTabClient(
+    storage: localStore ?? HarnessFileStore.shared,
+    onSnapshot: (controller) {
+      if (_disposed || controller.accountId != currentUser?.id) return;
+      var shown = false;
+      for (final tab in swarms.where((s) => s.superTabId == controller.tabId)) {
+        if (tab.name != controller.snapshot!.name || !tab.nameIsCustom) {
+          tab.name = controller.snapshot!.name;
+          tab.nameIsCustom = true;
+          shown = true;
+        }
+      }
+      if (shown) _persistLayout();
+      notifyListeners();
+    },
+    transport: (method, path, {body}) async {
+      final target = sharedTabsTarget;
+      if (target == null) {
+        throw const SuperTabFailure(
+          'MACHINE_UNAVAILABLE',
+          'Connect one of your machines to open Super Tab.',
+        );
+      }
+      final result = await superTabMachineRequest(target.machine.machineId, {
+        'action': 'backend',
+        'method': method,
+        'path': path,
+        'body': ?body,
+      });
+      return result['value'];
+    },
+  );
+
+  Future<Map<String, dynamic>> superTabMachineRequest(
+    String machineId,
+    Map<String, dynamic> payload,
+  ) async {
+    final revision = _authRevision;
+    final result = await _conn(machineId).request(
+      'super_tabs',
+      payload: payload,
+      timeout: const Duration(seconds: 30),
+    );
+    if (!_authWorkCurrent(revision)) {
+      throw const SuperTabFailure('ACCOUNT_CHANGED', 'The account changed.');
+    }
+    if (result['error'] != null) {
+      throw SuperTabFailure(
+        result['error'].toString(),
+        result['detail'] as String? ?? 'Could not reach this Super Tab.',
+        statusCode: (result['status'] as num?)?.toInt() ?? 0,
+      );
+    }
+    return result;
+  }
+
+  Future<void> wakeSuperTabHost(String machineId) async {
+    await superTabMachineRequest(machineId, {'action': 'wake'});
+    // Share derives only the session views authorized by the tab. Its existing
+    // observer protocol never exposes this machine's general command surface.
+    await _conn(machineId).request('harness_share_rosters');
+  }
+
+  void bindSuperTab(String swarmId, String tabId, String name) {
+    final swarm = swarms.where((s) => s.id == swarmId).firstOrNull;
+    if (swarm == null) return;
+    swarm.kind = 'superTab';
+    swarm.superTabId = tabId;
+    swarm.name = name;
+    swarm.nameIsCustom = true;
+    swarm.isNewTabPage = false;
+    _persistLayout();
+    notifyListeners();
+  }
+
+  void openSuperTab(String tabId, String name) {
+    final existing = swarms.where((s) => s.superTabId == tabId).firstOrNull;
+    if (existing != null) {
+      selectSwarm(existing.id);
+      return;
+    }
+    newSwarm(newTabPage: true);
+    bindSuperTab(activeSwarmId, tabId, name);
+  }
+
+  void markSuperTabDraft(String swarmId) {
+    final swarm = swarms.where((s) => s.id == swarmId).firstOrNull;
+    if (swarm == null) return;
+    swarm.kind = 'superTab';
+    _persistLayout();
+    notifyListeners();
+  }
+
+  /// Opening a recent harness uses the welcome page as an ordinary workspace.
+  /// Consume only a successful open; a missing result leaves creation available.
+  void finishSuperTabDraftNavigation(String swarmId) {
+    final swarm = swarms.where((s) => s.id == swarmId).firstOrNull;
+    if (swarm == null ||
+        !swarm.isSuperTab ||
+        swarm.superTabId != null ||
+        swarm.panes.isEmpty) {
+      return;
+    }
+    swarm.kind = 'harness';
+    _persistLayout();
+    notifyListeners();
+  }
+
+  Future<Agent> recoverSuperTabCreation(
+    String machineId,
+    String creationId,
+  ) async {
+    final revision = _authRevision;
+    final result = await _conn(machineId).request(
+      'agent_create_status',
+      payload: {'creationId': creationId},
+      timeout: const Duration(seconds: 10),
+    );
+    if (!_authWorkCurrent(revision)) {
+      throw const SuperTabFailure('ACCOUNT_CHANGED', 'The account changed.');
+    }
+    if (result['creationId'] == creationId && result['state'] == 'failed') {
+      final failure = result['failure'] is Map
+          ? result['failure'] as Map
+          : const {};
+      throw SuperTabFailure(
+        'CREATION_FAILED',
+        failure['detail'] as String? ?? result['error'] as String? ?? 'The machine could not start this harness. You can change its settings and try again.',
+      );
+    }
+    if (result['creationId'] != creationId ||
+        result['state'] != 'created' ||
+        result['agent'] is! Map) {
+      throw const SuperTabFailure(
+        'CREATION_PENDING',
+        'The machine has not confirmed this launch. Check status before starting another agent.',
+      );
+    }
+    return Agent.fromJson(Map<String, dynamic>.from(result['agent'] as Map));
   }
 
   /// Where this computer keeps, per shared tab, the other accounts'
@@ -1782,7 +1979,10 @@ class AppNotifier extends ChangeNotifier {
       swarm.panes.where((p) => p.agentId != null).length >=
           PaneLayoutStore.maxPanes;
 
-  static bool _sameSeen(Map<String, Set<String>> a, Map<String, Set<String>> b) {
+  static bool _sameSeen(
+    Map<String, Set<String>> a,
+    Map<String, Set<String>> b,
+  ) {
     if (a.length != b.length) return false;
     for (final MapEntry(:key, :value) in a.entries) {
       final other = b[key];
@@ -1922,6 +2122,19 @@ class AppNotifier extends ChangeNotifier {
         isDeskId(swarm.id) &&
         agentMessages.loaded;
   }
+
+  /// The account's Agent Messages switch (Settings ▸ Experimental, off by
+  /// default), as the backend last answered it.
+  bool get agentMessagesOn =>
+      experimentalFeatures.enabled(ExperimentalFeature.agentMessages);
+
+  /// Whether [tabId] offers what came with Tab Activity: the sidebar, Make
+  /// Leader and the Leader chip, and an unshared tab's People and Tasks. The
+  /// account's switch must be on, beside the support [agentMessagesOffered]
+  /// checks: support alone showed all of it to every account with the switch
+  /// off, the default (final review I1).
+  bool tabActivityOffered(String tabId) =>
+      agentMessagesOn && agentMessagesOffered(tabId);
 
   /// The machines of the owner's with a harness in [tabId], and this
   /// computer: every daemon that may hold part of the tab's log. A shared
@@ -2183,6 +2396,10 @@ class AppNotifier extends ChangeNotifier {
   bool get devicesEnabled => !kIsWeb && !kViewerMode;
 
   LocalKeyValueStore? get deviceLibraryStorage => _paneLayout?.storage;
+
+  /// This computer's small preferences store (`state.json` natively, the
+  /// origin's storage in a browser); null in a test that passes none.
+  LocalKeyValueStore? get localStore => _paneLayout?.storage;
   final deviceHosts = DeviceHosts();
   final _deviceReads = <String, Future<void>>{};
 
@@ -3160,6 +3377,7 @@ class AppNotifier extends ChangeNotifier {
           ..titleAgentId = saved.titleAgentId
           ..orchestratorId = saved.orchestratorId
           ..orchestratorMachineId = saved.orchestratorMachineId
+          ..superTabId = saved.superTabId
           ..gridColumns = saved.gridColumns
           ..presets.addAll(saved.presets)
           ..paneSizes.addAll(saved.paneSizes);
@@ -3714,6 +3932,7 @@ class AppNotifier extends ChangeNotifier {
               sendDesktopSetupMeasurement(this.config.apiBaseUrl, report),
         );
     productConnections = ProductConnections(this.productMeasurement);
+    this.agentPrefetch?.onDownload ??= this.productMeasurement.setupDownload;
     this.productMeasurement.addListener(_measurementChoiceChanged);
     if (!kUnderTest && this.productMeasurement.healthEnabled) {
       productRuntimeHealth = ProductRuntimeHealth(this.productMeasurement);
@@ -3767,10 +3986,17 @@ class AppNotifier extends ChangeNotifier {
             currentUser?.id != null
         ? (api, currentUser!.id)
         : null;
+    final client = api;
     productMeasurement.account(
       scope,
       choice: () => productUsageSettings(),
-      send: api.productUsageReport,
+      // Health names newer than this computer's CLI are counted only once
+      // it has said it forwards them (ProductHealthMeasure.vocabulary).
+      send: (report) => client.productUsageReport(
+        report,
+        onVocabulary: (vocabulary) =>
+            productMeasurement.proxyVocabulary = vocabulary,
+      ),
     );
     productRuntimeHealth?.account(
       scope == null ? null : '$_autonomousEnv:${currentUser!.id}',
@@ -3814,10 +4040,12 @@ class AppNotifier extends ChangeNotifier {
   void _measureConnection(
     String key,
     ConnectionStatus status,
-    ProductFlow flow,
-  ) {
+    ProductFlow flow, {
+    bool suppressStart = false,
+  }) {
     if (status == ConnectionStatus.connecting ||
         status == ConnectionStatus.reconnecting) {
+      if (suppressStart) return;
       if (_measurementConnections.length < 64) {
         _measurementConnections.putIfAbsent(
           key,
@@ -3888,6 +4116,21 @@ class AppNotifier extends ChangeNotifier {
   }
 
   static const offlineRetryInterval = Duration(seconds: 5);
+
+  /// Waits before each automatic reattach of a pane whose stream died while its machine stayed
+  /// reachable; the last one repeats. A pane used to get one reopen and then sit on Reconnect until
+  /// someone clicked it, in whatever tab it was (2026-10-16).
+  static const paneRetryDelays = <Duration>[
+    Duration(seconds: 1),
+    Duration(seconds: 2),
+    Duration(seconds: 4),
+    Duration(seconds: 8),
+    Duration(seconds: 16),
+    Duration(seconds: 30),
+  ];
+
+  /// At most one forced redial of a machine's link in this long (see [_forceRedial]).
+  static const forcedRedialWindow = Duration(seconds: 30);
   static const localDaemonReconnectDelay = Duration(seconds: 1);
   static const agentSyncInterval = Duration(seconds: 60);
 
@@ -5260,12 +5503,18 @@ class AppNotifier extends ChangeNotifier {
         EnvironmentSetupPhase.failed => 'failed',
         _ => 'running',
       },
+      // A check marks a tool that is not installed yet as failed, and setup then installs it. That
+      // is `missing`, not a failure: on Oct 16 every new computer counted its Harness CLI and tmux
+      // as failed steps while 0 setups failed. Only a setup that ends failed fails its step.
       for (final entry in value.steps.entries)
         switch (entry.key) {
           EnvironmentStep.harness => ProductFlow.setupHarness,
           EnvironmentStep.tmux => ProductFlow.setupTmux,
           EnvironmentStep.clipboard => ProductFlow.setupClipboard,
-        }: entry.value.name,
+        }: entry.value == EnvironmentStepStatus.failed &&
+                value.phase != EnvironmentSetupPhase.failed
+            ? 'missing'
+            : entry.value.name,
     });
   }
 
@@ -6649,7 +6898,7 @@ class AppNotifier extends ChangeNotifier {
             'This copy of Harness cannot install updates automatically.';
         return false;
       }
-      flushAppLog();
+      flushAppLog(durable: true);
       productRuntimeHealth?.cleanExit();
       exit(0);
     } catch (error) {
@@ -7417,6 +7666,20 @@ class AppNotifier extends ChangeNotifier {
         machine.needsLink &&
         (nextStatus == ConnectionStatus.connecting ||
             nextStatus == ConnectionStatus.reconnecting);
+    // A forced redial ([_forceRedial]) takes a connected link down and dials it again: neither a
+    // person nor the app connecting, so it opens no observation of its own, and one already open
+    // still ends with it. Each one used to start a new remote_connect; the day #1378 made dead panes
+    // redial, prod's remote_connect went from 1,683 to 2,834 started and 106 to 205 unknown
+    // (2026-10-15 → 16). Bounded by the window, so a redial that never reported back cannot hide a
+    // later ordinary connection.
+    final forcedSince = _forcedRedials[machineId];
+    final forced =
+        forcedSince != null && redialClock() - forcedSince < forcedRedialWindow;
+    if (!forced ||
+        nextStatus == ConnectionStatus.connected ||
+        (nextStatus == ConnectionStatus.disconnected && !settling)) {
+      _forcedRedials.remove(machineId);
+    }
     productConnections.status(
       machineId,
       connecting:
@@ -7424,7 +7687,7 @@ class AppNotifier extends ChangeNotifier {
           nextStatus == ConnectionStatus.connecting ||
           nextStatus == ConnectionStatus.reconnecting,
       connected: nextStatus == ConnectionStatus.connected,
-      suppressStart: viewer == null && retryingLink,
+      suppressStart: (viewer == null && retryingLink) || forced,
       failure: machine.needsLink
           ? ProductHealthMeasure.connectErrorUnlinked
           : machine.nodeOnline == false
@@ -7443,6 +7706,7 @@ class AppNotifier extends ChangeNotifier {
         machine.isLocalMachine
             ? ProductFlow.workspaceConnect
             : ProductFlow.remoteConnect,
+        suppressStart: forced,
       );
     }
     machine.connectionStatus = settling
@@ -7914,6 +8178,14 @@ class AppNotifier extends ChangeNotifier {
     }
     final visible = machines.map((machine) => machine.machineId).toSet();
     _sharingEnded.removeWhere((id, _) => visible.contains(id));
+    // Seen 2026-10-16: "Tuan stopped sharing Mac Auto with you." stayed up after Tuan shared it again.
+    final ended = _sharingEndedError;
+    if (ended != null &&
+        !machinesAreStale &&
+        visible.contains(ended.machineId)) {
+      _sharingEndedError = null;
+      if (_lastError == ended.text) _lastError = null;
+    }
     for (final entry in machineStates.entries) {
       if (!visible.contains(entry.key)) {
         // A shared machine that left the list was taken back by its owner (a fresh list says so).
@@ -8305,6 +8577,7 @@ class AppNotifier extends ChangeNotifier {
     _slowReloadTimers.clear();
     _offlinePollsInFlight.clear();
     _offlineRecoveryInFlight.clear();
+    _cancelPaneRetries();
   }
 
   void _startAgentSyncTimer(String machineId) {
@@ -10265,6 +10538,29 @@ class AppNotifier extends ChangeNotifier {
     return connection;
   }
 
+  /// Force a fresh dial of [machineId]'s link ([WsConn.forceReconnect]), at most once per
+  /// [forcedRedialWindow].
+  ///
+  /// A redial knocks every pane on the machine over, and since #1378 each dead pane's first reattach
+  /// may ask for one when its open goes unanswered: N dead panes on one machine redialled it N times,
+  /// each knocking the others' fresh opens over again. A stalled open inside the window resends on
+  /// the link the first redial brought back instead ([TerminalSession]'s recovery polls for that).
+  Future<void> _forceRedial(String machineId, [WsConn? connection]) {
+    final now = redialClock();
+    final last = _lastForcedRedial[machineId];
+    if (last != null && now - last < forcedRedialWindow) {
+      return Future<void>.value();
+    }
+    final link = connection ?? _conn(machineId);
+    if (link.isClosed) return Future<void>.value();
+    _lastForcedRedial[machineId] = now;
+    _forcedRedials[machineId] = now;
+    return link.forceReconnect();
+  }
+
+  @visibleForTesting
+  Future<void> forceRedialForTest(String machineId) => _forceRedial(machineId);
+
   // Every machine — this computer's own, or a relayed one — now speaks the same plaintext local wire
   // protocol to the CLI (which terminates E2EE itself for relayed machines; see remoteRelay.ts in the
   // harness CLI repo). There is no per-machine branching left here at all.
@@ -10288,10 +10584,7 @@ class AppNotifier extends ChangeNotifier {
   /// scheduling turn to the socket's incoming queue. Matching frames enter the
   /// session's ordered renderer queue synchronously, regardless of tab order.
   Future<void> _handleTerminalBinary(String machineId, Uint8List raw) async {
-    final targets = panesFor(machineId)
-        .map((pane) => pane.session)
-        .whereType<TerminalSession>()
-        .toList();
+    final targets = _terminalSessionsFor(machineId).toList();
     if (targets.isEmpty) return;
     final clear = decodeTerminalLocal(raw);
     if (clear == null) {
@@ -10471,7 +10764,7 @@ class AppNotifier extends ChangeNotifier {
           // process restarting, which drops its in-memory session state but doesn't touch the socket.
           // Nothing else would ever notice, so force a fresh dial rather than let every future retry
           // keep timing out against the same dead session.
-          unawaited(connection.forceReconnect());
+          unawaited(_forceRedial(machine.machine.machineId, connection));
         }
       } else {
         machine.agentsLoadError = 'Could not load harnesses: $error';
@@ -12966,6 +13259,18 @@ class AppNotifier extends ChangeNotifier {
     _ => 'Could not start harness: ${detail ?? code}',
   };
 
+  /// A typed new project's name that [folder] on [machine] already has. The
+  /// machine's own words ("Select that folder from your projects") left
+  /// nothing to press: PROJECT_EXISTS was 4 of 7 failed starts on Oct 18, all
+  /// from the apps. The form offers "Use the existing folder" beside this.
+  String _projectExistsMessage(String folder, String machine) {
+    final name = folder
+        .split('/')
+        .lastWhere((part) => part.isNotEmpty, orElse: () => folder);
+    return '“$name” already exists on $machine. '
+        'Choose another name, or use the existing folder.';
+  }
+
   /// A confirmed name collision happens before any process starts. Only then
   /// may an automatic suggestion advance to another name with a fresh receipt.
   /// Uncertain replies always keep their original receipt and never retry.
@@ -13017,6 +13322,7 @@ class AppNotifier extends ChangeNotifier {
     // Only this answer says whether it is starting; one that never reaches
     // the machine (it went offline) must not be followed as if it were.
     creation._starting = false;
+    creation._existingFolder = null;
     final machineId = creation._machineId!;
     var targetId = creation._targetId!;
     final split = creation._split;
@@ -13100,6 +13406,15 @@ class AppNotifier extends ChangeNotifier {
                     engineIdentity(dshId).label)
               : engineIdentity(choices['engine'] as String?).label,
         );
+      } on ProjectExistsException catch (error) {
+        // This computer's own folder refuses a typed name as the machine
+        // does, so the form offers the folder the same way.
+        creation._refusal = 'PROJECT_EXISTS';
+        if (error.folder case final folder?) {
+          creation._existingFolder = folder;
+          return creation._complete(_projectExistsMessage(folder, machineName));
+        }
+        return creation._complete(error.message);
       } on RepositoryCloneException catch (error) {
         return creation._complete(error.message);
       } catch (_) {
@@ -13178,6 +13493,17 @@ class AppNotifier extends ChangeNotifier {
         );
         if (result['creationId'] != creation._id) return unconfirmed;
       } else {
+        if (creation.beforeSubmit case final prepare?) {
+          try {
+            await prepare(machineId, creation._id);
+          } catch (failure) {
+            // The native request has not been sent. A failed local journal write
+            // must leave the form editable instead of waiting on a nonexistent receipt.
+            return creation._complete(
+              'Could not save the launch request: $failure',
+            );
+          }
+        }
         result = await connection.request(
           operation,
           payload: {...launchChoices, 'creationId': creation._id},
@@ -13319,6 +13645,14 @@ class AppNotifier extends ChangeNotifier {
           creation._preparedFolder = folder;
         }
         creation._refusal = failure['code'] as String;
+        // A typed name the machine found already there, as a folder it can
+        // open (CLI `existingFolder`): said so, and offered to the person.
+        if (failure['existingFolder'] case final String folder
+            when failure['code'] == 'PROJECT_EXISTS' &&
+                folder.startsWith('/')) {
+          creation._existingFolder = folder;
+          return creation._complete(_projectExistsMessage(folder, machineName));
+        }
         return creation._complete(
           _creationFailureMessage(
             failure['code'] as String,
@@ -15800,8 +16134,9 @@ class AppNotifier extends ChangeNotifier {
     notifyListeners();
   }
 
-  static bool _listedIn(SharedTab tab, String machineId, String agentId) =>
-      tab.harnesses.any((h) => h.machineId == machineId && h.agentId == agentId);
+  static bool _listedIn(SharedTab tab, String machineId, String agentId) => tab
+      .harnesses
+      .any((h) => h.machineId == machineId && h.agentId == agentId);
 
   /// Listed in [tab], or still `Joining…`: an add this computer's daemon holds
   /// for the owner's computer. Withdrawn then, it must be taken back too, or
@@ -15822,6 +16157,114 @@ class AppNotifier extends ChangeNotifier {
   bool _ownsSharedTab(SharedTab tab) {
     final me = sharedTabs.snapshot.me?.accountId;
     return me != null && tab.ownedBy(me);
+  }
+
+  /// The leader of [deskTabId]: in a tab shared with this account the roster's
+  /// (the owner's setting, re-signed by the sharing computer; none when it names
+  /// none), otherwise the account's own setting.
+  AgentMessageLeader? tabLeader(String deskTabId) {
+    final tab = sharedTabs.tabForDesk(deskTabId);
+    if (tab != null && !_ownsSharedTab(tab)) {
+      final leader = tab.leader;
+      return leader == null
+          ? null
+          : AgentMessageLeader(leader.machineId, leader.agentId);
+    }
+    return agentMessages.leaderOf(deskTabId);
+  }
+
+  /// Make [machineId]'s [agentId] the leader of [deskTabId]. A refusal keeps the
+  /// old leader and is told in the transient notice.
+  Future<void> setTabLeader(
+    String deskTabId,
+    String machineId,
+    String agentId,
+  ) => _writeLeader(deskTabId, AgentMessageLeader(machineId, agentId));
+
+  Future<void> clearTabLeader(String deskTabId) =>
+      _writeLeader(deskTabId, null);
+
+  Future<void> _writeLeader(
+    String deskTabId,
+    AgentMessageLeader? leader,
+  ) async {
+    final auth = _authRevision;
+    try {
+      final answer = await api.setAgentMessageTab(
+        deskTabId,
+        leader: leader,
+        clearLeader: leader == null,
+      );
+      // An answer for a session that has ended is not this one's.
+      if (!_authWorkCurrent(auth)) return;
+      agentMessages.applyTabSetting(
+        deskTabId,
+        AgentMessageLeader.fromJson(answer['leader']),
+      );
+    } catch (error) {
+      if (!_authWorkCurrent(auth)) return;
+      _lastError = error is ApiException && error.message.isNotEmpty
+          ? error.message
+          : 'Could not change the leader. Try again.';
+      _lastErrorRetryable = false;
+      notifyListeners();
+    }
+  }
+
+  /// The desk tab whose panes hold this harness, or null.
+  String? deskTabHolding(String machineId, String agentId) {
+    for (final swarm in swarms) {
+      if (swarm.panes.any(
+        (p) => p.machineId == machineId && p.agentId == agentId,
+      )) {
+        return swarm.id;
+      }
+    }
+    return null;
+  }
+
+  /// Whether this harness is the leader of the tab its pane is in. A leader
+  /// whose pane left the tab is the leader of no pane anywhere. None while the
+  /// account's Agent Messages switch is off: a leader leads only agents that
+  /// may message.
+  bool isTabLeader(String machineId, String agentId) {
+    if (!agentMessagesOn) return false;
+    final tab = deskTabHolding(machineId, agentId);
+    final leader = tab == null ? null : tabLeader(tab);
+    return leader != null &&
+        leader.machineId == machineId &&
+        leader.agentId == agentId;
+  }
+
+  /// What File, the palette and the pane offer for this harness: `'make'`,
+  /// `'remove'` (it leads its tab) or null. Needs [tabActivityOffered].
+  /// A member of a shared tab never chooses; its owner does, from any of its
+  /// computers, among its own harnesses and the roster's members' harnesses
+  /// that are panes of the tab. Another account's harness in a tab that is not
+  /// shared with it is never offered.
+  String? leaderActionFor(String machineId, String agentId) {
+    final tabId = deskTabHolding(machineId, agentId);
+    if (tabId == null || !tabActivityOffered(tabId)) return null;
+    final own = machineStates[machineId]?.belongsToOtherAccount == false;
+    final shared = sharedTabs.tabForDesk(tabId);
+    if (shared != null) {
+      if (!_ownsSharedTab(shared)) return null;
+      if (!own && !_listedIn(shared, machineId, agentId)) return null;
+    } else if (!own) {
+      return null;
+    }
+    return isTabLeader(machineId, agentId) ? 'remove' : 'make';
+  }
+
+  /// Make Leader or Remove Leader for this harness, as [leaderActionFor] says.
+  Future<void> toggleLeaderOf(String machineId, String agentId) async {
+    final tabId = deskTabHolding(machineId, agentId);
+    switch (leaderActionFor(machineId, agentId)) {
+      case 'make':
+        await setTabLeader(tabId!, machineId, agentId);
+      case 'remove':
+        await clearTabLeader(tabId!);
+    }
   }
 
   /// The shared tab whose desk tab holds this harness, or null.
@@ -15854,11 +16297,10 @@ class AppNotifier extends ChangeNotifier {
   /// desk as an ordinary pane.
   Future<void> removeFromSharedTab(String machineId, String agentId) async {
     if (!canRemoveFromSharedTab(machineId, agentId)) return;
-    await _shareAction(
-      sharedTabHolding(machineId, agentId)!,
-      'share_remove',
-      {'machineId': machineId, 'agentId': agentId},
-    );
+    await _shareAction(sharedTabHolding(machineId, agentId)!, 'share_remove', {
+      'machineId': machineId,
+      'agentId': agentId,
+    });
   }
 
   /// The `share_add` for a person's pane in a shared tab; null when none is
@@ -15872,7 +16314,8 @@ class AppNotifier extends ChangeNotifier {
   }) {
     final tab = sharedTabs.tabForDesk(deskTabId);
     final state = machineStates[machineId];
-    if (tab == null || state == null || state.belongsToOtherAccount) return null;
+    if (tab == null || state == null || state.belongsToOtherAccount)
+      return null;
     // The owner's harnesses join by being in its desk tab.
     if (_ownsSharedTab(tab) || _listedIn(tab, machineId, agentId)) return null;
     final agent = state.agents.where((a) => a.id == agentId).firstOrNull;
@@ -15886,7 +16329,11 @@ class AppNotifier extends ChangeNotifier {
     }, onFailure: onFailure);
   }
 
-  void _shareRemoveIfShared(String deskTabId, String machineId, String agentId) {
+  void _shareRemoveIfShared(
+    String deskTabId,
+    String machineId,
+    String agentId,
+  ) {
     final tab = sharedTabs.tabForDesk(deskTabId);
     if (tab == null ||
         _ownsSharedTab(tab) ||
@@ -15920,7 +16367,9 @@ class AppNotifier extends ChangeNotifier {
       if (_disposed) return;
       // The computer that is away is the one holding the harness, named when it
       // is one of the person's own.
-      final holder = machineStates[body['machineId'] ?? (body['harness'] as Map?)?['machineId']];
+      final holder =
+          machineStates[body['machineId'] ??
+              (body['harness'] as Map?)?['machineId']];
       _lastError = sharedTabErrorText(
         e,
         machine: holder != null && !holder.belongsToOtherAccount
@@ -15942,6 +16391,8 @@ class AppNotifier extends ChangeNotifier {
     PaneSplitRequest? split,
     bool autoTile = false,
     bool focus = true,
+    String? inputContext,
+    bool watchOnly = false,
 
     /// A rail click, a drag, a picker — a person. The device's own doors pass
     /// [AttachIntent.automatic]: they put an agent on screen without anybody
@@ -15988,6 +16439,12 @@ class AppNotifier extends ChangeNotifier {
         .where((p) => p.machineId == machineId && p.agentId == agentId)
         .firstOrNull;
     if (paneId == null && existing != null) {
+      existing.inputContext = inputContext;
+      existing.watchOnly = watchOnly;
+      await existing.session?.setInputContext(
+        inputContext,
+        watchOnly: watchOnly,
+      );
       if (focus && target == activeSwarm) focusPane(existing.id);
       // A pane a refused share_add left unshared: a person's retry shares it.
       if (intent == AttachIntent.person) {
@@ -16009,6 +16466,9 @@ class AppNotifier extends ChangeNotifier {
     }
     final replaced = targetPanes.where((p) => p.id == paneId).firstOrNull;
     if (replaced == shared && shared != null) {
+      shared.inputContext = inputContext;
+      shared.watchOnly = watchOnly;
+      await shared.session?.setInputContext(inputContext, watchOnly: watchOnly);
       if (focus && target == activeSwarm) focusPane(shared.id);
       return;
     }
@@ -16024,9 +16484,7 @@ class AppNotifier extends ChangeNotifier {
     // A shared desk tab holds the desk's 9 harnesses: a 10th would never
     // reach the desk ([deskTabFull]). Placement asks quietly and tries again
     // later; a person is told.
-    if (existing == null &&
-        replaced?.agentId == null &&
-        deskTabFull(target)) {
+    if (existing == null && replaced?.agentId == null && deskTabFull(target)) {
       if (intent == AttachIntent.person) {
         _lastError =
             'This tab holds ${PaneLayoutStore.maxPanes} harnesses. Close one, then try again.';
@@ -16063,6 +16521,9 @@ class AppNotifier extends ChangeNotifier {
     final pane =
         shared ??
         TerminalPane(id: _nextPaneId++, machineId: machineId, agentId: agentId);
+    pane.inputContext = inputContext;
+    pane.watchOnly = watchOnly;
+    pane.session?.stageInputContext(inputContext, watchOnly: watchOnly);
     final firstAgent = targetPanes.every((pane) => pane.agentId == null);
     if (machine.machine.isShared) {
       pane.sharedHarness = machine.machine.sharedHarnesses
@@ -16187,6 +16648,9 @@ class AppNotifier extends ChangeNotifier {
     _stopOfflineRetry(machineId);
     notifyListeners();
     if (target == activeSwarm || pane.session != null) {
+      if (pane.session case final session?) {
+        await session.setInputContext(inputContext, watchOnly: watchOnly);
+      }
       await _attachSession(pane, intent: intent);
     }
   }
@@ -16251,13 +16715,15 @@ class AppNotifier extends ChangeNotifier {
       agentName: agent.displayName,
       engineId: agent.engine,
       client: localClientDescriptor(),
+      inputContext: pane.inputContext,
+      watchOnly: pane.watchOnly,
       // Only a person at this window may take the terminal from whoever holds
       // it; everything else opens as a watcher. See [AttachIntent].
       takeover: intent == AttachIntent.person,
       send: (type, payload) =>
           _conn(pane.machineId).sendTerminalFrame(type, payload),
       sendBinary: (frame) => _sendTerminalBinary(pane.machineId, frame),
-      onOpenStalled: () => _conn(pane.machineId).forceReconnect(),
+      onOpenStalled: () => _forceRedial(pane.machineId),
       // A `terminal_open` can round-trip app → local CLI → (for a relayed
       // machine) the E2EE relay → the remote peer → tmux → back, possibly
       // negotiating P2P on the way, so a cold open legitimately takes several
@@ -16267,7 +16733,7 @@ class AppNotifier extends ChangeNotifier {
       resyncTimeout: const Duration(seconds: 15),
     );
     pane.session = terminal;
-    terminal.addListener(notifyListeners);
+    terminal.addListener(_onSessionChanged);
     notifyListeners();
     // Wait for the pane's actual measured viewport before asking the daemon to open anything.
     // Sending the 80x24 fallback here used to make the daemon spawn the remote TTY (and render its
@@ -16279,6 +16745,99 @@ class AppNotifier extends ChangeNotifier {
     await terminal.open(waitForViewportSize: true);
   }
 
+  // File delivery for a new background harness uses the same native terminal
+  // protocol, without manufacturing a pane or changing the selected group.
+  final _attachmentSessions = <TerminalSession>{};
+
+  Iterable<TerminalSession> _terminalSessionsFor(String machineId) sync* {
+    yield* panesFor(machineId).map((p) => p.session).nonNulls;
+    yield* _attachmentSessions.where((s) => s.machineId == machineId);
+  }
+
+  void _closeAttachmentSessions() {
+    final sessions = _attachmentSessions.toList();
+    _attachmentSessions.clear();
+    for (final session in sessions) {
+      unawaited(session.close().whenComplete(session.dispose));
+    }
+  }
+
+  Future<String?> deliverBackgroundAttachments({
+    required String machineId,
+    required String agentId,
+    required List<HarnessAttachment> files,
+    required String task,
+  }) async {
+    final machine = machineStates[machineId];
+    final revision = _authRevision, account = currentUser?.id;
+    bool current() =>
+        currentUser?.id == account &&
+        machine != null &&
+        _machineWorkCurrent(machine, revision);
+    if (!current() || machine!.machine.isShared) {
+      return 'This machine is no longer available for file delivery.';
+    }
+    if (!machine.agents.any((a) => a.id == agentId)) {
+      await _loadMachineData(machine, force: true);
+    }
+    if (!current()) return 'The account changed. No files were sent.';
+    final agent = machine.agents.where((a) => a.id == agentId).firstOrNull;
+    if (agent == null) {
+      return 'The new harness is not available on its machine.';
+    }
+    final existing = panesFor(machineId)
+        .where((p) => p.agentId == agentId)
+        .map((p) => p.session)
+        .nonNulls
+        .firstOrNull;
+    final connection = _conn(machineId);
+    final session =
+        existing ??
+        TerminalSession(
+          machineId: machineId,
+          agentId: agentId,
+          agentName: agent.displayName,
+          engineId: agent.engine,
+          client: localClientDescriptor(),
+          takeover: true,
+          send: (type, payload) => current() || type == 'terminal_close'
+              ? connection.sendTerminalFrame(type, payload)
+              : Future.value(false),
+          sendBinary: (frame) {
+            if (!current()) return Future.value(false);
+            final bytes = encodeTerminalLocal(frame);
+            return bytes == null
+                ? Future.value(false)
+                : connection.sendTerminalBinary(bytes);
+          },
+          onOpenStalled: () async {
+            if (current()) await _forceRedial(machineId);
+          },
+          resyncTimeout: const Duration(seconds: 15),
+        );
+    if (existing == null) _attachmentSessions.add(session);
+    try {
+      if (existing == null) await session.open();
+      return await deliverAttachedTask(
+        this,
+        machineId: machineId,
+        agentId: agentId,
+        files: files,
+        task: task,
+        terminal: session,
+        stillWanted: current,
+      );
+    } finally {
+      if (_attachmentSessions.remove(session)) {
+        try {
+          await session.close();
+        } finally {
+          session.dispose();
+        }
+      }
+    }
+  }
+
   Future<void> _detachSession(
     TerminalPane pane, {
     required bool sendClose,
@@ -16286,7 +16845,7 @@ class AppNotifier extends ChangeNotifier {
     final terminal = pane.session;
     pane.session = null;
     if (terminal == null) return;
-    terminal.removeListener(notifyListeners);
+    terminal.removeListener(_onSessionChanged);
     try {
       if (sendClose) await terminal.close();
     } finally {
@@ -16772,6 +17331,15 @@ class AppNotifier extends ChangeNotifier {
     if (tab == null) return;
     final pane = tab.panes.where((p) => p.id == paneId).firstOrNull;
     if (pane == null) return;
+    if (tab.superTabId case final superTabId?) {
+      final controller = superTabs.peek(superTabId);
+      final selected = controller?.terminalAgent(controller.selectedId);
+      if (selected != null &&
+          selected.machineId == pane.machineId &&
+          selected.harnessId == pane.agentId) {
+        controller!.selectTerminal(controller.selectedId, null);
+      }
+    }
     if (tab.isCompanions || tab.isDevices) {
       await closeSwarm(tab.id, persist: persist);
       return;
@@ -17637,10 +18205,18 @@ class AppNotifier extends ChangeNotifier {
                     ? 'devices'
                     : isCompanions
                     ? 'companions'
+                    : raw['kind'] == 'superTab'
+                    ? 'superTab'
                     : raw['kind'] == 'orchestrator'
                     ? 'orchestrator'
                     : 'harness',
               )
+              ..superTabId =
+                  raw['superTabId'] is String &&
+                      RegExp(r'^[a-f0-9]{24}$')
+                          .hasMatch(raw['superTabId'] as String)
+                  ? raw['superTabId'] as String
+                  : null
               ..orchestratorId =
                   raw['orchestratorId'] is String &&
                       RegExp(r'^[a-f0-9]{32}$')
@@ -17854,6 +18430,111 @@ class AppNotifier extends ChangeNotifier {
       // could only ever promise restoration to one of them.
       unawaited(_reattachPane(pane, intent: paneIntent));
     }
+    // A load is also when a pane that could not be attached before (agents not listed yet) can be.
+    _schedulePaneRetries();
+  }
+
+  /// Every session change repaints, and may mean a pane's stream just died.
+  void _onSessionChanged() {
+    notifyListeners();
+    // Sessions notify on every change — a title, a resize, a watcher band — and the sweep answers
+    // differently only when a stream dies, closes here or comes back live. Run on each notification,
+    // it rebuilt the pane set for every dead pane and every timer: with 40 panes, 10 of them dead, a
+    // notification cost ~53 µs, and ~3 µs with the set built once and this check (2026-10-17, VM test).
+    if (_retryPhasesChanged()) _schedulePaneRetries();
+  }
+
+  /// What the sweep reads of a session's status: dead (error/closed, here or not), live (which resets
+  /// the pane's backoff), or neither.
+  static int _retryPhase(TerminalSession session) => switch (session.status) {
+    TerminalSessionStatus.error ||
+    TerminalSessionStatus.closed => session.closedHere ? 1 : 2,
+    TerminalSessionStatus.controlling => 3,
+    _ => 0,
+  };
+
+  bool _retryPhasesChanged() {
+    for (final swarm in swarms) {
+      for (final pane in swarm.panes) {
+        final session = pane.session;
+        if (session != null &&
+            _sweptRetryPhases[session] != _retryPhase(session)) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  /// Keep one timer for each pane whose stream died while its machine stays reachable, in whichever
+  /// tab it is, and none for any other. Sessions notify on state changes, not on output, so the walk
+  /// is cheap; an app with every terminal live holds no timer.
+  void _schedulePaneRetries() {
+    if (_disposed) return;
+    _paneSweeps++;
+    final all = allPanes;
+    _sweptRetryPhases.clear();
+    for (final pane in all) {
+      if (pane.session case final session?) {
+        _sweptRetryPhases[session] = _retryPhase(session);
+      }
+      if (!_paneRetryWanted(pane, all: all)) {
+        _paneRetryTimers.remove(pane)?.cancel();
+        if (pane.session?.status == TerminalSessionStatus.controlling) {
+          _paneRetryAttempts.remove(pane);
+        }
+        continue;
+      }
+      if (_paneRetryTimers.containsKey(pane)) continue;
+      final attempts = _paneRetryAttempts[pane] ?? 0;
+      final delay = paneRetryDelays[min(attempts, paneRetryDelays.length - 1)];
+      _paneRetryTimers[pane] = Timer(delay, () {
+        _paneRetryTimers.remove(pane);
+        if (!_paneRetryWanted(pane)) return;
+        _paneRetryAttempts[pane] = attempts + 1;
+        appLog.info(
+          'terminal',
+          'reattach machine=${pane.machineId} agent=${pane.agentId} attempt=${attempts + 1}',
+        );
+        final session = pane.session!;
+        // A sweep reopen is never a gesture. It must not take the terminal on the strength of an
+        // earlier click whose open failed, and only its first attempt may redial the machine's link:
+        // a forced redial knocks every other pane on that machine over too.
+        session.takeover = false;
+        unawaited(session.reopen(redial: attempts == 0));
+      });
+    }
+    _paneRetryTimers.removeWhere((pane, timer) {
+      if (all.contains(pane)) return false;
+      timer.cancel();
+      return true;
+    });
+    _paneRetryAttempts.removeWhere((pane, _) => !all.contains(pane));
+  }
+
+  /// A dead stream on a machine that is up and can open terminals politely. Offline machines are left
+  /// to the offline/online path, and `takenOver` panes to a person. A dead watcher is included, unlike
+  /// in [_paneNeedsAttach]: the reopen is polite, so it comes back as a watcher and takes nothing.
+  bool _paneRetryWanted(TerminalPane pane, {Set<TerminalPane>? all}) {
+    final session = pane.session;
+    final machine = machineStates[pane.machineId];
+    return pane.agentId != null &&
+        session != null &&
+        !session.closedHere &&
+        (session.status == TerminalSessionStatus.error ||
+            session.status == TerminalSessionStatus.closed) &&
+        machine != null &&
+        machine.nodeOnline == true &&
+        machine.terminalNoTakeoverAvailable &&
+        _canAttachPane(pane, all: all);
+  }
+
+  void _cancelPaneRetries() {
+    for (final timer in _paneRetryTimers.values) {
+      timer.cancel();
+    }
+    _paneRetryTimers.clear();
+    _paneRetryAttempts.clear();
   }
 
   /// Whether this tile is showing something that is not a working terminal.
@@ -17930,8 +18611,9 @@ class AppNotifier extends ChangeNotifier {
     await Future.wait(reopening);
   }
 
-  bool _canAttachPane(TerminalPane pane) {
-    if (_disposed || !allPanes.contains(pane)) return false;
+  /// [all] is [allPanes] when the caller already holds it.
+  bool _canAttachPane(TerminalPane pane, {Set<TerminalPane>? all}) {
+    if (_disposed || !(all ?? allPanes).contains(pane)) return false;
     final machine = machineStates[pane.machineId];
     return machine != null &&
         machine.nodeOnline != false &&
@@ -18356,8 +19038,8 @@ class AppNotifier extends ChangeNotifier {
     // Each session still sees terminal frames: ready replies match their own
     // request/agent, while transport errors must reach the whole machine.
     if (type.startsWith('terminal_')) {
-      for (final pane in panesFor(machineId).toList()) {
-        await pane.session?.handleFrame(type, payload);
+      for (final session in _terminalSessionsFor(machineId).toList()) {
+        await session.handleFrame(type, payload);
       }
       return;
     }
@@ -18666,6 +19348,8 @@ class AppNotifier extends ChangeNotifier {
         break;
       case 'desk_changed':
         unawaited(experimentalFeatures.refresh());
+        // A tab's leader is kept with the tabs and may have changed with them.
+        unawaited(agentMessages.refresh());
         // Another window — on another computer, or this one — changed the
         // tabs. The payload is only the revision; the document is fetched.
         final deskRevision = payload['revision'];
@@ -18788,6 +19472,10 @@ class AppNotifier extends ChangeNotifier {
           _lastError =
               '${machine.machine.machineShare!.owner} stopped sharing $name with you.';
           _lastErrorRetryable = false;
+          _sharingEndedError = (
+            machineId: machine.machine.machineId,
+            text: _lastError!,
+          );
           unawaited(refreshMachines());
         } else {
           _lastError = machineSelectErrorText(code, name);
@@ -19135,7 +19823,7 @@ class AppNotifier extends ChangeNotifier {
     )..session = session;
     panes.add(pane);
     focusedPaneId = pane.id;
-    session.addListener(notifyListeners);
+    session.addListener(_onSessionChanged);
     return pane;
   }
 
@@ -19215,6 +19903,7 @@ class AppNotifier extends ChangeNotifier {
     agentMessagesRemote.dispose();
     agentMessages.dispose();
     sharedTabs.dispose();
+    superTabs.dispose();
     for (final project in _orchestratorProjects.values) {
       project.dispose();
     }
@@ -19234,6 +19923,7 @@ class AppNotifier extends ChangeNotifier {
     agentAlerts.dispose();
     agentUnread.dispose();
     _disposed = true;
+    _closeAttachmentSessions();
     _sharingDiscoveryTimer?.cancel();
     _deafMachineListTimer?.cancel();
     _stopMachineRecovery();
@@ -19249,7 +19939,7 @@ class AppNotifier extends ChangeNotifier {
     _stopAllAgentSyncTimers();
     _clearAllTurnActivity();
     for (final pane in allPanes) {
-      pane.session?.removeListener(notifyListeners);
+      pane.session?.removeListener(_onSessionChanged);
       pane.session?.dispose();
     }
     for (final swarm in swarms) {

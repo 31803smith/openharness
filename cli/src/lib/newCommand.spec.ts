@@ -3,7 +3,7 @@ import { EventEmitter } from 'node:events'
 import { mkdirSync, mkdtempSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { newAgentPayload, newCommand, NewUsageError, parseNewArgs, resolveNewMachine, trustAsked, type NewCommandDeps, type NewSocket } from './newCommand.js'
+import { machineChoices, newAgentPayload, newCommand, NewUsageError, parseNewArgs, resolveNewMachine, trustAsked, type NewCommandDeps, type NewSocket } from './newCommand.js'
 import { SANDBOXED } from './unreachable.js'
 import { AgentClientError } from '../agentClient/daemon.js'
 
@@ -118,6 +118,39 @@ describe('harness new: the words', () => {
     expect(resolveNewMachine('macb', machines).machineId).toBe('m2')
     expect(() => resolveNewMachine('mac', machines)).toThrow(/could be Mac mini or MacBook Pro/)
     expect(() => resolveNewMachine('linux', machines)).toThrow(/No machine called/)
+  })
+
+  // Seen 2026-10-16: `harness ps --machine "Mac Auto"` said `No machine called “Mac Auto”` for a machine Tuan
+  // shared with this account, which the app opened and created on with the owner's rights.
+  it('finds a machine shared with the account, and its own machine wins a name both have', () => {
+    const machines = machineChoices({
+      machines: [
+        { machineId: 'own', name: 'MacBook Pro', hostname: 'mbp.local', status: 'running' },
+        { machineId: 'own-mini', name: ' ', hostname: 'Mac mini', status: '' },
+      ],
+      sharedMachines: [
+        { machineId: 'auto', name: 'Mac Auto', status: 'running', share: { ownerName: 'Tuan', added: true } },
+        { machineId: 'theirs-mini', name: 'Mac mini', status: 'running', share: { ownerName: 'Dee', added: true } },
+        { machineId: 'team', name: 'gpu-box', status: 'running', share: { ownerName: 'Lee', added: false } },
+        { machineId: 'nameless', hostname: 'studio.local', share: { ownerName: '  ', added: true } },
+      ],
+    }, 'own')
+    expect(machines.map((machine) => [machine.machineId, machine.label, machine.status, machine.current, machine.sharedBy, machine.toAdd])).toEqual([
+      ['own', 'MacBook Pro', 'running', true, undefined, undefined],
+      ['own-mini', 'Mac mini', 'unknown', false, undefined, undefined],
+      ['auto', 'Mac Auto', 'running', false, 'Tuan', undefined],
+      ['theirs-mini', 'Mac mini', 'running', false, 'Dee', undefined],
+      ['team', 'gpu-box', 'running', false, 'Lee', true],
+      ['nameless', 'studio.local', 'unknown', false, 'another account', undefined],
+    ])
+    expect(resolveNewMachine('Mac Auto', machines).machineId).toBe('auto')
+    expect(resolveNewMachine('auto', machines).machineId).toBe('auto')
+    expect(resolveNewMachine('mac mini', machines).machineId).toBe('own-mini')
+    // A domain share not added yet is not the account's to use: its machine refuses it. Named, it says how to add it.
+    expect(() => resolveNewMachine('gpu-box', machines)).toThrow('Lee shared “gpu-box” with everyone at your company. Add it first: Machines › Shared with your team, in the app or hn.')
+    expect(() => resolveNewMachine('team', machines)).toThrow(/Add it first/)
+    expect(() => resolveNewMachine('gpu', machines)).toThrow('No machine called “gpu”. Yours: MacBook Pro, Mac mini. Shared with you: Mac Auto, Mac mini, studio.local.')
+    expect(() => resolveNewMachine('linux', machineChoices({}, null))).toThrow('No machine called “linux”. Yours: none.')
   })
 })
 
@@ -386,6 +419,30 @@ describe('harness new: the daemon', () => {
     const claimed = deps(['codex', '--machine', 'Mac mini'], answer({ state: 'unconfirmed' }), { sleep: async () => {} })
     expect(await newCommand(claimed)).toBe(1)
     expect(claimed.err.at(-1)).toBe('Harness could not confirm the harness started (unconfirmed). Check with `harness ps --machine "Mac mini"` before starting another.')
+  })
+
+  // PROJECT_EXISTS was 4 of 7 failed starts on Oct 18: "Name its folder instead" said neither where nor how.
+  it('says where a typed project already is and the command that starts in it, or to choose another name', async () => {
+    const exists = (existingFolder?: string) => new FakeSocket((frame) => frame.type === 'agent_create' ? { creationId: 'c1', state: 'failed',
+      failure: { code: 'PROJECT_EXISTS', detail: '“payments” already exists. Select that folder from your projects.', ...(existingFolder ? { existingFolder } : {}) } } : null)
+    const here = deps(['codex', 'payments', '--name', 'pay', '--', 'add refunds'], exists('/home/me/harnesses/payments'))
+    expect(await newCommand(here)).toBe(1)
+    expect(here.err).toEqual(['“payments” already exists on this computer: ~/harnesses/payments. Choose another name for the new project, '
+      + 'or start in that folder: harness new codex ~/harnesses/payments --name pay -- …'])
+    // On another machine its path is that machine's, named as it is.
+    const there = deps(['codex', '--machine', 'Mac mini', 'payments'], exists('/home/lee/Harness Projects/payments'))
+    expect(await newCommand(there)).toBe(1)
+    expect(there.err).toEqual(['“payments” already exists on Mac mini: /home/lee/Harness Projects/payments. Choose another name for the new project, '
+      + 'or start in that folder: harness new codex --machine "Mac mini" "/home/lee/Harness Projects/payments"'])
+    const mcp = deps(['codex', '--new', 'payments', '--name', 'pay', '--task', 'add refunds'], exists('/home/me/harnesses/payments'),
+      { env: { HARNESS_VIA_MCP: '1', HOME: '/nonexistent/home', CODEX_HOME: '/nonexistent/codex' } })
+    expect(await newCommand(mcp)).toBe(1)
+    expect(mcp.err.at(-1)).toBe('“payments” already exists on this computer: ~/harnesses/payments. Choose another name for the new project, '
+      + 'or start in that folder: harness_start (folder: "~/harnesses/payments", …)')
+    // A file has that name, or the machine predates naming the folder: only another name helps.
+    const file = deps(['codex', 'payments', '--json'], exists())
+    expect(await newCommand(file)).toBe(1)
+    expect(JSON.parse(file.out[0]!)).toEqual({ ok: false, error: '“payments” already exists on this computer. Choose another name for the new project.' })
   })
 
   it('says why the machine refused an engine that cannot run, in the machine\'s words', async () => {
