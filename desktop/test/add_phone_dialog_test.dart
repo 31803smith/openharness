@@ -184,7 +184,7 @@ void main() {
         Uri.splitQueryString(Uri.parse(_qrData(tester)).fragment)['h'],
         'h1',
       );
-      expect(find.text('Scan with the Harness app.'), findsOneWidget);
+      expect(find.text('Scan with the Harness mobile app.'), findsOneWidget);
       expect(find.text('No app yet?'), findsOneWidget);
       expect(
         find.descendant(
@@ -234,7 +234,7 @@ void main() {
       expect(find.byKey(const ValueKey('add-phone-ready')), findsOneWidget);
       expect(find.text('Dee’s iPhone is ready.'), findsOneWidget);
       expect(find.byType(PhonePairQr), findsNothing);
-      expect(find.text('Scan with the Harness app.'), findsNothing);
+      expect(find.text('Scan with the Harness mobile app.'), findsNothing);
       expect(find.byKey(const ValueKey('add-phone-close')), findsNothing);
       expect(
         find.byKey(const ValueKey('add-phone-see-phones')),
@@ -367,7 +367,7 @@ void main() {
       );
       expect(find.byKey(const ValueKey('add-phone-cancel')), findsOneWidget);
       expect(find.text('Sign in first'), findsNothing);
-      expect(find.text('Scan with the Harness app.'), findsNothing);
+      expect(find.text('Scan with the Harness mobile app.'), findsNothing);
       expect(find.byType(PhonePairQr), findsNothing);
       expect(daemon.codes, isEmpty);
       expect(signIn.minted, 0);
@@ -690,7 +690,7 @@ void main() {
           signIn: 'h1',
         ).toString(),
       );
-      expect(find.text('Scan with the Harness app.'), findsOneWidget);
+      expect(find.text('Scan with the Harness mobile app.'), findsOneWidget);
       expect(find.byKey(const ValueKey('add-phone-status')), findsNothing);
 
       await tester.pump(const Duration(milliseconds: 1500));
@@ -876,7 +876,7 @@ void main() {
       );
       // Few words: no heading or caption of its own; Close stays.
       expect(find.text('Get Harness on your phone'), findsNothing);
-      expect(find.text('Scan with the Harness app.'), findsNothing);
+      expect(find.text('Scan with the Harness mobile app.'), findsNothing);
       expect(find.byKey(const ValueKey('add-phone-close')), findsOneWidget);
 
       await tester.tap(find.byKey(const ValueKey('add-phone-hide-downloads')));
