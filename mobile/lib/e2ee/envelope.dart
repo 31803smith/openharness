@@ -39,6 +39,9 @@ const Set<String> encryptedDownTypes = {
   // refuses them unsealed (E2EE_REQUIRED) — without them the switch could never start.
   'agent_handoff_prepare',
   'agent_close',
+  // Delete Harness (`AppNotifier.purgeAgent`): reviewed, then deleted under that review. A
+  // `MACHINE_REQUESTS` type in the CLI, refused unsealed (E2EE_REQUIRED).
+  'agent_purge',
   'agent_recent',
   'agent_update',
   'agent_files',

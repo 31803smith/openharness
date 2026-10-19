@@ -677,6 +677,90 @@ void main() {
       await frames(tester);
     }
 
+    /// A machine that reviews then deletes what it is asked to — or, with [review], answers the
+    /// review only when that does.
+    EdgeConn purging({Future<Map<String, dynamic>>? review}) =>
+        _PurgeConn(review ?? Future.value({'reviewId': 'review-1'}))
+          ..handshaken = true;
+
+    testWidgets('Delete is offered beside Stop, and not on a terminal', (
+      tester,
+    ) async {
+      var focus = await openMenu(tester);
+      expect(find.text('Stop this harness…'), findsOneWidget);
+      expect(find.text('Delete this harness…'), findsOneWidget);
+      await focus.close();
+
+      focus = await openMenu(tester, engine: 'terminal');
+      expect(find.text('Stop this harness…'), findsOneWidget);
+      expect(find.text('Delete this harness…'), findsNothing);
+      await focus.close();
+    });
+
+    testWidgets('Delete, confirmed, reviews then deletes the harness this page '
+        'shows, conversation and all', (tester) async {
+      final conn = purging();
+      final focus = await _Focus.open(
+        tester,
+        agents: [switchable()],
+        connection: conn,
+      );
+      await tester.tap(find.byKey(const ValueKey('terminal-title')));
+      await frames(tester);
+      await tapInView(tester, find.text('Delete this harness…'));
+      await frames(tester);
+      expect(find.text('Delete a?'), findsOneWidget);
+      await tester.tap(find.widgetWithText(FilledButton, 'Delete'));
+      await frames(tester);
+
+      expect(
+        [for (final p in conn.payloads['agent_purge']!) p['mode']],
+        ['inspect', 'delete'],
+      );
+      expect(conn.payloads['agent_purge']!.last, {
+        'agentId': 'a',
+        'sessionId': 'session-a',
+        'createdAt': DateTime.utc(2026, 10, 16, 1).millisecondsSinceEpoch,
+        'mode': 'delete',
+        'reviewId': 'review-1',
+      });
+      expect(conn.requests, isNot(contains('agent_delete')));
+      expect(focus.app.stateOf('m')!.agents, isEmpty);
+      await focus.close();
+    });
+
+    testWidgets('Delete, while it is out, says so and cannot be pressed '
+        'again', (tester) async {
+      final review = Completer<Map<String, dynamic>>();
+      final conn = purging(review: review.future);
+      final focus = await _Focus.open(
+        tester,
+        agents: [switchable()],
+        connection: conn,
+      );
+      await tester.tap(find.byKey(const ValueKey('terminal-title')));
+      await frames(tester);
+      await tapInView(tester, find.text('Delete this harness…'));
+      await frames(tester);
+      await tester.tap(find.widgetWithText(FilledButton, 'Delete'));
+      await frames(tester);
+
+      await tester.tap(find.byKey(const ValueKey('terminal-title')));
+      await frames(tester);
+      expect(find.text('Delete this harness…'), findsNothing);
+      await tapInView(tester, find.text('Deleting…'));
+      await frames(tester);
+      expect(find.text('Delete a?'), findsNothing, reason: 'took no tap');
+
+      await tester.tapAt(const Offset(200, 40));
+      await frames(tester);
+      review.complete({'error': 'OWNER_REQUIRED'});
+      await frames(tester);
+      expect(find.text('Delete failed: OWNER_REQUIRED'), findsOneWidget);
+      expect(conn.payloads['agent_purge'], hasLength(1));
+      await focus.close();
+    });
+
     testWidgets('Change agent is named by the agent it is on, and offered to '
         'an agent only', (tester) async {
       var focus = await openMenu(tester);
@@ -2507,6 +2591,29 @@ class _HeldForkConn extends EdgeConn {
     requests.add(type);
     (payloads[type] ??= []).add(payload);
     return reply;
+  }
+}
+
+/// A machine that answers Delete's review with [review], and deletes under any review id.
+class _PurgeConn extends EdgeConn {
+  _PurgeConn(this.review);
+
+  final Future<Map<String, dynamic>> review;
+
+  @override
+  Future<Map<String, dynamic>> request(
+    String type, {
+    Map<String, dynamic> payload = const {},
+    Duration timeout = const Duration(seconds: 20),
+  }) {
+    if (type != 'agent_purge') {
+      return super.request(type, payload: payload, timeout: timeout);
+    }
+    requests.add(type);
+    (payloads[type] ??= []).add(payload);
+    return payload['mode'] == 'inspect'
+        ? review
+        : Future.value({'deleted': true});
   }
 }
 

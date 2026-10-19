@@ -2774,7 +2774,14 @@ class _TerminalPageState extends State<TerminalPage>
             ),
           ],
         ),
-        PhoneSheetSection(actions: [_stopAction(agent)]),
+        PhoneSheetSection(
+          actions: [
+            _stopAction(agent),
+            // Stop's harder sibling, under it: the conversation goes too. Not for a terminal,
+            // which keeps none.
+            if (agent.engine != 'terminal') _purgeAction(agent),
+          ],
+        ),
       ],
     );
     unawaited(
@@ -3120,6 +3127,32 @@ class _TerminalPageState extends State<TerminalPage>
       ),
     ),
   );
+
+  /// Delete Harness — see [confirmPurgeAgent]. Small at the foot beside Stop, and saying so while a
+  /// delete is out, as Restart does: the review and the delete can take a while. In its label, in
+  /// the desktop's word for it — a quiet row draws no value.
+  PhoneSheetAction _purgeAction(Agent agent) {
+    final deleting = widget.notifier.agentPurging(
+      widget.machineId,
+      widget.agentId,
+    );
+    return PhoneSheetAction(
+      icon: LucideIcons.trash300,
+      label: deleting ? 'Deleting…' : 'Delete this harness…',
+      enabled: !deleting,
+      destructive: true,
+      quiet: true,
+      onTap: () => unawaited(
+        confirmPurgeAgent(
+          context,
+          widget.notifier,
+          widget.machineId,
+          widget.agentId,
+          agent.name,
+        ),
+      ),
+    );
+  }
 
   /// Asks for the terminal this pane is only watching, or reopens the stream it lost — a tap or a
   /// scroll on a terminal held elsewhere.

@@ -7065,6 +7065,108 @@ class AppNotifier extends ChangeNotifier {
     return null;
   }
 
+  /// Deletes on their way, by machine and agent — what a second press joins rather than reviewing
+  /// the same harness twice.
+  final Map<(String, String), Future<String?>> _agentPurges = {};
+
+  /// Whether a Delete of this agent is on its way: the menu's row says so, as Restart does.
+  bool agentPurging(String machineId, String agentId) =>
+      _agentPurges.containsKey((machineId, agentId));
+
+  /// Delete Harness — the desktop's `purgeAgent`. Unlike Stop ([deleteAgent]), which keeps the
+  /// conversation to reopen, this stops a running harness and deletes its saved conversation for
+  /// good, so it can never be opened again. Project files and worktrees are kept.
+  ///
+  /// The machine's reviewed deletion (`agent_purge`): `inspect` first, then `delete` under that
+  /// review's id, both naming the harness exactly — id, conversation and when it was registered —
+  /// so a delete meant for one that has since been replaced under the same id is refused rather
+  /// than taking the replacement. Null on success, or the sentence to show.
+  ///
+  /// ⚠️ **A lost reply is not a failed delete.** The second step may have run; the answer says to
+  /// check rather than inviting another press that would only find nothing to delete.
+  Future<String?> purgeAgent(String machineId, String agentId) {
+    final key = (machineId, agentId);
+    if (_agentPurges[key] case final pending?) return pending;
+    final request = _purgeAgent(machineId, agentId).whenComplete(() {
+      _agentPurges.remove(key);
+      if (!_disposed) notifyListeners();
+    });
+    _agentPurges[key] = request;
+    notifyListeners();
+    return request;
+  }
+
+  Future<String?> _purgeAgent(String machineId, String agentId) async {
+    final machine = machineStates[machineId];
+    final agent = machine?.agents
+        .where((agent) => agent.id == agentId)
+        .firstOrNull;
+    final createdAt = agent?.createdAt;
+    if (machine == null || agent == null || createdAt == null) {
+      return 'This harness is no longer listed. Refresh and try again.';
+    }
+    // The desktop's rule: a terminal keeps no conversation, so there is nothing to delete past
+    // what Stop already does.
+    if (agent.engine == 'terminal') {
+      return 'A terminal keeps no conversation. Stop it instead.';
+    }
+    final revision = _authRevision;
+    final sessionId = agent.sessionId;
+    final target = {
+      'agentId': agentId,
+      'sessionId': sessionId == null || sessionId.isEmpty ? null : sessionId,
+      'createdAt': createdAt.millisecondsSinceEpoch,
+    };
+    String refused(Object? code, Object? detail) =>
+        'Delete failed: ${detail is String && detail.isNotEmpty ? detail : code}';
+    const unconfirmed =
+        'Could not confirm the deletion. Refresh harnesses to check.';
+    var deleting = false;
+    try {
+      final review = await _conn(machineId).request(
+        'agent_purge',
+        payload: {...target, 'mode': 'inspect'},
+        timeout: const Duration(seconds: 30),
+      );
+      if (review['error'] != null) {
+        return refused(review['error'], review['detail']);
+      }
+      final reviewId = review['reviewId'];
+      if (reviewId is! String) {
+        return 'Could not review this harness for deletion.';
+      }
+      if (!_machineWorkCurrent(machine, revision)) {
+        return 'The machine changed before the delete. Try again.';
+      }
+      deleting = true;
+      final result = await _conn(machineId).request(
+        'agent_purge',
+        payload: {...target, 'mode': 'delete', 'reviewId': reviewId},
+        timeout: const Duration(seconds: 60),
+      );
+      if (result['error'] != null) {
+        return refused(result['error'], result['detail']);
+      }
+      if (result['deleted'] != true) return unconfirmed;
+    } on WsRequestFailure catch (failure) {
+      return refused(failure.code, failure.detail);
+    } on WsRequestTimeout {
+      return deleting
+          ? unconfirmed
+          : 'Could not review this harness for deletion. Try again.';
+    } catch (_) {
+      return deleting
+          ? unconfirmed
+          : 'Could not delete the harness. Try again.';
+    }
+    if (_disposed || !_machineWorkCurrent(machine, revision)) return null;
+    await _removeAgent(machine, agentId);
+    // Gone from the machine, so gone from the desk — as Stop does ([deleteAgent]).
+    _desk.drop((machineId: machineId, agentId: agentId));
+    notifyListeners();
+    return null;
+  }
+
   /// Bring a stopped agent back, so something can be opened on it.
   ///
   /// The desktop's `resumeAgent`: a thin guard over [restartAgent], which is the
