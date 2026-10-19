@@ -13,6 +13,8 @@ import 'dart:math' show Random;
 import 'package:dio/dio.dart';
 import 'package:xterm/xterm.dart' show RemoteScrollMemory, Terminal;
 import 'package:flutter/foundation.dart';
+// The 80-character limit on a fork's name counts what a person sees, as the desktop's does.
+import 'package:flutter/widgets.dart' show StringCharacters;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../api/api_client.dart';
@@ -110,6 +112,67 @@ class AgentChangeResult {
   final String? notice;
 
   const AgentChangeResult({this.error, this.agentId, this.notice});
+}
+
+/// What became of a Fork ([AppNotifier.forkAgent]) — the desktop's `ForkAgentResult`.
+///
+/// [error] is a sentence to show as it is. Without it [agentId] is the fork to open now, and
+/// [level] says what it got: `native` (the engine's own fork, the whole context) or `handoff` (a
+/// first message composed from what the machine remembers of the source, for an engine that cannot
+/// fork). [notice], when set, is a line to say once it is open.
+class ForkAgentResult {
+  final String? error;
+  final String level;
+  final String? agentId;
+  final String? notice;
+
+  const ForkAgentResult({
+    this.error,
+    this.level = 'native',
+    this.agentId,
+    this.notice,
+  });
+}
+
+/// The Fork form's draft and its one deliberate fork — the desktop's `AgentForkAttempt`.
+///
+/// ⚠️ **Kept while the form is closed, receipt and all.** A fork starts a process, and its reply can
+/// be lost: then the attempt is locked on its choices until Check status asks `agent_create_status`
+/// about the SAME `creationId`, or the person explicitly starts another
+/// ([AppNotifier.discardForkAttempt]). Reopening the form while it is on its way joins it.
+class AgentForkAttempt {
+  AgentForkAttempt._(
+    this._machine,
+    this.source,
+    this._authRevision, {
+    this.name = '',
+    this.prompt = '',
+  });
+
+  /// The machine as it was when the form opened: a fork belongs to that connection.
+  final MachineState? _machine;
+
+  /// The agent as it was when the form opened. A fork is sent only while the machine still lists
+  /// this one — same id, same conversation.
+  final Agent? source;
+  final int _authRevision;
+
+  /// What the form holds: the fork's name and its first task.
+  String name, prompt;
+  String? _id;
+  bool _awaitingConfirmation = false;
+  Future<ForkAgentResult>? _inFlight;
+
+  /// The last answer, so the form opened again says what the last one ended on.
+  ForkAgentResult? result;
+
+  /// The fork was sent and its outcome is not known: Check status, not Fork.
+  bool get awaitingConfirmation => _awaitingConfirmation;
+  bool get busy => _inFlight != null;
+
+  /// The form's choices are held — while it is on its way, and while its outcome is unknown.
+  bool get locked => busy || awaitingConfirmation;
+  Future<ForkAgentResult>? get pending => _inFlight;
 }
 
 /// One deliberate creation, retained by the form if its reply is lost. Reusing
@@ -7314,6 +7377,291 @@ class AppNotifier extends ChangeNotifier {
           'RESUME_SESSION_MISMATCH' => 'The harness came back on a different conversation. The saved one is still kept.',
           'RESUME_FAILED' => 'The harness did not come back. Its output and conversation are kept.',
           _ => 'Restart failed: $code',
+        };
+
+  /// Fork's attempts, by machine and source agent — see [AgentForkAttempt] for why one outlives
+  /// its form.
+  final Map<(String, String), AgentForkAttempt> _agentForks = {};
+
+  /// Whether a fork of this agent is on its way: the terminal menu's Fork row says so, as Restart
+  /// does.
+  bool agentForking(String machineId, String agentId) =>
+      forkPending(machineId, agentId) != null;
+
+  /// The fork of this agent on its way, if one is — what the terminal page waits on once the
+  /// form closed before it landed.
+  Future<ForkAgentResult>? forkPending(String machineId, String agentId) =>
+      _agentForks[(machineId, agentId)]?.pending;
+
+  /// Whether the attempt's source is still the agent its machine lists — the same connection, the
+  /// same id and the same conversation.
+  bool _forkSourceCurrent(AgentForkAttempt attempt) {
+    final machine = attempt._machine;
+    final source = attempt.source;
+    if (machine == null ||
+        source == null ||
+        !_machineWorkCurrent(machine, attempt._authRevision)) {
+      return false;
+    }
+    final current = machine.agents
+        .where((agent) => agent.id == source.id)
+        .firstOrNull;
+    return current != null && current.sessionId == source.sessionId;
+  }
+
+  /// The Fork form's attempt for [agentId]: the one already held while its source is unchanged or
+  /// its outcome is still to be checked, else a new one starting from [name] and [prompt].
+  AgentForkAttempt forkAttempt(
+    String machineId,
+    String agentId, {
+    String name = '',
+    String prompt = '',
+  }) {
+    final existing = _agentForks[(machineId, agentId)];
+    if (existing != null &&
+        (_forkSourceCurrent(existing) ||
+            (existing.locked &&
+                existing._machine != null &&
+                _machineWorkCurrent(
+                  existing._machine,
+                  existing._authRevision,
+                )))) {
+      return existing;
+    }
+    final machine = machineStates[machineId];
+    final source = machine?.agents
+        .where((agent) => agent.id == agentId)
+        .firstOrNull;
+    return _agentForks[(machineId, agentId)] = AgentForkAttempt._(
+      machine,
+      source,
+      _authRevision,
+      name: name,
+      prompt: prompt,
+    );
+  }
+
+  /// Lets an unconfirmed fork go — only the form's explicit Start another fork does this, and
+  /// never while it is on its way. False when [attempt] is not the one held.
+  bool discardForkAttempt(
+    String machineId,
+    String agentId,
+    AgentForkAttempt attempt,
+  ) {
+    if (attempt.busy ||
+        !identical(_agentForks[(machineId, agentId)], attempt)) {
+      return false;
+    }
+    _agentForks.remove((machineId, agentId));
+    return true;
+  }
+
+  /// Fork: a NEW harness that starts with everything [agentId]'s conversation has, in the same
+  /// project folder — the desktop's `forkAgent`. The source is not touched, not even paused, which
+  /// is why it has to be idle (`cli/src/core/agents/fork.ts`).
+  ///
+  /// One fork per agent at a time: asking again while one is on its way joins it, and once its
+  /// outcome is unknown the same attempt checks it (`agent_create_status`) rather than sending a
+  /// second `agent_fork`.
+  Future<ForkAgentResult> forkAgent(
+    String machineId,
+    String agentId, {
+    AgentForkAttempt? attempt,
+  }) {
+    final operation = attempt ?? forkAttempt(machineId, agentId);
+    if (operation.result case final result?
+        when result.error == null && result.agentId != null) {
+      return Future.value(result);
+    }
+    if (operation.pending case final pending?) return pending;
+    late final Future<ForkAgentResult> request;
+    request = _runAgentFork(machineId, agentId, operation)
+        .then((result) {
+          operation.result = result;
+          return result;
+        })
+        .whenComplete(() {
+          if (identical(operation._inFlight, request)) {
+            operation._inFlight = null;
+          }
+          if (!_disposed && _authWorkCurrent(operation._authRevision)) {
+            notifyListeners();
+          }
+        });
+    operation._inFlight = request;
+    notifyListeners();
+    return request;
+  }
+
+  /// The steps of [forkAgent], in the desktop's order and words.
+  Future<ForkAgentResult> _runAgentFork(
+    String machineId,
+    String agentId,
+    AgentForkAttempt attempt,
+  ) async {
+    final machine = attempt._machine;
+    if (machine == null) {
+      return const ForkAgentResult(error: 'Machine not found');
+    }
+    if (machine.machine.machineId != machineId ||
+        attempt.source?.id != agentId) {
+      return const ForkAgentResult(
+        error: 'The source harness is no longer available.',
+      );
+    }
+    if (!_machineWorkCurrent(machine, attempt._authRevision)) {
+      return const ForkAgentResult(
+        error: 'This fork is no longer active. Reopen Fork Harness.',
+      );
+    }
+    if (!attempt.awaitingConfirmation) {
+      if (!_forkSourceCurrent(attempt)) {
+        return const ForkAgentResult(
+          error: 'The source harness changed. Close this prompt and reopen Fork Harness.',
+        );
+      }
+      if (attempt.source?.canFork != true) {
+        return const ForkAgentResult(
+          error: 'This harness does not support forking.',
+        );
+      }
+      if (agentIsProcessing(machineId, agentId)) {
+        return const ForkAgentResult(
+          error: 'This harness is working. Wait for its turn to finish, then fork.',
+        );
+      }
+      if (attempt.name.characters.length > 80) {
+        return const ForkAgentResult(
+          error: 'Use at most 80 characters for the name.',
+        );
+      }
+      if (attempt.prompt.length > 2000) {
+        return const ForkAgentResult(
+          error: 'Use at most 2000 characters for the first task.',
+        );
+      }
+      attempt._id = _newReceiptId();
+    }
+    final checking = attempt.awaitingConfirmation;
+    attempt._awaitingConfirmation = true;
+    const unknown = ForkAgentResult(
+      error: 'The fork is not confirmed yet. Check status, or look for it in Find before starting another.',
+    );
+    Map<String, dynamic> result;
+    try {
+      result = await _conn(machineId).request(
+        checking ? 'agent_create_status' : 'agent_fork',
+        payload: {
+          'creationId': attempt._id,
+          if (!checking) ...{
+            'agentId': agentId,
+            if (attempt.name.trim().isNotEmpty) 'name': attempt.name.trim(),
+            if (attempt.prompt.trim().isNotEmpty) 'prompt': attempt.prompt,
+          },
+        },
+        timeout: checking
+            ? const Duration(seconds: 10)
+            : const Duration(seconds: 20),
+      );
+    } on WsRequestFailure catch (failure) {
+      // Refusals before anything started are safe to correct. These cannot prove nothing did, and
+      // no answer to a status check can.
+      if (checking ||
+          const {
+            'INTERNAL',
+            'CREATION_STORAGE_FAILED',
+            'SPAWN_FAILED',
+            'REGISTRATION_FAILED',
+          }.contains(failure.code)) {
+        return unknown;
+      }
+      attempt._awaitingConfirmation = false;
+      return ForkAgentResult(error: _forkFailure(failure.code, failure.detail));
+    } catch (_) {
+      // Disconnects, timeouts and malformed replies: not evidence that the machine did nothing.
+      return unknown;
+    }
+    if (_disposed || !_machineWorkCurrent(machine, attempt._authRevision)) {
+      return const ForkAgentResult(
+        error: 'The machine changed while forking. Check its harnesses after reconnecting.',
+      );
+    }
+    if ((checking ||
+            result.containsKey('creationId') ||
+            result.containsKey('state')) &&
+        result['creationId'] != attempt._id) {
+      return unknown;
+    }
+    switch (result['state']) {
+      case 'pending':
+        return const ForkAgentResult(
+          error: 'The machine is still starting the fork. Check again in a moment.',
+        );
+      case 'missing':
+      case 'unconfirmed':
+        return unknown;
+      case 'unavailable':
+        attempt._awaitingConfirmation = false;
+        return const ForkAgentResult(
+          error: 'The fork was created but is no longer available. You can start another.',
+        );
+      case 'failed':
+        final failure = result['failure'];
+        if (failure is! Map || failure['code'] is! String) return unknown;
+        attempt._awaitingConfirmation = false;
+        return ForkAgentResult(
+          error: _forkFailure(failure['code'] as String, failure['detail']),
+        );
+      case 'created':
+      case null: // A first answer from a machine predating receipts.
+        break;
+      default:
+        return unknown;
+    }
+    final raw = result['agent'];
+    if (raw is! Map ||
+        raw['id'] is! String ||
+        (raw['id'] as String).isEmpty ||
+        raw['id'] == agentId) {
+      return unknown;
+    }
+    final Map<String, dynamic> json;
+    final Agent fork;
+    try {
+      json = Map<String, dynamic>.from(raw);
+      fork = Agent.fromJson(json);
+    } catch (_) {
+      return unknown;
+    }
+    attempt._awaitingConfirmation = false;
+    if (identical(_agentForks[(machineId, agentId)], attempt)) {
+      _agentForks.remove((machineId, agentId));
+    }
+    _upsertAgent(machine, fork, json: json);
+    // Into the tab the phone is in — the source's, since Fork is asked from its terminal — the way
+    // the desktop places a fork beside its source.
+    _desk.adopt((
+      machineId: machineId,
+      agentId: fork.id,
+    ), name: fork.displayName);
+    notifyListeners();
+    return ForkAgentResult(
+      level: result['level'] == 'handoff' ? 'handoff' : 'native',
+      agentId: fork.id,
+    );
+  }
+
+  /// The desktop's `_forkFailure`: the machine's own [detail] when it sends one, else a sentence
+  /// for the code.
+  String _forkFailure(String code, Object? detail) =>
+      detail is String && detail.isNotEmpty
+      ? detail
+      : switch (code) {
+          'UNSUPPORTED_ON_REMOTE' || 'UNSUPPORTED' =>
+            'Update the harness CLI on this machine to fork a harness.',
+          'AGENT_BUSY' =>
+            'This harness is working. Wait for its turn to finish, then fork.',
+          _ => 'Fork failed: $code',
         };
 
   /// Change agent's switches, by machine and agent — see [_AgentChange] for why one outlives a

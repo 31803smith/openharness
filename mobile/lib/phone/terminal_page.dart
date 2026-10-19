@@ -38,6 +38,7 @@ import 'package:harness_mobile/core/agent_handoff.dart'
     show supportsAgentHandoff;
 import 'package:harness_mobile/widgets/engine_identity.dart'
     show engineIdentity;
+import 'package:harness_mobile/widgets/fork_agent_dialog.dart';
 import 'package:harness_mobile/widgets/rename_agent_dialog.dart';
 import 'package:harness_mobile/widgets/terminal_panel.dart';
 
@@ -2929,6 +2930,16 @@ class _TerminalPageState extends State<TerminalPage>
         chevron: !_changing,
         onTap: () => unawaited(_changeAgent(agent)),
       ),
+    // A second harness that starts with this one's conversation, in the same folder — the
+    // desktop's Fork Harness. Only where the machine can fork it, and not on saved work: a stopped
+    // harness is reopened, not forked.
+    if (agent.canFork && !agent.isStopped)
+      PhoneSheetAction(
+        icon: LucideIcons.gitFork300,
+        label: 'Fork…',
+        value: _forking ? 'forking…' : null,
+        onTap: () => unawaited(_fork()),
+      ),
     PhoneSheetAction(
       icon: LucideIcons.pencil300,
       label: 'Rename…',
@@ -2961,6 +2972,63 @@ class _TerminalPageState extends State<TerminalPage>
   /// Whether this agent has a switch on its way — see [AppNotifier.agentChanging].
   bool get _changing =>
       widget.notifier.agentChanging(widget.machineId, widget.agentId);
+
+  /// Whether a fork of this agent is on its way — see [AppNotifier.agentForking].
+  bool get _forking =>
+      widget.notifier.agentForking(widget.machineId, widget.agentId);
+
+  /// Fork: the form, then the fork opens — the source stays as it is, in the same tab.
+  ///
+  /// ⚠️ **A fork outlives its form.** Closed while the fork is still out, the form says it carries
+  /// on, so its answer is still said here when it lands — and the fork offered to open rather
+  /// than opened over whatever the person went on to.
+  Future<void> _fork() async {
+    final messenger = ScaffoldMessenger.maybeOf(context);
+    final shell = PhoneShellScope.maybeOf(context);
+    final notifier = widget.notifier;
+    final machineId = widget.machineId;
+    final result = await showForkAgentDialog(
+      context,
+      notifier,
+      machineId,
+      widget.agentId,
+    );
+    if (result == null) {
+      final pending = notifier.forkPending(machineId, widget.agentId);
+      if (pending == null) return;
+      final landed = await pending;
+      final opened = landed.agentId;
+      // A menu opened in the wait would cover the answer — see [_putMenuAway].
+      if (mounted) _putMenuAway();
+      messenger?.showSnackBar(
+        SnackBar(
+          content: Text(landed.error ?? landed.notice ?? 'Fork created.'),
+          action: landed.error != null || opened == null
+              ? null
+              : SnackBarAction(
+                  label: 'Open',
+                  onPressed: () => mounted
+                      ? openAgent(context, notifier, machineId, opened)
+                      : shell?.onOpenAgent(machineId, opened),
+                ),
+        ),
+      );
+      return;
+    }
+    final said =
+        result.notice ??
+        (result.level == 'handoff'
+            ? 'Fork opened with a handoff summary of the source conversation.'
+            : null);
+    if (said != null) messenger?.showSnackBar(SnackBar(content: Text(said)));
+    final next = result.agentId;
+    if (next == null) return;
+    if (mounted) {
+      openAgent(context, notifier, machineId, next);
+    } else {
+      shell?.onOpenAgent(machineId, next);
+    }
+  }
 
   /// Change agent: pick the engine, and the harness goes on there with the conversation handed
   /// over — then the new one opens in place of this one. See [AppNotifier.changeAgent].

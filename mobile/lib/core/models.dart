@@ -226,6 +226,10 @@ class Agent {
   /// agent, so the new agent is given the same freedom when its engine has that mode.
   final String? permissionMode;
 
+  /// Whether its machine can fork it (`agent_fork`), as the frame says; null from a daemon older
+  /// than the field — then [forkableEngines] decides. The desktop's `Agent.forkable`.
+  final bool? forkable;
+
   const Agent({
     required this.id,
     this.sessionId,
@@ -258,6 +262,7 @@ class Agent {
     this.createdAt,
     this.closeSupported = false,
     this.permissionMode,
+    this.forkable,
   });
 
   factory Agent.fromJson(Map<String, dynamic> j) {
@@ -330,6 +335,7 @@ class Agent {
       createdAt: _safeTime(j['createdAt']),
       closeSupported: j['closeSupported'] == true,
       permissionMode: _safePermissionMode(j['permissionMode']),
+      forkable: j['forkable'] is bool ? j['forkable'] as bool : null,
     );
   }
 
@@ -365,7 +371,18 @@ class Agent {
     createdAt: createdAt,
     closeSupported: closeSupported,
     permissionMode: permissionMode,
+    forkable: forkable,
   );
+
+  /// The engines whose sessions can be forked — natively (Claude Code's `--fork-session`,
+  /// `codex fork`) or by a handoff message (OpenCode takes a first prompt). The answer for a
+  /// daemon that does not say ([forkable]); the desktop's list.
+  static const forkableEngines = {'claude', 'codex', 'opencode'};
+
+  /// Whether to offer Fork for this agent at all — the desktop's rule. Devin, Cursor, a terminal
+  /// and the rest can neither fork nor open with a message, so the row is not drawn rather than
+  /// drawn and refused.
+  bool get canFork => forkable ?? forkableEngines.contains(engine);
 
   /// Saved work the daemon is no longer running, as the desktop's [Agent] reads
   /// it. Its conversation is on disk; `agent_resume` brings it back.

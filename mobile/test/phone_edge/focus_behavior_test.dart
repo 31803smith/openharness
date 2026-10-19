@@ -451,6 +451,198 @@ void main() {
       await focus.close();
     });
 
+    /// A machine that forks what it is asked to, as `f`, echoing the receipt — or, with [failure],
+    /// records the fork as refused for that reason.
+    EdgeConn forking({Map<String, dynamic>? failure}) => EdgeConn(
+      const {},
+      (type, payload) => type != 'agent_fork'
+          ? null
+          : failure != null
+          ? {
+              'creationId': payload['creationId'],
+              'state': 'failed',
+              'failure': failure,
+            }
+          : {
+              'creationId': payload['creationId'],
+              'state': 'created',
+              'level': 'native',
+              'agent': {
+                'id': 'f',
+                'name': payload['name'] ?? 'f',
+                'engine': 'claude',
+                'terminal': {'available': true},
+              },
+            },
+    )..handshaken = true;
+
+    testWidgets('Fork is offered where the machine can fork, and not on a '
+        'terminal', (tester) async {
+      var focus = await openMenu(tester);
+      expect(find.text('Fork…'), findsOneWidget);
+      await focus.close();
+
+      focus = await openMenu(tester, engine: 'terminal');
+      expect(find.text('Fork…'), findsNothing);
+      await focus.close();
+    });
+
+    testWidgets('Fork: the desktop’s form, named after the source, then the '
+        'fork opens and the source is left as it was', (tester) async {
+      final conn = forking();
+      final focus = await openMenu(tester, connection: conn);
+      await tapInView(tester, find.text('Fork…'));
+      await frames(tester);
+
+      expect(find.text('Fork Harness'), findsOneWidget);
+      expect(
+        find.text('Continues the conversation in the same project folder.'),
+        findsOneWidget,
+      );
+      expect(
+        tester
+            .widget<TextField>(find.byKey(const Key('fork-name')))
+            .controller!
+            .text,
+        'a - fork',
+      );
+      await tester.enterText(
+        find.byKey(const Key('fork-task')),
+        'Try the other approach',
+      );
+      await tester.tap(find.byKey(const Key('fork-confirm')));
+      for (var i = 0; i < 40 && focus.opened.isEmpty; i++) {
+        await tester.pump(const Duration(milliseconds: 100));
+      }
+
+      final [sent] = conn.payloads['agent_fork']!;
+      expect(sent['agentId'], 'a');
+      expect(sent['name'], 'a - fork');
+      expect(sent['prompt'], 'Try the other approach');
+      expect(focus.opened, [('m', 'f')]);
+      await frames(tester);
+      expect(find.text('Fork Harness'), findsNothing, reason: 'the form went');
+      expect(
+        conn.requests,
+        isNot(contains('agent_close')),
+        reason: 'the source is not touched',
+      );
+      await focus.close();
+    });
+
+    testWidgets('Fork the machine refuses says why in the form, and opens '
+        'nothing', (tester) async {
+      final conn = forking(
+        failure: {
+          'code': 'AGENT_BUSY',
+          'detail': 'a is in the middle of a turn.',
+        },
+      );
+      final focus = await openMenu(tester, connection: conn);
+      await tapInView(tester, find.text('Fork…'));
+      await frames(tester);
+      await tester.tap(find.byKey(const Key('fork-confirm')));
+      await frames(tester);
+
+      expect(find.text('a is in the middle of a turn.'), findsOneWidget);
+      expect(find.text('Fork'), findsOneWidget, reason: 'can be sent again');
+      expect(focus.opened, isEmpty);
+      await focus.close();
+    });
+
+    testWidgets('Fork with no name is not sent', (tester) async {
+      final conn = forking();
+      final focus = await openMenu(tester, connection: conn);
+      await tapInView(tester, find.text('Fork…'));
+      await frames(tester);
+      await tester.enterText(find.byKey(const Key('fork-name')), '  ');
+      await tester.tap(find.byKey(const Key('fork-confirm')));
+      await frames(tester);
+
+      expect(find.text('Name cannot be empty'), findsOneWidget);
+      expect(conn.payloads['agent_fork'], isNull);
+      await focus.close();
+    });
+
+    // The form's own fields raise the keyboard, and on a small phone it takes most of the screen:
+    // the form scrolls inside what is left rather than overflowing, and Fork stays in reach.
+    testWidgets('Fork’s form under the keyboard on a small phone still reaches '
+        'Fork', (tester) async {
+      final conn = forking();
+      final focus = await openMenu(tester, connection: conn);
+      setPhone(tester, smallPhone);
+      await frames(tester);
+      await tapInView(tester, find.text('Fork…'));
+      await frames(tester);
+      raiseKeyboard(tester);
+      await frames(tester);
+      expect(tester.takeException(), isNull, reason: 'no overflow');
+
+      final confirm = find.byKey(const Key('fork-confirm'));
+      await tester.ensureVisible(confirm);
+      await tester.pump();
+      final bottom = tester.getRect(confirm).bottom;
+      expect(
+        bottom,
+        lessThanOrEqualTo(smallPhone.size.height - smallPhone.keyboard),
+        reason: 'above the keyboard',
+      );
+      await tester.tap(confirm);
+      for (var i = 0; i < 40 && focus.opened.isEmpty; i++) {
+        await tester.pump(const Duration(milliseconds: 100));
+      }
+      expect(focus.opened, [('m', 'f')]);
+      lowerKeyboard(tester);
+      await frames(tester);
+      await focus.close();
+    });
+
+    testWidgets('Fork closed while it is on its way carries on, says so when '
+        'it lands, and offers the fork', (tester) async {
+      final reply = Completer<Map<String, dynamic>>();
+      final forkConn = _HeldForkConn(reply.future)..handshaken = true;
+      final focus = await openMenu(tester, connection: forkConn);
+      await tapInView(tester, find.text('Fork…'));
+      await frames(tester);
+      await tester.tap(find.byKey(const Key('fork-confirm')));
+      await frames(tester);
+      expect(
+        find.text('Forking continues if you close this dialog.'),
+        findsOneWidget,
+      );
+      await tester.tap(find.byKey(const Key('fork-cancel')));
+      await frames(tester);
+      expect(find.text('Fork Harness'), findsNothing);
+
+      // The menu says so while it is out, and goes when the answer lands under it.
+      await tester.tap(find.byKey(const ValueKey('terminal-title')));
+      await frames(tester);
+      expect(find.text('forking…'), findsOneWidget);
+
+      reply.complete({
+        'creationId': forkConn.receipt,
+        'state': 'created',
+        'agent': {
+          'id': 'f',
+          'name': 'a - fork',
+          'engine': 'claude',
+          'terminal': {'available': true},
+        },
+      });
+      await frames(tester);
+      expect(find.text('forking…'), findsNothing, reason: 'the menu went');
+      expect(find.text('Fork created.'), findsOneWidget);
+      expect(
+        focus.opened,
+        isEmpty,
+        reason: 'offered, not opened over the page',
+      );
+      await tester.tap(find.text('Open'));
+      await frames(tester);
+      expect(focus.opened, [('m', 'f')]);
+      await focus.close();
+    });
+
     /// A harness its machine can save and stop — what Change agent needs of one.
     Agent switchable() => Agent(
       id: 'a',
@@ -2290,6 +2482,31 @@ class _SwitchConn extends EdgeConn {
     requests.add(type);
     (payloads[type] ??= []).add(payload);
     return handoff();
+  }
+}
+
+/// A machine whose `agent_fork` answers only when [reply] does — a fork still on its way.
+class _HeldForkConn extends EdgeConn {
+  _HeldForkConn(this.reply);
+
+  final Future<Map<String, dynamic>> reply;
+
+  /// The receipt the fork was sent under, for the answer to echo.
+  String? get receipt =>
+      payloads['agent_fork']?.single['creationId'] as String?;
+
+  @override
+  Future<Map<String, dynamic>> request(
+    String type, {
+    Map<String, dynamic> payload = const {},
+    Duration timeout = const Duration(seconds: 20),
+  }) {
+    if (type != 'agent_fork') {
+      return super.request(type, payload: payload, timeout: timeout);
+    }
+    requests.add(type);
+    (payloads[type] ??= []).add(payload);
+    return reply;
   }
 }
 
