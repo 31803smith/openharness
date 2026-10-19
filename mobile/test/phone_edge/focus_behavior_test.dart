@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:file_selector/file_selector.dart' show XFile;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -11,6 +12,7 @@ import 'package:harness_mobile/phone/machines_tab.dart';
 import 'package:harness_mobile/phone/phone_search_catalog.dart'
     show phoneAgentId;
 import 'package:harness_mobile/phone/phone_shell_scope.dart';
+import 'package:harness_mobile/phone/terminal_file_send.dart';
 import 'package:harness_mobile/phone/terminal_page.dart';
 import 'package:harness_mobile/phone/terminal_search.dart';
 import 'package:harness_mobile/phone/settings_page.dart';
@@ -1514,6 +1516,67 @@ void main() {
         find.text('Allow camera access in Settings to send a photo.'),
         findsOneWidget,
       );
+      await focus.close();
+    });
+  });
+
+  group('a file', () {
+    testWidgets('where the computer takes one: behind the same key, and out '
+        'as an upload under its name', (tester) async {
+      final restore = pickTerminalFile;
+      addTearDown(() => pickTerminalFile = restore);
+      var picks = 0;
+      pickTerminalFile = () async {
+        picks++;
+        // Named by its path, as a picked file is on a phone.
+        return XFile.fromData(
+          Uint8List.fromList(utf8.encode('log line')),
+          path: '/picked/server.log',
+        );
+      };
+      final focus = await _Focus.open(tester);
+      focus.app.stateOf('m')!
+        ..terminalImagePasteAvailable = true
+        ..terminalPasteFileAvailable = true;
+      focus.fill();
+      await frames(tester);
+      await focus.tapPrompt();
+      await tester.pump();
+      raiseKeyboard(tester);
+      await frames(tester);
+
+      await tester.tap(
+        find.byKey(const ValueKey('terminal-key-Send image or file')),
+      );
+      await frames(tester);
+      await tester.tap(find.text('Choose a file'));
+      await frames(tester);
+
+      expect(picks, 1);
+      final begin = focus.sent
+          .where((frame) => frame.$1 == 'terminal_chunked_upload_begin')
+          .single
+          .$2;
+      expect(begin['uploadKind'], 'file');
+      expect(begin['filename'], 'server.log');
+      await focus.close();
+    });
+
+    testWidgets('where it does not, the key offers pictures only', (
+      tester,
+    ) async {
+      final focus = await _Focus.open(tester);
+      focus.app.stateOf('m')!.terminalImagePasteAvailable = true;
+      focus.fill();
+      await frames(tester);
+      await focus.tapPrompt();
+      await tester.pump();
+      raiseKeyboard(tester);
+      await frames(tester);
+
+      await tester.tap(find.byKey(const ValueKey('terminal-key-Send image')));
+      await frames(tester);
+      expect(find.text('Choose a file'), findsNothing);
       await focus.close();
     });
   });

@@ -61,6 +61,11 @@ dependencies:
   # are re-encoded to PNG before they leave — see `terminal/image_transcode.dart`
   # for why the whole pipe past this point accepts nothing else.
   image_picker: ^1.2.3
+  # Sending any other file to an agent — a PDF, a log, a zip — from the same key: the system's own
+  # document picker (Files on iOS, the Storage Access Framework on Android), which hands over one
+  # file the person chose and asks for no storage permission. The bytes go out as the CLI's
+  # `pasteFile` upload, which writes them on that machine and pastes the path.
+  file_selector: ^1.1.0
 
   # Talking to an agent: tapping the terminal opens voice input before the
   # keyboard (`phone/voice_input_panel.dart`). This only RECORDS — 16 kHz mono

@@ -72,6 +72,7 @@ class TerminalKeyBar extends StatefulWidget {
     this.onPaste,
     this.onPickImage,
     this.onTakePhoto,
+    this.onPickFile,
     this.questionOpen = false,
     this.enginePrompt = false,
     this.hints = const [],
@@ -133,6 +134,10 @@ class TerminalKeyBar extends StatefulWidget {
   final VoidCallback? onPickImage;
   final VoidCallback? onTakePhoto;
 
+  /// Sending any other file, from the same key. Null on a pane whose machine never advertised
+  /// `terminalPasteFileAvailable`, for the same reason.
+  final VoidCallback? onPickFile;
+
   @override
   State<TerminalKeyBar> createState() => _TerminalKeyBarState();
 }
@@ -141,6 +146,9 @@ class _TerminalKeyBarState extends State<TerminalKeyBar>
     with WidgetsBindingObserver {
   bool get _canSendImage =>
       widget.onPickImage != null || widget.onTakePhoto != null;
+
+  /// Whether the send key is drawn at all: a picture, or a file, can go.
+  bool get _canSend => _canSendImage || widget.onPickFile != null;
 
   /// Whether the phone's clipboard holds anything `paste` would send: text,
   /// or an image where this pane takes one. The key is drawn only then — a
@@ -213,37 +221,46 @@ class _TerminalKeyBarState extends State<TerminalKeyBar>
     action();
   }
 
-  /// The image key: asks WHICH picture, then hands off.
+  /// The send key: asks WHICH picture — or a file — then hands off.
   ///
   /// The sheet only appears where there is a choice to make. A build with just
-  /// one of the two wired goes straight there instead — a sheet with a single
+  /// one of them wired goes straight there instead — a sheet with a single
   /// row is a tap spent on nothing.
   void _sendImage(BuildContext context) {
     final pick = widget.onPickImage;
     final photo = widget.onTakePhoto;
-    if (pick == null) {
-      photo?.call();
-      return;
-    }
-    if (photo == null) {
-      pick();
-      return;
-    }
-    showPhoneSheet(
-      context,
-      title: 'Send a picture to this harness',
-      actions: [
+    final file = widget.onPickFile;
+    final actions = [
+      if (pick != null)
         PhoneSheetAction(
           icon: LucideIcons.image300,
           label: 'Choose from library',
           onTap: pick,
         ),
+      if (photo != null)
         PhoneSheetAction(
           icon: LucideIcons.camera300,
           label: 'Take a photo',
           onTap: photo,
         ),
-      ],
+      if (file != null)
+        PhoneSheetAction(
+          icon: LucideIcons.paperclip300,
+          label: 'Choose a file',
+          onTap: file,
+        ),
+    ];
+    if (actions.length == 1) {
+      actions.single.onTap();
+      return;
+    }
+    if (actions.isEmpty) return;
+    showPhoneSheet(
+      context,
+      title: file == null
+          ? 'Send a picture to this harness'
+          : 'Send to this harness',
+      actions: actions,
     );
   }
 
@@ -426,10 +443,16 @@ class _TerminalKeyBarState extends State<TerminalKeyBar>
     // were the same kind of thing, and an image button that looks like `esc`
     // reads as something that will be typed at the agent.
     final apart = <_Slot>[
-      if (_canSendImage)
+      // Named for a picture wherever one can go — the file is one more row behind it — and
+      // for a file only where nothing else can.
+      if (_canSend)
         _key(
-          label: 'img',
-          semanticLabel: 'Send image',
+          label: _canSendImage ? 'img' : 'file',
+          semanticLabel: !_canSendImage
+              ? 'Send file'
+              : widget.onPickFile != null
+              ? 'Send image or file'
+              : 'Send image',
           onTap: () => _sendImage(context),
         ),
       // The way back to a full screen of output, which on a phone is the only

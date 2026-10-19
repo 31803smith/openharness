@@ -885,24 +885,26 @@ void main() {
   });
 
   group('img', () {
-    Widget bar({VoidCallback? pick, VoidCallback? photo}) => MaterialApp(
-      home: Scaffold(
-        body: Align(
-          alignment: Alignment.bottomCenter,
-          child: SizedBox(
-            width: 375,
-            child: TerminalKeyBar(
-              terminal: terminal,
-              enabled: true,
-              enginePrompt: true,
-              onDismissKeyboard: () {},
-              onPickImage: pick,
-              onTakePhoto: photo,
+    Widget bar({VoidCallback? pick, VoidCallback? photo, VoidCallback? file}) =>
+        MaterialApp(
+          home: Scaffold(
+            body: Align(
+              alignment: Alignment.bottomCenter,
+              child: SizedBox(
+                width: 375,
+                child: TerminalKeyBar(
+                  terminal: terminal,
+                  enabled: true,
+                  enginePrompt: true,
+                  onDismissKeyboard: () {},
+                  onPickImage: pick,
+                  onTakePhoto: photo,
+                  onPickFile: file,
+                ),
+              ),
             ),
           ),
-        ),
-      ),
-    );
+        );
     final image = find.byKey(const ValueKey('terminal-key-Send image'));
     final newline = find.byKey(const ValueKey('terminal-key-Newline'));
     final hide = find.byKey(const ValueKey('terminal-key-Hide keyboard'));
@@ -939,6 +941,48 @@ void main() {
       await tester.pumpAndSettle();
       expect((picks, photos), (0, 1));
       expect(outbound, isEmpty, reason: 'nothing typed at the agent');
+    });
+
+    testWidgets('where a file can go too, it is one more row behind the same '
+        'key', (tester) async {
+      var picks = 0, photos = 0, files = 0;
+      await tester.pumpWidget(
+        bar(pick: () => picks++, photo: () => photos++, file: () => files++),
+      );
+      final key = find.byKey(const ValueKey('terminal-key-Send image or file'));
+      expect(find.descendant(of: key, matching: find.text('img')), findsOne);
+      await tester.tap(key);
+      await tester.pumpAndSettle();
+      expect(find.text('Send to this harness'), findsOneWidget);
+      expect(find.text('Choose from library'), findsOneWidget);
+      expect(find.text('Take a photo'), findsOneWidget);
+
+      await tester.tap(find.text('Choose a file'));
+      await tester.pumpAndSettle();
+      expect((picks, photos, files), (0, 0, 1));
+      expect(outbound, isEmpty, reason: 'nothing typed at the agent');
+    });
+
+    testWidgets('a picture alone keeps its own sheet title', (tester) async {
+      await tester.pumpWidget(bar(pick: () {}, photo: () {}));
+      await tester.tap(image);
+      await tester.pumpAndSettle();
+      expect(find.text('Send a picture to this harness'), findsOneWidget);
+      expect(find.text('Choose a file'), findsNothing);
+    });
+
+    testWidgets('where only a file can go, the key says so and opens the '
+        'picker at once', (tester) async {
+      var files = 0;
+      await tester.pumpWidget(bar(file: () => files++));
+      expect(image, findsNothing);
+      final key = find.byKey(const ValueKey('terminal-key-Send file'));
+      expect(find.descendant(of: key, matching: find.text('file')), findsOne);
+
+      await tester.tap(key);
+      await tester.pumpAndSettle();
+      expect(files, 1);
+      expect(find.text('Choose a file'), findsNothing, reason: 'no sheet');
     });
   });
 

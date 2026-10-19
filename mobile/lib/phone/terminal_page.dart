@@ -58,6 +58,7 @@ import 'terminal_action_column.dart';
 import 'terminal_chrome_scroll.dart';
 import 'terminal_input_dock.dart';
 import 'terminal_copy.dart';
+import 'terminal_file_send.dart';
 import 'terminal_paste.dart';
 import 'terminal_search.dart';
 import 'tty.dart';
@@ -1947,6 +1948,36 @@ class _TerminalPageState extends State<TerminalPage>
     }
   }
 
+  /// The key bar's "Choose a file": the system's document picker, then the file to the machine,
+  /// which pastes its path there — see [sendFileToTerminal]. One picker at a time, shared with the
+  /// image picker ([_picking]): two system sheets stacked would be one too many.
+  Future<void> _sendFile(TerminalSession session) async {
+    if (_picking || !session.acceptsInput) return;
+    _picking = true;
+    final messenger = ScaffoldMessenger.maybeOf(context);
+    try {
+      await sendFileToTerminal(
+        session: session,
+        stillShowing: () =>
+            mounted &&
+            widget.isActive &&
+            identical(
+              widget.notifier
+                  .paneOfAgent(widget.machineId, widget.agentId)
+                  ?.session,
+              session,
+            ),
+        report: (message) {
+          if (mounted) {
+            messenger?.showSnackBar(SnackBar(content: Text(message)));
+          }
+        },
+      );
+    } finally {
+      _picking = false;
+    }
+  }
+
   /// The composer starts OPEN here, and the phone owns that answer rather than the pane.
   ///
   @override
@@ -2473,6 +2504,12 @@ class _TerminalPageState extends State<TerminalPage>
                                   ? () => unawaited(
                                       _sendImage(session, ImageSource.camera),
                                     )
+                                  : null,
+                              // The same rule for any other file: only a CLI that advertises
+                              // `pasteFile` writes it out there.
+                              onPickFile:
+                                  machine?.terminalPasteFileAvailable == true
+                                  ? () => unawaited(_sendFile(session))
                                   : null,
                             ),
                         ],
