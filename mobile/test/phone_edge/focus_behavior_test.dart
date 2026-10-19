@@ -13,6 +13,7 @@ import 'package:harness_mobile/phone/phone_search_catalog.dart'
     show phoneAgentId;
 import 'package:harness_mobile/phone/phone_shell_scope.dart';
 import 'package:harness_mobile/phone/terminal_file_send.dart';
+import 'package:harness_mobile/phone/terminal_find_bar.dart';
 import 'package:harness_mobile/phone/terminal_page.dart';
 import 'package:harness_mobile/phone/terminal_search.dart';
 import 'package:harness_mobile/phone/settings_page.dart';
@@ -331,6 +332,161 @@ void main() {
       await tester.tap(find.text('api-fix asking'));
       await frames(tester);
       expect(find.byType(TerminalSearchOverlay), findsOneWidget);
+      await focus.close();
+    });
+  });
+
+  // The desktop's ⌘F: the phone could not search what a harness had said at all — a long build's
+  // one error line was found by scrolling and reading.
+  group('find in terminal', () {
+    Finder bar() => find.byKey(const ValueKey('terminal-find-bar'));
+    Finder field() =>
+        find.descendant(of: bar(), matching: find.byType(TextField));
+    String status(WidgetTester tester) =>
+        (tester.widget<Text>(
+                  find.descendant(
+                    of: find.byKey(const ValueKey('terminal-find-status')),
+                    matching: find.byType(Text),
+                  ),
+                ).data ??
+                '')
+            .trim();
+
+    /// The page, its terminal holding [lines], and Find opened from the `⋯` menu.
+    Future<_Focus> openFind(
+      WidgetTester tester, {
+      String lines = 'row 1 marker\r\nrow 2\r\nrow 3 marker\r\n',
+    }) async {
+      final focus = await _Focus.open(tester);
+      focus.session.terminal.write(lines);
+      await tester.tap(find.byKey(const ValueKey('terminal-title')));
+      await frames(tester);
+      await tester.tap(find.text('Find in terminal'));
+      await frames(tester);
+      return focus;
+    }
+
+    Future<void> search(WidgetTester tester, String query) async {
+      await tester.enterText(field(), query);
+      await frames(tester);
+    }
+
+    testWidgets('opens from the menu with its field focused, counts and steps, '
+        'and nothing typed reaches the shell', (tester) async {
+      final focus = await openFind(tester);
+
+      expect(bar(), findsOneWidget);
+      expect(
+        tester.binding.focusManager.primaryFocus?.context
+            ?.findAncestorWidgetOfExactType<TextField>(),
+        isNotNull,
+        reason: 'the field has the keyboard',
+      );
+      await search(tester, 'marker');
+      expect(status(tester), '1/2');
+
+      await tester.tap(find.byKey(const ValueKey('terminal-find-next')));
+      await frames(tester);
+      expect(status(tester), '2/2');
+      await tester.tap(find.byKey(const ValueKey('terminal-find-previous')));
+      await frames(tester);
+      expect(status(tester), '1/2');
+
+      expect(focus.typed, isEmpty, reason: 'the query is the bar’s');
+      await focus.close();
+    });
+
+    testWidgets('nothing found reads 0/0, and ↑ ↓ take no tap', (tester) async {
+      final focus = await openFind(tester);
+      await search(tester, 'needle');
+
+      expect(status(tester), '0/0');
+      final next = tester.widget<IconButton>(
+        find.byKey(const ValueKey('terminal-find-next')),
+      );
+      expect(next.onPressed, isNull);
+      await focus.close();
+    });
+
+    // ⚠️ Every keyboard raised or lowered ends in a keyframe that replaces the terminal — Find's
+    // own field's keyboard among them. Read as the terminal's, that keyboard handed the input
+    // connection back to the panel, and the rest of the query went to the shell.
+    testWidgets('a keyframe while typing keeps the search, and the query out of '
+        'the shell', (tester) async {
+      final focus = await openFind(tester);
+      await search(tester, 'mar');
+      // The field's keyboard, up — the one the terminal must not take for its own.
+      raiseKeyboard(tester);
+      await frames(tester);
+      // What the machine sends after the resize the field's keyboard caused: a new screen.
+      await focus.session.handleBinary(
+        TerminalBinaryFrame(
+          kind: TerminalBinaryKind.keyframe,
+          streamId: focus.session.streamId!,
+          seq: 1000,
+          bytes: Uint8List.fromList(
+            utf8.encode('one marker\r\nanother marker\r\n'),
+          ),
+          compressed: false,
+          cols: focus.session.terminal.viewWidth,
+          rows: focus.session.terminal.viewHeight,
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 250));
+      await frames(tester);
+      expect(
+        tester.binding.focusManager.primaryFocus?.context
+            ?.findAncestorWidgetOfExactType<TerminalFindBar>(),
+        isNotNull,
+        reason: 'the keyboard is still the field’s after the terminal was replaced',
+      );
+
+      await search(tester, 'marker');
+      // Both found on the new screen; which one is lit follows the match carried across.
+      expect(status(tester), matches(RegExp(r'^[12]/2$')));
+      expect(focus.typed, isEmpty);
+      await focus.close();
+    });
+
+    testWidgets('× and Back put it away, and the page stays', (tester) async {
+      final focus = await openFind(tester);
+      await tester.tap(find.byKey(const ValueKey('terminal-find-close')));
+      await frames(tester);
+      expect(bar(), findsNothing);
+
+      await tester.tap(find.byKey(const ValueKey('terminal-title')));
+      await frames(tester);
+      await tester.tap(find.text('Find in terminal'));
+      await frames(tester);
+      expect(bar(), findsOneWidget);
+
+      await tester.binding.handlePopRoute();
+      await frames(tester);
+      expect(bar(), findsNothing, reason: 'Back closes Find first');
+      expect(find.byType(TerminalPage), findsOneWidget);
+      await focus.close();
+    });
+
+    // The keyboard-inset rule (`phone_shell.dart`): a bar on the keyboard sits exactly on it, never
+    // a second keyboard's height higher.
+    testWidgets('the bar sits on the keyboard, not two keyboards up', (
+      tester,
+    ) async {
+      final focus = await openFind(tester);
+      raiseKeyboard(tester);
+      await frames(tester);
+
+      final screen = tester.view.physicalSize.height / tester.view.devicePixelRatio;
+      final keyboard = tester.view.viewInsets.bottom / tester.view.devicePixelRatio;
+      expect(tester.getBottomLeft(bar()).dy, moreOrLessEquals(screen - keyboard, epsilon: 1));
+
+      lowerKeyboard(tester);
+      await frames(tester);
+      expect(
+        tester.getBottomLeft(bar()).dy,
+        greaterThan(screen - keyboard),
+        reason: 'back at the foot once the keyboard has gone',
+      );
       await focus.close();
     });
   });

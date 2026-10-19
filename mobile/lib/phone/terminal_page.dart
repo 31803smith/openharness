@@ -33,6 +33,7 @@ import 'package:harness_mobile/terminal/elicitation_press.dart';
 import 'package:harness_mobile/terminal/key_hints.dart';
 import 'package:harness_mobile/terminal/question_pane.dart';
 import 'package:harness_mobile/terminal/question_pane_watcher.dart';
+import 'package:harness_mobile/terminal/terminal_find.dart';
 import 'package:harness_mobile/terminal/terminal_session.dart';
 import 'package:harness_mobile/core/agent_handoff.dart'
     show supportsAgentHandoff;
@@ -59,6 +60,7 @@ import 'terminal_chrome_scroll.dart';
 import 'terminal_input_dock.dart';
 import 'terminal_copy.dart';
 import 'terminal_file_send.dart';
+import 'terminal_find_bar.dart';
 import 'terminal_paste.dart';
 import 'terminal_search.dart';
 import 'tty.dart';
@@ -378,6 +380,13 @@ class _TerminalPageState extends State<TerminalPage>
   bool _heldForCover = false;
   Timer? _searchHoldTimer;
   static const _searchHoldLimit = Duration(milliseconds: 800);
+
+  /// Find in terminal while its bar is up — see [_openFind]. Null while it is not.
+  TerminalFindController? _find;
+
+  /// Whether the terminal had the keyboard when Find opened: closing gives it back, or puts away
+  /// the one Find's field raised — as [_keyboardBeforeSearch] does for search.
+  bool _keyboardBeforeFind = false;
 
   /// The header getting out of the way as the terminal is scrolled. See
   /// [TerminalChromeScroll].
@@ -825,6 +834,8 @@ class _TerminalPageState extends State<TerminalPage>
       _keyboardRequested = false;
       _cancelSettle();
       if (_keyboardSettling) setState(() => _keyboardSettling = false);
+      // Find belongs to the terminal being read: swiped away, it goes, keyboard and all.
+      if (_find != null) _closeFind(giveKeyboardBack: false, rebuild: false);
     }
   }
 
@@ -847,6 +858,8 @@ class _TerminalPageState extends State<TerminalPage>
     _barMessageTimer?.cancel();
     _barMessage.dispose();
     _scrollback.dispose();
+    _dropFindBack();
+    _find?.dispose();
     widget.notifier.removeListener(_onNotifier);
     _daemon?.noteQuestion(
       this,
@@ -1552,6 +1565,86 @@ class _TerminalPageState extends State<TerminalPage>
     });
   }
 
+  /// Find in terminal: its bar where the key bar is, the terminal searched and its match lit —
+  /// the desktop's ⌘F, from the `⋯` menu.
+  ///
+  /// The terminal is not held still for it, unlike search: the field's keyboard shrinks the page as
+  /// typing into the terminal does, and the panel carries the search across the keyframe that
+  /// follows (`TerminalPanel._syncTerminal`), so the match is read in the space the keyboard
+  /// leaves. What the field must not do is hand the keyboard to the terminal — see [_shouldFocus].
+  void _openFind() {
+    if (_find != null || !mounted) return;
+    _keyboardBeforeFind = _keyboardIsUp;
+    // Let go of the terminal's input before the field mounts and asks for the keyboard — the race
+    // [_openSearch] closes the same way.
+    FocusManager.instance.primaryFocus?.unfocus();
+    _chrome.reveal();
+    final route = ModalRoute.of(context);
+    final back = _FindBack(() => _closeFind());
+    route?.registerPopEntry(back);
+    _findBack = (route: route, entry: back);
+    setState(() {
+      _find = TerminalFindController();
+      _keyboardRequested = false;
+    });
+  }
+
+  /// Back while Find is up closes Find, not the page — registered on the route for as long as the
+  /// bar is up, which is what a [PopScope] would do, without wrapping the page in one.
+  ({ModalRoute<Object?>? route, _FindBack entry})? _findBack;
+
+  void _dropFindBack() {
+    final back = _findBack;
+    _findBack = null;
+    if (back == null) return;
+    back.route?.unregisterPopEntry(back.entry);
+    back.entry.dispose();
+  }
+
+  /// Puts Find away: the panel goes back to where the reader was, and the keyboard goes back to
+  /// whoever had it — the terminal, if it had one when Find opened, else nobody.
+  ///
+  /// ⚠️ **Find's keyboard falls for half a second after the bar has gone**, and the terminal would
+  /// take the falling inset for its own (see [_heldForSearch]). So unless the terminal is getting
+  /// a keyboard back, it is held off the keyboard until that one is gone — search's own close.
+  ///
+  /// [rebuild] false for a page being parked ([didUpdateWidget]): it rebuilds anyway, and a parked
+  /// page claims no keyboard to be held off.
+  void _closeFind({bool giveKeyboardBack = true, bool rebuild = true}) {
+    final find = _find;
+    if (find == null) return;
+    _dropFindBack();
+    final back = giveKeyboardBack && _keyboardBeforeFind && widget.isActive;
+    if (!back) dismissKeyboardForSwipe();
+    void apply() {
+      _find = null;
+      if (!rebuild) return;
+      if (back) {
+        _keyboardRequested = true;
+        _focusRequest++;
+      } else {
+        _heldForSearch = true;
+        _keyboardUpAtSearch = false;
+      }
+    }
+
+    if (rebuild) {
+      setState(apply);
+      if (back) {
+        _armSettle();
+      } else if (_lastInset == 0) {
+        _releaseSearchHold();
+      } else {
+        _searchHoldTimer?.cancel();
+        _searchHoldTimer = Timer(_searchHoldLimit, _releaseSearchHold);
+      }
+    } else {
+      apply();
+    }
+    // After the bar and the panel have let go of it.
+    WidgetsBinding.instance.addPostFrameCallback((_) => find.dispose());
+  }
+
   /// Hands the terminal back its own reading of the keyboard.
   void _releaseSearchHold() {
     _searchHoldTimer?.cancel();
@@ -1686,7 +1779,9 @@ class _TerminalPageState extends State<TerminalPage>
         // The search field's keyboard is not this page's to put back, and a
         // page with something stacked over it is not the page being returned to.
         _keyboardHeldForBackground =
-            !_heldForSearch && (_ownsInput || _keyboardRequested);
+            _find == null &&
+            !_heldForSearch &&
+            (_ownsInput || _keyboardRequested);
       }
       return;
     }
@@ -1731,6 +1826,11 @@ class _TerminalPageState extends State<TerminalPage>
   /// would be sent to the shell instead.
   bool get _shouldFocus =>
       widget.isActive &&
+      // ⚠️ Find's field owns the keyboard while its bar is up, for the reason search's does (see
+      // [_heldForSearch]): read as the terminal's, the panel would take the input connection back
+      // on the next keyframe — and the field's own keyboard rising ends in one — so the second
+      // letter of a search would go to the shell.
+      _find == null &&
       !_heldForSearch &&
       !_heldForCover &&
       (_keyboardIsUp || _keyboardRequested);
@@ -2300,6 +2400,8 @@ class _TerminalPageState extends State<TerminalPage>
                                                   // up is a separate question, and the pager asks
                                                   // it on every swipe — see [_shouldFocus].
                                                   focused: _shouldFocus,
+                                                  // What the bar is finding — see [_openFind].
+                                                  find: _find,
                                                   // Asks again when `focused` did
                                                   // not move — coming back from
                                                   // another app. See
@@ -2473,7 +2575,11 @@ class _TerminalPageState extends State<TerminalPage>
                           // `PhoneShell`'s Scaffold has already resized for it —
                           // the same resize that empties this page's MediaQuery
                           // insets (see [didChangeMetrics]).
-                          if (session != null)
+                          // Find in terminal takes the key bar's place: on the keyboard while
+                          // its field has one, at the terminal's foot while not.
+                          if (session != null && _find != null)
+                            TerminalFindBar(find: _find!, onClose: _closeFind)
+                          else if (session != null)
                             TerminalInputDock(
                               session: session,
                               keyboardUp: _keyBarUp,
@@ -2571,7 +2677,7 @@ class _TerminalPageState extends State<TerminalPage>
                     // call (2026-09-27): "we don't need the scrolling indicator". The history
                     // scrolls like any list; scrolling down is the way back to the stream.
                     // The line above the mic: what is going on, in a few words — see [_statusLine].
-                    if (!_ownsInput)
+                    if (!_ownsInput && _find == null)
                       Positioned(
                         left: 0,
                         right: 0,
@@ -2589,7 +2695,7 @@ class _TerminalPageState extends State<TerminalPage>
                         ),
                       ),
                     // How loud the take is: a glow behind the mic that swells with the voice.
-                    if (!_ownsInput)
+                    if (!_ownsInput && _find == null)
                       ListenableBuilder(
                         listenable: widget.voice,
                         builder: (context, _) =>
@@ -2615,7 +2721,7 @@ class _TerminalPageState extends State<TerminalPage>
                     // way the home screen stays whole under Siri. Laid over the
                     // whole page so its capsule, rising as it talks, still takes
                     // taps.
-                    if (!_ownsInput)
+                    if (!_ownsInput && _find == null)
                       Positioned(
                         left: 0,
                         right: 0,
@@ -2777,6 +2883,13 @@ class _TerminalPageState extends State<TerminalPage>
             // terminal only being watched too — but only while there is a reply on it to copy.
             if (session != null && hasLastReply(session))
               _copyReplyAction(session),
+            // The desktop's ⌘F. Only with a terminal on screen to search.
+            if (session != null)
+              PhoneSheetAction(
+                icon: LucideIcons.textSearch300,
+                label: 'Find in terminal',
+                onTap: _openFind,
+              ),
             ..._agentActions(agent),
           ],
         ),
@@ -4445,4 +4558,24 @@ class _SampleEndCard extends StatelessWidget {
       ),
     );
   }
+}
+
+/// Find's hold on the back gesture — see `_TerminalPageState._findBack`.
+class _FindBack extends PopEntry<Object?> {
+  _FindBack(this.onBack);
+
+  final VoidCallback onBack;
+
+  @override
+  final ValueNotifier<bool> canPopNotifier = ValueNotifier(false);
+
+  /// ⚠️ **After the route is done asking, not while it asks.** The route walks its entries to tell
+  /// each of them, and closing Find takes this one off the route — taken off mid-walk, the walk
+  /// threw (`ConcurrentModificationError`) and Back did nothing.
+  @override
+  void onPopInvokedWithResult(bool didPop, Object? result) {
+    if (!didPop) scheduleMicrotask(onBack);
+  }
+
+  void dispose() => canPopNotifier.dispose();
 }

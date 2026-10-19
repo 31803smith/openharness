@@ -14,6 +14,7 @@ import '../state/app_state.dart';
 
 import '../terminal/terminal_snapshot.dart';
 import '../terminal/terminal_binary.dart';
+import '../terminal/terminal_find.dart';
 import '../terminal/terminal_font_store.dart';
 import '../terminal/terminal_link_opener.dart';
 import '../terminal/remote_media_download.dart';
@@ -21,6 +22,7 @@ import '../terminal/remote_scroll_physics.dart';
 import '../terminal/terminal_links.dart';
 import '../terminal/output_blocks.dart';
 import '../terminal/terminal_prompt_zone.dart';
+import '../terminal/terminal_search.dart';
 import '../phone/media_preview_page.dart';
 import '../phone/tty.dart';
 import '../terminal/terminal_session.dart';
@@ -131,6 +133,10 @@ class TerminalPanel extends StatefulWidget {
   final TerminalLinkOpener? linkOpener;
   final RemoteMediaDownloader? mediaDownloader;
 
+  /// Find in terminal, while the page's bar is up — see [TerminalFindController]. The panel searches
+  /// what it shows, lights the match and scrolls to it; null puts the reader back where they were.
+  final TerminalFindController? find;
+
   const TerminalPanel({
     super.key,
     required this.notifier,
@@ -148,6 +154,7 @@ class TerminalPanel extends StatefulWidget {
     this.onPaste,
     this.linkOpener,
     this.mediaDownloader,
+    this.find,
   });
 
   @override
@@ -156,7 +163,7 @@ class TerminalPanel extends StatefulWidget {
 
 class _TerminalPanelState extends State<TerminalPanel>
     with WidgetsBindingObserver
-    implements TerminalViewport {
+    implements TerminalViewport, TerminalFindTarget {
   static const _dialScale = 2.5;
   static const _dialStopVelocity = 40.0;
   static const _dialDecayPerSecond = 0.002;
@@ -234,6 +241,20 @@ class _TerminalPanelState extends State<TerminalPanel>
   bool _openingLink = false;
   bool _linkRefreshPending = false;
   bool _followTail = true;
+
+  /// Find in terminal — the desktop panel's, field for field ([TerminalPanel.find]). [_find] searches
+  /// the terminal on show; [_findHighlight] lights its match, painted for [_findPaintedRange] in
+  /// [_findPaintedBuffer]; a reveal is owed while [_findRevealPending]. Where the reader was when
+  /// Find opened is kept in [_findOriginLine] and its neighbours, for closing to go back to.
+  TerminalSearch? _find;
+  TerminalHighlight? _findHighlight;
+  Buffer? _findPaintedBuffer;
+  BufferRangeLine? _findPaintedRange;
+  bool _findRevealPending = false;
+  Buffer? _findOriginBuffer;
+  CellAnchor? _findOriginLine;
+  double _findOriginFraction = 0;
+  bool _findOriginAtEnd = true;
   TerminalStyle _terminalFont = terminalFontStore.value;
   bool _observingLinkModifiers = false;
   late final RemoteMediaDownloader _mediaDownloader;
@@ -260,6 +281,12 @@ class _TerminalPanelState extends State<TerminalPanel>
     // directly rather than through a builder.
     terminalThemeStore.addListener(_onFontChanged);
     _afterTerminalMounted();
+    // After the first layout: where the reader is is read off the laid-out view.
+    if (widget.find != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _openFind();
+      });
+    }
   }
 
   @override
@@ -299,6 +326,21 @@ class _TerminalPanelState extends State<TerminalPanel>
   void didUpdateWidget(TerminalPanel oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.jumpToEndRequest != widget.jumpToEndRequest) _jumpToEnd();
+    // Another controller, or none: the search it was running belongs to the bar that went.
+    if (!identical(oldWidget.find, widget.find)) {
+      oldWidget.find?.detach(this);
+      if (widget.find == null) {
+        _closeFind();
+      } else {
+        _closeFind(restore: false);
+        _openFind();
+      }
+    }
+    // A search runs over one terminal; another session is another terminal, searched afresh once
+    // it has laid out.
+    final refind =
+        !identical(oldWidget.session, widget.session) && _find != null;
+    if (refind) _closeFind(restore: false, detach: false);
     if (!identical(oldWidget.session, widget.session)) {
       _previewCancellation?.cancel();
       _previewProgress.value = null;
@@ -331,6 +373,11 @@ class _TerminalPanelState extends State<TerminalPanel>
       _cursorBlinkVisible = true;
       widget.session.setCursorBlinkPhase(true);
       _afterTerminalMounted();
+      if (refind) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) _openFind();
+        });
+      }
     }
     if (oldWidget.visible && !widget.visible) {
       _promptMenuCell = null;
@@ -363,6 +410,8 @@ class _TerminalPanelState extends State<TerminalPanel>
 
   @override
   void dispose() {
+    widget.find?.detach(this);
+    _closeFind(restore: false, detach: false);
     WidgetsBinding.instance.removeObserver(this);
     _tickerMode?.removeListener(_syncCursorBlink);
     _previewCancellation?.cancel();
@@ -487,16 +536,30 @@ class _TerminalPanelState extends State<TerminalPanel>
         ? position.pixels / lineHeight - viewportRow!
         : 0.0;
     final atEnd = _followTail || position == null;
+    // Find's place in the old screen, carried to the new one — the desktop's rule. A keyframe
+    // replaces the terminal on every keyboard raised or lowered, and the search field's own
+    // keyboard is one: without this, the first letter typed would end the search it started.
+    final originRow = _findOriginLine?.attached == true
+        ? _findOriginLine!.y
+        : null;
+    final originFraction = _findOriginFraction;
+    final originAtEnd = _findOriginAtEnd;
+    final match = _find?.match?.begin;
     final selection = _controller.selection;
     final selectedText = selection == null ? null : previous.getText(selection);
     final locations = remapTerminalRows(previous, next, [
       if (!atEnd) ?viewportRow,
+      ?originRow,
+      ?match?.y,
       ?selection?.begin.y,
       ?selection?.end.y,
     ]);
     int row(int old) => locations[old] ?? old.clamp(0, next.lines.length - 1);
     CellOffset location(CellOffset old) =>
         CellOffset(old.x.clamp(0, terminal.viewWidth - 1), row(old.y));
+    final wasFinding = _find != null;
+    // Rebuilt below over the new terminal; the bar stays attached and keeps its words.
+    _closeFind(restore: false, detach: false);
     // Selection anchors belong to a specific circular buffer. Detach them
     // before the TerminalView starts laying out the replacement terminal.
     _controller.clearSelection();
@@ -534,6 +597,20 @@ class _TerminalPanelState extends State<TerminalPanel>
           next.createAnchorFromOffset(range.end),
         );
       }
+    }
+    if (wasFinding) {
+      _findOriginBuffer = next;
+      _findOriginAtEnd = originAtEnd;
+      _findOriginFraction = originFraction;
+      if (originRow != null) {
+        _findOriginLine = next.createAnchor(0, row(originRow));
+      }
+      _findRevealPending = true;
+      _find = TerminalSearch(
+        terminal,
+        origin: match == null ? null : location(match),
+      )..addListener(_onFindChanged);
+      _find!.setQuery(widget.find?.query ?? '');
     }
     _followTail = atEnd;
     // ⚠️ **The keyboard is claimed only by a view that does not hold the focus.** One that does kept
@@ -749,8 +826,146 @@ class _TerminalPanelState extends State<TerminalPanel>
       }
       if (scrollToEnd && _followTail) view.scrollToBottom();
       if (claimFocus) _claimFocus(view);
+      if (_find != null) _onFindChanged();
       if (_linkPointerPosition != null) _hoverLink(_linkPointerPosition);
     });
+  }
+
+  /// Starts Find over the terminal on show, from the row at the top of the view — the desktop's
+  /// origin, so the first match is the first one at or below where the reader is looking.
+  void _openFind() {
+    final find = widget.find;
+    if (!mounted || find == null || _find != null) return;
+    CellOffset? origin;
+    final view = _laidOutTerminalView();
+    if (view != null && _scrollController.hasClients) {
+      final position = _scrollController.position;
+      final height = view.renderTerminal.lineHeight;
+      if (height > 0 && position.hasPixels && position.hasContentDimensions) {
+        final row = (position.pixels / height).floor().clamp(
+          0,
+          _viewTerminal.buffer.lines.length - 1,
+        );
+        _findOriginBuffer = _viewTerminal.buffer;
+        _findOriginLine = _findOriginBuffer!.createAnchor(0, row);
+        _findOriginFraction = position.pixels / height - row;
+        _findOriginAtEnd = position.maxScrollExtent - position.pixels < 1;
+        origin = CellOffset(0, row);
+      }
+    }
+    _find = TerminalSearch(_viewTerminal, origin: origin)
+      ..addListener(_onFindChanged);
+    _findRevealPending = true;
+    find.attach(this);
+  }
+
+  @override
+  void findQuery(String query) {
+    _findRevealPending = true;
+    _find?.setQuery(query);
+  }
+
+  @override
+  void findStep(int delta) {
+    _findRevealPending = true;
+    _find?.step(delta);
+  }
+
+  /// The search moved: say so to the bar, light the match, and bring it into view.
+  ///
+  /// The reveal is the desktop's — scroll only as far as the match needs — with a taller margin at
+  /// the top: the phone's title lies over the terminal's first rows, and a match revealed under it
+  /// would be found and not seen.
+  void _onFindChanged() {
+    final search = _find;
+    if (!mounted || search == null) return;
+    widget.find?.report(
+      count: search.count,
+      selected: search.selected,
+      searching: search.searching,
+      hasSnapshot: search.hasSnapshot,
+    );
+    if (!widget.visible) return;
+    final range = search.match;
+    if (range != _findPaintedRange ||
+        !identical(_findPaintedBuffer, _viewTerminal.buffer)) {
+      _clearFindHighlight();
+      if (range != null) {
+        _findPaintedBuffer = _viewTerminal.buffer;
+        _findPaintedRange = range;
+        _findHighlight = _controller.highlight(
+          p1: _viewTerminal.buffer.createAnchorFromOffset(range.begin),
+          p2: _viewTerminal.buffer.createAnchorFromOffset(range.end),
+          color: const Color(0x99cf8e25),
+        );
+      }
+    }
+    if (_findRevealPending && search.hasSnapshot && range != null) {
+      final render = _laidOutTerminalView()?.renderTerminal;
+      if (render == null || !_scrollController.hasClients) return;
+      final position = _scrollController.position;
+      if (!position.hasPixels || !position.hasContentDimensions) return;
+      _findRevealPending = false;
+      final line = render.lineHeight;
+      final top = range.begin.y * line;
+      final bottom = (range.end.y + 1) * line;
+      final above = line * 3;
+      final safeTop = position.pixels + above;
+      final safeBottom = position.pixels + position.viewportDimension - 10;
+      final offset = top < safeTop
+          ? top - above
+          : bottom > safeBottom
+          ? bottom - position.viewportDimension + 10
+          : position.pixels;
+      final target = offset.clamp(
+        position.minScrollExtent,
+        position.maxScrollExtent,
+      );
+      if (target != position.pixels) position.jumpTo(target);
+    }
+  }
+
+  void _clearFindHighlight() {
+    final highlight = _findHighlight;
+    _findHighlight = null;
+    _findPaintedBuffer = null;
+    _findPaintedRange = null;
+    if (highlight == null) return;
+    highlight.dispose();
+    highlight.p1.dispose();
+    highlight.p2.dispose();
+  }
+
+  /// Ends the search: the highlight goes, and with [restore] the reader goes back to where they
+  /// were when Find opened — the end of the output, if that is where they were. [detach] lets the
+  /// bar go too; a search rebuilt over a new terminal keeps it.
+  void _closeFind({bool restore = true, bool detach = true}) {
+    final search = _find;
+    if (search == null) return;
+    _find = null;
+    search.removeListener(_onFindChanged);
+    search.dispose();
+    _clearFindHighlight();
+    if (detach) widget.find?.detach(this);
+    if (restore &&
+        identical(_findOriginBuffer, _viewTerminal.buffer) &&
+        _scrollController.hasClients) {
+      final height = _laidOutTerminalView()?.renderTerminal.lineHeight;
+      final position = _scrollController.position;
+      if (height != null && position.hasContentDimensions) {
+        final offset = _findOriginAtEnd
+            ? position.maxScrollExtent
+            : _findOriginLine?.attached == true
+            ? (_findOriginLine!.y + _findOriginFraction) * height
+            : 0.0;
+        position.jumpTo(
+          offset.clamp(position.minScrollExtent, position.maxScrollExtent),
+        );
+      }
+    }
+    _findOriginLine?.dispose();
+    _findOriginLine = null;
+    _findOriginBuffer = null;
   }
 
   @override
