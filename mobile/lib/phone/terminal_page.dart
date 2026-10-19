@@ -3097,6 +3097,17 @@ class _TerminalPageState extends State<TerminalPage>
         value: _forking ? 'forking…' : null,
         onTap: () => unawaited(_fork()),
       ),
+    // Another of this one beside it — same folder and settings, a fresh conversation. The desktop's
+    // Clone Harness (⌘⇧N): no form, every answer is already on the agent. Not on a grid agent,
+    // whose launch key the frame never carries.
+    if (agent.canClone && !agent.isStopped)
+      PhoneSheetAction(
+        icon: LucideIcons.copyPlus300,
+        label: 'Clone',
+        value: _cloning ? 'cloning…' : null,
+        enabled: !_cloning,
+        onTap: () => unawaited(_clone()),
+      ),
     PhoneSheetAction(
       icon: LucideIcons.pencil300,
       label: 'Rename…',
@@ -3133,6 +3144,33 @@ class _TerminalPageState extends State<TerminalPage>
   /// Whether a fork of this agent is on its way — see [AppNotifier.agentForking].
   bool get _forking =>
       widget.notifier.agentForking(widget.machineId, widget.agentId);
+
+  /// Whether a Clone of this agent is on its way — see [AppNotifier.agentCloning].
+  bool get _cloning =>
+      widget.notifier.agentCloning(widget.machineId, widget.agentId);
+
+  /// Clone: the new harness opens once its machine confirms it, the source left as it is in the
+  /// same tab. What opens it is captured before the wait, as Change agent's is: the page can leave
+  /// on its own while the answer is out.
+  Future<void> _clone() async {
+    final messenger = ScaffoldMessenger.maybeOf(context);
+    final shell = PhoneShellScope.maybeOf(context);
+    final notifier = widget.notifier;
+    final machineId = widget.machineId;
+    final error = await notifier.cloneAgent(machineId, widget.agentId);
+    if (mounted) _putMenuAway();
+    if (error != null) {
+      messenger?.showSnackBar(SnackBar(content: Text(error)));
+      return;
+    }
+    final next = notifier.cloneAttempt(machineId, widget.agentId)?.agentId;
+    if (next == null) return;
+    if (mounted) {
+      openAgent(context, notifier, machineId, next);
+    } else {
+      shell?.onOpenAgent(machineId, next);
+    }
+  }
 
   /// Fork: the form, then the fork opens — the source stays as it is, in the same tab.
   ///

@@ -230,6 +230,14 @@ class Agent {
   /// than the field — then [forkableEngines] decides. The desktop's `Agent.forkable`.
   final bool? forkable;
 
+  /// Whether its permission prompts were bypassed at launch; null when unrecorded (see
+  /// [permissionMode]) — then a Clone uses the default. The desktop's `Agent.bypassPermission`.
+  final bool? bypassPermission;
+
+  /// The engine's own named agent it was opened as (`agent_create`'s `agent`, `namedAgent` on the
+  /// frame), or null for a general session. Read by Clone, so another opens as the same one.
+  final String? namedAgent;
+
   const Agent({
     required this.id,
     this.sessionId,
@@ -263,6 +271,8 @@ class Agent {
     this.closeSupported = false,
     this.permissionMode,
     this.forkable,
+    this.bypassPermission,
+    this.namedAgent,
   });
 
   factory Agent.fromJson(Map<String, dynamic> j) {
@@ -336,6 +346,10 @@ class Agent {
       closeSupported: j['closeSupported'] == true,
       permissionMode: _safePermissionMode(j['permissionMode']),
       forkable: j['forkable'] is bool ? j['forkable'] as bool : null,
+      bypassPermission: j['bypassPermission'] is bool
+          ? j['bypassPermission'] as bool
+          : null,
+      namedAgent: _safeNamedAgent(j['namedAgent']),
     );
   }
 
@@ -372,6 +386,8 @@ class Agent {
     closeSupported: closeSupported,
     permissionMode: permissionMode,
     forkable: forkable,
+    bypassPermission: bypassPermission,
+    namedAgent: namedAgent,
   );
 
   /// The engines whose sessions can be forked — natively (Claude Code's `--fork-session`,
@@ -383,6 +399,11 @@ class Agent {
   /// and the rest can neither fork nor open with a message, so the row is not drawn rather than
   /// drawn and refused.
   bool get canFork => forkable ?? forkableEngines.contains(engine);
+
+  /// Whether Clone can open another of this one — any engine, but not one on a grid: the frame
+  /// carries the grid's model and never its launch key, so a clone would land on the engine's own
+  /// login instead. The desktop's `Agent.canClone`.
+  bool get canClone => engine != null && gridModel == null;
 
   /// Saved work the daemon is no longer running, as the desktop's [Agent] reads
   /// it. Its conversation is on disk; `agent_resume` brings it back.
@@ -446,6 +467,12 @@ class Agent {
 
   static String? _safeResumeMode(Object? raw) =>
       raw is String && _resumeModes.contains(raw) ? raw : null;
+
+  /// A named agent's id as the CLI accepts one (`AGENT_NAME_RE`) — the desktop's `_safeNamedAgent`.
+  static String? _safeNamedAgent(Object? raw) =>
+      raw is String && RegExp(r'^[A-Za-z0-9_-]{1,64}$').hasMatch(raw)
+      ? raw
+      : null;
 
   /// A mode id as the CLI writes one — the desktop's `_safePermissionMode`, character for character.
   static String? _safePermissionMode(Object? raw) =>

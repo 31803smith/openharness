@@ -634,6 +634,44 @@ void main() {
             },
     )..handshaken = true;
 
+    testWidgets('Clone opens another of this one, in the same folder, and the '
+        'source stays as it was', (tester) async {
+      final conn = EdgeConn(const {}, startsAgents)..handshaken = true;
+      final focus = await openMenu(tester, connection: conn);
+      await tapInView(tester, find.text('Clone'));
+      for (var i = 0; i < 40 && focus.opened.isEmpty; i++) {
+        await tester.pump(const Duration(milliseconds: 100));
+      }
+
+      final [sent] = conn.payloads['agent_create']!;
+      expect(sent['engine'], 'claude');
+      expect(sent['cwd'], '/code/$longProject');
+      expect(sent['name'], 'a - clone');
+      expect(focus.opened, [('m', 'new-agent')]);
+      expect(conn.requests, isNot(contains('agent_close')));
+      await focus.close();
+    });
+
+    testWidgets('Clone, while it is out, says so and cannot be pressed '
+        'again', (tester) async {
+      final reply = Completer<Map<String, dynamic>>();
+      final conn = _HeldCreateConn(reply.future)..handshaken = true;
+      final focus = await openMenu(tester, connection: conn);
+      await tapInView(tester, find.text('Clone'));
+      await frames(tester);
+
+      await tester.tap(find.byKey(const ValueKey('terminal-title')));
+      await frames(tester);
+      expect(find.text('cloning…'), findsOneWidget);
+      await tapInView(tester, find.text('Clone'));
+      await frames(tester);
+      expect(conn.payloads['agent_create'], hasLength(1));
+
+      reply.complete({'error': 'BUSY'});
+      await frames(tester);
+      await focus.close();
+    });
+
     testWidgets('Fork is offered where the machine can fork, and not on a '
         'terminal', (tester) async {
       var focus = await openMenu(tester);
@@ -2833,6 +2871,27 @@ class _PurgeConn extends EdgeConn {
     return payload['mode'] == 'inspect'
         ? review
         : Future.value({'deleted': true});
+  }
+}
+
+/// A machine whose `agent_create` answers only when [reply] does — a clone still on its way.
+class _HeldCreateConn extends EdgeConn {
+  _HeldCreateConn(this.reply);
+
+  final Future<Map<String, dynamic>> reply;
+
+  @override
+  Future<Map<String, dynamic>> request(
+    String type, {
+    Map<String, dynamic> payload = const {},
+    Duration timeout = const Duration(seconds: 20),
+  }) {
+    if (type != 'agent_create') {
+      return super.request(type, payload: payload, timeout: timeout);
+    }
+    requests.add(type);
+    (payloads[type] ??= []).add(payload);
+    return reply;
   }
 }
 

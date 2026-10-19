@@ -198,6 +198,11 @@ class AgentCreationAttempt {
   Map<String, dynamic>? _choices;
   Future<String?>? _inFlight;
   bool _awaitingConfirmation = false, _finished = false;
+
+  /// The Codex profile came off an agent the machine already runs on it (Clone), so the machine
+  /// is known to take one — the desktop's `_codexHomeTrusted`. The New form, which offers profiles
+  /// only from the machine's own engine list, leaves it false.
+  bool _codexHomeTrusted = false;
   String? _outcome;
   String? _agentId;
 
@@ -6286,6 +6291,117 @@ class AppNotifier extends ChangeNotifier {
     );
   }
 
+  /// Clones on their way or still to be confirmed, by machine and source agent — see [cloneAgent].
+  final Map<(String, String), AgentCreationAttempt> _agentClones = {};
+
+  /// Whether a Clone of this agent is on its way: the menu's row says so and takes no tap.
+  bool agentCloning(String machineId, String agentId) =>
+      _agentClones[(machineId, agentId)]?._inFlight != null;
+
+  /// Clone: another agent of the same kind as [agentId], with a fresh conversation — fork minus the
+  /// context. The desktop's `cloneAgent` (⌘⇧N): same machine, same project folder, same engine or
+  /// harness, Codex profile, named agent and permission mode, every one read off the agent's own
+  /// frame. Nothing of the source is touched, so a clone works while the source is busy or has no
+  /// conversation yet, where a fork would wait or refuse.
+  ///
+  /// A machine from before the frame carried the launch choices reports them null; the clone then
+  /// opens the way New Harness would by default. A terminal clones to a terminal in the same
+  /// folder, which the machine names itself.
+  ///
+  /// Null once the clone exists — its id is on [cloneAttempt] — else the sentence to show.
+  ///
+  /// ⚠️ **A lost reply is kept, receipt and all.** The machine may have started the clone, so the
+  /// next Clone of the same agent asks `agent_create_status` about the same receipt instead of
+  /// starting a second one; only a confirmed outcome lets it go.
+  Future<String?> cloneAgent(String machineId, String agentId) {
+    final key = (machineId, agentId);
+    final held = _agentClones[key];
+    if (held != null) {
+      if (held._inFlight case final inFlight?) return inFlight;
+      if (held.awaitingConfirmation) {
+        return _settleClone(key, checkAgentCreation(held), held);
+      }
+      _agentClones.remove(key);
+    }
+    final machine = machineStates[machineId];
+    if (machine == null) return Future.value('Machine not found');
+    final source = machine.agents
+        .where((agent) => agent.id == agentId)
+        .firstOrNull;
+    if (source == null) {
+      return Future.value('The source harness is no longer available.');
+    }
+    final engine = source.engine;
+    if (engine == null) {
+      return Future.value('${source.displayName} has no engine to clone.');
+    }
+    if (!source.canClone) {
+      return Future.value(
+        '${source.displayName} runs on a grid; cloning a grid harness is not supported.',
+      );
+    }
+    final terminal = engine == 'terminal';
+    final cwd = source.project?.cwd;
+    if ((cwd == null || cwd.isEmpty) && !terminal) {
+      return Future.value(
+        '${source.displayName} has no project folder to clone into.',
+      );
+    }
+    final attempt = AgentCreationAttempt()
+      .._codexHomeTrusted = source.codexHome != null;
+    final work = _create(machineId, {
+      'engine': engine,
+      if (cwd != null && cwd.isNotEmpty) 'cwd': cwd,
+      'dsh': ?source.dsh,
+      if (engine == 'codex') 'codexHome': ?source.codexHome,
+      'agent': ?source.namedAgent,
+      'permissionMode': ?source.permissionMode,
+      // Unrecorded is not "off": an older machine's agent clones the way a new one would open. A
+      // terminal has no permissions to bypass. The desktop's rule.
+      'bypassPermission': source.bypassPermission ?? !terminal,
+      // A terminal is named by the machine, as the desktop's ⌘⇧T is.
+      if (!terminal) 'name': cloneNameFor(source.displayName),
+    }, attempt: attempt);
+    _agentClones[key] = attempt;
+    return _settleClone(key, work, attempt);
+  }
+
+  /// The attempt behind the last Clone of [agentId], for the page to open what it started.
+  AgentCreationAttempt? cloneAttempt(String machineId, String agentId) =>
+      _agentClones[(machineId, agentId)];
+
+  /// Lets a clone's attempt go once its outcome is known — kept only while it is still to be
+  /// confirmed — and tells the menu it is no longer on its way.
+  Future<String?> _settleClone(
+    (String, String) key,
+    Future<String?> work,
+    AgentCreationAttempt attempt,
+  ) {
+    notifyListeners();
+    return work
+        .then(
+          // The New form's "Check status" is a button this menu does not have: here it is Clone
+          // again, which asks about the same receipt.
+          (error) => error != null && attempt.awaitingConfirmation
+              ? 'The clone is not confirmed yet. Tap Clone again to check '
+                    'before starting another.'
+              : error,
+        )
+        .whenComplete(() {
+          if (identical(_agentClones[key], attempt) &&
+              !attempt.awaitingConfirmation &&
+              attempt._inFlight == null &&
+              attempt.agentId == null) {
+            _agentClones.remove(key);
+          }
+          if (!_disposed) notifyListeners();
+        });
+  }
+
+  /// The name a clone is offered: the source's, marked as a clone — the desktop's `cloneNameFor`.
+  static String cloneNameFor(String name) =>
+      '${name.trim().isEmpty ? 'Harness' : name.trim()} - clone';
+
   /// A Claude Code or Codex conversation Harness did not start, opened as a harness that resumes
   /// it, in its own folder (Find's "not in Harness" rows, `ExternalSessionRef`) — the desktop's
   /// `resumeConversation`. The machine refuses one open elsewhere, already a harness, or whose
@@ -6466,7 +6582,8 @@ class AppNotifier extends ChangeNotifier {
         if (choices['engine'] != 'codex') {
           return 'Choose a Codex profile only for Codex';
         }
-        if (machine.engines['codex']?.supportsCodexHome != true) {
+        if (!creation._codexHomeTrusted &&
+            machine.engines['codex']?.supportsCodexHome != true) {
           return 'Update the harness CLI on this machine to choose a Codex profile';
         }
       }
