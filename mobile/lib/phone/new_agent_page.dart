@@ -903,6 +903,25 @@ class _NewAgentPageState extends State<NewAgentPage> {
     _answered(creation, engine, error);
   }
 
+  /// Cancel request: the held request called off. Confirmed, the form is free for a new one and
+  /// says so; otherwise the reason stands under the task and the request stays to be checked.
+  Future<void> _cancelPending() async {
+    final creation = _creation;
+    if (creation == null || _creating || creation.cancelling) return;
+    setState(() {});
+    final problem = await widget.notifier.cancelAgentCreation(creation);
+    if (!mounted) return;
+    if (problem == null) {
+      if (identical(_creation, creation)) _creation = null;
+      ScaffoldMessenger.maybeOf(context)
+          ?.showSnackBar(const SnackBar(content: Text('Creation cancelled.')));
+    }
+    setState(() {
+      _error = problem;
+      _failure = null;
+    });
+  }
+
   /// What the machine said to [creation], on the form: inside the new harness when one started,
   /// otherwise the reason under the task.
   void _answered(AgentCreationAttempt creation, String engine, String? error) {
@@ -1378,6 +1397,22 @@ class _NewAgentPageState extends State<NewAgentPage> {
                                     // Never a dead button: with a choice missing, Start opens its chooser.
                                     onPressed: () => unawaited(_start()),
                                   ),
+                                  // A request the machine holds before starting anything (an engine it is
+                                  // installing) can still be called off — the desktop's Cancel request.
+                                  if (_creation?.canCancelPending == true &&
+                                      !_creating)
+                                    Center(
+                                      child: TtyTextButton(
+                                        key: const ValueKey(
+                                          'cancel-pending-creation',
+                                        ),
+                                        label: 'Cancel request',
+                                        size: TtySize.meta,
+                                        onPressed: _creation!.cancelling
+                                            ? null
+                                            : () => unawaited(_cancelPending()),
+                                      ),
+                                    ),
                                 ],
                               ),
                             ),

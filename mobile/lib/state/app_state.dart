@@ -203,10 +203,23 @@ class AgentCreationAttempt {
   /// is known to take one — the desktop's `_codexHomeTrusted`. The New form, which offers profiles
   /// only from the machine's own engine list, leaves it false.
   bool _codexHomeTrusted = false;
+
+  /// What the machine holds the request on — "Installing Kilo. The harness starts once it is
+  /// installed." — from a `pending` answer that names one. Null when it holds nothing: then it is
+  /// already starting the harness, and there is nothing left to cancel.
+  String? _holdReason;
+  bool _cancelling = false;
   String? _outcome;
   String? _agentId;
 
   bool get awaitingConfirmation => _awaitingConfirmation;
+
+  /// The machine holds this request before starting anything (an engine it is installing), so it
+  /// can still be called off — the desktop's `canCancelPending`, behind the form's Cancel request.
+  bool get canCancelPending => _awaitingConfirmation && _holdReason != null;
+
+  /// A cancel is on its way to the machine.
+  bool get cancelling => _cancelling;
 
   /// The agent this attempt started, once the machine has confirmed it.
   ///
@@ -219,6 +232,7 @@ class AgentCreationAttempt {
   String? _complete(String? error) {
     _finished = true;
     _awaitingConfirmation = false;
+    _holdReason = null;
     return _outcome = error;
   }
 }
@@ -6566,6 +6580,42 @@ class AppNotifier extends ChangeNotifier {
         _ => 'Create harness failed: ${detail ?? code}',
       };
 
+  /// Calls off a request the machine holds — the New form's Cancel request, the desktop's
+  /// `cancelAgentCreation`. Null once the machine says it is cancelled; otherwise what to tell the
+  /// person, with the request still kept to check.
+  ///
+  /// ⚠️ **Confirmed by the machine's own receipt.** A lost reply here cannot turn the original
+  /// request into a fresh one: the attempt keeps its receipt, and Check status asks about it.
+  Future<String?> cancelAgentCreation(AgentCreationAttempt creation) async {
+    if (!creation.canCancelPending ||
+        creation._cancelling ||
+        creation._inFlight != null) {
+      return 'Check the request status before cancelling.';
+    }
+    final machineId = creation._machineId;
+    if (machineId == null || !machineStates.containsKey(machineId)) {
+      return 'The original machine is unavailable. The request is still saved.';
+    }
+    creation._cancelling = true;
+    try {
+      final result = await _conn(machineId).request(
+        'agent_create_cancel',
+        payload: {'creationId': creation._id},
+        timeout: const Duration(seconds: 10),
+      );
+      if (result['creationId'] == creation._id &&
+          result['state'] == 'cancelled') {
+        creation._complete('Creation cancelled.');
+        return null;
+      }
+      return 'The request may already be starting. Check status before starting another.';
+    } catch (_) {
+      return 'Cancellation is not confirmed. Check status before starting another.';
+    } finally {
+      creation._cancelling = false;
+    }
+  }
+
   Future<String?> _createAgentWithReceipt(AgentCreationAttempt creation) async {
     final machineId = creation._machineId!;
     final targetId = creation._targetId!;
@@ -6727,7 +6777,20 @@ class AppNotifier extends ChangeNotifier {
         return '$machineName has no record of this request. '
             'Use Find a harness to look for it before creating another.';
       case 'pending':
+        // Held before anything started — an engine being installed, a model waking — the machine
+        // says on what, in a sentence of its own, and the request can still be called off.
+        final held = result['held'];
+        if (held is Map) {
+          final detail = held['detail'];
+          if (detail is String && detail.isNotEmpty) {
+            creation._holdReason = detail;
+            return detail;
+          }
+        }
+        creation._holdReason = null;
         return '$machineName is still starting your harness. Check again in a moment.';
+      case 'cancelled':
+        return creation._complete('Creation cancelled.');
       case 'unconfirmed':
         return '$machineName could not confirm whether this harness started. '
             'Use Open Harness to look for it before creating another.';
