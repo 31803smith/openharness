@@ -13,6 +13,7 @@ import 'controller.dart';
 import 'dialog_scope.dart';
 import 'model.dart';
 import 'message_row.dart';
+import 'route_row.dart';
 import 'work_details.dart';
 
 /// The contents of one app tab. Its title stays in the app's existing tab bar.
@@ -56,6 +57,12 @@ class _SuperTabViewState extends State<SuperTabView> {
   int _mentionIndex = 0;
   String? _dismissedMention;
   SuperTabController get c => widget.controller;
+
+  String _agentName(SuperTabAgent agent) =>
+      c.snapshot?.agentName(agent.id, fallback: agent.name) ?? agent.name;
+
+  String _authorName(SuperTabMessage message) =>
+      c.snapshot?.authorName(message) ?? message.authorName;
 
   @override
   void initState() {
@@ -232,7 +239,7 @@ class _SuperTabViewState extends State<SuperTabView> {
             .where(
               (agent) =>
                   c.selected?.agentIds.contains(agent.id) == true &&
-                  '${agent.name} ${agent.engine}'.toLowerCase().contains(
+                  '${_agentName(agent)} ${agent.engine}'.toLowerCase().contains(
                     mention.query,
                   ),
             )
@@ -244,7 +251,7 @@ class _SuperTabViewState extends State<SuperTabView> {
   void _chooseMention(SuperTabAgent agent) {
     final at = _mentionAtCursor;
     if (at == null) return;
-    final token = '@${agent.name}';
+    final token = '@${_agentName(agent)}';
     final text = _composer.text.replaceRange(at.start, at.end, '$token ');
     c.setDraft(c.selectedId, text);
     c.mention(c.selectedId, agent.id, token);
@@ -469,7 +476,7 @@ class _SuperTabViewState extends State<SuperTabView> {
                   .where(
                     (a) =>
                         currentGroup.agentIds.contains(a.id) &&
-                        '${a.name} ${a.engine} ${widget.machineName(a.machineId)}'
+                        '${_agentName(a)} ${a.engine} ${widget.machineName(a.machineId)}'
                             .toLowerCase()
                             .contains(query),
                   )
@@ -593,7 +600,7 @@ class _SuperTabViewState extends State<SuperTabView> {
           crossAxisAlignment: CrossAxisAlignment.start,
           mainAxisSize: MainAxisSize.min,
           children: [
-            Text(agent.name, style: DesktopChrome.control(medium: true)),
+            Text(_agentName(agent), style: DesktopChrome.control(medium: true)),
             const SizedBox(height: 4),
             Text(
               '${engineIdentity(agent.engine).label} · ${widget.machineName(agent.machineId)}',
@@ -784,6 +791,15 @@ class _SuperTabViewState extends State<SuperTabView> {
                     : null,
                 child: Text(c.isOwner ? 'Invite' : 'People'),
               ),
+              TextButton(
+                onPressed: c.snapshot != null
+                    ? () {
+                        _closeSidebar();
+                        unawaited(showSuperTabRouting(context, c));
+                      }
+                    : null,
+                child: const Text('Routing'),
+              ),
             ],
           ),
         ),
@@ -935,7 +951,8 @@ class _SuperTabViewState extends State<SuperTabView> {
               )
             : AlertDialog(
                 title: DesktopDialogHeader(
-                  title: 'Check delivery to ${agent?.name ?? 'agent'}',
+                  title:
+                      'Check delivery to ${agent == null ? 'agent' : _agentName(agent)}',
                   padding: EdgeInsets.zero,
                   onClose: () => Navigator.pop(context),
                 ),
@@ -1011,19 +1028,30 @@ class _SuperTabViewState extends State<SuperTabView> {
     bool grouped,
     Map<String, SuperTabMessage> byId,
   ) {
+    final route = message.route;
+    if (route != null) {
+      return SuperTabRouteRow(
+        key: ValueKey('super-message-${message.id}'),
+        message: message,
+        route: route,
+        controller: c,
+      );
+    }
     final agent = message.fromAgent
         ? c.snapshot?.agent(message.authorId)
         : null;
+    final reply = byId[message.replyTo];
     return SuperTabMessageRow(
       key: ValueKey('super-message-${message.id}'),
       message: message,
       author: message.authorId == c.accountId && !message.fromAgent
           ? 'You'
-          : message.authorName,
+          : _authorName(message),
       agent: agent,
       machineName: agent == null ? null : widget.machineName(agent.machineId),
       grouped: grouped,
-      reply: byId[message.replyTo],
+      reply: reply,
+      replyAuthor: reply == null ? null : _authorName(reply),
       onReply: c.canWrite && c.selected?.archived == false
           ? () {
               setState(() => _replies[c.selectedId] = message);
@@ -1056,7 +1084,7 @@ class _SuperTabViewState extends State<SuperTabView> {
                 ? () => _reviewDelivery(message, delivery)
                 : null,
             child: Text(
-              'Check delivery to ${c.snapshot?.agent(delivery['agentId'] as String)?.name ?? 'agent'}',
+              'Check delivery to ${c.snapshot?.agentName(delivery['agentId'] as String, fallback: 'agent') ?? 'agent'}',
             ),
           ),
       ],
@@ -1235,7 +1263,7 @@ class _SuperTabViewState extends State<SuperTabView> {
               children: [
                 Expanded(
                   child: SuperTabReplyPreview(
-                    author: 'Replying to ${reply.authorName}',
+                    author: 'Replying to ${_authorName(reply)}',
                     text: reply.text,
                   ),
                 ),
@@ -1261,7 +1289,7 @@ class _SuperTabViewState extends State<SuperTabView> {
                       dense: true,
                       selected:
                           i == _mentionIndex.clamp(0, mentions.length - 1),
-                      title: Text(mentions[i].name),
+                      title: Text(_agentName(mentions[i])),
                       subtitle: Text(
                         '${mentions[i].engine} · ${widget.machineName(mentions[i].machineId)}',
                       ),

@@ -8,8 +8,10 @@ import { applyCommand, operationSchema, type Command, type CommandContext } from
 import { revokeNativeContexts, SuperTabNativeStore } from './native.js'
 import {
   activeWork, actorKey, agent, author, conversation, createSuperTab, fail, person, stableId, visibleState,
-  SuperTabError, type Actor, type Agent, type Author, type SuperTabState,
+  SuperTabError, type Actor, type Agent, type Author, type MessageDraft, type SuperTabState,
 } from './model.js'
+import { closeAssignment, readDecision, recentRoutes, timedDecisionOf, writeRouteEffects } from './routeDecisions.js'
+import { DEFAULT_ROUTING_POLICY, effectivePolicy, routingPolicySchema, type RoutingPolicy } from './routingPolicy.js'
 
 type Transaction = Prisma.TransactionClient
 const json = (value: unknown): Prisma.InputJsonValue => JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue
@@ -44,6 +46,41 @@ export class SuperTabStore {
       row: async (tx, user, tabId) => { const row = await this.row(tx, user, tabId); return { row, state: stateOf(row) } },
       agentGrant: (tx, state, target) => this.agentGrant(tx, state, target),
       contribution: (tx, state, actor, command) => this.contribution(tx, state, actor, command),
+    })
+  }
+
+  private policyId(user: AuthUser) { return stableId('routing-policy', user.sub, user.autonomousEnv) }
+
+  async accountPolicy(user: AuthUser) {
+    const row = await this.db.routingPolicy.findUnique({ where: { id: this.policyId(user) } })
+    if (!row) return { policy: DEFAULT_ROUTING_POLICY, revision: 0, isDefault: true }
+    const { policy } = effectivePolicy(row.policy, null)
+    return { policy, revision: row.revision, isDefault: false }
+  }
+
+  async saveAccountPolicy(user: AuthUser, revision: number, input: RoutingPolicy) {
+    const policy = routingPolicySchema.parse(input)
+    return transaction(this.db, async tx => {
+      const id = this.policyId(user)
+      const row = await tx.routingPolicy.findUnique({ where: { id } })
+      if ((row?.revision ?? 0) !== revision) fail('REVISION_CHANGED', 'The routing policy changed elsewhere. Reload it and try again.')
+      const next = revision + 1
+      if (row) await tx.routingPolicy.update({ where: { id, revision }, data: { revision: next, policy: json(policy) } })
+      else await tx.routingPolicy.create({ data: { id, userId: user.sub, autonomousEnv: user.autonomousEnv, revision: next, policy: json(policy) } })
+      return { policy, revision: next, isDefault: false as const }
+    })
+  }
+
+  /** Viewers and agents read the same effective policy; it always comes from the tab owner's account. */
+  async tabPolicy(user: AuthUser, tabId: string, asAgentId?: string) {
+    return transaction(this.db, async tx => {
+      const row = await this.row(tx, user, tabId)
+      const state = stateOf(row)
+      author(state, await this.actor(tx, user, state, asAgentId))
+      const account = await tx.routingPolicy.findUnique({ where: { id: stableId('routing-policy', state.ownerId, state.environment) } })
+      // The owner's account policy alone, so a field reset to "use account default" can show its value.
+      return { ...effectivePolicy(account?.policy ?? null, state.routingPolicy ?? null), override: state.routingPolicy ?? null,
+        account: effectivePolicy(account?.policy ?? null, null).policy }
     })
   }
 
@@ -213,6 +250,10 @@ export class SuperTabStore {
         context.confirmedStopped = !!proof && !!execution && proof.machineId === execution.machineId &&
           proof.harnessId === execution.harnessId && proof.machineOwnerId === execution.machineOwnerId
       }
+      if (command.type === 'route.record') context.recentRoutes = await recentRoutes(tx, tabId, context.now)
+      const decisionId = command.type === 'route.override' || command.type === 'route.modelResult' ? command.decisionId
+        : command.type === 'work.assign' || command.type === 'agent.start' ? command.routeDecisionId : undefined
+      if (decisionId) context.routeDecision = await readDecision(tx, tabId, decisionId) ?? fail('NOT_FOUND', 'This routing decision is unavailable.', 404)
       const effects = applyCommand(original, actor, command, context)
       await revokeNativeContexts(tx, original, effects.state)
       const revision = row.revision + 1
@@ -247,20 +288,11 @@ export class SuperTabStore {
       await tx.superTab.update({ where: { id: tabId, revision: row.revision }, data: {
         revision, state: json(effects.state), ...indexes(effects.state),
       } })
-      for (const message of effects.messages) {
-        await tx.superTabMessage.create({ data: { id: message.id, tabId, conversationId: message.conversationId,
-          sequence: revision, author: json(message.author), text: message.text, replyTo: message.replyTo, recipientIds: message.recipients } })
-        for (const recipient of message.recipients) {
-          const target = agent(effects.state, recipient)
-          const group = conversation(effects.state, message.conversationId)
-          await tx.superTabDelivery.create({ data: { id: stableId(message.id, recipient), tabId,
-            conversationId: message.conversationId, messageId: message.id, agentId: recipient, machineId: target.machineId,
-            machineOwnerId: target.machineOwnerId,
-            assignmentId: activeWork(group) && group.assignment?.agentId === recipient ? group.assignment.id : null,
-            membershipGeneration: target.membershipGeneration, authorKind: message.author.kind,
-            authorId: message.author.id, authorGeneration: message.author.membershipGeneration } })
-        }
+      await writeRouteEffects(tx, tabId, effects.routeDecisions, context.now)
+      if (command.type === 'work.status' && (command.status === 'done' || command.status === 'stopped')) {
+        await closeAssignment(tx, tabId, command.assignmentId, command.status, context.now)
       }
+      await this.writeMessages(tx, tabId, effects.state, effects.messages, revision)
       const revoked = [
         ...original.people.filter(p => !effects.state.people.some(n => n.id === p.id && n.generation === p.generation))
           .map(p => ({ authorKind: 'person', authorId: p.id, authorGeneration: p.generation })),
@@ -279,6 +311,25 @@ export class SuperTabStore {
         revision, result: json(effects.result) } })
       return { revision, result: effects.result }
     })
+  }
+
+  /** Records committed messages and one delivery per recipient, at the tab revision that carried them. */
+  private async writeMessages(tx: Transaction, tabId: string, state: SuperTabState, messages: MessageDraft[], revision: number) {
+    for (const message of messages) {
+      await tx.superTabMessage.create({ data: { id: message.id, tabId, conversationId: message.conversationId,
+        sequence: revision, author: json(message.author), ...(message.source ? { source: json(message.source) } : {}),
+        text: message.text, replyTo: message.replyTo, recipientIds: message.recipients } })
+      for (const recipient of message.recipients) {
+        const target = agent(state, recipient)
+        const group = conversation(state, message.conversationId)
+        await tx.superTabDelivery.create({ data: { id: stableId(message.id, recipient), tabId,
+          conversationId: message.conversationId, messageId: message.id, agentId: recipient, machineId: target.machineId,
+          machineOwnerId: target.machineOwnerId,
+          assignmentId: activeWork(group) && group.assignment?.agentId === recipient ? group.assignment.id : null,
+          membershipGeneration: target.membershipGeneration, authorKind: message.author.kind,
+          authorId: message.author.id, authorGeneration: message.author.membershipGeneration } })
+      }
+    }
   }
 
   async messages(user: AuthUser, tabId: string, conversationId: string, cursor: { after?: number; before?: number; messageId?: string }, asAgentId?: string) {
@@ -301,6 +352,24 @@ export class SuperTabStore {
     })
   }
 
+  async routeDecisions(user: AuthUser, tabId: string, asAgentId?: string) {
+    return transaction(this.db, async tx => {
+      const state = stateOf(await this.row(tx, user, tabId))
+      author(state, await this.actor(tx, user, state, asAgentId))
+      const rows = await tx.superTabRouteDecision.findMany({ where: { tabId }, orderBy: { createdAt: 'desc' }, take: 100 })
+      return rows.map(timedDecisionOf)
+    })
+  }
+
+  async routeDecision(user: AuthUser, tabId: string, decisionId: string, asAgentId?: string) {
+    return transaction(this.db, async tx => {
+      const state = stateOf(await this.row(tx, user, tabId))
+      author(state, await this.actor(tx, user, state, asAgentId))
+      const row = await tx.superTabRouteDecision.findFirst({ where: { id: decisionId, tabId } })
+      return row ? timedDecisionOf(row) : fail('NOT_FOUND', 'This routing decision is unavailable.', 404)
+    })
+  }
+
   /** Host polling discovers only registered sessions on its own machine, never unrelated tab transcripts. */
   async hostTabs(user: AuthUser, machineId: string) {
     return transaction(this.db, async tx => {
@@ -314,7 +383,9 @@ export class SuperTabStore {
         for (const target of state.agents.filter(a => a.machineId === machineId && a.machineOwnerId === user.sub)) {
           try { agent(state, target.id); await this.agentGrant(tx, state, target) }
           catch (error) { if (error instanceof SuperTabError) continue; throw error }
-          result.push({ tabId: row.id, revision: row.revision, paused: state.paused, agent: target,
+          // `active` lets the host release members that are only in archived groups to automatic cleanup.
+          const active = state.conversations.some(c => !c.archived && c.agentIds.includes(target.id))
+          result.push({ tabId: row.id, revision: row.revision, paused: state.paused, active, agent: target,
             observers: people.filter(p => p.id !== user.sub).map(p => ({ email: p.email, userId: p.id })) })
         }
       }
@@ -442,16 +513,32 @@ export class SuperTabStore {
       const id = stableId('stop', tabId, assignmentId)
       const prior = await tx.superTabStopReceipt.findUnique({ where: { id } })
       if (prior && prior.receipt !== receipt) fail('RECEIPT_CONFLICT', 'This stop already has a host receipt.')
+      const revision = row.revision + 1
+      const notices: MessageDraft[] = []
       if (group && activeWork(group)) {
         assignment.status = 'stopped'
         assignment.result = 'The execution host confirmed that this harness stopped.'
         await tx.superTabRun.deleteMany({ where: { tabId, assignmentId } })
         await tx.superTabDelivery.updateMany({ where: { tabId, assignmentId,
           status: { in: ['queued', 'claimed', 'uncertain'] } }, data: { status: 'cancelled' } })
+        await closeAssignment(tx, tabId, assignmentId, 'stopped', this.now())
+        // No agent command closes this attempt, so nobody was told: in the two-account E2E of 2026-10-19
+        // the Lead learned of a stopped worker only by re-reading status. Say it in the group, as the
+        // worker's own Stopped update would, and deliver it to the Lead. A removed worker was removed
+        // on purpose by someone who already knows.
+        const worker = state.agents.find(a => a.id === assignment.agentId)
+        if (worker) {
+          const lead = group.leadId && group.leadId !== worker.id && group.agentIds.includes(group.leadId) ? group.leadId : null
+          notices.push({ id: stableId('stop-notice', tabId, assignmentId), conversationId: group.id,
+            author: { kind: 'agent', id: worker.id, name: worker.name, membershipGeneration: worker.membershipGeneration },
+            text: `Stopped\n\n${assignment.result} If this work should continue, assign a new attempt.`, replyTo: null, recipients: lead ? [lead] : [] })
+          group.lastMessageSequence = revision
+        }
       }
       await tx.superTab.update({ where: { id: tabId, revision: row.revision }, data: {
-        revision: { increment: 1 }, state: json(state), ...indexes(state),
+        revision, state: json(state), ...indexes(state),
       } })
+      await this.writeMessages(tx, tabId, state, notices, revision)
       if (!prior) await tx.superTabStopReceipt.create({ data: { id, tabId, assignmentId, ...execution, receipt } })
       return { confirmed: true }
     })
