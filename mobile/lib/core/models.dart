@@ -238,6 +238,15 @@ class Agent {
   /// frame), or null for a general session. Read by Clone, so another opens as the same one.
   final String? namedAgent;
 
+  /// A Stop its machine holds until the agent finishes what it is doing (`agent_close` with
+  /// `after_task`): `waiting` while it waits, `failed` when the close it then tried did not go
+  /// through. Null with no Stop queued, or from a daemon older than the field. The desktop's
+  /// `Agent.closePlanState`; opening the agent again calls the queued Stop off (CLI agents/update.ts).
+  final String? closePlanState;
+
+  /// What the machine said about a queued Stop that failed — already a sentence.
+  final String? closePlanDetail;
+
   const Agent({
     required this.id,
     this.sessionId,
@@ -273,6 +282,8 @@ class Agent {
     this.forkable,
     this.bypassPermission,
     this.namedAgent,
+    this.closePlanState,
+    this.closePlanDetail,
   });
 
   factory Agent.fromJson(Map<String, dynamic> j) {
@@ -350,10 +361,23 @@ class Agent {
           ? j['bypassPermission'] as bool
           : null,
       namedAgent: _safeNamedAgent(j['namedAgent']),
+      closePlanState:
+          j['closePlan'] is Map &&
+              const {'waiting', 'failed'}.contains(j['closePlan']['state'])
+          ? j['closePlan']['state'] as String
+          : null,
+      closePlanDetail: j['closePlan'] is Map
+          ? _safeDetail(j['closePlan']['detail'])
+          : null,
     );
   }
 
-  Agent copyWith({String? name, AgentGitContext? gitContext}) => Agent(
+  Agent copyWith({
+    String? name,
+    AgentGitContext? gitContext,
+    String? closePlanState,
+    bool clearClosePlan = false,
+  }) => Agent(
     id: id,
     sessionId: sessionId,
     name: name ?? this.name,
@@ -388,6 +412,12 @@ class Agent {
     forkable: forkable,
     bypassPermission: bypassPermission,
     namedAgent: namedAgent,
+    closePlanState: clearClosePlan
+        ? null
+        : closePlanState ?? this.closePlanState,
+    closePlanDetail: clearClosePlan || closePlanState != null
+        ? null
+        : closePlanDetail,
   );
 
   /// The engines whose sessions can be forked — natively (Claude Code's `--fork-session`,

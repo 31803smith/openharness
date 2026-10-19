@@ -879,6 +879,62 @@ void main() {
         _PurgeConn(review ?? Future.value({'reviewId': 'review-1'}))
           ..handshaken = true;
 
+    testWidgets('while it works: Stop after it finishes queues the stop, and '
+        'the menu then offers to keep it running', (tester) async {
+      final conn = EdgeConn(const {}, (type, payload) {
+        if (type != 'agent_close') return null;
+        return payload['mode'] == 'cancel'
+            ? {'cancelled': true}
+            : {'deferred': true};
+      })..handshaken = true;
+      final focus = await _Focus.open(
+        tester,
+        agents: [switchable()],
+        connection: conn,
+      );
+      focus.app.stateOf('m')!.processingAgentIds.add('a');
+      await tester.tap(find.byKey(const ValueKey('terminal-title')));
+      await frames(tester);
+
+      await tapInView(tester, find.text('Stop after it finishes'));
+      await frames(tester);
+      expect(conn.payloads['agent_close']!.single['mode'], 'after_task');
+      expect(find.text('Stops after it finishes.'), findsOneWidget);
+
+      await tester.tap(find.byKey(const ValueKey('terminal-title')));
+      await frames(tester);
+      expect(find.text('Stop after it finishes'), findsNothing);
+      await tapInView(
+        tester,
+        find.text('Stops after finishing · Keep running'),
+      );
+      await frames(tester);
+      expect(conn.payloads['agent_close']!.last['mode'], 'cancel');
+      // Behind the first answer's snackbar, which has its few seconds first.
+      await tester.pump(const Duration(seconds: 5));
+      await frames(tester);
+      expect(find.text('Keeps running.'), findsOneWidget);
+      await focus.close();
+    });
+
+    testWidgets('idle, or a shell, has no stop to queue — Stop is the '
+        'answer', (tester) async {
+      var focus = await _Focus.open(tester, agents: [switchable()]);
+      await tester.tap(find.byKey(const ValueKey('terminal-title')));
+      await frames(tester);
+      expect(find.text('Stop after it finishes'), findsNothing);
+      expect(find.text('Stop this harness…'), findsOneWidget);
+      await focus.close();
+
+      focus = await openMenu(tester, working: true);
+      expect(
+        find.text('Stop after it finishes'),
+        findsNothing,
+        reason: 'its machine cannot close it',
+      );
+      await focus.close();
+    });
+
     testWidgets('Delete is offered beside Stop, and not on a terminal', (
       tester,
     ) async {

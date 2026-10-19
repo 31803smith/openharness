@@ -2658,11 +2658,21 @@ class _TerminalPageState extends State<TerminalPage>
                               away:
                                   machineAway && (session?.hasScreen ?? false),
                               onTap: () {
-                                if (agent == null) return;
+                                // The agent as it is NOW, not as this build read it: a fact the
+                                // page does not rebuild for (a Stop queued for after it finishes)
+                                // still has to be right in the menu that opens.
+                                final current =
+                                    widget.notifier
+                                        .stateOf(widget.machineId)
+                                        ?.agents
+                                        .where((a) => a.id == widget.agentId)
+                                        .firstOrNull ??
+                                    agent;
+                                if (current == null) return;
                                 _showActions(
                                   machineName:
                                       machine?.machine.displayName ?? '',
-                                  agent: agent,
+                                  agent: current,
                                   session: session,
                                 );
                               },
@@ -2926,6 +2936,11 @@ class _TerminalPageState extends State<TerminalPage>
         ),
         PhoneSheetSection(
           actions: [
+            // Above Stop while it works: stopping once it is done, rather than mid-task — and,
+            // once queued, the way to call it off.
+            if (AppNotifier.canStopAfterTask(agent) &&
+                (agent.closePlanState == 'waiting' || _agentWorking))
+              _stopAfterAction(agent),
             _stopAction(agent),
             // Stop's harder sibling, under it: the conversation goes too. Not for a terminal,
             // which keeps none.
@@ -3315,6 +3330,44 @@ class _TerminalPageState extends State<TerminalPage>
       ),
     ),
   );
+
+  /// Stop after it finishes, or — with one queued — Keep running. See [AppNotifier.stopAfterTask].
+  /// Quiet at the foot like Stop; a queued Stop is said in the row itself, the desktop's words
+  /// for it, since a quiet row draws no value.
+  PhoneSheetAction _stopAfterAction(Agent agent) {
+    final queued = agent.closePlanState == 'waiting';
+    final pending = widget.notifier.agentClosePlanPending(
+      widget.machineId,
+      widget.agentId,
+    );
+    return PhoneSheetAction(
+      icon: queued ? LucideIcons.play300 : LucideIcons.timerOff300,
+      label: queued
+          ? 'Stops after finishing · Keep running'
+          : 'Stop after it finishes',
+      enabled: !pending,
+      destructive: !queued,
+      quiet: true,
+      onTap: () => unawaited(_stopAfter(queued: queued)),
+    );
+  }
+
+  /// What the queued Stop came to, said once its machine has answered — on the snackbar, as
+  /// Restart's answer is.
+  Future<void> _stopAfter({required bool queued}) async {
+    final messenger = ScaffoldMessenger.maybeOf(context);
+    final error = queued
+        ? await widget.notifier.keepRunning(widget.machineId, widget.agentId)
+        : await widget.notifier.stopAfterTask(widget.machineId, widget.agentId);
+    if (mounted) _putMenuAway();
+    messenger?.showSnackBar(
+      SnackBar(
+        content: Text(
+          error ?? (queued ? 'Keeps running.' : 'Stops after it finishes.'),
+        ),
+      ),
+    );
+  }
 
   /// Delete Harness — see [confirmPurgeAgent]. Small at the foot beside Stop, and saying so while a
   /// delete is out, as Restart does: the review and the delete can take a while. In its label, in

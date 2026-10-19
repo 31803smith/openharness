@@ -7148,6 +7148,116 @@ class AppNotifier extends ChangeNotifier {
     return null;
   }
 
+  /// Queued Stops on their way to the machine, by machine and agent — what a second press joins.
+  final Map<(String, String), Future<String?>> _closePlanRequests = {};
+
+  /// Whether a Stop after it finishes, or calling one off, is on its way for this agent.
+  bool agentClosePlanPending(String machineId, String agentId) =>
+      _closePlanRequests.containsKey((machineId, agentId));
+
+  /// Whether this agent can be stopped once it finishes: its machine closes harnesses on request
+  /// (`agent_close`), and it has a conversation to finish — a shell never reads as idle, so its
+  /// Stop would wait forever.
+  static bool canStopAfterTask(Agent agent) =>
+      agent.closeSupported &&
+      agent.createdAt != null &&
+      agent.engine != 'terminal' &&
+      !agent.isStopped;
+
+  /// Stop after it finishes: the machine waits for the agent to be idle, then saves and stops it
+  /// (`agent_close`, `after_task`) — what the desktop's close does with a session still working.
+  /// Its conversation is kept, as Stop's is. Null once the machine has queued it, else the
+  /// sentence to show.
+  Future<String?> stopAfterTask(String machineId, String agentId) =>
+      _requestClosePlan(machineId, agentId, 'after_task');
+
+  /// Keep running: the queued Stop called off (`agent_close`, `cancel`).
+  Future<String?> keepRunning(String machineId, String agentId) =>
+      _requestClosePlan(machineId, agentId, 'cancel');
+
+  Future<String?> _requestClosePlan(
+    String machineId,
+    String agentId,
+    String mode,
+  ) {
+    final key = (machineId, agentId);
+    if (_closePlanRequests[key] case final pending?) return pending;
+    final request = _sendClosePlan(machineId, agentId, mode).whenComplete(() {
+      _closePlanRequests.remove(key);
+      if (!_disposed) notifyListeners();
+    });
+    _closePlanRequests[key] = request;
+    notifyListeners();
+    return request;
+  }
+
+  Future<String?> _sendClosePlan(
+    String machineId,
+    String agentId,
+    String mode,
+  ) async {
+    final machine = machineStates[machineId];
+    final agent = machine?.agents.where((a) => a.id == agentId).firstOrNull;
+    if (machine == null || agent == null) {
+      return 'This harness is no longer available.';
+    }
+    if (!canStopAfterTask(agent)) {
+      return 'Update the Harness CLI on this machine to stop a harness once it finishes.';
+    }
+    final revision = _authRevision;
+    final Map<String, dynamic> result;
+    try {
+      result = await _conn(machineId).request(
+        'agent_close',
+        payload: {
+          'agentId': agent.id,
+          'sessionId': agent.sessionId ?? '',
+          'createdAt': agent.createdAt!.toUtc().toIso8601String(),
+          'mode': mode,
+        },
+        timeout: const Duration(seconds: 15),
+      );
+    } on WsRequestFailure catch (failure) {
+      if (failure.code == 'AGENT_CHANGED') {
+        return 'The harness changed. Open its menu again.';
+      }
+      final detail = failure.detail;
+      return detail != null && detail.isNotEmpty
+          ? detail
+          : mode == 'cancel'
+          ? 'Could not keep it running: ${failure.code}'
+          : 'Could not queue the stop: ${failure.code}';
+    } catch (_) {
+      // A lost reply is not a refusal: the machine may have queued it. Its frame says which once
+      // the agents are read again, and the row follows that.
+      unawaited(reloadMachineData(machineId));
+      return mode == 'cancel'
+          ? 'Could not confirm it keeps running. Check its menu again in a moment.'
+          : 'Could not confirm the stop is queued. Check its menu again in a moment.';
+    }
+    final done = mode == 'cancel'
+        ? result['cancelled'] == true
+        : result['deferred'] == true || result['closed'] == true;
+    if (!done) {
+      final detail = result['detail'];
+      return detail is String && detail.isNotEmpty
+          ? detail
+          : 'The machine did not confirm it. Check its menu again in a moment.';
+    }
+    // The machine's push says the same in a moment; the menu reads it now.
+    if (!_disposed && _machineWorkCurrent(machine, revision)) {
+      final index = machine.agents.indexWhere((a) => a.id == agentId);
+      if (index != -1 && result['closed'] != true) {
+        machine.agents = [...machine.agents]
+          ..[index] = mode == 'cancel'
+              ? machine.agents[index].copyWith(clearClosePlan: true)
+              : machine.agents[index].copyWith(closePlanState: 'waiting');
+        notifyListeners();
+      }
+    }
+    return null;
+  }
+
   /// Tells the machine that owns an agent it was just opened here, so it can stamp
   /// `lastOpenedAt` and every app — this phone, each desktop — sorts by the same
   /// last use. Fire and forget: a daemon too old to keep the stamp answers
@@ -7161,7 +7271,14 @@ class AppNotifier extends ChangeNotifier {
     final key = '$machineId/$agentId';
     final now = DateTime.now();
     final last = _touchedAt[key];
-    if (last != null && now.difference(last) < _touchEvery) return;
+    // A Stop queued for after it finishes is called off by opening the agent again (CLI
+    // agents/update.ts), so that open is never coalesced away — the desktop's rule.
+    final queuedStop = machine.agents.any(
+      (agent) => agent.id == agentId && agent.closePlanState != null,
+    );
+    if (!queuedStop && last != null && now.difference(last) < _touchEvery) {
+      return;
+    }
     _touchedAt[key] = now;
     final revision = _authRevision;
     unawaited(() async {
