@@ -3108,7 +3108,7 @@ class _TerminalPageState extends State<TerminalPage>
     if (agent.canFork && !agent.isStopped)
       PhoneSheetAction(
         icon: LucideIcons.gitFork300,
-        label: 'Fork…',
+        label: 'Fork',
         value: _forking ? 'forking…' : null,
         onTap: () => unawaited(_fork()),
       ),
@@ -3125,7 +3125,7 @@ class _TerminalPageState extends State<TerminalPage>
       ),
     PhoneSheetAction(
       icon: LucideIcons.pencil300,
-      label: 'Rename…',
+      label: 'Rename',
       onTap: () => showAgentRenameDialog(
         context,
         widget.notifier,
@@ -3317,7 +3317,7 @@ class _TerminalPageState extends State<TerminalPage>
   PhoneSheetAction _stopAction(Agent agent) => PhoneSheetAction(
     icon: LucideIcons.trash2300,
     // The least used thing here: small at the foot, not a full red row (it still confirms).
-    label: 'Stop this harness…',
+    label: 'Stop this harness',
     destructive: true,
     quiet: true,
     onTap: () => unawaited(
@@ -3379,7 +3379,7 @@ class _TerminalPageState extends State<TerminalPage>
     );
     return PhoneSheetAction(
       icon: LucideIcons.trash300,
-      label: deleting ? 'Deleting…' : 'Delete this harness…',
+      label: deleting ? 'Deleting…' : 'Delete this harness',
       enabled: !deleting,
       destructive: true,
       quiet: true,
