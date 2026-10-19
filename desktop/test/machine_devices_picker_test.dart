@@ -9,6 +9,8 @@ import 'package:harness/api/api_client.dart';
 import 'package:harness/auth/auth_session.dart';
 import 'package:harness/core/config.dart';
 import 'package:harness/core/models.dart';
+import 'package:harness/measurement/product_measurement.dart'
+    show AddPhoneOpening;
 import 'package:harness/screens/swarm_screen.dart';
 import 'package:harness/shared/theme/app_theme.dart' as grid;
 import 'package:harness/shared/widgets/app_select_field.dart';
@@ -34,6 +36,15 @@ const _strayId = 'cccccccccccccccccccccccccccccccc';
 class _App extends FakeDevicesApp {
   final deletes = <String>[];
   String? deleteError;
+
+  /// Each Add Phone opened, by its way in.
+  final addPhoneOpenings = <AddPhoneOpening>[];
+
+  @override
+  void addPhoneOpened(AddPhoneOpening from) {
+    addPhoneOpenings.add(from);
+    super.addPhoneOpened(from);
+  }
 
   @override
   Future<String?> deleteMachine(String id) async {
@@ -520,6 +531,7 @@ void main() {
     await tester.tap(find.byKey(const Key('machine-picker-add-phone')));
     await tester.pumpAndSettle();
     expect(find.byType(AddPhoneDialog), findsOneWidget);
+    expect(app.addPhoneOpenings, [AddPhoneOpening.machines]);
     expect(resourceScope('@'), findsNothing);
 
     app.ownDaemonMachineIdForTest(_localId);
