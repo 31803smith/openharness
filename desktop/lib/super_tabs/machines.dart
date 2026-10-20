@@ -129,6 +129,14 @@ class _SuperTabMachinesState extends State<SuperTabMachines> {
     final existingId = existing?['machineId'] as String?;
     bool isExisting(MachineState m) =>
         existingId != null && m.machine.machineId == existingId;
+    // "Already in this tab" means already CONTRIBUTED — an agent already
+    // running there (unconfirmed) does not count, or a freshly created tab
+    // whose lead runs on this Mac could never contribute it. `_ids` (agents
+    // too) is for the machine-card panel below, not this dialog.
+    final contributed = {
+      for (final m in c.snapshot?.machines ?? const <Map<String, dynamic>>[])
+        m['machineId'] as String,
+    };
     // Only this account's own, reachable computers can be offered — a machine
     // already in the tab would duplicate its entry, and one offline or
     // unlinked cannot actually be contributed right now. The machine being
@@ -141,20 +149,31 @@ class _SuperTabMachinesState extends State<SuperTabMachines> {
         .where(
           (m) =>
               isExisting(m) ||
-              (!_ids.contains(m.machine.machineId) &&
+              (!contributed.contains(m.machine.machineId) &&
                   !m.needsLink &&
                   !m.isOffline),
         )
         .toList();
     final alreadyInTab = own
-        .where((m) => !isExisting(m) && _ids.contains(m.machine.machineId))
+        .where(
+          (m) => !isExisting(m) && contributed.contains(m.machine.machineId),
+        )
+        .toList();
+    final notLinked = own
+        .where(
+          (m) =>
+              !isExisting(m) &&
+              !contributed.contains(m.machine.machineId) &&
+              m.needsLink,
+        )
         .toList();
     final offline = own
         .where(
           (m) =>
               !isExisting(m) &&
-              !_ids.contains(m.machine.machineId) &&
-              (m.needsLink || m.isOffline),
+              !contributed.contains(m.machine.machineId) &&
+              !m.needsLink &&
+              m.isOffline,
         )
         .toList();
     String labelFor(MachineState m) => m.isLocalMachine
@@ -274,9 +293,18 @@ class _SuperTabMachinesState extends State<SuperTabMachines> {
             }
 
             final canAdd = addable.isNotEmpty;
+            // Only in Add mode: Configure already names the one machine it
+            // edits, so the picker's "already in the tab"/"can't reach it"
+            // bookkeeping about every OTHER machine is noise there.
+            final showStatus = !isConfigure;
+            final singleAlreadyInTab =
+                !canAdd &&
+                alreadyInTab.length == 1 &&
+                notLinked.isEmpty &&
+                offline.isEmpty;
             final String emptyStatement = own.isEmpty
                 ? 'No computer is connected to this account yet.'
-                : alreadyInTab.length == 1 && offline.isEmpty
+                : singleAlreadyInTab
                 ? '${labelFor(alreadyInTab.single)} is already in this tab.'
                 : 'No other computer can be added to this tab right now.';
             return AlertDialog(
@@ -295,7 +323,10 @@ class _SuperTabMachinesState extends State<SuperTabMachines> {
                           semanticLabel: 'Machine',
                           options: [
                             for (final m in addable)
-                              SelectOption(value: m.machine.machineId, label: labelFor(m)),
+                              SelectOption(
+                                value: m.machine.machineId,
+                                label: labelFor(m),
+                              ),
                           ],
                           onChanged: (id) {
                             if (busy) return;
@@ -309,20 +340,31 @@ class _SuperTabMachinesState extends State<SuperTabMachines> {
                       )
                     else
                       Text(emptyStatement, style: DesktopChrome.text()),
-                    if (alreadyInTab.isNotEmpty) ...[
+                    if (showStatus &&
+                        !singleAlreadyInTab &&
+                        alreadyInTab.isNotEmpty) ...[
                       const SizedBox(height: 12),
                       Text(
                         'Already in this tab: ${alreadyInTab.map(labelFor).join(', ')}',
                         style: DesktopChrome.metadata(),
                       ),
                     ],
-                    for (final m in offline) ...[
-                      const SizedBox(height: 4),
-                      Text(
-                        'Offline: ${labelFor(m)}. Start Harness on it to add it.',
-                        style: DesktopChrome.metadata(),
-                      ),
-                    ],
+                    if (showStatus)
+                      for (final m in notLinked) ...[
+                        const SizedBox(height: 4),
+                        Text(
+                          'Not linked: ${labelFor(m)}. Link it from Machines.',
+                          style: DesktopChrome.metadata(),
+                        ),
+                      ],
+                    if (showStatus)
+                      for (final m in offline) ...[
+                        const SizedBox(height: 4),
+                        Text(
+                          'Offline: ${labelFor(m)}. Start Harness on it to add it.',
+                          style: DesktopChrome.metadata(),
+                        ),
+                      ],
                     const SizedBox(height: 16),
                     if (canAdd)
                       Text(
