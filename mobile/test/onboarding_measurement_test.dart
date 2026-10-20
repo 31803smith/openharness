@@ -6,6 +6,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:harness_mobile/measurement/onboarding_measurement.dart';
 import 'package:harness_mobile/measurement/product_measurement.dart';
 
+import 'voice_fakes.dart' show MemoryKeyValueStore;
+
 void main() {
   late ProductMeasurement usage;
   late OnboardingMeasurement onboarding;
@@ -338,6 +340,142 @@ void main() {
       (setup.single['counters'] as Map).keys,
       isNot(contains('health_phone_collector_days')),
     );
+  });
+
+  group('a wait for a computer the app left', () {
+    late MemoryKeyValueStore store;
+
+    setUp(() => store = MemoryKeyValueStore());
+
+    /// One launch of the app over [store]: its own onboarding, the account's usage shared with it.
+    OnboardingMeasurement launch() {
+      final run = OnboardingMeasurement(usage, storage: store);
+      addTearDown(run.dispose);
+      return run;
+    }
+
+    Future<void> settled() => Future<void>.delayed(Duration.zero);
+
+    test(
+      'is remembered, and the launch that finds the computer counts it once',
+      () async {
+        await signIn();
+        final first = launch()
+          ..signedIn(ProductFlow.signInGoogle, Duration.zero)
+          ..start(ProductFlow.computerWait);
+        await settled();
+        expect(store.values[OnboardingMeasurement.waitingKey], '1');
+        first.dispose(); // The app is closed with the wait still open.
+
+        final next = launch();
+        await next.computersSeen();
+        await next.computersSeen();
+        await usage.flush();
+        expect(counters('ui_phone_computer_wait_joined_after_leaving'), {
+          'ui_phone_computer_wait_joined_after_leaving': 1,
+        });
+        // That wait is over: no `ok` of its own, and nothing left to count.
+        expect(counters('ui_phone_computer_wait_ok'), isEmpty);
+        await settled();
+        expect(store.values, isEmpty);
+      },
+    );
+
+    test('that ended in its own launch leaves nothing for the next', () async {
+      await signIn();
+      launch()
+        ..signedIn(ProductFlow.signInGoogle, Duration.zero)
+        ..start(ProductFlow.computerWait)
+        ..end(ProductFlow.computerWait, ProductOutcome.ok);
+      await settled();
+      expect(store.values, isEmpty);
+
+      await launch().computersSeen();
+      await usage.flush();
+      expect(counters('ui_phone_computer_wait_joined_after_leaving'), isEmpty);
+    });
+
+    test('is not counted again by the launch that has a wait of its own', () async {
+      await signIn();
+      launch().start(ProductFlow.computerWait);
+      await settled();
+
+      // Reopened mid-wait: this launch waits too, and sees the computer itself.
+      final next = launch()..start(ProductFlow.computerWait);
+      await settled();
+      expect(store.values[OnboardingMeasurement.waitingKey], '1');
+      await next.computersSeen();
+      next.end(ProductFlow.computerWait, ProductOutcome.ok);
+      await next.computersSeen();
+      await usage.flush();
+      expect(counters('ui_phone_computer_wait_joined_after_leaving'), isEmpty);
+      expect(counters('ui_phone_computer_wait_ok'), {
+        'ui_phone_computer_wait_ok': 1,
+      });
+      await settled();
+      expect(store.values, isEmpty);
+    });
+
+    test('is forgotten when the account signs out', () async {
+      await signIn();
+      final run = launch()..start(ProductFlow.computerWait);
+      await settled();
+      run.reset();
+      await settled();
+      expect(store.values, isEmpty);
+    });
+
+    test('counts nothing for an account that does not share', () async {
+      choice = {'enabled': false, 'revision': 0};
+      await signIn();
+      store.values[OnboardingMeasurement.waitingKey] = '1';
+      await launch().computersSeen();
+      await usage.flush();
+      expect(reports, isEmpty);
+    });
+  });
+
+  group('a sign-in that made its account', () {
+    final now = DateTime.utc(2026, 10, 20, 9);
+
+    test('counts new_account, once', () async {
+      await signIn();
+      signedInHere();
+      onboarding.accountCreated(
+        now.subtract(const Duration(minutes: 2)),
+        now: now,
+      );
+      onboarding.accountCreated(
+        now.subtract(const Duration(minutes: 2)),
+        now: now,
+      );
+      await usage.flush();
+      expect(counters('ui_phone_sign_in_new_account'), {
+        'ui_phone_sign_in_new_account': 1,
+      });
+    });
+
+    test('allows for this phone\'s clock running behind', () async {
+      await signIn();
+      signedInHere();
+      onboarding.accountCreated(now.add(const Duration(minutes: 5)), now: now);
+      await usage.flush();
+      expect(counters('ui_phone_sign_in_new_account'), hasLength(1));
+    });
+
+    test('counts nothing for an older account, an unknown age, or a launch that did not sign in', () async {
+      await signIn();
+      // Opened signed in: whatever its age, this launch made nothing.
+      onboarding.accountCreated(now, now: now);
+      signedInHere();
+      onboarding.accountCreated(
+        now.subtract(const Duration(days: 3)),
+        now: now,
+      );
+      onboarding.accountCreated(null, now: now);
+      await usage.flush();
+      expect(counters('ui_phone_sign_in_new_account'), isEmpty);
+    });
   });
 
   test('every mark is in the backend vocabulary under each step it names', () {

@@ -1,3 +1,6 @@
+import 'dart:async';
+
+import '../core/local_key_value_store.dart';
 import 'product_measurement.dart';
 
 /// Mirrors `PRODUCT_USAGE_ONBOARDING_MARKS` in backend/src/types/productUsage.ts, with the steps
@@ -8,6 +11,9 @@ enum OnboardingMark {
 
   /// A sign-in went through on another button than the first one tried in this app run.
   switched('switched', {ProductFlow.signIn}),
+
+  /// The sign-in created the account: minutes old, its first Harness sign-in anywhere.
+  newAccount('new_account', {ProductFlow.signIn}),
 
   /// The step started in an app run that did not sign in: reopened mid-step, not a new start.
   resumed('resumed', {
@@ -21,6 +27,10 @@ enum OnboardingMark {
 
   /// The computer's address sent from the phone (share sheet).
   linkShared('link_shared', {ProductFlow.computerWait}),
+
+  /// The computer the wait was for turned up after the app had left the wait: a launch later found it
+  /// on the account. That wait never saw it, so it has no `ok` of its own.
+  joinedAfterLeaving('joined_after_leaving', {ProductFlow.computerWait}),
 
   /// The joining computer wants its password before its session can open.
   blockedPassword('blocked_password', {ProductFlow.sessionOpen}),
@@ -45,11 +55,24 @@ enum OnboardingMark {
 /// choice reads off. A step that ends before then is never counted; the sign-in itself, which
 /// always does, is the exception ([signedIn]).
 class OnboardingMeasurement {
-  OnboardingMeasurement(this._usage) {
+  OnboardingMeasurement(this._usage, {this.storage}) {
     _usage.addListener(_admit);
   }
 
   final ProductMeasurement _usage;
+
+  /// Where a wait for a computer is remembered across launches ([waitingKey]): a yes or nothing, never
+  /// sent. None (a test, the sample): nothing outlives the run.
+  final LocalKeyValueStore? storage;
+
+  /// Set while a wait for a computer is open, cleared once it ends or the account signs out. A launch
+  /// that finds it set and a computer on the account counts [OnboardingMark.joinedAfterLeaving].
+  static const waitingKey = 'onboarding_computer_wait_open';
+
+  /// How old an account may be at its sign-in to count as made by it ([accountCreated]). Its record is
+  /// written by the first Harness sign-in anywhere, seconds before the profile is read; the margin is
+  /// for a slow sign-in and for this phone's clock.
+  static const newAccountWithin = Duration(minutes: 15);
   final _waiting = <ProductFlow, ({Stopwatch watch, bool resumed})>{};
   final _running = <ProductFlow, void Function(ProductOutcome)>{};
   final _seen = <ProductFlow>{};
@@ -91,6 +114,7 @@ class OnboardingMeasurement {
   /// [OnboardingMark.resumed] as well.
   void start(ProductFlow flow) {
     if (!_seen.add(flow)) return;
+    if (flow == ProductFlow.computerWait) _rememberWaiting(true);
     _waiting[flow] = (
       watch: Stopwatch()..start(),
       resumed: !_signedInThisRun && OnboardingMark.resumed.flows.contains(flow),
@@ -100,8 +124,59 @@ class OnboardingMeasurement {
 
   /// Ends [flow] with [outcome] if it is running; otherwise nothing.
   void end(ProductFlow flow, ProductOutcome outcome) {
+    if (flow == ProductFlow.computerWait && _seen.contains(flow)) {
+      _rememberWaiting(false);
+    }
     _waiting.remove(flow);
     _running.remove(flow)?.call(outcome);
+  }
+
+  /// The account's profile, read after a sign-in in this run: one created by it ([newAccountWithin])
+  /// counts [OnboardingMark.newAccount]. [createdAt] is the account record's; null says nothing.
+  void accountCreated(DateTime? createdAt, {DateTime? now}) {
+    if (!_signedInThisRun || createdAt == null) return;
+    final age = (now ?? DateTime.now()).difference(createdAt);
+    // A record from the future is this phone's clock running behind, by as much as the margin allows.
+    if (age > newAccountWithin || age < -newAccountWithin) return;
+    if (!_marked.add((ProductFlow.signIn, OnboardingMark.newAccount))) return;
+    _marks.add((ProductFlow.signIn, OnboardingMark.newAccount));
+    _admit();
+  }
+
+  /// The account's computers have been read and it has at least one. A wait for a computer that a
+  /// launch before this one left open ([waitingKey]) ended there: counted once as
+  /// [OnboardingMark.joinedAfterLeaving]. Nothing once this sign-in has a wait of its own, open or
+  /// ended: it saw the computer itself (`ok`), or is still looking — asked again after the read below
+  /// too, which a wait may end meanwhile.
+  Future<void> computersSeen() async {
+    final storage = this.storage;
+    if (storage == null || _seen.contains(ProductFlow.computerWait)) return;
+    String? open;
+    try {
+      open = await storage.read(waitingKey);
+    } catch (_) {
+      return;
+    }
+    if (open == null || _seen.contains(ProductFlow.computerWait)) return;
+    _rememberWaiting(false);
+    if (!_marked.add((
+      ProductFlow.computerWait,
+      OnboardingMark.joinedAfterLeaving,
+    ))) {
+      return;
+    }
+    _marks.add((ProductFlow.computerWait, OnboardingMark.joinedAfterLeaving));
+    _admit();
+  }
+
+  /// Best effort: a flag not written costs one [OnboardingMark.joinedAfterLeaving] at most.
+  void _rememberWaiting(bool open) {
+    final storage = this.storage;
+    if (storage == null) return;
+    unawaited(
+      (open ? storage.write(waitingKey, '1') : storage.delete(waitingKey))
+          .catchError((Object _) {}),
+    );
   }
 
   /// Counts [what] of [flow], once per sign-in; build methods may call it on every frame. Only for
@@ -131,6 +206,8 @@ class OnboardingMeasurement {
     for (final flow in [..._running.keys]) {
       end(flow, ProductOutcome.cancelled);
     }
+    // A wait this account left open is not the next account's.
+    _rememberWaiting(false);
     _clearWaiting();
     _seen.clear();
     _marked.clear();

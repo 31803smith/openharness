@@ -1,4 +1,5 @@
 import '../core/app_version.dart';
+import '../core/install_source.dart';
 import '../core/test_run.dart';
 import '../measurement/launch_measurement.dart';
 import '../measurement/onboarding_measurement.dart';
@@ -440,8 +441,12 @@ class AppNotifier extends ChangeNotifier {
   late ApiClient api;
   late final ProductMeasurement productMeasurement;
 
-  /// The phone's onboarding steps after sign-in, counted through [productMeasurement].
-  late final onboardingMeasurement = OnboardingMeasurement(productMeasurement);
+  /// The phone's onboarding steps after sign-in, counted through [productMeasurement]. A wait for a
+  /// computer is remembered in the app's own store, for the launch that finds the computer.
+  late final onboardingMeasurement = OnboardingMeasurement(
+    productMeasurement,
+    storage: _paneLayout?.storage,
+  );
   final _measurementConnections = <String, void Function(ProductOutcome)>{};
 
   /// Each machine's dials, the person's (`connect_user`) apart from the app's own (`connect_auto`).
@@ -1301,6 +1306,8 @@ class AppNotifier extends ChangeNotifier {
     // a launch of this app.
     if (!kUnderTest && paneLayoutStore != null) {
       launchMeasurement = LaunchMeasurement(this.productMeasurement);
+      // The install's first launch, once: the step between a store's download and a sign-in.
+      unawaited(this.productMeasurement.noteFirstOpen());
     }
     addListener(_syncProductMeasurement);
     unawaited(_measurementContext());
@@ -1316,6 +1323,7 @@ class AppNotifier extends ChangeNotifier {
     try {
       release = await runningAppVersion();
     } catch (_) {}
+    final source = await installSource();
     if (_disposed) return;
     productMeasurement.context = {
       'surface': 'phone',
@@ -1328,7 +1336,8 @@ class AppNotifier extends ChangeNotifier {
         TargetPlatform.android => 'android',
         _ => 'other',
       },
-      'channel': kReleaseMode ? 'production' : 'development',
+      // A tester's build (TestFlight) is `testing`: the backend keeps its totals apart.
+      'channel': measurementChannel(release: kReleaseMode, source: source),
     };
   }
 
@@ -1867,6 +1876,8 @@ class AppNotifier extends ChangeNotifier {
       }
       if (me != null) {
         currentUser = CurrentUserProfile.fromMe(me);
+        // Made by a sign-in in this run, or coming back to it.
+        onboardingMeasurement.accountCreated(currentUser?.createdAt);
         // A sign-in by hand: the device log keeps which account it was made to.
         if (currentUser?.id case final id?) {
           unawaited(_deviceLog?.signedInAs(id));
@@ -2710,6 +2721,8 @@ class AppNotifier extends ChangeNotifier {
     machines = list
         .where((machine) => machine.authMode == MachineAuthMode.remote)
         .toList();
+    // A wait for a computer that an earlier launch left open, with the computer now here.
+    if (machines.isNotEmpty) unawaited(onboardingMeasurement.computersSeen());
     final visible = machines.map((machine) => machine.machineId).toSet();
     // A code scanned for a machine this account does not have can never be
     // spent: the pairing screen waits for that machine to show up locked.

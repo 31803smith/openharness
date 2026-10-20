@@ -381,6 +381,109 @@ void main() {
         expect(phone.accountOptOutPending, isFalse);
       },
     );
+
+    group('the first launch of an install', () {
+      Map<String, dynamic> counted(List<Map<String, dynamic>> sent) => {
+        for (final report in sent) ...(report['counters'] as Map),
+      };
+
+      test('signed out it is counted once, never on a later launch', () async {
+        final first = launch(keeping: store);
+        await first.noteFirstOpen();
+        await first.noteFirstOpen();
+        await first.flush();
+        expect(counted(setup), {'setup_phone_first_open': 1});
+        expect(store.values[ProductMeasurement.firstOpenKey], '1');
+
+        final second = launch(keeping: store);
+        await second.noteFirstOpen();
+        await second.flush();
+        expect(setup, hasLength(1));
+      });
+
+      test(
+        'off signed out it is never counted, nor a later launch instead',
+        () async {
+          final first = launch(keeping: store);
+          await first.setupChoiceReady;
+          await first.setSignedOutSharing(false);
+          await first.noteFirstOpen();
+          await first.setSignedOutSharing(true);
+          await first.flush();
+          expect(setup, isEmpty);
+
+          final second = launch(keeping: store);
+          await second.noteFirstOpen();
+          await second.flush();
+          expect(setup, isEmpty);
+        },
+      );
+
+      test(
+        'opened signed in, it waits for the account and counts there',
+        () async {
+          final phone = launch(keeping: store);
+          phone.account(
+            'PRIVATE_ACCOUNT',
+            choice: () async => {'enabled': true, 'revision': 0},
+            send: (r) async {
+              reports.add(jsonDecode(jsonEncode(r)));
+              return {'accepted': true};
+            },
+          );
+          await phone.noteFirstOpen();
+          expect(reports, isEmpty, reason: 'the account has not answered');
+          await phone.flush();
+          await phone.flush();
+          expect(setup, isEmpty);
+          expect(counted(reports), {'ui_phone_first_open': 1});
+        },
+      );
+
+      test('an account that reads off drops it for good', () async {
+        final phone = launch(keeping: store);
+        await signIn(phone, () => {'enabled': false, 'revision': 1});
+        await phone.noteFirstOpen();
+        phone.savedChoice({'enabled': true, 'revision': 2}, explicit: true);
+        await phone.flush();
+        expect(reports, isEmpty);
+        expect(setup, isEmpty);
+      });
+
+      test('nothing without storage, nor off the phone', () async {
+        final sample = launch();
+        await sample.setSignedOutSharing(true);
+        await sample.noteFirstOpen();
+        await sample.flush();
+        final desktop = ProductMeasurement(
+          surface: 'desktop',
+          automatic: false,
+          now: () => now,
+          setupStorage: store,
+          sendSetup: (r) async {
+            setup.add(jsonDecode(jsonEncode(r)));
+            return {'accepted': true};
+          },
+        );
+        opened.add(desktop);
+        await desktop.noteFirstOpen();
+        await desktop.flush();
+        expect(setup, isEmpty);
+        expect(
+          store.values.containsKey(ProductMeasurement.firstOpenKey),
+          isFalse,
+        );
+      });
+
+      test('a flag that cannot be read counts nothing', () async {
+        final phone = launch(keeping: _Unreadable());
+        await phone.setupChoiceReady;
+        await phone.setSignedOutSharing(true);
+        await phone.noteFirstOpen();
+        await phone.flush();
+        expect(setup, isEmpty);
+      });
+    });
   });
 
   group('the phone\'s side pages', () {

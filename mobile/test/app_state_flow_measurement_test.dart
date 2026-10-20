@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:harness_mobile/core/models.dart';
+import 'package:harness_mobile/measurement/onboarding_measurement.dart';
 import 'package:harness_mobile/measurement/product_measurement.dart';
 
 import 'viewer_app_fixture.dart';
@@ -19,8 +20,15 @@ void main() {
   });
 
   /// A signed-in phone whose account shares product usage.
-  Future<ViewerRig> sharing(Map<String, List<String>> agents) async {
-    final rig = await signedInWith(agents, productMeasurement: usage);
+  Future<ViewerRig> sharing(
+    Map<String, List<String>> agents, {
+    MemoryKeyValueStore? storage,
+  }) async {
+    final rig = await signedInWith(
+      agents,
+      storage: storage,
+      productMeasurement: usage,
+    );
     addTearDown(rig.app.dispose);
     await usage.flush();
     expect(usage.sharing, isTrue);
@@ -216,5 +224,89 @@ void main() {
         expect(kept(storage), 'false');
       },
     );
+  });
+
+  group('what the account itself tells the onboarding', () {
+    test(
+      'a wait an earlier launch left open, its computer now on the account',
+      () async {
+        final storage = MemoryKeyValueStore()
+          ..values[OnboardingMeasurement.waitingKey] = '1';
+        final rig = await sharing({'m': []}, storage: storage);
+        expect(await sent(rig, 'computer_wait'), {
+          'ui_phone_computer_wait_joined_after_leaving': 1,
+        });
+        expect(
+          storage.values,
+          isNot(contains(OnboardingMeasurement.waitingKey)),
+        );
+
+        await rig.app.refreshMachines();
+        await settle();
+        expect(await sent(rig, 'computer_wait'), {
+          'ui_phone_computer_wait_joined_after_leaving': 1,
+        }, reason: 'once');
+      },
+    );
+
+    test('a wait left open, still with no computer, is kept', () async {
+      final storage = MemoryKeyValueStore()
+        ..values[OnboardingMeasurement.waitingKey] = '1';
+      final rig = await sharing({}, storage: storage);
+      expect(await sent(rig, 'computer_wait'), isEmpty);
+      expect(storage.values[OnboardingMeasurement.waitingKey], '1');
+    });
+
+    Future<ViewerRig> signingIn(DateTime createdAt) async {
+      final rig = viewerApp(signedIn: false, productMeasurement: usage);
+      addTearDown(rig.app.dispose);
+      rig.api.profile = {
+        'user': {
+          'id': 'u1',
+          'email': 'pat@example.com',
+          'createdAt': createdAt.toUtc().toIso8601String(),
+        },
+      };
+      await rig.app.signInWithCode(email: 'pat@example.com', code: '1234');
+      await settle();
+      return rig;
+    }
+
+    test('a sign-in that made its account says so', () async {
+      final rig = await signingIn(
+        DateTime.now().subtract(const Duration(seconds: 5)),
+      );
+      expect(
+        await sent(rig, 'sign_in'),
+        allOf([
+          containsPair('ui_phone_sign_in_ok', 1),
+          containsPair('ui_phone_sign_in_new_account', 1),
+        ]),
+      );
+    });
+
+    test('a sign-in to an older account is a return', () async {
+      final rig = await signingIn(
+        DateTime.now().subtract(const Duration(days: 30)),
+      );
+      final signIn = await sent(rig, 'sign_in');
+      expect(signIn, containsPair('ui_phone_sign_in_ok', 1));
+      expect(signIn, isNot(contains('ui_phone_sign_in_new_account')));
+    });
+
+    test('a launch already signed in made no account', () async {
+      final rig = viewerApp(productMeasurement: usage);
+      addTearDown(rig.app.dispose);
+      rig.api.profile = {
+        'user': {
+          'id': 'u1',
+          'email': 'pat@example.com',
+          'createdAt': DateTime.now().toUtc().toIso8601String(),
+        },
+      };
+      await rig.app.bootstrap();
+      await settle();
+      expect(await sent(rig, 'sign_in'), isEmpty);
+    });
   });
 }
