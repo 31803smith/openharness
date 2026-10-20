@@ -1,4 +1,4 @@
-import { HEALTH_FAILURES, HEALTH_MEASURES, type HealthSource, type ResumeReason } from './productHealthContract.js'
+import { AUTOMATIC_POLL_ACTIONS, HEALTH_FAILURES, HEALTH_MEASURES, type HealthSource, type ResumeReason } from './productHealthContract.js'
 import type { MessageOutcome, MessageReceipt } from './sessionInput.js'
 import { LAUNCH_ERROR_CODES, PRODUCT_USAGE_FLOWS, PRODUCT_USAGE_LAUNCH_ENGINES, PRODUCT_USAGE_USER_OPENED_ACTIONS,
   type LaunchErrorCode, type ProductUsageLaunchEngine, type ProductUsageMetric } from './productUsageContract.js'
@@ -130,10 +130,16 @@ export function productUsageRequest(type: string, emit: (metric: ProductUsageMet
   let answered = false
   // A fixed poll is `automatic` whichever app makes it, the phone's included: its own source is for what a
   // person on it asked for.
-  const origin = (source === 'app' || source === 'phone') && ['history', 'history_page', 'store_list', 'model_list'].includes(action)
+  const origin = (source === 'app' || source === 'phone') && (AUTOMATIC_POLL_ACTIONS as readonly string[]).includes(action)
     ? 'automatic' : source
+  // `automatic` is every app's polls, the Desktop's and the phone's together: the phone's are counted again, apart.
+  const phonePoll = source === 'phone' && origin === 'automatic'
   const count = (measure: string) => { if (action && action !== 'message') { try { emit(`${action}_${measure}` as ProductUsageMetric) } catch { /* Optional measurement. */ } } }
-  const detail = (measure: string) => { if (!source) return; try { emit(`request_${origin}_${action}_${measure}` as ProductUsageMetric) } catch { /* Optional measurement. */ } }
+  const detail = (measure: string) => {
+    if (!source) return
+    try { emit(`request_${origin}_${action}_${measure}` as ProductUsageMetric) } catch { /* Optional measurement. */ }
+    if (phonePoll) { try { emit(`request_phone_automatic_${action}_${measure}` as ProductUsageMetric) } catch { /* Optional measurement. */ } }
+  }
   count('requests'); detail('started')
   if (userAction && (PRODUCT_USAGE_USER_OPENED_ACTIONS as readonly string[]).includes(action)) count('user_requests')
   // [failure]: the kind of a refusal its caller already knows (a message's, [messageReceipt]), not read off a code.

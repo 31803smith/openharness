@@ -149,9 +149,10 @@ it('takes how the phone opened Find or Computers, and the phone\'s own requests,
   const context = { surface: 'phone', release: '1.0.4', platform: 'ios', channel: 'production' }
   const counters = { ui_phone_screen_find_swipe: 2, ui_phone_screen_find_button: 1, ui_phone_screen_computers_swipe: 1,
     ui_phone_screen_computers_button: 1, request_phone_create_started: 1, request_phone_resume_error_other: 1,
-    request_phone_resume_reason_busy: 1 }
+    request_phone_resume_reason_busy: 1, request_phone_automatic_history_ok: 1, request_phone_automatic_store_list_error_timeout: 1 }
   expect((await submit({ ...good, context, counters })).statusCode).toBe(200)
-  for (const name of ['ui_phone_screen_settings_swipe', 'ui_phone_screen_find_pinch', 'ui_desktop_screen_find_swipe']) {
+  for (const name of ['ui_phone_screen_settings_swipe', 'ui_phone_screen_find_pinch', 'ui_desktop_screen_find_swipe',
+    'request_phone_automatic_create_ok', 'request_desktop_automatic_history_ok']) {
     expect((await submit({ ...good, context, counters: { [name]: 1 } })).statusCode).toBe(400)
   }
 })
