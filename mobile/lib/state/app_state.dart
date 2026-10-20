@@ -10467,6 +10467,12 @@ class AppNotifier extends ChangeNotifier {
     _pausedAt ??= DateTime.now();
     _desk.pause();
     _stopDeafPoll();
+    // A socket waiting on a machine that is off stops dialling it while nobody is looking;
+    // [handleAppResumed]'s reconnectAll asks again the moment the phone is back
+    // ([WsConn.pauseParkedRecheck]).
+    for (final machine in machines) {
+      _heldConnection(machine.machineId)?.pauseParkedRecheck();
+    }
     // The agents this run learned between lists, for the next launch — see [_keepMachineCache].
     _keepMachineCache();
   }
