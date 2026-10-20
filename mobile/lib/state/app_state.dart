@@ -195,6 +195,10 @@ class AgentCreationAttempt {
   /// The desk tab the agent joins once started, picked before it was asked for — see
   /// [PhoneDesk.adopt]. Null joins the tab the phone is in.
   String? _deskTabId;
+
+  /// The agent opens a desk tab of its own once started — the `+` at the end of Find's tab chips.
+  /// See [PhoneDesk.adopt].
+  bool _newDeskTab = false;
   Map<String, dynamic>? _choices;
   Future<String?>? _inFlight;
   bool _awaitingConfirmation = false, _finished = false;
@@ -6249,7 +6253,8 @@ class AppNotifier extends ChangeNotifier {
   /// picked — cannot be forgotten.
   ///
   /// [deskTabId] is the desk tab the agent joins once started — the one Find was narrowed to —
-  /// instead of the tab the phone is in. See [PhoneDesk.adopt].
+  /// instead of the tab the phone is in. [newDeskTab] opens a desk tab of its own for it instead —
+  /// Find's `+` at the end of the tab chips. See [PhoneDesk.adopt].
   Future<String?> createAgent(
     String machineId, {
     required String engine,
@@ -6264,6 +6269,7 @@ class AppNotifier extends ChangeNotifier {
     GridModel? model,
     String? swarmId,
     String? deskTabId,
+    bool newDeskTab = false,
     AgentCreationAttempt? attempt,
     String? prompt,
     String? name,
@@ -6301,6 +6307,7 @@ class AppNotifier extends ChangeNotifier {
       choices,
       swarmId: swarmId,
       deskTabId: deskTabId,
+      newDeskTab: newDeskTab,
       attempt: creation,
     );
   }
@@ -6462,6 +6469,7 @@ class AppNotifier extends ChangeNotifier {
     Map<String, dynamic> choices, {
     String? swarmId,
     String? deskTabId,
+    bool newDeskTab = false,
     AgentCreationAttempt? attempt,
   }) {
     final creation = attempt ?? AgentCreationAttempt();
@@ -6480,6 +6488,7 @@ class AppNotifier extends ChangeNotifier {
       creation._targetId = swarmId ?? activeSwarmId;
       // With the request, not read again on a Check status: the tab picked is the one asked for.
       creation._deskTabId = deskTabId;
+      creation._newDeskTab = newDeskTab;
     }
     final work = _createAgentWithReceipt(creation);
     creation._inFlight = work;
@@ -6854,12 +6863,14 @@ class AppNotifier extends ChangeNotifier {
       return null;
     }
     // Created HERE, so it joins the tab this phone is in — the way an agent
-    // created in a window joins that window's tab — or the tab picked for it.
-    // See [PhoneDesk.adopt] for what happens when the phone is in no tab.
+    // created in a window joins that window's tab — or the tab picked for it,
+    // or a tab of its own. See [PhoneDesk.adopt] for what happens when the
+    // phone is in no tab.
     _desk.adopt(
       (machineId: machineId, agentId: agent.id),
       name: agent.displayName,
       tabId: creation._deskTabId,
+      newTab: creation._newDeskTab,
     );
     await assignAgentToPane(null, machineId, agent.id, swarmId: targetId);
     return null;
