@@ -36,10 +36,16 @@ export const PRODUCT_USAGE_LONG_MEASURES = ['1m_to_5m', '5m_to_15m', '15m_to_1h'
  * `resumed`: the step started in an app run that did not sign in (reopened mid-step), so it is not a
  * new person; the rest are the step's own ways out or walls. The sign_in marks are counted with a
  * sign-in that went through: `retried`, an attempt before it in this app run failed or was
- * cancelled; `switched`, it used another button than the first one tried. */
+ * cancelled; `switched`, it used another button than the first one tried; `new_account`, the account
+ * was created by this sign-in (minutes old: its first Harness sign-in anywhere), not one coming back.
+ * `computer_wait_joined_after_leaving`: the computer the wait was for turned up after the app had left
+ * that screen, which ends the wait in no `ok` of its own (16–19 October 2026: 5 `ok` in 49 fresh waits,
+ * while 91% of the phone's people had a computer on the same account those days). */
 export const PRODUCT_USAGE_ONBOARDING_MARKS = ['ui_phone_sign_in_retried', 'ui_phone_sign_in_switched',
+  'ui_phone_sign_in_new_account',
   'ui_phone_computer_wait_resumed', 'ui_phone_computer_wait_not_you',
-  'ui_phone_computer_wait_link_shared', 'ui_phone_session_open_resumed', 'ui_phone_session_open_blocked_password',
+  'ui_phone_computer_wait_link_shared', 'ui_phone_computer_wait_joined_after_leaving',
+  'ui_phone_session_open_resumed', 'ui_phone_session_open_blocked_password',
   'ui_phone_session_open_blocked_offline', 'ui_phone_first_message_resumed'] as const
 export const PRODUCT_USAGE_ONBOARDING_METRICS = [...PRODUCT_USAGE_ONBOARDING_MARKS,
   ...PRODUCT_USAGE_LONG_FLOWS.flatMap(flow => PRODUCT_USAGE_LONG_MEASURES.map(measure => `ui_phone_${flow}_${measure}` as const)),
@@ -85,6 +91,9 @@ export const PRODUCT_USAGE_SETUP_METRICS = [...PRODUCT_USAGE_SURFACES.flatMap(su
   // download put its agent in place, and how long it took. Engine names only, never a path or log line.
   ...PRODUCT_USAGE_SETUP_DOWNLOADS.flatMap(engine => PRODUCT_USAGE_SETUP_DOWNLOAD_MEASURES
     .map(measure => `setup_desktop_agent_download_${engine}_${measure}` as const)),
+  // The phone's first launch after an install, once (a local flag, never sent): the step between a store's
+  // download and a sign-in, which nothing else counts. Signed in already at that launch, it is `ui_phone_first_open`.
+  'setup_phone_first_open',
 ] as const
 /** A new-harness, create or resume refusal outside the four fixed kinds (setup, auth, unavailable,
  * invalid), by its code: the daemon's own fixed error names, lower-cased. On 2026-10-16 production counted
@@ -166,6 +175,7 @@ export const PRODUCT_USAGE_METRICS = [
   ...PRODUCT_USAGE_ONBOARDING_METRICS,
   ...PRODUCT_USAGE_PHONE_SCREEN_METRICS,
   ...PRODUCT_USAGE_ADD_PHONE_METRICS,
+  'ui_phone_first_open',
   // Written by the backend itself: a report that named counters this backend does not know yet, which
   // it kept without them (routes/productUsage.ts). One per report, never the names.
   'health_cli_report_unknown_metric', 'health_desktop_report_unknown_metric', 'health_phone_report_unknown_metric',

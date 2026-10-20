@@ -164,6 +164,13 @@ it('takes the Desktop\'s Add Phone card and each way into Add Phone, and no othe
   }
 })
 
+it('takes a tester\'s build as its own channel, and the phone\'s new onboarding names, and no other channel', async () => {
+  const context = { surface: 'phone', release: '1.0.7', platform: 'ios', channel: 'testing' }
+  const counters = { ui_phone_first_open: 1, ui_phone_sign_in_new_account: 1, ui_phone_computer_wait_joined_after_leaving: 1 }
+  expect((await submit({ ...good, context, counters })).statusCode).toBe(200)
+  expect((await submit({ ...good, context: { ...context, channel: 'beta' } })).statusCode).toBe(400)
+})
+
 it('rejects extra context, custom versions and device fingerprints without echoing them', async () => {
   const context = { surface: 'desktop', release: '1.2.73', platform: 'macos', channel: 'production' }
   for (const c of [{ ...context, path: 'PRIVATE_CANARY' }, { ...context, release: 'PRIVATE_CANARY' },

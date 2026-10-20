@@ -57,7 +57,8 @@ export interface ProductUsageContext {
   surface: 'cli' | 'desktop' | 'phone'
   release: string
   platform: 'macos' | 'linux' | 'windows' | 'ios' | 'android' | 'other'
-  channel: 'production' | 'development'
+  // `testing`: a tester's build of a store release (the phone from TestFlight), kept apart from the totals.
+  channel: 'production' | 'development' | 'testing'
 }
 /** Public numeric release only. Custom build names, hashes and suffixes cannot become labels. */
 export function releaseBucket(value: unknown): string {
@@ -67,7 +68,7 @@ export function cleanUsageContext(value: unknown): ProductUsageContext | undefin
   if (!value || typeof value !== 'object') return
   const c = value as ProductUsageContext
   if (!['cli', 'desktop', 'phone'].includes(c.surface) || !['macos', 'linux', 'windows', 'ios', 'android', 'other'].includes(c.platform)
-      || !['production', 'development'].includes(c.channel)) return
+      || !['production', 'development', 'testing'].includes(c.channel)) return
   return { surface: c.surface, release: releaseBucket(c.release), platform: c.platform, channel: c.channel }
 }
 
