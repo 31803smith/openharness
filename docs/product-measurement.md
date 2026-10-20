@@ -69,15 +69,17 @@ it for under names of their own. Nothing else in a report is the phone's:
 | Where | Names | What they are |
 | --- | --- | --- |
 | The phone's own reports (`context.surface: 'phone'`, `platform: 'ios' \| 'android'`) | `ui_phone_*` signed in, `setup_phone_*` signed out, `health_phone_collector_days`, `health_phone_report_*` | Its flows and marks in the rows above: sign-in by button, the onboarding steps, `first_open`, `app_start` and what it waited on, its dials, `resume_recovery`, the side pages |
-| A computer's daemon (that computer's CLI report, `context.surface: 'cli'`) | `request_phone_<action>_<result>`, `request_phone_<action>_error_<kind>`, `phone_delete_error_code_<code>`, `phone_restart_error_code_<code>` | The requests the phone sent that computer (create, resume, restart, delete and the rest, and a typed `message`), which it marks `usageSurface: 'phone'` inside the E2EE payload |
+| A computer's daemon (that computer's CLI report, `context.surface: 'cli'`) | `request_phone_<action>_<result>`, `request_phone_<action>_error_<kind>`, `request_phone_automatic_<poll>_<result>`, `phone_delete_error_code_<code>`, `phone_restart_error_code_<code>` | The requests the phone sent that computer (create, resume, restart, delete and the rest, and a typed `message`), and apart its own fixed polls, all of which it marks `usageSurface: 'phone'` inside the E2EE payload |
 | Margins | `breakdown:release:phone:<release>:<metric>`, `breakdown:platform:phone:<ios\|android>:<metric>` | The phone's own counts by its release and OS, shown above 20 collector days |
 
 Reading the phone apart:
 
 - In a daemon's report `request_app_*` is the Desktop's and the browser's, `request_tool_*` scripts' and
-  agents', `request_unknown_*` any other session's, and `request_automatic_*` every app's fixed polls: the
-  phone's own reads of history, history pages and the Store and model lists are counted there, with the
-  Desktop's, not as `request_phone_*`. The families with no source in their name (`<action>_ok`,
+  agents', `request_unknown_*` any other session's, and `request_automatic_*` every app's fixed polls (reads
+  of history, history pages and the Store and model lists), the Desktop's and the phone's together. The
+  phone's are counted again, apart, as `request_phone_automatic_<action>_<result>`, so the Desktop's and the
+  browser's are `request_automatic_*` less those; a CLI before that counts only the total. The families with
+  no source in their name (`<action>_ok`,
   `<action>_failed`, `delete_error_code_*`, `restart_error_code_*`, `create_error_code_*`, `turns_*`,
   `launch_*`) are every client's together, the phone's included: never add the phone's names to them.
 - The other apps have their own prefixes: the Desktop `ui_desktop_*`, `setup_desktop_*` and

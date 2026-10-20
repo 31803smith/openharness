@@ -4,8 +4,8 @@ import { fileURLToPath } from 'node:url'
 import { expect, it, vi } from 'vitest'
 import { failureKind, launchErrorCode, messageReceipt, productObservation, productUsageIntent, productUsageLaunch, productUsageRequest, productUsageSource } from './productUsageSignals.js'
 import type { MessageOutcome } from './sessionInput.js'
-import { LAUNCH_ERROR_CODES, PRODUCT_USAGE_FLOWS, PRODUCT_USAGE_METRICS, PRODUCT_USAGE_SETUP_METRICS } from './productUsageContract.js'
-import { HEALTH_MEASURES } from './productHealthContract.js'
+import { LAUNCH_ERROR_CODES, PRODUCT_USAGE_AUTOMATIC_ACTIONS, PRODUCT_USAGE_FLOWS, PRODUCT_USAGE_METRICS, PRODUCT_USAGE_SETUP_METRICS } from './productUsageContract.js'
+import { AUTOMATIC_POLL_ACTIONS, HEALTH_MEASURES } from './productHealthContract.js'
 
 it('separates automated polling, tool and app RPCs without inspecting error objects or content', () => {
   const emit = vi.fn()
@@ -40,6 +40,11 @@ it('counts what a person on the phone asked for as the phone\'s, and its polls a
     'request_phone_resume_error_other', 'request_phone_resume_reason_busy',
     'request_automatic_history_ok', 'request_automatic_model_list_ok']))
   expect(names).not.toContain('request_phone_history_ok')
+  // One list of the fixed polls, as the feature counts name them.
+  expect([...AUTOMATIC_POLL_ACTIONS]).toEqual([...PRODUCT_USAGE_AUTOMATIC_ACTIONS])
+  // The phone's polls again, apart from every app's `automatic`; nothing else of the phone's.
+  expect(names.filter(name => name.startsWith('request_phone_automatic_'))).toEqual(['request_phone_automatic_history_started',
+    'request_phone_automatic_history_ok', 'request_phone_automatic_model_list_started', 'request_phone_automatic_model_list_ok'])
   for (const name of names) expect(PRODUCT_USAGE_METRICS).toContain(name)
   const work = vi.fn()
   productUsageIntent('message', 'interactive', 'agent', 'phone', work)
