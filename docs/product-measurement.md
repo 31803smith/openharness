@@ -61,6 +61,36 @@ From the first backend release after v1.2.93, the totals everyone reads leave ou
 2026 the team was 8–30% of the phone's people each day. Compare across this change separately: totals drop by what
 the team and the testers sent. Signed-out setup counts have no account and still include them.
 
+## The phone's counts, apart from the other apps
+
+The phone app's own counts say they are the phone's, and a computer's daemon counts what the phone asks
+it for under names of their own. Nothing else in a report is the phone's:
+
+| Where | Names | What they are |
+| --- | --- | --- |
+| The phone's own reports (`context.surface: 'phone'`, `platform: 'ios' \| 'android'`) | `ui_phone_*` signed in, `setup_phone_*` signed out, `health_phone_collector_days`, `health_phone_report_*` | Its flows and marks in the rows above: sign-in by button, the onboarding steps, `first_open`, `app_start` and what it waited on, its dials, `resume_recovery`, the side pages |
+| A computer's daemon (that computer's CLI report, `context.surface: 'cli'`) | `request_phone_<action>_<result>`, `request_phone_<action>_error_<kind>`, `phone_delete_error_code_<code>`, `phone_restart_error_code_<code>` | The requests the phone sent that computer (create, resume, restart, delete and the rest, and a typed `message`), which it marks `usageSurface: 'phone'` inside the E2EE payload |
+| Margins | `breakdown:release:phone:<release>:<metric>`, `breakdown:platform:phone:<ios\|android>:<metric>` | The phone's own counts by its release and OS, shown above 20 collector days |
+
+Reading the phone apart:
+
+- In a daemon's report `request_app_*` is the Desktop's and the browser's, `request_tool_*` scripts' and
+  agents', `request_unknown_*` any other session's, and `request_automatic_*` every app's fixed polls: the
+  phone's own reads of history, history pages and the Store and model lists are counted there, with the
+  Desktop's, not as `request_phone_*`. The families with no source in their name (`<action>_ok`,
+  `<action>_failed`, `delete_error_code_*`, `restart_error_code_*`, `create_error_code_*`, `turns_*`,
+  `launch_*`) are every client's together, the phone's included: never add the phone's names to them.
+- The other apps have their own prefixes: the Desktop `ui_desktop_*`, `setup_desktop_*` and
+  `health_desktop_*`, hn `ui_tui_*` and `health_tui_*`, the browser `ui_web_*`.
+- A phone older than 1.0.6 (68) marks none of its requests, and they count as `app`.
+- Testers and the team: the phone's own reports from TestFlight (`channel: 'testing'`) are kept under
+  `testing:`, an `@autonomous.ai` account's under `staff:`, and debug builds are not kept. A daemon's report
+  is its computer's: the phone's requests in it go under `staff:` when that computer's account is the
+  team's, but never under `testing:`, even from a TestFlight phone. On Android a Play test track installs as the store release does
+  and cannot be told apart.
+- The counts are UTC-day totals in `product_usage_totals` (`dayUtc`, `metric`, `value`): none names a
+  person, a device or a computer (the 10-day people marks below are kept apart).
+
 Daemon reports combine participating signed-in installations, both environments.
 App reports are surface-specific operation totals; never add them to daemon or relay counts.
 They are not all-user counts and are not directly comparable with earlier account-cohort reports
@@ -302,7 +332,11 @@ Use synthetic data to verify duplicate receipts, transaction rollback/retry, off
 and expiry. Then release CLI, desktop and phone together. An older backend refuses a whole report
 carrying a counter it does not know (a phone page opening, a `request_phone_*` count, a phone
 `sharing: "default"` setup report, a launch code, a first launch's engine, Desktop's Add Phone card or opening, a
-phone's `testing` channel, which it refuses whole), so the backend always goes first. Check that the switch saves and that reports
+phone's `testing` channel, which it refuses whole), so the backend always goes first. A backend
+that keeps a report without the names it does not know yet drops the newer ones instead (the phone's
+`first_open`, `new_account`, `joined_after_leaving` and `app_start` waits; the daemon's delete and restart
+codes and message outcomes), counting `health_<surface>_report_unknown_metric` once per report: lost
+counts, not lost reports, but still lost. Check that the switch saves and that reports
 stop when it is off. Old clients stop contributing individual daily histories when the backend changes;
 the historical reporting command will no longer be a current-usage source.
 
