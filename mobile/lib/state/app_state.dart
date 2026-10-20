@@ -2346,6 +2346,7 @@ class AppNotifier extends ChangeNotifier {
     // few seconds for a `harness link connect` run elsewhere, which a phone's links never come from.
     machine.needsLink = true;
     machine.agentLoadStatus = AgentLoadStatus.needsLink;
+    launchMeasurement?.waiting(LaunchWait.locked);
     // …unless the log already vouches for it and this phone's key is new to it: then the machine
     // has only not read that key yet — see [_redialOnceVouched].
     unawaited(_redialOnceVouched(machine.machine.machineId));
@@ -2541,6 +2542,12 @@ class AppNotifier extends ChangeNotifier {
       settling ? ConnectionStatus.connecting : nextStatus,
       ProductFlow.remoteConnect,
     );
+    // A socket retries only once a dial ended without the machine's welcome (`WsConn`).
+    if (nextStatus == ConnectionStatus.reconnecting &&
+        !machine.needsLink &&
+        _nodeOnlineFromStatus(machine.machine.status) == true) {
+      launchMeasurement?.waiting(LaunchWait.connectFailed);
+    }
     productConnections.status(
       machineId,
       connecting:
@@ -2672,6 +2679,11 @@ class AppNotifier extends ChangeNotifier {
         // (dropping [machinesLoading]); one that answers only after an earlier failure does not.
         if (!machinesLoading) notifyListeners();
       }
+    } catch (_) {
+      if (_authWorkCurrent(revision)) {
+        launchMeasurement?.waiting(LaunchWait.listFailed);
+      }
+      rethrow;
     } finally {
       if (_authWorkCurrent(revision)) _machinesFetchedFor = revision;
       // Said out loud: the list's own notify fires before this, so a flag
@@ -2723,6 +2735,14 @@ class AppNotifier extends ChangeNotifier {
         .toList();
     // A wait for a computer that an earlier launch left open, with the computer now here.
     if (machines.isNotEmpty) unawaited(onboardingMeasurement.computersSeen());
+    // What this launch's wait for a computer is up against, as the list says.
+    if (machines.isEmpty) {
+      launchMeasurement?.waiting(LaunchWait.noComputer);
+    } else if (machines.every(
+      (machine) => _nodeOnlineFromStatus(machine.status) == false,
+    )) {
+      launchMeasurement?.waiting(LaunchWait.offline);
+    }
     final visible = machines.map((machine) => machine.machineId).toSet();
     // A code scanned for a machine this account does not have can never be
     // spent: the pairing screen waits for that machine to show up locked.

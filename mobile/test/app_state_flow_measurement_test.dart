@@ -1,5 +1,8 @@
+import 'dart:async';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:harness_mobile/core/models.dart';
+import 'package:harness_mobile/measurement/launch_measurement.dart';
 import 'package:harness_mobile/measurement/onboarding_measurement.dart';
 import 'package:harness_mobile/measurement/product_measurement.dart';
 
@@ -308,5 +311,105 @@ void main() {
       await settle();
       expect(await sent(rig, 'sign_in'), isEmpty);
     });
+  });
+
+  group('what a launch back to work waited on', () {
+    /// A launch that came back signed in, its computers [machines], counted as the app counts one.
+    Future<ViewerRig> launching(
+      Future<List<Machine>> Function() machines,
+    ) async {
+      final rig = viewerApp(productMeasurement: usage);
+      addTearDown(rig.app.dispose);
+      rig.app.launchMeasurement = LaunchMeasurement(
+        usage,
+        observeLifecycle: false,
+        sinceLaunch: () => const Duration(seconds: 3),
+      );
+      rig.api.onMachines = machines;
+      await rig.app.bootstrap();
+      await settle();
+      return rig;
+    }
+
+    Future<Set<String>> waits(ViewerRig rig) async => {
+      for (final metric in (await sent(rig, 'app_start')).keys)
+        for (final why in LaunchWait.values)
+          if (metric == 'ui_phone_app_start_${why.wire}') why.wire,
+    };
+
+    test('an account with no computer', () async {
+      final rig = await launching(() async => const []);
+      expect(
+        await sent(rig, 'app_start'),
+        containsPair('ui_phone_app_start_started', 1),
+      );
+      expect(await waits(rig), {'no_computer'});
+    });
+
+    test('every computer reported offline', () async {
+      final rig = await launching(
+        () async => [
+          remoteMachine('m', status: 'offline'),
+          remoteMachine('n', status: 'stopped'),
+        ],
+      );
+      expect(await waits(rig), {'offline'});
+    });
+
+    test('one computer still online is not offline', () async {
+      final rig = await launching(
+        () async => [remoteMachine('m', status: 'offline'), remoteMachine('n')],
+      );
+      expect(await waits(rig), isEmpty);
+    });
+
+    test('a list that cannot be read', () async {
+      final rig = await launching(() async => throw StateError('offline'));
+      expect(await waits(rig), {'list_failed'});
+    });
+
+    test('a computer that wants this phone\'s password', () async {
+      final rig = await launching(() async => [remoteMachine('m')]);
+      rig.app.trustSettleRound = const Duration(milliseconds: 20);
+      // Each dial again is refused again: nothing vouches for this phone there.
+      rig.app.onRedialForTest = (id) => scheduleMicrotask(
+        () => rig.app.localFailureForTest(id, 4404, 'NO_PEER_LINK'),
+      );
+      rig.app.localFailureForTest('m', 4404, 'NO_PEER_LINK');
+      for (var i = 0; i < 100 && !rig.app.stateOf('m')!.needsLink; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+      }
+      expect(rig.app.stateOf('m')!.needsLink, isTrue);
+      expect(await waits(rig), {'locked'});
+    });
+
+    test(
+      'a dial to a computer said to be online that fails, until one answers',
+      () async {
+        final rig = await launching(
+          () async => [
+            remoteMachine('m'),
+            remoteMachine('n', status: 'offline'),
+          ],
+        );
+        rig.app.connectionStatusForTest('n', ConnectionStatus.connecting);
+        rig.app.connectionStatusForTest('n', ConnectionStatus.reconnecting);
+        expect(await waits(rig), isEmpty, reason: 'n is offline');
+
+        rig.app.connectionStatusForTest('m', ConnectionStatus.connecting);
+        rig.app.connectionStatusForTest('m', ConnectionStatus.reconnecting);
+        rig.app.connectionStatusForTest('m', ConnectionStatus.connected);
+        expect(await waits(rig), {'connect_failed'});
+        expect(
+          await sent(rig, 'app_start'),
+          containsPair('ui_phone_app_start_ok', 1),
+        );
+
+        // Answered: what follows is not the launch's.
+        rig.app.connectionStatusForTest('m', ConnectionStatus.reconnecting);
+        rig.app.localFailureForTest('m', 4404, 'NO_PEER_LINK');
+        expect(await waits(rig), {'connect_failed'});
+      },
+    );
   });
 }
