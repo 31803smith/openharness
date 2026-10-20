@@ -1588,6 +1588,80 @@ void main() {
     );
   });
 
+  group('slow input log', () {
+    late _RecordingLog log;
+
+    Future<void> typing() async {
+      log = _RecordingLog();
+      final previous = appLog;
+      appLog = log;
+      addTearDown(() => appLog = previous);
+      controlledNow = DateTime(2026, 10, 19, 10);
+      await ready();
+      await session.handleBinary(
+        output(0, utf8.encode(r'$ '), keyframe: true, cols: 100, rows: 30),
+      );
+      session.terminal.onOutput?.call('a');
+      await pumpEventQueue();
+      expect(binarySent, hasLength(1));
+    }
+
+    List<String> slow() =>
+        log.lines.where((line) => line.contains('input ')).toList();
+
+    test('an echo that comes back late is logged with the wait', () async {
+      await typing();
+      controlledNow = controlledNow!.add(const Duration(seconds: 9));
+      await session.handleBinary(output(1, utf8.encode('a')));
+      await pumpEventQueue();
+
+      expect(slow(), [
+        'terminal input answered late machine=machine-1 agent=agent-1 stream=$streamId '
+            'link=null waitedMs=9000 by=output',
+      ]);
+    });
+
+    test('a prompt echo is not logged', () async {
+      await typing();
+      controlledNow = controlledNow!.add(const Duration(milliseconds: 300));
+      await session.handleBinary(output(1, utf8.encode('a')));
+      await pumpEventQueue();
+
+      expect(slow(), isEmpty);
+    });
+
+    test(
+      'an idle sync after unechoed input is not logged inside its cadence',
+      () async {
+        await typing();
+        controlledNow = controlledNow!.add(const Duration(seconds: 8));
+        await session.handleBinary(
+          TerminalBinaryFrame(
+            kind: TerminalBinaryKind.sync,
+            streamId: streamId,
+            seq: 1,
+            bytes: Uint8List(0),
+            compressed: false,
+          ),
+        );
+        await pumpEventQueue();
+
+        expect(slow(), isEmpty);
+      },
+    );
+
+    test('a stream timeout with typing still waiting is logged', () async {
+      await typing();
+      controlledNow = controlledNow!.add(const Duration(seconds: 16));
+      session.transportLost();
+
+      expect(slow(), [
+        'terminal input unanswered machine=machine-1 agent=agent-1 stream=$streamId '
+            'link=null waitedMs=16000 until=transport_lost',
+      ]);
+    });
+  });
+
   group('composer', () {
     /// The `message` frames this session put on the wire.
     List<Map<String, dynamic>> messages() => [
