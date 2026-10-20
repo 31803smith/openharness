@@ -12,8 +12,22 @@ enum OnboardingMark {
   /// A sign-in went through on another button than the first one tried in this app run.
   switched('switched', {ProductFlow.signIn}),
 
-  /// The sign-in created the account: minutes old, its first Harness sign-in anywhere.
-  newAccount('new_account', {ProductFlow.signIn}),
+  /// The sign-in created the account: minutes old, its first Harness sign-in anywhere. Under the steps
+  /// after it as well, each counted once in such a sign-in, so the new people's funnel reads apart
+  /// from everyone who signs in again ([newAccountOk] for how it ended).
+  newAccount('new_account', {
+    ProductFlow.signIn,
+    ProductFlow.computerWait,
+    ProductFlow.sessionOpen,
+    ProductFlow.firstMessage,
+  }),
+
+  /// The step ended `ok` in a sign-in that created the account ([newAccount]).
+  newAccountOk('new_account_ok', {
+    ProductFlow.computerWait,
+    ProductFlow.sessionOpen,
+    ProductFlow.firstMessage,
+  }),
 
   /// The step started in an app run that did not sign in: reopened mid-step, not a new start.
   resumed('resumed', {
@@ -83,6 +97,14 @@ class OnboardingMeasurement {
   ProductFlow? _firstMethod;
   bool _troubled = false;
 
+  /// This sign-in created the account ([accountCreated]).
+  bool _newAccount = false;
+
+  /// The steps of this sign-in that were counted, and those of them that ended `ok`: the profile can
+  /// be read after either, and a step never counted (it ended before sharing was known) marks nothing.
+  final _begun = <ProductFlow>{};
+  final _ok = <ProductFlow>{};
+
   /// A sign-in attempt by [method] ended with [outcome]. Kept in RAM for this app run only: before
   /// an account there is nobody's choice to ask, so it is counted — as [OnboardingMark.retried] or
   /// [OnboardingMark.switched] — only with a sign-in that goes through ([signedIn]).
@@ -128,7 +150,12 @@ class OnboardingMeasurement {
       _rememberWaiting(false);
     }
     _waiting.remove(flow);
-    _running.remove(flow)?.call(outcome);
+    final running = _running.remove(flow);
+    running?.call(outcome);
+    if (running != null && outcome == ProductOutcome.ok) {
+      _ok.add(flow);
+      if (_newAccount) _markNew(flow, OnboardingMark.newAccountOk);
+    }
   }
 
   /// The account's profile, read after a sign-in in this run: one created by it ([newAccountWithin])
@@ -140,7 +167,22 @@ class OnboardingMeasurement {
     if (age > newAccountWithin || age < -newAccountWithin) return;
     if (!_marked.add((ProductFlow.signIn, OnboardingMark.newAccount))) return;
     _marks.add((ProductFlow.signIn, OnboardingMark.newAccount));
+    _newAccount = true;
+    // Steps counted — or ended `ok` — before the profile was read are the new account's too.
+    for (final flow in _begun) {
+      _markNew(flow, OnboardingMark.newAccount);
+    }
+    for (final flow in _ok) {
+      _markNew(flow, OnboardingMark.newAccountOk);
+    }
     _admit();
+  }
+
+  /// [what] of [flow], once per sign-in, for a step of a new account ([OnboardingMark.newAccount],
+  /// [OnboardingMark.newAccountOk]); [_admit] counts it.
+  void _markNew(ProductFlow flow, OnboardingMark what) {
+    if (!what.flows.contains(flow) || !_marked.add((flow, what))) return;
+    _marks.add((flow, what));
   }
 
   /// The account's computers have been read and it has at least one. A wait for a computer that a
@@ -211,6 +253,9 @@ class OnboardingMeasurement {
     _clearWaiting();
     _seen.clear();
     _marked.clear();
+    _begun.clear();
+    _ok.clear();
+    _newAccount = false;
     _signedInThisRun = false;
     _firstMethod = null;
     _troubled = false;
@@ -228,7 +273,9 @@ class OnboardingMeasurement {
     for (final MapEntry(key: flow, value: step) in [..._waiting.entries]) {
       _waiting.remove(flow);
       _running[flow] = _usage.begin(flow, elapsed: step.watch.elapsed);
+      _begun.add(flow);
       if (step.resumed) _usage.mark(flow, OnboardingMark.resumed.wire);
+      if (_newAccount) _markNew(flow, OnboardingMark.newAccount);
     }
     for (final MapEntry(key: flow, value: took) in [..._signedIn.entries]) {
       _signedIn.remove(flow);

@@ -553,6 +553,118 @@ void main() {
       );
     });
   });
+
+  group('leaving the screen', () {
+    // iOS suspends an app within seconds of leaving the screen and may end it unannounced: a count
+    // still in RAM then is gone. On 2026-10-19 the signed-out screen counted 17 sign-ins and the
+    // accounts 9.
+    test('sends what both channels queued, now', () async {
+      // Signed out: a sign-in's count waits on the setup channel.
+      await usage.setSignedOutSharing(true);
+      usage.begin(ProductFlow.signIn)(ProductOutcome.ok);
+      await usage.sendBeforeBackground();
+      expect(
+        setup.single['counters'],
+        containsPair('setup_desktop_sign_in_ok', 1),
+      );
+      // Signed in: the account's counts.
+      await account();
+      reports.clear();
+      usage.begin(ProductFlow.remoteConnect)(ProductOutcome.ok);
+      usage.begin(ProductFlow.appStart)(ProductOutcome.ok);
+      await usage.sendBeforeBackground();
+      expect(
+        reports.expand((r) => (r['counters'] as Map).keys),
+        containsAll([
+          'ui_desktop_remote_connect_ok',
+          'ui_desktop_app_start_ok',
+        ]),
+      );
+    });
+
+    test(
+      'asks an account whose choice is unread, so what waits on it is counted',
+      () async {
+        final waited = <String>[];
+        usage.addListener(() {
+          if (usage.sharing && waited.isEmpty) {
+            waited.add('admitted');
+            usage.begin(ProductFlow.appStart)(ProductOutcome.ok);
+          }
+        });
+        usage.account(
+          'PRIVATE_ACCOUNT',
+          choice: () async => choice,
+          send: (r) async {
+            reports.add(jsonDecode(jsonEncode(r)));
+            return {'accepted': true};
+          },
+        );
+        expect(usage.sharing, isFalse);
+        await usage.sendBeforeBackground();
+        expect(waited, ['admitted']);
+        expect(
+          reports.expand((r) => (r['counters'] as Map).keys),
+          contains('ui_desktop_app_start_ok'),
+        );
+      },
+    );
+
+    test('sends nothing when nothing is queued', () async {
+      await account();
+      reports.clear();
+      var reads = 0;
+      usage.account(
+        'PRIVATE_OTHER',
+        choice: () async {
+          reads++;
+          return choice;
+        },
+        send: (r) async {
+          reports.add(r);
+          return {'accepted': true};
+        },
+      );
+      await usage.flush();
+      reads = 0;
+      await usage.sendBeforeBackground();
+      expect(reports, isEmpty);
+      expect(reads, 0);
+    });
+
+    test(
+      'a refused report waits for the next minute, not another try at once',
+      () async {
+        await account();
+        fail = true;
+        reports.clear();
+        usage.begin(ProductFlow.remoteConnect)(ProductOutcome.ok);
+        await usage.sendBeforeBackground();
+        expect(reports, hasLength(1));
+        fail = false;
+        await usage.flush();
+        expect(reports, hasLength(2));
+        expect(reports.last['id'], reports.first['id']);
+      },
+    );
+
+    test('a slow report stops the wait at its bound', () async {
+      final answer = Completer<Map<String, dynamic>>();
+      usage.account(
+        'PRIVATE_ACCOUNT',
+        choice: () async => choice,
+        send: (r) => answer.future,
+      );
+      await Future<void>.delayed(Duration.zero);
+      usage.begin(ProductFlow.remoteConnect)(ProductOutcome.ok);
+      final watch = Stopwatch()..start();
+      await usage.sendBeforeBackground(
+        within: const Duration(milliseconds: 50),
+      );
+      expect(watch.elapsed, lessThan(const Duration(seconds: 2)));
+      answer.complete({'accepted': true});
+    });
+  });
 }
 
 /// A kept choice that cannot be read: an opt-out must never come back on because of it.

@@ -476,6 +476,102 @@ void main() {
       await usage.flush();
       expect(counters('ui_phone_sign_in_new_account'), isEmpty);
     });
+
+    /// The marks under the steps after the sign-in, by name.
+    Map<String, dynamic> newAccountSteps() => {
+      for (final MapEntry(:key, :value) in counters().entries)
+        if (key.contains('new_account') && !key.startsWith('ui_phone_sign_in_'))
+          key: value,
+    };
+
+    test('marks each step of the new account, and how it ended', () async {
+      await signIn();
+      signedInHere();
+      onboarding.accountCreated(
+        now.subtract(const Duration(minutes: 1)),
+        now: now,
+      );
+      onboarding.start(ProductFlow.computerWait);
+      onboarding.end(ProductFlow.computerWait, ProductOutcome.ok);
+      onboarding.start(ProductFlow.sessionOpen);
+      onboarding.end(ProductFlow.sessionOpen, ProductOutcome.ok);
+      onboarding.start(ProductFlow.firstMessage);
+      onboarding.end(ProductFlow.firstMessage, ProductOutcome.cancelled);
+      await onboarding.askNotifications(() async => true);
+      // A step asked for again in the same sign-in is the same step.
+      onboarding.start(ProductFlow.computerWait);
+      await usage.flush();
+      expect(newAccountSteps(), {
+        'ui_phone_computer_wait_new_account': 1,
+        'ui_phone_computer_wait_new_account_ok': 1,
+        'ui_phone_session_open_new_account': 1,
+        'ui_phone_session_open_new_account_ok': 1,
+        'ui_phone_first_message_new_account': 1,
+      });
+    });
+
+    test('marks the steps counted before the profile was read', () async {
+      await signIn();
+      signedInHere();
+      onboarding.start(ProductFlow.computerWait);
+      onboarding.end(ProductFlow.computerWait, ProductOutcome.ok);
+      onboarding.start(ProductFlow.sessionOpen);
+      onboarding.accountCreated(
+        now.subtract(const Duration(minutes: 1)),
+        now: now,
+      );
+      onboarding.end(ProductFlow.sessionOpen, ProductOutcome.failed);
+      await usage.flush();
+      expect(newAccountSteps(), {
+        'ui_phone_computer_wait_new_account': 1,
+        'ui_phone_computer_wait_new_account_ok': 1,
+        'ui_phone_session_open_new_account': 1,
+      });
+    });
+
+    test('marks nothing for an account signing in again', () async {
+      await signIn();
+      signedInHere();
+      onboarding.accountCreated(
+        now.subtract(const Duration(days: 3)),
+        now: now,
+      );
+      onboarding.start(ProductFlow.sessionOpen);
+      onboarding.end(ProductFlow.sessionOpen, ProductOutcome.ok);
+      await usage.flush();
+      expect(counters('ui_phone_session_open_ok'), hasLength(1));
+      expect(newAccountSteps(), isEmpty);
+    });
+
+    test('marks nothing for a step that was never counted', () async {
+      // Sharing not known yet: a step that ends before then is not counted, nor marked.
+      signedInHere();
+      onboarding.accountCreated(
+        now.subtract(const Duration(minutes: 1)),
+        now: now,
+      );
+      onboarding.start(ProductFlow.computerWait);
+      onboarding.end(ProductFlow.computerWait, ProductOutcome.ok);
+      await signIn();
+      await usage.flush();
+      expect(counters('ui_phone_computer_wait'), isEmpty);
+      expect(counters('ui_phone_sign_in_new_account'), hasLength(1));
+    });
+
+    test('a sign-out starts the next sign-in afresh', () async {
+      await signIn();
+      signedInHere();
+      onboarding.accountCreated(
+        now.subtract(const Duration(minutes: 1)),
+        now: now,
+      );
+      onboarding.reset();
+      signedInHere();
+      onboarding.start(ProductFlow.sessionOpen);
+      onboarding.end(ProductFlow.sessionOpen, ProductOutcome.ok);
+      await usage.flush();
+      expect(newAccountSteps(), isEmpty);
+    });
   });
 
   test('every mark is in the backend vocabulary under each step it names', () {

@@ -155,6 +155,17 @@ it('measures a person\'s message by what became of it, under its source, once', 
   }
 })
 
+it('names a stop the machine could not confirm, rather than unlisted', () => {
+  // lib/stopAgentService.ts: `agent_delete` is Stop, and STOP_UNCONFIRMED is its own refusal.
+  const emit = vi.fn()
+  productUsageRequest('agent_delete', emit, () => 0, 'phone')('STOP_UNCONFIRMED', undefined, false)
+  const names: string[] = emit.mock.calls.flat()
+  expect(names).toContain('delete_error_code_stop_unconfirmed')
+  expect(names).toContain('phone_delete_error_code_stop_unconfirmed')
+  expect(names.filter(name => name.endsWith('_unlisted'))).toEqual([])
+  for (const name of names.filter(name => name.includes('error_code_'))) expect(PRODUCT_USAGE_METRICS).toContain(name)
+})
+
 it('counts every delete or restart refusal by its code, whatever its kind, so each family adds up to `_failed`', () => {
   const emit = vi.fn()
   productUsageRequest('agent_delete', emit, () => 0, 'phone')('DELETE_FAILED', undefined, false)

@@ -6338,7 +6338,7 @@ class AppNotifier extends ChangeNotifier {
       'gridModel': ?model?.id,
       'gridName': ?model?.grid,
     };
-    return _create(
+    final created = _create(
       machineId,
       choices,
       swarmId: swarmId,
@@ -6346,6 +6346,15 @@ class AppNotifier extends ChangeNotifier {
       newDeskTab: newDeskTab,
       attempt: creation,
     );
+    if (task == null || task.isEmpty) return created;
+    // A task typed into New Harness is a message sent to a session too: the onboarding's first
+    // message, if it is still waiting for one (`terminal_page.dart` counts every other send).
+    return created.then((error) {
+      if (error == null) {
+        onboardingMeasurement.end(ProductFlow.firstMessage, ProductOutcome.ok);
+      }
+      return error;
+    });
   }
 
   /// Clones on their way or still to be confirmed, by machine and source agent — see [cloneAgent].
@@ -7407,15 +7416,32 @@ class AppNotifier extends ChangeNotifier {
 
   /// Deletes an agent via `agent_delete`. Returns null on success, or an error message to show
   /// inline in the caller's dialog.
+  ///
+  /// A refusal the machine says is worth asking again (`retryable`: `IDENTITY_UNAVAILABLE`, its
+  /// conversation file changing under the lookup) is asked again after [stopRetryDelays], before it
+  /// is shown. On 2026-10-19, 3 of the phone's 4 stops were refused as `other`, the kind this code
+  /// falls under. Any other refusal is shown at once — `STOP_UNCONFIRMED` asks for a look at the
+  /// harness first, not another stop.
   Future<String?> deleteAgent(String machineId, String agentId) async {
     final machine = machineStates[machineId];
     if (machine == null) return 'Machine not found';
     Map<String, dynamic> result;
-    try {
-      result = await _conn(machineId)
-          .request('agent_delete', payload: {'agentId': agentId});
-    } catch (error) {
-      return 'Delete failed: $error';
+    for (var attempt = 0; ; attempt++) {
+      try {
+        result = await _conn(machineId)
+            .request('agent_delete', payload: {'agentId': agentId});
+      } catch (error) {
+        return 'Delete failed: $error';
+      }
+      if (result['error'] is! String ||
+          result['retryable'] != true ||
+          attempt >= stopRetryDelays.length) {
+        break;
+      }
+      await Future<void>.delayed(stopRetryDelays[attempt]);
+      if (_disposed || machineStates[machineId] == null) {
+        return 'Machine not found';
+      }
     }
     final error = result['error'];
     if (error is String) return 'Delete failed: $error';
@@ -7426,6 +7452,14 @@ class AppNotifier extends ChangeNotifier {
     notifyListeners();
     return null;
   }
+
+  /// How long [deleteAgent] waits before asking again after a refusal the machine marks `retryable`,
+  /// one entry per retry.
+  @visibleForTesting
+  List<Duration> stopRetryDelays = const [
+    Duration(seconds: 1),
+    Duration(seconds: 2),
+  ];
 
   /// Deletes on their way, by machine and agent — what a second press joins rather than reviewing
   /// the same harness twice.
@@ -10543,6 +10577,7 @@ class AppNotifier extends ChangeNotifier {
     }
     // The agents this run learned between lists, for the next launch — see [_keepMachineCache].
     _keepMachineCache();
+    _sendMeasurementBeforeBackground();
   }
 
   /// When the app last went into the background ([handleAppPaused]); null while it is in front.
@@ -10600,8 +10635,25 @@ class AppNotifier extends ChangeNotifier {
 
   /// The app lost the foreground for a moment — the app switcher, a system sheet. Nothing stops;
   /// only the machine cache is written ([_keepMachineCache]), because the switcher is where an app
-  /// is closed, and closing it there need not pass through [handleAppPaused] first.
-  void handleAppInactive() => _keepMachineCache();
+  /// is closed, and closing it there need not pass through [handleAppPaused] first. The queued
+  /// counts go now too, for the same reason ([_sendMeasurementBeforeBackground]).
+  void handleAppInactive() {
+    _keepMachineCache();
+    _sendMeasurementBeforeBackground();
+  }
+
+  /// Whether leaving the screen sends the queued product counts ([ProductMeasurement
+  /// .sendBeforeBackground]). Off under test, where a report would go to the network; a test that
+  /// passes its own measurement turns it on.
+  @visibleForTesting
+  bool sendMeasurementBeforeBackground = !kUnderTest;
+
+  /// Counts kept in RAM are lost when iOS ends a suspended app; the minute's report may never come.
+  /// Never awaited: leaving the screen waits for nothing.
+  void _sendMeasurementBeforeBackground() {
+    if (!sendMeasurementBeforeBackground) return;
+    unawaited(productMeasurement.sendBeforeBackground());
+  }
 
   /// How often a phone with no machine connected reads the machine list again. Every push
   /// (`machines_changed`, `device_keys_changed`) reaches the phone over a machine's socket; with none

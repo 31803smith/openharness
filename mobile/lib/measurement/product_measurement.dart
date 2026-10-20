@@ -346,6 +346,39 @@ class ProductMeasurement extends ChangeNotifier {
     }
   }
 
+  /// Sends what is queued on either channel, at most [within]: the app is leaving the screen, where iOS
+  /// suspends it within seconds and may end it unannounced, and every count still in RAM goes with it.
+  /// On 2026-10-19 the phone's signed-out screen counted 17 sign-ins that went through and the
+  /// accounts counted 9; counts lost this way are the likely gap, since a sign-in is often followed
+  /// by leaving for the computer to install Harness, before the minute's report. An account whose
+  /// sharing choice is still unread is asked first, which also counts what waits on that answer
+  /// (`OnboardingMeasurement`).
+  Future<void> sendBeforeBackground({
+    Duration within = const Duration(seconds: 2),
+  }) async {
+    final watch = Stopwatch()..start();
+    for (var round = 0; round < 3; round++) {
+      final unread =
+          round == 0 &&
+          _account != null &&
+          _readChoice != null &&
+          _enabled == null;
+      final queued =
+          (sharing && _queued('ui')) || (_setupAllowed && _queued('setup'));
+      if (_disposed || !(unread || queued) || watch.elapsed >= within) return;
+      try {
+        await flush().timeout(within - watch.elapsed);
+      } on TimeoutException {
+        return;
+      }
+      // A report a flush leaves pending was refused or lost: it waits for the next timer, which
+      // keeps retries to one a minute, rather than going again at once.
+      if (_pending.isNotEmpty) {
+        return;
+      }
+    }
+  }
+
   bool _queued(String channel) =>
       _pending.containsKey(channel) ||
       _days.keys.any((key) => key.startsWith('$channel:'));

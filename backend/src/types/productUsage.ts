@@ -43,6 +43,11 @@ export const PRODUCT_USAGE_LONG_MEASURES = ['1m_to_5m', '5m_to_15m', '15m_to_1h'
  * while 91% of the phone's people had a computer on the same account those days). */
 export const PRODUCT_USAGE_ONBOARDING_MARKS = ['ui_phone_sign_in_retried', 'ui_phone_sign_in_switched',
   'ui_phone_sign_in_new_account',
+  // The steps after a sign-in that made its account: started (counted) and ended `ok` there, so the new
+  // people's funnel reads apart from everyone signing in again (mobile/lib/measurement/onboarding_measurement.dart).
+  'ui_phone_computer_wait_new_account', 'ui_phone_computer_wait_new_account_ok',
+  'ui_phone_session_open_new_account', 'ui_phone_session_open_new_account_ok',
+  'ui_phone_first_message_new_account', 'ui_phone_first_message_new_account_ok',
   'ui_phone_computer_wait_resumed', 'ui_phone_computer_wait_not_you',
   'ui_phone_computer_wait_link_shared', 'ui_phone_computer_wait_joined_after_leaving',
   'ui_phone_session_open_resumed', 'ui_phone_session_open_blocked_password',
@@ -134,6 +139,9 @@ export const LAUNCH_ERROR_CODES = [
   'restart_failed', 'restart_unsupported_backend', 'retarget_unsupported_backend', 'fork_on_grid_unsupported',
   'no_active_process', 'opencode_sqlite_missing', 'unavailable', 'missing_name', 'missing_update',
   'invalid_close_request', 'invalid_delete_request', 'close_failed', 'delete_failed',
+  // A Stop (`agent_delete`) the machine could not confirm, or whose harness changed while it saved
+  // (lib/stopAgentService.ts): 3 of the phone's 4 stops on 2026-10-19 were refused as `other`, the kind it falls under.
+  'stop_unconfirmed',
   // A guest on a machine shared with it (core/guestPolicy.ts, core/agents/guestCreate.ts, services/guestLaunches.ts).
   'guest_not_allowed', 'guest_unsupported', 'guest_harness', 'guest_unavailable', 'guest_helper_required',
   'guest_engine_unsupported', 'guest_relay_failed', 'guest_folder_unavailable', 'guest_invalid', 'guest_helper_missing',

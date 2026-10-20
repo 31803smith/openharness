@@ -53,6 +53,52 @@ void main() {
     return total;
   }
 
+  group('leaving the screen', () {
+    // iOS suspends an app within seconds and may end it unannounced; counts still in RAM go with
+    // it. The once-a-minute report is not waited for.
+
+    /// A sharing phone that counted a dial and has not reported it yet; [send] as given.
+    Future<(ViewerRig, int)> dialled({required bool send}) async {
+      final rig = await sharing({'m': []});
+      final before = rig.api.usageReports.length;
+      rig.app.connectionStatusForTest('m', ConnectionStatus.connecting);
+      rig.app.connectionStatusForTest('m', ConnectionStatus.connected);
+      rig.app.sendMeasurementBeforeBackground = send;
+      return (rig, before);
+    }
+
+    Iterable<Object?> sentSince(ViewerRig rig, int before) => rig
+        .api
+        .usageReports
+        .skip(before)
+        .expand((report) => (report['counters'] as Map).keys);
+
+    test(
+      'sends the queued counts when the app goes to the background',
+      () async {
+        final (rig, before) = await dialled(send: true);
+        rig.app.handleAppPaused();
+        await pumpEventQueue();
+        expect(sentSince(rig, before), contains('ui_phone_remote_connect_ok'));
+      },
+    );
+
+    test('and when it loses the foreground (the app switcher)', () async {
+      final (rig, before) = await dialled(send: true);
+      rig.app.handleAppInactive();
+      await pumpEventQueue();
+      expect(sentSince(rig, before), contains('ui_phone_remote_connect_ok'));
+    });
+
+    test('sends nothing when that is switched off', () async {
+      final (rig, before) = await dialled(send: false);
+      rig.app.handleAppPaused();
+      rig.app.handleAppInactive();
+      await pumpEventQueue();
+      expect(sentSince(rig, before), isEmpty);
+    });
+  });
+
   group('dials', () {
     test('a socket coming back by itself is the app\'s own', () async {
       final rig = await sharing({'m': []});
