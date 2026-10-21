@@ -190,6 +190,7 @@ import { createGuestCreate } from './agents/guestCreate.js'
 import { createStoreLink } from './storeLink.js'
 import { createModelsLink } from './modelsLink.js'
 import { createRecapsLink } from './recapsLink.js'
+import { HOSTED_JEV_PATH } from '../lib/jev/jevClient.js'
 import { createAgentCleanupLink } from './agentCleanupLink.js'
 import { AGENT_CLEANUP_FALLBACKS, RECAPS_FALLBACKS, TERMINALS_OFF } from './api.js'
 import { answerAgentQuery } from './agentQueries.js'
@@ -1076,8 +1077,9 @@ async function runForeground(session: AuthSession | null): Promise<void> {
   const cableWatchingLocal = (): boolean => dialWatching
 
   const deviceIsWatching = (): boolean => backend.hasCommander() || cableWatchingLocal() || wifiCore.connected()
-  /** Anyone who can DRAW a question: a device, a cabled dial, or a desktop window on this computer. */
-  const someoneCanAnswer = (): boolean => deviceIsWatching() || backend.hasLocalClient()
+  /** Anyone who can DRAW a question: a device, a cabled dial, a desktop window on this computer, or an app away
+   *  from this desk (the phone), which is sent it over the relay (core/questions.ts). */
+  const someoneCanAnswer = (): boolean => deviceIsWatching() || backend.hasLocalClient() || backend.hasRemoteApp()
   // A page a program in a harness's pane opens (Claude Code's `/login`) goes to the phone typing there, and the
   // sign-in the phone catches comes back to the program (core/terminals/browser.ts, lib/browserShim.ts).
   const browser = createBrowser({
@@ -1110,6 +1112,7 @@ async function runForeground(session: AuthSession | null): Promise<void> {
     },
     streamingAvailable: terminalBackends.some((backend) => !!backend.openStream),
     diagnostic: (event, fields) => console.log(`[terminal-stream] ${event}`, fields),
+    typingTrace: env.TYPING_TRACE ? (line) => console.log(`[typing] ${line}`) : undefined,
     // The keystroke prewarm (grid-reads-without-waking issue 03): typing into a pane whose agent runs on
     // a sleeping grid starts that grid while the person types. Here, in the daemon's own input path, so
     // an older desktop and typing from a phone get it too; an agent on its own login has no `grid`.
@@ -1309,6 +1312,8 @@ async function runForeground(session: AuthSession | null): Promise<void> {
   cloudAgents = createCloudAgents({ port: () => ports.cloud, clients: backend, openQuestions: asking.openQuestions, deviceInput })
   const cloud = cloudAgents
   backend.questionProvider = createQuestionResponse((payload) => cloud.answer(payload) ?? asking.answer(payload))
+  // An app away from this desk is told what is still being asked as it connects (core/questions.ts).
+  backend.onRemoteAppJoined = () => asking.reannounceRemote()
   const openQuestions = asking.openQuestions
   // The agents on this machine (core/agents/list.ts), in the socket's frames, with its monitor readings.
   backend.agentsProvider = createAgentList({
@@ -1332,6 +1337,7 @@ async function runForeground(session: AuthSession | null): Promise<void> {
   // Recaps: turn cards, notifications, cut by the recaps (services/recaps.ts) from the lifecycle the core tells (core/turns/recaps.ts).
   const recaps = createRecaps({
     port: () => ports.recaps, turnActivity, clients: backend, deviceIsWatching, cableWatchingLocal, sessionTurnOpen,
+    remoteApp: () => backend.hasRemoteApp(),
     bySession: (sessionId) => registry.bySession(sessionId), resolve: (id) => registry.resolve(id), live: () => registry.list(),
     stopped: (agentId) => stoppedAgents.get(agentId),
     orchestratorRoleOf: (agentId) => ports.orchestrator?.roleOf(agentId) ?? null,
@@ -1441,7 +1447,8 @@ async function runForeground(session: AuthSession | null): Promise<void> {
   if (outOfProcess.has('wifi')) ports.wifi = wifiLink.port
   // What the core tells the recaps in their own process, and reads back from what they said (core/recapsLink.ts).
   const recapsLink = createRecapsLink({ notify: (frame, opts) => serviceLinks.notify('recaps', frame, opts), buffered: () => serviceLinks.buffered('recaps'),
-    call: (type, payload) => serviceLinks.call('recaps', type, payload), clients: coreApi.clients, lastTurn: coreApi.transcripts.lastTurn })
+    call: (type, payload) => serviceLinks.call('recaps', type, payload), clients: coreApi.clients, lastTurn: coreApi.transcripts.lastTurn,
+    jev: (body) => proxyBackend('POST', HOSTED_JEV_PATH, body) })
   // What the core tells the agent cleanup in its own process, and answers it (core/agentCleanupLink.ts).
   const agentCleanupLink = createAgentCleanupLink(coreApi, (frame, opts) => serviceLinks.notify('agentCleanup', frame, opts))
   const usageLink = createUsageLink({ call: payload => ports.usage?.read(payload.target as AgentUsageTarget) ?? Promise.resolve({}), changed: agentEvents.onTokenUsageChanged })

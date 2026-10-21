@@ -36,6 +36,7 @@ import type { FormCommand, FormResult } from './windowForm.js'
 import type { PetStore } from './pets/store.js'
 import type { MachineFleet } from './machineFleet.js'
 import type { ReviewedAnswer, AnswerReceipt } from './questionInbox.js'
+import { isTier, type Tier } from '../lib/notifyTier.js'
 
 /** One completed turn's recap, as the mirror keeps them. */
 
@@ -901,8 +902,8 @@ export function cableStepFor(
  * kind reaches the cable the day it reaches the socket.
  */
 export function cableEventFor(
-  frame: { type?: string; agentId?: string; payload?: { kind?: string; text?: string; recap?: string; subagent?: unknown; restored?: unknown; update?: unknown; fullText?: unknown; failed?: unknown } },
-): { kind: 'processing' | 'done' | 'summary' | 'error'; agentId: string; text: string; recap: string; subagent: boolean; update?: string; fullText?: string; failed?: boolean } | null {
+  frame: { type?: string; agentId?: string; payload?: { kind?: string; text?: string; recap?: string; subagent?: unknown; restored?: unknown; update?: unknown; fullText?: unknown; failed?: unknown; tier?: unknown } },
+): { kind: 'processing' | 'done' | 'summary' | 'error'; agentId: string; text: string; recap: string; subagent: boolean; update?: string; fullText?: string; failed?: boolean; tier?: Tier } | null {
   if (frame.type !== 'commander_event' || !frame.agentId) return null
   const kind = frame.payload?.kind
   if (kind !== 'processing' && kind !== 'done' && kind !== 'summary' && kind !== 'error') return null
@@ -911,10 +912,13 @@ export function cableEventFor(
   const silent = frame.payload?.subagent === true || frame.payload?.restored === true
   const update = frame.payload?.update
   const fullText = frame.payload?.fullText
+  // `tier`: how loudly the turn tells, decided once by the recaps (services/recaps.ts) for every screen.
+  const tier = frame.payload?.tier
   return { kind, agentId: frame.agentId, text: frame.payload?.text ?? '', recap: frame.payload?.recap ?? '', subagent: silent,
     ...(kind === 'processing' && typeof update === 'string' ? { update } : {}),
     ...(kind === 'summary' && frame.payload?.failed === true ? { failed: true } : {}),
-    ...(kind === 'summary' && typeof fullText === 'string' && fullText ? { fullText } : {}) }
+    ...(kind === 'summary' && typeof fullText === 'string' && fullText ? { fullText } : {}),
+    ...(kind === 'summary' && isTier(tier) ? { tier } : {}) }
 }
 
 /**
