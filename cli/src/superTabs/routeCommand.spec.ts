@@ -92,6 +92,9 @@ describe('routeTask', () => {
     const fresh = await routeTask({ ...input, assessment: { ...input.assessment, difficulty: 'high' } }, scoped({ jev: { ok: true, value: { unavailable: 'BUSY' } } }), where as never, opener(), () => 'op')
     expect(fresh).toMatchObject({ pick: { kind: 'new', engine: 'claude', model: 'opus', effort: 'high' } })
     expect(fresh.next).toContain('"engine":"claude","model":"opus","effort":"high","routeDecisionId":"d1"')
+    // Without a branch the agent starts from the default one, and the hint says how to choose another.
+    expect(fresh.next).toContain('"branchRef":"refs/remotes/origin/BRANCH"')
+    expect(fresh.next).toContain('default branch, fetched first')
     // A complete start: every field its schema requires, with the defaults the help gives.
     const hint = JSON.parse(/start OPERATION_ID (\{.*\}), then/.exec(fresh.next as string)![1]!)
     expect(hint).toEqual({ conversationId: 'g1', name: 'Builder', cwd: '/absolute/repo/on/that/machine', worktree: true,
