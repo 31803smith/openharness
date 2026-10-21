@@ -1163,6 +1163,8 @@ class AppNotifier extends ChangeNotifier {
     _phoneOfferAway = null;
     _missedWhileAway = null;
     _phoneOfferAfterWorkAsked = false;
+    _phoneOfferAfterWorkUnanswered = 0;
+    _accountHasPhone = false;
     _closeOwnerMemories();
     _stopMachineRecovery();
     api.resetAccountCache();
@@ -7491,6 +7493,17 @@ class AppNotifier extends ChangeNotifier {
   /// [_offerPhoneAfterWork] has been asked in this run, for this account: one devices read a run.
   bool _phoneOfferAfterWorkAsked = false;
 
+  /// Device reads [_offerPhoneAfterWork] has had in this run that gave no list to judge by. An
+  /// older CLI with no device list answers none at every finished turn, so it stops asking after
+  /// [_phoneOfferUnansweredReads] rather than read at each one for the rest of the run.
+  int _phoneOfferAfterWorkUnanswered = 0;
+  static const _phoneOfferUnansweredReads = 3;
+
+  /// A devices read in this run found a phone or a browser on this account: no card, and no read to
+  /// find that out again at each return to the window ([_offerPhoneAway]) — each one reaches the
+  /// backend through the daemon, for the many accounts that already have a phone.
+  bool _accountHasPhone = false;
+
   /// The card for a computer that has never shown it ([_phoneOfferSeen]), on an account with no phone
   /// or browser yet: once, after one of the person's own harnesses here finished a turn — beside work
   /// that just went well, not over a launch.
@@ -7501,6 +7514,7 @@ class AppNotifier extends ChangeNotifier {
   /// showed the first card, or opened Add Phone, has seen it.
   Future<void> _offerPhoneAfterWork() async {
     if (_phoneOfferAfterWorkAsked ||
+        _accountHasPhone ||
         _phoneOffer ||
         viewer != null ||
         !signedIn ||
@@ -7510,23 +7524,26 @@ class AppNotifier extends ChangeNotifier {
     _phoneOfferAfterWorkAsked = true;
     final revision = _authRevision;
     if (await _phoneOfferSeen()) return;
+    // No list to judge by: asked again at a later finished turn, a few times a run at most.
+    void unanswered() => _phoneOfferAfterWorkAsked =
+        ++_phoneOfferAfterWorkUnanswered >= _phoneOfferUnansweredReads;
     bool hasPhone;
     try {
       final devices = await loadDevices();
       if (devices == null) {
-        // No list to judge by: asked again at the next finished turn.
-        _phoneOfferAfterWorkAsked = false;
+        unanswered();
         return;
       }
       hasPhone = devices.devices.any(
         (device) => !device.isMachine && !device.self,
       );
     } catch (_) {
-      _phoneOfferAfterWorkAsked = false;
+      unanswered();
       return;
     }
     if (!_authWorkCurrent(revision) || !signedIn || _phoneOffer) return;
     if (hasPhone) {
+      _accountHasPhone = true;
       _markPhoneOfferSeen();
       return;
     }
@@ -7629,6 +7646,7 @@ class AppNotifier extends ChangeNotifier {
     ({String agent, bool waited, DateTime at}) missed,
   ) async {
     if (_phoneOffer ||
+        _accountHasPhone ||
         viewer != null ||
         !signedIn ||
         status != AppStatus.authenticated) {
@@ -7647,7 +7665,9 @@ class AppNotifier extends ChangeNotifier {
     } catch (_) {
       return;
     }
-    if (!_authWorkCurrent(revision) || !signedIn || _phoneOffer || hasPhone) {
+    if (!_authWorkCurrent(revision) || !signedIn || _phoneOffer) return;
+    if (hasPhone) {
+      _accountHasPhone = true;
       return;
     }
     final minutes = phoneOfferClock().difference(missed.at).inMinutes;

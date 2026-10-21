@@ -287,6 +287,24 @@ void main() {
     });
 
     test(
+      'a list that never comes is asked for three times a run at most',
+      () async {
+        // An older CLI with no device list: not a read at every finished turn for the whole run.
+        for (final api in [
+          _DevicesApi(null),
+          _DevicesApi(_listing([]), fails: true),
+        ]) {
+          final (app, _) = await returning(api);
+          for (var i = 0; i < 6; i++) {
+            await turnEnds(app);
+          }
+          expect(api.reads, 3);
+          expect(app.phoneOfferShowing, isFalse);
+        }
+      },
+    );
+
+    test(
       'a failed turn offers nothing, and a run reads the list once',
       () async {
         final api = _DevicesApi(_listing([_device('phone')]));
@@ -541,6 +559,41 @@ void main() {
           expect(app.phoneOfferShowing, isFalse);
           expect(api.reads, 1);
         }
+      },
+    );
+
+    test(
+      'an account found to have a phone is not read again in this run',
+      () async {
+        Future<void> awayAndBack(AppNotifier app, int times) async {
+          for (var i = 0; i < times; i++) {
+            leave(app);
+            await finishes(app, id: 'n$i');
+            await back(app, const Duration(minutes: 10));
+          }
+        }
+
+        // Each read reaches the backend through the daemon: once a run is enough to know.
+        final phone = _DevicesApi(_listing([_device('phone')]));
+        final (app, _) = await working(phone);
+        await awayAndBack(app, 3);
+        expect(app.phoneOfferShowing, isFalse);
+        expect(phone.reads, 1);
+
+        // Found by the card after work first: the same.
+        final known = _DevicesApi(_listing([_device('browser')]));
+        final (worked, _) = await working(known);
+        await worked.offerPhoneAfterWorkForTest();
+        expect(known.reads, 1);
+        await awayAndBack(worked, 2);
+        expect(worked.phoneOfferShowing, isFalse);
+        expect(known.reads, 1);
+
+        // No list is no answer: asked again at the next return.
+        final unread = _DevicesApi(null);
+        final (other, _) = await working(unread);
+        await awayAndBack(other, 2);
+        expect(unread.reads, 2);
       },
     );
 

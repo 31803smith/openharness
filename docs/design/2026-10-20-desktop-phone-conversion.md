@@ -46,7 +46,8 @@ first offer.
 
 - "Own harness" is the same test the window uses for its own work counters: not a shared computer, not a plain
   terminal, open in a pane of this window, not a subagent.
-- Asked once per run. If the account's device list cannot be read, it asks again at the next finished turn.
+- Asked once per run. If the account's device list cannot be read, it asks again at the next finished turn, up to
+  3 reads a run (an older CLI has no device list at all).
 - A computer that already showed the card, or opened Add Phone, has seen it (`phone_offer_seen`).
 - An account that already has a phone or browser marks the computer seen and shows nothing.
 
@@ -80,6 +81,7 @@ told them while they were away:
 ### Rules shared by every card
 
 - Only on an account with **no phone or browser** yet (`loadDevices`). No list to judge by: no card this time.
+  An account found to have one is not read again in that run: each read reaches the backend through the daemon.
 - **At most 3 cards per computer**, every kind together (the first offer, after work, after time away).
 - **× or Add Phone opened (from the card or any other way in) stops the cards on this computer for good.**
 - A card left unanswered stays on screen until the app closes or the person signs out. On a later run, the card
@@ -162,7 +164,8 @@ A Desktop released first still offers the cards; its counts wait for the CLI.
 ## Known limits
 
 - A computer that put the first card away before this release has only `phone_offer_done`, which cannot tell a ×
-  from a signed-in launch. It may see the card once more; its × then stops it for good.
+  from a signed-in launch. It may see the card once more, and left unanswered, the card after time away up to the
+  3-card cap; a × or Add Phone then stops it for good.
 - Away time follows the window (`appLifecycleChanged`), not the person. A window left behind another app for 5
   minutes while the person sat at the computer counts as away. The card then says what happened, which stays true.
 - Counts are per computer, not per person: a person with two computers can see up to 3 cards on each.
