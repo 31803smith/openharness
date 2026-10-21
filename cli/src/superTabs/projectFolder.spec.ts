@@ -47,6 +47,12 @@ describe('per-project checkouts on a contributed swarm machine', () => {
     f.start.request.conversationId = 'unknown'
     await expect(f.run()).rejects.toThrow('no authorized project')
   })
+  it('tells the lead how to share a project recorded without a repository address', async () => {
+    const f = fixture()
+    f.repository.repositoryUrl = null as unknown as string
+    await expect(f.run()).rejects.toThrow(/Share a GitHub repository.*project\.repository command/)
+    expect(f.prepare).not.toHaveBeenCalled()
+  })
   it('refuses missing or unsafe repositories and a mismatched prepared checkout', async () => {
     const f = fixture()
     for (const url of [undefined, 'file:///private/repo', 'https://secret@github.com/example/project', 'ext::command']) {

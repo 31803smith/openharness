@@ -40,7 +40,10 @@ Each section's plus button has one purpose:
 A machine contribution is a workspace grant for this Swarm. The host prepares
 each project's repository before starting an agent. A project on another
 machine needs a shared GitHub repository; a local-only folder is not silently
-replaced with an unrelated directory.
+replaced with an unrelated directory. The project records its lead checkout's
+GitHub `origin` as an HTTPS address when the lead starts. If a project has no
+address yet, its owner or lead can share one once with `project.repository`.
+An address that is already shared is not replaced.
 
 Ordinary guest machine sharing does not authorize Swarm controls under the
 owner's account. The owner contributes the machine or an agent. The lead's

@@ -27,7 +27,8 @@ export async function prepareSwarmProject(core: CoreApi, row: Json, start: Json,
   if (repository.machineId === core.daemon.machineId() && sameFolder(request.cwd, repository.cwd)) return
   const expected = join(expectedRoot, project.id)
   if (!sameFolder(request.cwd, expected)) throw new Error('The requested folder is outside this project.')
-  if (typeof repository.repositoryUrl !== 'string') throw new Error('Share a GitHub repository for this project before starting agents on another machine.')
+  // The Lead reads this from the failed start; it can record its checkout's origin and start again.
+  if (typeof repository.repositoryUrl !== 'string') throw new Error('Share a GitHub repository for this project before starting agents on another machine. Its lead can share its checkout\'s GitHub origin with the project.repository command, then start again.')
   const source = parseProjectFolder({ projectSource: 'remote', repositoryUrl: repository.repositoryUrl })
   if (source?.source !== 'remote') throw new Error('This project repository is unavailable.')
   const cwd = await prepare({ ...source, name: project.id }, { root: expectedRoot })
