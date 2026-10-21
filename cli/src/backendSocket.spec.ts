@@ -183,8 +183,8 @@ describe('reviewed permanent deletion RPCs', () => {
     const { sealTerminalBinary } = await import('./lib/e2ee/terminalSeal.js')
     const raw = sealTerminalBinary(new Uint8Array(32).fill(7), 9, { kind: 1, streamId: '00112233-4455-6677-8899-aabbccddeeff', seq: 1, bytes: new TextEncoder().encode('ls\r'), compressed: false })!
     const gateway = gatewayOf(socket) as any
+    // Opened as it arrives, outside the connection's line: told at once.
     gateway.enqueueTerminalBinary('web:gone', raw)
-    await gateway.downChains.get('web:gone')
     expect(upstreamOf(socket).queue.map((item: { msg: unknown }) => item.msg)).toContainEqual({ t: 'up', targetConnId: 'web:gone', frame: { type: 'e2e_session_unknown', payload: { refused: { type: 'terminal_binary', kind: 1, n: 9 } } } })
   })
 

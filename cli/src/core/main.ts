@@ -1100,6 +1100,7 @@ async function runForeground(session: AuthSession | null): Promise<void> {
     },
     streamingAvailable: terminalBackends.some((backend) => !!backend.openStream),
     diagnostic: (event, fields) => console.log(`[terminal-stream] ${event}`, fields),
+    typingTrace: env.TYPING_TRACE ? (line) => console.log(`[typing] ${line}`) : undefined,
     // The keystroke prewarm (grid-reads-without-waking issue 03): typing into a pane whose agent runs on
     // a sleeping grid starts that grid while the person types. Here, in the daemon's own input path, so
     // an older desktop and typing from a phone get it too; an agent on its own login has no `grid`.

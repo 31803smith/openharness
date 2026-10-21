@@ -41,7 +41,7 @@ import { terminalHandoffRequest } from './lib/terminalHandoff.js'
 import { OwnerCommands, ROUTE_COMMAND_TYPES } from './lib/ownerCommands.js'
 import { VIEWER_DOWN_TYPES } from './lib/viewerFrames.js'
 import type { TerminalStreamManager } from './lib/terminalStreamManager.js'
-import { encodeTerminalLocal, type TerminalBinaryClear } from './lib/terminalBinary.js'
+import { encodeTerminalLocal, TerminalBinaryKind, type TerminalBinaryClear } from './lib/terminalBinary.js'
 import { BACKEND_ONLY_DOWN_TYPES, GATEWAY_REQUEST_TYPES, isLocalClientId, logSafeType, PAIR_REQUESTS, PLATE_REQUEST, rpcResultType, type DownTransport } from './lib/relayFrames.js'
 import { sid, logFrame } from './lib/log.js'
 import { eventAgentId, GUEST_REFUSALS, guestVerdict } from './core/guestPolicy.js'
@@ -51,6 +51,10 @@ export { isLocalClientId, type DownTransport }
 /** Requests one local connection may queue before the daemon is ready (see `openRequests`). The app
  *  sends a handful on connect; hundreds is a client looping, not a person. */
 const MAX_REQUESTS_BEFORE_READY = 256
+/** A terminal stream's bookkeeping, handled as it arrives rather than in its connection's line — see `enqueueDown`. */
+const TERMINAL_BOOKKEEPING_TYPES: ReadonlySet<string> = new Set(['terminal_ack', 'terminal_alive'])
+/** An upload's control frames, which go in line with its chunks — see `enqueueDown`. */
+const TERMINAL_UPLOAD_CONTROL_TYPES: ReadonlySet<string> = new Set(['terminal_chunked_upload_begin', 'terminal_chunked_upload_cancel'])
 /** Agent Messages' requests, which the frame log leaves out: they carry what agents say to each other. */
 const MESSAGE_REQUESTS: ReadonlySet<string> = new Set(MESSAGES_REQUESTS)
 /** Share's requests, which the frame log leaves out as well: they carry who a harness is shared with. */
@@ -77,6 +81,8 @@ export class BackendSocket {
   /** Whether the backend link is up, as the gateway last said. */
   private linkUp = false
   private readonly downChains = new Map<string, Promise<void>>()
+  /** A remote client's terminal bytes, per connection and stream — see `enqueueTerminalBinary`. */
+  private readonly streamLanes = new Map<string, Promise<void>>()
   /**
    * Requests wait here until the daemon is ready (`openRequests`), each in its connection's own order.
    * The port answers long before start-up has wired every handler and confirmed the agents it
@@ -752,6 +758,23 @@ export class BackendSocket {
         return Promise.resolve()
       }
     }
+    const type = frame.type
+    // A stream's acknowledgements and heartbeats are bookkeeping that every other frame may be ordered
+    // around (an ack for output a keyframe has since replaced is ignored), and one stuck behind a slow
+    // request let unacknowledged output pile up to the pause mark (384 KiB): the screen stopped while the
+    // connection waited on, say, `agents_list`.
+    if (this.requestsOpen && typeof type === 'string' && TERMINAL_BOOKKEEPING_TYPES.has(type)) {
+      return this.dispatchDown(frame, connId, transport, role).catch((err) => {
+        console.error('[backend] down-frame dispatch failed:', err instanceof Error ? err.message : err)
+      })
+    }
+    // An upload's begin and cancel go in line with its chunks, which ride the stream's input lane: a cancel
+    // and a new begin let through while the old upload's chunks still waited there would have taken those
+    // chunks into the new upload.
+    const streamId = (frame.payload as { streamId?: unknown } | undefined)?.streamId
+    if (transport !== 'local' && typeof type === 'string' && TERMINAL_UPLOAD_CONTROL_TYPES.has(type) && typeof streamId === 'string') {
+      return this.inStreamLane(connId, streamId, () => this.dispatchDown(frame, connId, transport, role), 'down-frame')
+    }
     const previous = this.downChains.get(key) ?? Promise.resolve()
     const next = previous
       .catch(() => { /* prior failure is already logged */ })
@@ -767,21 +790,39 @@ export class BackendSocket {
     return next
   }
 
-  /** A remote client's terminal bytes, opened by the gateway, in its connection's order (not gated: a
-   *  stream exists only once a request through the gate opened it). */
+  /**
+   * A remote client's terminal bytes, opened by the gateway: in their stream's order, and in nothing else's
+   * (not gated: a stream exists only once a request through the gate opened it). They used to share the
+   * connection's line with its requests, so a keystroke waited for whatever came before it: an
+   * `agents_list` (1–2s with ~250 agents), a `session_get` (up to 5s for a cold engine reader), another
+   * pane's keyframe (Codex: ~200ms and ~166KB at the median, daemon log 2026-10-13..15). Its own pane's
+   * keyframe still holds the echo, as it holds all of that pane's output, but no longer the keystroke. A
+   * window on this computer never waited (its bytes go straight to the streams, `handleLocalBinary`); a
+   * phone now does not either. A paste still holds the keystrokes typed after it, and an upload's chunks
+   * stay in line with its begin and cancel.
+   */
   private enqueueTerminalBinary(connId: string, clear: TerminalBinaryClear): Promise<void> {
-    const key = connId || '__backend__'
-    const previous = this.downChains.get(key) ?? Promise.resolve()
+    const traced = env.TYPING_TRACE && clear.kind === TerminalBinaryKind.input
+    const queuedAt = traced ? performance.now() : 0
+    return this.inStreamLane(connId, clear.streamId, async () => {
+      if (traced) console.log(`[typing] lane conn=${sid(connId)} stream=${sid(clear.streamId)} seq=${clear.seq} waited ${Math.round(performance.now() - queuedAt)}ms`)
+      await this.terminalStreams?.handleBinary(connId, clear)
+    }, 'binary terminal')
+  }
+
+  private inStreamLane(connId: string, streamId: string, task: () => Promise<void>, what: string): Promise<void> {
+    const key = `${connId || '__backend__'}\0${streamId}`
+    const previous = this.streamLanes.get(key) ?? Promise.resolve()
     const next = previous
       .catch(() => { /* prior failure is already logged */ })
-      .then(async () => { await this.terminalStreams?.handleBinary(connId, clear) })
+      .then(task)
       .catch((err) => {
-        console.error('[backend] binary terminal dispatch failed:', err instanceof Error ? err.message : err)
+        console.error(`[backend] ${what} dispatch failed:`, err instanceof Error ? err.message : err)
       })
       .finally(() => {
-        if (this.downChains.get(key) === next) this.downChains.delete(key)
+        if (this.streamLanes.get(key) === next) this.streamLanes.delete(key)
       })
-    this.downChains.set(key, next)
+    this.streamLanes.set(key, next)
     return next
   }
 
