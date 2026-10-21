@@ -56,6 +56,12 @@ it('documents how a lead shares its project repository for other machines', asyn
   const answer = await t.ask({ action: 'help' }, owner) as { help: { commands: Array<Record<string, unknown>> } }
   expect(answer.help.commands).toContainEqual({ type: 'project.repository', projectId: 'PROJECT', repositoryUrl: 'https://github.com/OWNER/REPOSITORY' })
 })
+it('tells the Lead that start works only on a machine in the Swarm\'s Machines list', async () => {
+  const t = setup()
+  const answer = await t.ask({ action: 'help' }, owner) as { help: { start: string } }
+  expect(answer.help.start).toContain('create one agent in a conversation on a machine in this Swarm\'s Machines list; to use another machine, a person adds it to the Swarm first.')
+  expect(answer.help.start).toContain('Repeat exactly after an interruption')
+})
 it('resolves a native caller to its exact contribution and rechecks it before every agent command', async () => {
   const t = setup()
   expect(await t.ask({ action: 'status', tabId: 'tab', harnessId: 'native' }, owner)).toMatchObject({ ok: true })
@@ -353,5 +359,21 @@ describe('which messages still need an answer', () => {
     const failed = await ask('m1')
     expect(failed.ok).toBe(true)
     expect(failed.value.messages[0]).not.toHaveProperty('answered')
+  })
+})
+
+describe('post --attach steps', () => {
+  it('reads whether this post already went out with files, as the agent', async () => {
+    const t = setup()
+    const messageId = createHash('sha256').update(JSON.stringify(['tab', `agent:${t.agentId}`, 'op'])).digest('hex').slice(0, 24)
+    vi.mocked(t.core.account.backend).mockImplementation(async (_method: string, path: string) => ({ status: 200, body: { success: true, data:
+      path.includes('/messages?') ? { messages: [{ id: messageId, attachments: [{ id: 'f0' }] }] } : { state: { agents: [t.agent] } } } }))
+    expect(await t.ask({ action: 'attachment', step: 'sent', tabId: 'tab', agentId: t.agentId, conversationId: 'lead', operationId: 'op' }, owner))
+      .toEqual({ ok: true, value: { agentId: t.agentId, attachmentIds: ['f0'] } })
+    expect(t.call).toHaveBeenLastCalledWith('GET', `/api/super-tabs/tab/conversations/lead/messages?asAgentId=${t.agentId}&messageId=${messageId}`, undefined)
+    vi.mocked(t.core.account.backend).mockImplementation(async (_method: string, path: string) => ({ status: 200, body: { success: true, data:
+      path.includes('/messages?') ? { messages: [] } : { state: { agents: [t.agent] } } } }))
+    expect(await t.ask({ action: 'attachment', step: 'sent', tabId: 'tab', agentId: t.agentId, conversationId: 'lead', operationId: 'op' }, owner))
+      .toEqual({ ok: true, value: { agentId: t.agentId, attachmentIds: null } })
   })
 })
