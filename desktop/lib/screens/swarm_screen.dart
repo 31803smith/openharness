@@ -27,6 +27,7 @@ import '../core/permission_modes.dart';
 import '../core/project_folder.dart';
 import '../core/launch_setup.dart';
 import '../core/test_run.dart';
+import '../core/windows_status_tray.dart';
 import '../logging/debug_surface.dart';
 import '../models/api_connections_controller.dart' show agentOnApiModel;
 import '../models/models_panel.dart';
@@ -59,7 +60,7 @@ import '../state/account_phones.dart';
 import '../state/app_state.dart';
 import '../state/notification_inbox.dart';
 import '../state/status_menu.dart';
-import '../widgets/linux_menu_bar.dart'
+import '../widgets/in_window_menu_bar.dart'
     show LinuxTitleBar, linuxTitleBarActions;
 import '../widgets/account_menu.dart';
 import '../widgets/notification_inbox.dart';
@@ -191,6 +192,7 @@ class SwarmScreen extends StatefulWidget {
     this.daemonsPreview,
     this.experimentalFeatures,
     this.chrome,
+    this.statusTray,
   });
   final AppNotifier notifier;
   final bool? nativeTabs;
@@ -216,6 +218,10 @@ class SwarmScreen extends StatefulWidget {
 
   /// Extra tab-bar controls from a host composition (the web build's menu).
   final WorkspaceChrome? chrome;
+
+  /// The Windows tray (`harness/status_menu`): the macOS status menu's rows,
+  /// fed from the same payload. A test passes its own; null off Windows.
+  final WindowsStatusTray? statusTray;
   @override
   State<SwarmScreen> createState() => _SwarmScreenState();
 }
@@ -251,12 +257,20 @@ class _SwarmScreenState extends State<SwarmScreen> {
   late final bool _native =
       widget.nativeTabs ?? (RuntimePlatform.isMacOS && !kUnderTest);
 
-  /// A menu bar is listening: AppKit's on macOS, the in-window bar on Linux.
-  /// Not the same as [_native], which is whether AppKit also draws the tab
-  /// strip and the title-bar buttons. On Linux Flutter still draws those, so
-  /// the strip stays and only the menu state and actions cross the bus.
+  /// The Windows tray. A test passes its own.
+  late final WindowsStatusTray? _statusTray =
+      widget.statusTray ??
+      (RuntimePlatform.isWindows && !kUnderTest ? windowsStatusTray : null);
+
+  /// A menu bar is listening: AppKit's on macOS, the in-window bar on Linux
+  /// and Windows, the Windows tray. Not the same as [_native], which is
+  /// whether AppKit also draws the tab strip and the title-bar buttons. On
+  /// Linux and Windows Flutter still draws those, so the strip stays and only
+  /// the menu state and actions cross the bus.
   late final bool _menuHost =
-      _native || (RuntimePlatform.isLinux && !kUnderTest);
+      _native ||
+      _statusTray != null ||
+      ((RuntimePlatform.isLinux || RuntimePlatform.isWindows) && !kUnderTest);
 
   /// On Linux the in-window menu bar is the title bar, and search,
   /// notifications and Store sit at its right end instead of the tab strip's
@@ -275,7 +289,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
   bool _deviceRevealInFlight = false;
   StreamSubscription<void>? _modelsRequests;
   StreamSubscription<String>? _superTabClosures;
-  // The one Super Tab notice: whether it exists (queued or shown), whether it
+  // The one Swarm notice: whether it exists (queued or shown), whether it
   // is on screen, and the closed tab its Reopen restores.
   int _superTabNoticeSerial = 0;
   bool _superTabNoticeLive = false, _superTabNoticeShowing = false;
@@ -341,6 +355,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
       _experimentalFeatures.enabled(ExperimentalFeature.focusBarCreature);
   late final _brain = DaemonBrain(
     send: _sendDaemonFrame,
+    trustedConnectionMissing: () => app.daemonTrustedConnectionMissing,
     storage: kUnderTest ? null : HarnessFileStore.shared,
     now: widget.daemonClock,
   );
@@ -526,9 +541,9 @@ class _SwarmScreenState extends State<SwarmScreen> {
         : null,
     // What to pick up, opened into this tab the way Cmd-P opens it: a harness
     // as itself, a conversation Harness did not start as a harness resuming it.
-    // Super Tab creation uses the same form as Cmd-N, without recent sessions.
+    // Swarm creation uses the same form as Cmd-N, without recent sessions.
     app: app.activeSwarm.isSuperTab ? null : app,
-    // The palette lists the same getter. A Super Tab draft has no recents but
+    // The palette lists the same getter. A Swarm draft has no recents but
     // still offers these.
     closedSuperTabs: app.closedSuperTabs,
     onOpenSuperTab: _openClosedSuperTab,
@@ -790,6 +805,9 @@ class _SwarmScreenState extends State<SwarmScreen> {
     }
     if (_menuHost) {
       _menuBus.setHandler(_onNative);
+      // A row chosen in the tray follows the existing status-menu receipt path.
+      _statusTray?.onSelected = (receipt) =>
+          _onNative(MethodCall('openStatusHarness', receipt));
       app.addListener(_syncNative);
       app.agentMessages.addListener(_syncNative);
       app.sharedTabs.addListener(_syncNative);
@@ -970,6 +988,10 @@ class _SwarmScreenState extends State<SwarmScreen> {
       app.sharedTabs.removeListener(_syncNative);
       _menuBus.setHandler(null);
       unawaited(_menuBus.send('update', {'tabs': [], 'enabled': false}));
+    }
+    if (_statusTray case final tray?) {
+      tray.onSelected = null;
+      unawaited(tray.clear());
     }
     if (widget.projectStore == null) _projects.dispose();
     // Dismissing notifies app listeners. Detach our views and catalogs first so
@@ -2204,6 +2226,18 @@ class _SwarmScreenState extends State<SwarmScreen> {
       // the active tab: only those it offers.
       'tabShareActions': sharedTabMenu(app, app.activeSwarmId).actions,
     };
+    if (_statusTray case final tray?) {
+      unawaited(
+        tray.update(
+          entries: statusMenuEntries(app, colorForActivity: activityInk),
+          workingEntries: statusMenuWorkingEntries(
+            app,
+            colorForActivity: activityInk,
+          ),
+          workspaceAvailable: true,
+        ),
+      );
+    }
     final encoded = jsonEncode(payload);
     if (encoded == _nativeState) return;
     _nativeState = encoded;
@@ -2966,10 +3000,11 @@ class _SwarmScreenState extends State<SwarmScreen> {
         'type': 'tab.rename',
         'name': name,
       });
-      if (result == null && mounted)
+      if (result == null && mounted) {
         _showPaneActionHint(
-          controller.operationError ?? 'Could not rename the Super Tab.',
+          controller.operationError ?? 'Could not rename the Swarm.',
         );
+      }
     } else {
       app.renameSwarm(id, name);
     }
@@ -2983,10 +3018,11 @@ class _SwarmScreenState extends State<SwarmScreen> {
       'type': 'tab.pause',
       'paused': controller.snapshot?.paused != true,
     });
-    if (result == null && mounted)
+    if (result == null && mounted) {
       _showPaneActionHint(
         controller.operationError ?? 'Could not change new work.',
       );
+    }
   }
 
   /// The tab a native action names, or the active one (File's rows).
@@ -3634,11 +3670,13 @@ class _SwarmScreenState extends State<SwarmScreen> {
     String? projectName,
     String? task,
     String? superTabConversationId,
+    bool newSwarmProject = false,
     HarnessPlacement? placement,
     _NewHarnessSource source = _NewHarnessSource.workspace,
     bool Function()? stillCurrent,
   }) async {
-    if (_newHarnessEmbedded &&
+    if (!newSwarmProject &&
+        _newHarnessEmbedded &&
         _newHarness != null &&
         source == _NewHarnessSource.workspace &&
         split == null &&
@@ -3660,7 +3698,8 @@ class _SwarmScreenState extends State<SwarmScreen> {
     final superTab = app.swarms
         .where((s) => s.id == target && s.isSuperTab)
         .firstOrNull;
-    final conversation = superTabConversationId ??
+    final conversation =
+        superTabConversationId ??
         (superTab?.superTabId == null
             ? 'lead'
             : search != null && _superTabAddTarget?.swarmId == target
@@ -3744,7 +3783,12 @@ class _SwarmScreenState extends State<SwarmScreen> {
         requestedSplit == null &&
         placement != HarnessPlacement.newTab) {
       try {
-        integration = await SuperTabLaunch.open(app, superTab, conversation);
+        integration = await SuperTabLaunch.open(
+          app,
+          superTab,
+          newSwarmProject ? 'new-project' : conversation,
+          newProject: newSwarmProject,
+        );
       } catch (failure) {
         _showPaneActionHint(failure.toString());
         return;
@@ -4277,7 +4321,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
     app.openClosedSuperTab(tabId, intoSwarmId: app.activeSwarmId);
   }
 
-  /// Closing a Super Tab asks nothing, so the way back is said right after.
+  /// Closing a Swarm asks nothing, so the way back is said right after.
   /// A second close replaces this notice rather than queueing behind it.
   void _offerSuperTabReopen(String historyId) {
     if (!mounted) return;
@@ -4809,7 +4853,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
 
   bool _noteKey(KeyEvent event) {
     // Paint hints only; the keymap still owns every shortcut and input event.
-    _tabShortcutHints.value = HardwareKeyboard.instance.isMetaPressed;
+    _tabShortcutHints.value = showsTabShortcutHints(HardwareKeyboard.instance);
     // Off, this is not here at all: every key goes where it went before.
     if (event is! KeyDownEvent || _zoo.daemons == DaemonsSwitch.off) {
       return false;
@@ -6192,28 +6236,47 @@ class _SwarmScreenState extends State<SwarmScreen> {
     final groupTitle = superTabTarget == null
         ? null
         : contribution?.snapshot?.conversation(superTabTarget.groupId)?.title;
+    final contributionProject = superTabTarget == null
+        ? null
+        : contribution?.snapshot?.projectFor(superTabTarget.groupId);
     _search = SwarmSearchController(
       app,
       _navigation.recent,
       harnessContext: superTabTarget == null
           ? null
           : HarnessPickerContext(
-              title: 'Add agent to ${groupTitle ?? 'conversation'}',
-              description: 'Shared with everyone in ${app.activeSwarm.name}.',
+              title:
+                  'Add agent to ${contribution?.snapshot?.name ?? app.activeSwarm.name}',
+              description: contributionProject?.isPrivate == true
+                  ? 'Starts in ${groupTitle ?? 'Lead'}. Only members of ${contributionProject!.name} can access it.'
+                  : 'Starts in ${groupTitle ?? 'Lead'}.',
               action: 'Add agent',
               unavailable: (row) {
-                final shared = app.superTabs.peek(superTabTarget.tabId)?.snapshot;
-                final agent = shared?.agents.where(
-                  (agent) => agent.machineId == row.machineId &&
-                      agent.harnessId == row.agentId,
-                ).firstOrNull;
+                final shared = app.superTabs
+                    .peek(superTabTarget.tabId)
+                    ?.snapshot;
+                final agent = shared?.agents
+                    .where(
+                      (agent) =>
+                          agent.machineId == row.machineId &&
+                          agent.harnessId == row.agentId,
+                    )
+                    .firstOrNull;
                 if (agent != null) {
-                  return shared!.conversation(superTabTarget.groupId)
-                          ?.agentIds.contains(agent.id) == true
+                  if (agent.projectId != contributionProject?.id) {
+                    return 'This agent belongs to another project. Create a new agent here.';
+                  }
+                  return shared!
+                              .conversation(superTabTarget.groupId)
+                              ?.agentIds
+                              .contains(agent.id) ==
+                          true
                       ? 'Already in this conversation.'
                       : null;
                 }
-                final native = app.stateOf(row.machineId ?? '')?.agents
+                final native = app
+                    .stateOf(row.machineId ?? '')
+                    ?.agents
                     .where((agent) => agent.id == row.agentId)
                     .firstOrNull;
                 return native != null &&
@@ -6275,13 +6338,16 @@ class _SwarmScreenState extends State<SwarmScreen> {
     if (contribution != null && superTabTarget != null) {
       void guardContribution() {
         if (!mounted || !identical(_search, deviceSearch)) return;
-        final group = contribution.snapshot?.conversation(superTabTarget.groupId);
+        final group = contribution.snapshot?.conversation(
+          superTabTarget.groupId,
+        );
         if (!contribution.canWrite || group == null || group.archived) {
           _closeSearch();
         } else {
           deviceSearch.refreshAvailability();
         }
       }
+
       contribution.addListener(guardContribution);
       _stopSuperTabPickerWatch = () =>
           contribution.removeListener(guardContribution);
@@ -6937,7 +7003,9 @@ class _SwarmScreenState extends State<SwarmScreen> {
     if (superTabTarget != null) {
       final controller = app.superTabs.peek(superTabTarget.tabId);
       final group = controller?.snapshot?.conversation(superTabTarget.groupId);
-      if (controller?.canWrite != true || group == null || group.archived) return;
+      if (controller?.canWrite != true || group == null || group.archived) {
+        return;
+      }
     }
     _openSearch(
       adding: true,
@@ -7789,17 +7857,17 @@ class _SwarmScreenState extends State<SwarmScreen> {
           shortcut: _keymap.hint(command.id),
           searchFields: [command.id, ...command.keywords],
         ),
-    // Where New Super Tab lives: the tabs closed here, back by name.
+    // Where New Swarm lives: the tabs closed here, back by name.
     if (_canExecuteCommand('super_tab.new'))
       for (final tab in app.closedSuperTabs)
         SwarmDestination(
           id: 'command:$_closedSuperTabCommand${tab.id}',
           title: tab.name,
-          detail: 'Closed Super Tabs',
+          detail: 'Recent Swarms',
           swarmId: null,
           current: false,
           commandId: '$_closedSuperTabCommand${tab.id}',
-          searchFields: ['closed', 'reopen', 'super tab'],
+          searchFields: ['recent', 'closed', 'reopen', 'super tab'],
         ),
     if (_canExecuteCommand('app.settings'))
       for (final group in settingsGroups)
@@ -7972,11 +8040,17 @@ class _SwarmScreenState extends State<SwarmScreen> {
                               ),
                               const SizedBox(width: 10),
                               Expanded(
-                                child: Text(
-                                  _projects.error ?? app.lastError!,
-                                  maxLines: 2,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: grid.AppType.body(),
+                                // Plain text, so the banner never takes keyboard
+                                // focus from the terminal; the tooltip carries
+                                // the whole message when it is clipped.
+                                child: Tooltip(
+                                  message: _projects.error ?? app.lastError!,
+                                  child: Text(
+                                    _projects.error ?? app.lastError!,
+                                    maxLines: 4,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: grid.AppType.body(),
+                                  ),
                                 ),
                               ),
                               if (_projects.error == null &&
@@ -8036,7 +8110,9 @@ class _SwarmScreenState extends State<SwarmScreen> {
                                             !_creatureEnabled) ||
                                         app.activeSwarm.isOrchestrator,
                                     child: Padding(
-                                      padding: app.panes.isEmpty || app.activeSwarm.isSuperTab
+                                      padding:
+                                          app.panes.isEmpty ||
+                                              app.activeSwarm.isSuperTab
                                           ? EdgeInsets.zero
                                           : const EdgeInsets.fromLTRB(
                                               kWorkspaceInset,
@@ -8046,6 +8122,9 @@ class _SwarmScreenState extends State<SwarmScreen> {
                                             ),
                                       child: SuperTabWorkspace(
                                         app: app,
+                                        onNewProject: () => unawaited(
+                                          _newAgent(newSwarmProject: true),
+                                        ),
                                         onAddAgent: (group) => unawaited(
                                           _addAgent(conversationId: group.id),
                                         ),
@@ -9178,7 +9257,7 @@ class _SuperTabClosedTextState extends State<_SuperTabClosedText> {
 
   @override
   Widget build(BuildContext context) =>
-      const Text('Super Tab closed. Its agents keep running.');
+      const Text('Swarm closed. Its agents keep running.');
 }
 
 /// What covers the workspace, as the titlebar sees it
