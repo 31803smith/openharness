@@ -1,3 +1,4 @@
+import '../finder/widgets/finder_pane_panel.dart';
 import '../super_tabs/pane.dart';
 import '../super_tabs/saved_session.dart';
 import '../sharing/shared_harness_panel.dart';
@@ -26,6 +27,7 @@ import '../state/app_state.dart';
 import '../state/harness_sessions.dart' show heldLaunchDetail;
 import '../state/pane_preset.dart';
 import '../state/pane_arrangement.dart';
+import 'pane_fixed_width.dart';
 import '../state/terminal_pane.dart';
 import '../terminal/terminal_binary.dart';
 import '../terminal/terminal_text.dart';
@@ -574,9 +576,18 @@ class _SwarmCanvasState extends State<_SwarmCanvas> {
           );
         }
         if (layout.columns != null) app.gridColumns = layout.columns;
+        // A tile that asks for its own width (a Finder showing only its
+        // files) takes it; its divider is not dragged while it does.
+        final pinned = pinFixedColumn(
+          layout.rectangles,
+          [for (final pane in visible) pane.fixedWidth],
+          Size(layout.width, layout.height),
+          gap: kPaneGap,
+          minOther: _MinTile.of().width,
+        );
+        final tiles = pinned ?? layout.rectangles;
         final rectangles = {
-          for (var i = 0; i < visible.length; i++)
-            visible[i].id: layout.rectangles[i],
+          for (var i = 0; i < visible.length; i++) visible[i].id: tiles[i],
         };
         final retainedIds = app.allPanes.map((pane) => pane.id).toSet();
         _inputLayers.removeWhere((id, _) => !retainedIds.contains(id));
@@ -653,6 +664,7 @@ class _SwarmCanvasState extends State<_SwarmCanvas> {
                                 ),
                               ),
                           if (_shownZoom == null &&
+                              pinned == null &&
                               layout.arrangement?.dividers.isNotEmpty == true)
                             Positioned.fill(child: _resizeLayer(layout)),
                         ],
@@ -1590,6 +1602,17 @@ class _PaneContent extends StatelessWidget {
         hasAccess:
             machine?.machine.sharedHarnesses.any((s) => s.id == grant.id) ==
             true,
+      );
+    }
+
+    // A folder browsed in place: no agent and no terminal behind it.
+    if (pane.finderRoot case final root? when pane.isFinder) {
+      return FinderPanePanel(
+        key: ValueKey('finder-pane-${pane.id}'),
+        root: root,
+        onGuardClose: (guard) => pane.beforeClose = guard,
+        onFixedWidth: (width) => notifier.setPaneFixedWidth(pane.id, width),
+        compactHeader: swarmMode,
       );
     }
 

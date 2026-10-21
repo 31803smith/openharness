@@ -36,6 +36,7 @@ import 'essential_harness_controller.dart';
 import 'agent_handoff_file.dart';
 import 'agent_switch_handoff.dart';
 import '../agent_messages/agent_messages.dart';
+import '../finder/finder_roots.dart';
 import '../agent_messages/shared_tab_errors.dart';
 import '../agent_messages/shared_tab_placement.dart';
 import '../agent_messages/shared_tabs.dart';
@@ -3283,20 +3284,36 @@ class AppNotifier extends ChangeNotifier {
     final tab = swarms.where((s) => s.id == id).firstOrNull;
     if (tab == null) return Future.value();
     final captured = tab.panes.toList();
-    return _requestViewClose(
-      'tab:$id',
-      tab,
+    return _afterCloseGuards(
       captured,
-      () async {
-        if (tab.panes.length != captured.length ||
-            !captured.every(tab.panes.contains)) {
-          return;
-        }
-        await closeSwarm(id);
-      },
-      tabName: tab.name,
-      wholeTab: true,
+      () => _requestViewClose(
+        'tab:$id',
+        tab,
+        captured,
+        () async {
+          if (tab.panes.length != captured.length ||
+              !captured.every(tab.panes.contains)) {
+            return;
+          }
+          await closeSwarm(id);
+        },
+        tabName: tab.name,
+        wholeTab: true,
+      ),
     );
+  }
+
+  /// Runs [close] once every pane in [panes] with a close check has passed
+  /// it — a Finder tile asks about its unsaved tabs (`TerminalPane.beforeClose`),
+  /// one tile at a time. A tile kept open keeps the whole close from happening.
+  Future<void> _afterCloseGuards(
+    List<TerminalPane> panes,
+    Future<void> Function() close,
+  ) async {
+    for (final pane in panes) {
+      if (pane.beforeClose case final guard? when !await guard()) return;
+    }
+    await close();
   }
 
   Future<void> requestClosePane(int paneId) {
@@ -3305,19 +3322,35 @@ class AppNotifier extends ChangeNotifier {
     final pane = tab.panes.where((p) => p.id == paneId).firstOrNull;
     if (pane == null) return Future.value();
     if (tab.isCompanions || tab.isDevices) return requestCloseSwarm(tab.id);
+    // A Finder and its chat are one group: closing the Finder closes the chat,
+    // which takes the Finder with it, exactly as the chat's own Close does.
+    if (pane.isFinder && pane.ownerAgentId != null) {
+      final chat = tab.panes
+          .where(
+            (p) =>
+                !p.isViewer &&
+                p.machineId == pane.machineId &&
+                p.agentId == pane.ownerAgentId,
+          )
+          .firstOrNull;
+      if (chat != null) return requestClosePane(chat.id);
+    }
     final captured = tab.panes
         .where(
           (p) =>
               identical(p, pane) ||
-              (!pane.isWeb &&
-                  p.isWeb &&
-                  p.machineId == pane.machineId &&
-                  p.ownerAgentId == pane.agentId),
+              p.viewsAgent(pane.machineId, pane.agentId),
         )
         .toList();
-    return _requestViewClose('pane:${tab.id}:$paneId', tab, captured, () async {
-      if (tab.panes.contains(pane)) await closePane(paneId, swarmId: tab.id);
-    });
+    return _afterCloseGuards(
+      captured,
+      () =>
+          _requestViewClose('pane:${tab.id}:$paneId', tab, captured, () async {
+            if (tab.panes.contains(pane)) {
+              await closePane(paneId, swarmId: tab.id);
+            }
+          }),
+    );
   }
 
   Future<void> _requestViewClose(
@@ -11995,8 +12028,7 @@ class AppNotifier extends ChangeNotifier {
     for (final pane in allPanes.toList()) {
       final owned =
           pane.machineId == machineId &&
-          (pane.agentId == agentId ||
-              (pane.isWeb && pane.ownerAgentId == agentId));
+          (pane.agentId == agentId || pane.viewsAgent(machineId, agentId));
       if (!owned) continue;
       // The explicit Close owns these panes until its disk-safe acknowledgement,
       // so it can preserve recently-closed layout and composer history normally.
@@ -12014,6 +12046,7 @@ class AppNotifier extends ChangeNotifier {
     }
     _closeTabsEmptiedByStop(affected);
     _dismissedViewers.remove(_viewerKey(machineId, agentId));
+    finderRoots.forget(machineId, agentId);
     _persistLayout();
     _announceAppFocus();
     try {
@@ -12056,7 +12089,7 @@ class AppNotifier extends ChangeNotifier {
     final dismissed =
         viewerState != null &&
         _dismissedViewers[_viewerKey(machineId, agent.id)] == viewerState;
-    var changed = false;
+    var changed = _syncFinderPane(machineId, agent.id);
     // Tab by tab: wherever this agent's terminal is, its viewer is beside it,
     // and nowhere else. A terminal opened in a second tab gets a second
     // viewer; a tab whose terminal went loses its viewer.
@@ -12106,28 +12139,33 @@ class AppNotifier extends ChangeNotifier {
         viewerError: agent.viewerError,
         ownerAgentId: agent.id,
       );
-      swarm.panes.insert(insertion, pane);
+      _insertViewer(swarm, insertion, pane);
       // Counts opening a pane with a URL or a known launch error, not rendering its private page.
       productMeasurement.begin(ProductFlow.viewerOpen)(
         agent.viewerError == null ? ProductOutcome.ok : ProductOutcome.failed,
       );
-      // The same bookkeeping a split does when it grows the grid by one:
-      // pins past the insertion slide right, and the shape is re-derived.
-      swarm.pinnedSlots.updateAll(
-        (_, slot) => slot >= insertion ? slot + 1 : slot,
-      );
-      swarm.arranged = null;
-      swarm.arrangedKey = null;
-      // Alone with its terminal, the viewer takes 70% of the tab and the
-      // assistant keeps 30%. Only when nobody has sized this pair
-      // by hand: a manual layout is the user's.
-      if (swarm.panes.length == 2 && swarm.paneSizes['2:manual'] == null) {
-        swarm.savePaneSizes('2:manual', PaneArrangement.viewerBesideTerminal);
-      }
       changed = true;
     }
     if (changed) _persistLayout();
     return changed;
+  }
+
+  /// Puts a viewer into [swarm] at [insertion], beside its terminal.
+  void _insertViewer(Swarm swarm, int insertion, TerminalPane viewer) {
+    swarm.panes.insert(insertion, viewer);
+    // The same bookkeeping a split does when it grows the grid by one:
+    // pins past the insertion slide right, and the shape is re-derived.
+    swarm.pinnedSlots.updateAll(
+      (_, slot) => slot >= insertion ? slot + 1 : slot,
+    );
+    swarm.arranged = null;
+    swarm.arrangedKey = null;
+    // Alone with its terminal, the viewer takes 70% of the tab and the
+    // assistant keeps 30%. Only when nobody has sized this pair
+    // by hand: a manual layout is the user's.
+    if (swarm.panes.length == 2 && swarm.paneSizes['2:manual'] == null) {
+      swarm.savePaneSizes('2:manual', PaneArrangement.viewerBesideTerminal);
+    }
   }
 
   /// Opening an essential (Harness Monitor, Memories) reveals its ordinary DSH pair: its viewer is
@@ -15568,6 +15606,7 @@ class AppNotifier extends ChangeNotifier {
     for (final pane in viewers) {
       if (allPanes.contains(pane)) pane.ownerAgentId = nextId;
     }
+    finderRoots.move(machineId, source.id, nextId);
     for (final swarm in swarms) {
       if (swarm.titleMachineId == machineId &&
           swarm.titleAgentId == source.id) {
@@ -16863,6 +16902,78 @@ class AppNotifier extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Which folder each chat's Finder shows, kept so a Finder comes back
+  /// beside its chat after a restart.
+  late final finderRoots = FinderRoots(() => localStore);
+
+  /// Opens a Finder tile on [root] LEFT of [agentId]'s terminal, where a
+  /// harness's viewer sits: New Harness's Finder is a folder with a chat
+  /// beside it, never a folder alone. It is that chat's viewer from then on
+  /// ([TerminalPane.viewsAgent]) — it moves and closes with the terminal, and
+  /// comes back with it ([finderRoots]). Returns why it could not open, or null.
+  String? openFinderBeside(String machineId, String agentId, String root) {
+    finderRoots.set(machineId, agentId, root);
+    final shown = swarms.any(
+      (swarm) => swarm.panes.any(
+        (pane) =>
+            !pane.isViewer &&
+            pane.machineId == machineId &&
+            pane.agentId == agentId,
+      ),
+    );
+    if (!shown) return 'The chat closed before its Finder could open.';
+    if (!_syncFinderPane(machineId, agentId)) {
+      return 'This tab is full, so the Finder could not open beside the chat.';
+    }
+    notifyListeners();
+    return null;
+  }
+
+  /// A tile's own pixel width ([TerminalPane.fixedWidth]), or null to give
+  /// it back its share of the tab.
+  void setPaneFixedWidth(int paneId, double? width) {
+    final pane = allPanes.where((p) => p.id == paneId).firstOrNull;
+    if (pane == null || pane.fixedWidth == width) return;
+    pane.fixedWidth = width;
+    notifyListeners();
+  }
+
+  /// Puts [agentId]'s Finder, if it has one, beside its terminal in every
+  /// tab that shows that terminal without it. Whether one went in.
+  bool _syncFinderPane(String machineId, String agentId) {
+    final root = finderRoots.rootOf(machineId, agentId);
+    if (root == null) return false;
+    var changed = false;
+    for (final swarm in swarms) {
+      final at = swarm.panes.indexWhere(
+        (pane) =>
+            !pane.isViewer &&
+            pane.machineId == machineId &&
+            pane.agentId == agentId,
+      );
+      if (at < 0 ||
+          swarm.panes.length >= maxPanes ||
+          swarm.panes.any(
+            (pane) => pane.isFinder && pane.viewsAgent(machineId, agentId),
+          )) {
+        continue;
+      }
+      _insertViewer(
+        swarm,
+        at,
+        TerminalPane(
+          id: _nextPaneId++,
+          machineId: machineId,
+          kind: PaneKind.finder,
+          finderRoot: root,
+          ownerAgentId: agentId,
+        ),
+      );
+      changed = true;
+    }
+    return changed;
+  }
+
   Future<void> assignAgentToPane(
     int? paneId,
     String machineId,
@@ -17748,9 +17859,7 @@ class AppNotifier extends ChangeNotifier {
     final viewers = <TerminalPane>[];
     if (!pane.isWeb && pane.agentId != null) {
       for (final viewer in source.panes.toList()) {
-        if (viewer.isWeb &&
-            viewer.machineId == pane.machineId &&
-            viewer.ownerAgentId == pane.agentId) {
+        if (viewer.viewsAgent(pane.machineId, pane.agentId)) {
           source.remove(viewer);
           viewers.add(viewer);
         }
@@ -17819,6 +17928,10 @@ class AppNotifier extends ChangeNotifier {
       await closeSwarm(tab.id, persist: persist);
       return;
     }
+    // A Finder closed by hand stays closed: its chat no longer brings it back.
+    if (pane.isFinder && pane.ownerAgentId != null) {
+      finderRoots.forget(pane.machineId, pane.ownerAgentId!);
+    }
     if (pane.isWeb) {
       // A viewer closed by hand stays closed for THIS page: the agent's next
       // frame carries the same URL and must not reopen it. A different URL —
@@ -17831,11 +17944,7 @@ class AppNotifier extends ChangeNotifier {
     }
     bool closesWithPane(TerminalPane candidate) =>
         candidate == pane ||
-        (!pane.isWeb &&
-            pane.agentId != null &&
-            candidate.isWeb &&
-            candidate.machineId == pane.machineId &&
-            candidate.ownerAgentId == pane.agentId);
+        candidate.viewsAgent(pane.machineId, pane.agentId);
     if (tab.kind == 'harness' &&
         tab.panes.every(closesWithPane) &&
         !_activeAgentCreations.any((attempt) => attempt._targetId == tab.id)) {
@@ -17872,9 +17981,7 @@ class AppNotifier extends ChangeNotifier {
     // viewer's own close above is different — it is a choice about the page.
     if (!pane.isWeb && pane.agentId != null) {
       for (final viewer in tab.panes.toList()) {
-        if (viewer.isWeb &&
-            viewer.machineId == pane.machineId &&
-            viewer.ownerAgentId == pane.agentId) {
+        if (viewer.viewsAgent(pane.machineId, pane.agentId)) {
           tab.remove(viewer);
         }
       }
@@ -18343,9 +18450,7 @@ class AppNotifier extends ChangeNotifier {
         swarm.remove(pane);
         released.add(pane);
         for (final viewer in swarm.panes.toList()) {
-          if (viewer.isWeb &&
-              viewer.machineId == pane.machineId &&
-              viewer.ownerAgentId == pane.agentId) {
+          if (viewer.viewsAgent(pane.machineId, pane.agentId)) {
             swarm.remove(viewer);
           }
         }
@@ -18609,6 +18714,8 @@ class AppNotifier extends ChangeNotifier {
     if (workspaceEnabled?.call() == false) return;
     final store = _paneLayout;
     if (store == null) return;
+    // Before any chat is restored: its Finder comes back with its agent.
+    await finderRoots.load();
     final initialSwarm = activeSwarm;
     final revision = _layoutRevision;
     final authRevision = _authRevision;

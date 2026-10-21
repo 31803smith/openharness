@@ -494,6 +494,38 @@ add a kind there, not at the call site.
   `inventory()` restyles existing panes on each scan). ⚠️ `theme_set`/`theme_set_result` are in the
   E2EE type sets in `cli/src/lib/e2ee/core.ts`, which re-pinned the interop keystone; a daemon
   that predates the type goes silent, which the app treats as "not supported" — never an error.
+- **A Finder tile is a folder, not a terminal** (`lib/finder/`, `PaneKind.finder`), modelled on Orca's
+  Explorer, Source Control and editor tabs. New Harness lists Finder beside Terminal
+  (`kFinderEngine`), and a Finder never opens alone (owner, 2026-10-20): it is chosen as a Store
+  harness is — Harness row "Finder", then "Run Finder with" an agent, its model and approvals
+  (`NewHarnessController.isFinder`; `harnessId` reads `finder` while `_harnessId` stays the DSH
+  one) — and starts that chat in the folder (no worktree; the first message goes to it).
+  `AppNotifier.openFinderBeside` puts the tile LEFT of that terminal at 70/30, as a harness's web
+  viewer sits. It is the chat's viewer (`ownerAgentId`, `TerminalPane.viewsAgent`): it moves and
+  closes with the terminal, and the two are one group — the Finder has no Close of its own, and
+  closing it (⌘W) closes its chat (`requestClosePane`). Viewers are never in the saved layout or the desk, so the folder is
+  kept per chat in `FinderRoots` (`finder.roots` in the local store); `_syncViewerPane` brings the
+  Finder back whenever that chat's terminal is shown — after a restart too — until it is closed by
+  hand or the agent stops. With no file open the tile is only as wide as its file list, and its
+  header's Collapse (Orca's `PanelLeftClose`) folds it to a 44px rail (`FinderRail`): the panel
+  reports that width (`TerminalPane.fixedWidth`, `AppNotifier.setPaneFixedWidth`) and `PaneGrid`
+  gives it to a full-height edge tile, sliding the others into the rest (`pinFixedColumn`,
+  `widgets/pane_fixed_width.dart`; no divider drag while pinned). Opening a file takes its share
+  back. Left: Files (a lazy
+  tree with Git colours, ignored entries faint via `git check-ignore`, a right-click menu, names
+  typed in place, Trash rather than delete) or Changes (Conflicts / Changes / Staged / Untracked
+  with +/- counts, Stage, Unstage, Discard). Right: tabs — a single click opens a preview tab that
+  the next one replaces, a second click or an edit keeps it. Files open in `re_editor` with
+  re_highlight colours, find/replace, ⌘S, the file's own line break and indent; Markdown opens
+  rendered with its source a click away; diffs are whole-file (`--unified=1000000`), folded,
+  inline or side by side. A watcher (FSEvents on macOS) refreshes the tree, clean tabs and Git,
+  with a 60 s safety read; a tab edited when its file changes on disk gets Reload / Keep My Edits.
+  Closing a tile or tab with unsaved edits asks first (`TerminalPane.beforeClose`). ⌘S and ⌘F are
+  workspace bindings elsewhere, so the editor's `KeymapRegion(keeps:)` takes them back while it
+  has focus. The editor highlights on an isolate that headless tests never let answer — check
+  colours with `integration_test/finder_native_test.dart`. Only `LocalFinderFiles`/`LocalFinderGit`
+  exist, so other machines and the browser offer the row disabled (`canOpenFinderOn`) until the
+  daemon serves listings, reads, writes and Git.
 - `third_party/xterm` is a **vendored, patched** xterm 4.0.0 (atomic `replaceRange` fix for scroll
   regions — see its `README.autonomous.md`). Do not replace it with the pub package; the regression
   lives in `test/terminal_session_test.dart`.
