@@ -1409,6 +1409,19 @@ class AppNotifier extends ChangeNotifier {
     }
   }
 
+  /// Ends every dial still going as `cancelled`: the person left the screen before it had an answer,
+  /// which is neither a success nor a failure of the socket. Each count is dropped from
+  /// [_measurementConnections] as it ends, so the socket's own answer later finds none to end again
+  /// (no second outcome), and a dial after the app is back starts a fresh count.
+  void _cancelMeasurementConnections() {
+    if (_measurementConnections.isEmpty) return;
+    final open = _measurementConnections.values.toList();
+    _measurementConnections.clear();
+    for (final finish in open) {
+      finish(ProductOutcome.cancelled);
+    }
+  }
+
   /// Straight to the backend, signed with this app's own session.
   ApiClient _newApiClient() =>
       ApiClient(config: config, session: session, auth: viewer.auth);
@@ -10586,6 +10599,10 @@ class AppNotifier extends ChangeNotifier {
   ///
   /// And write the machine cache now ([_keepMachineCache]): this is the last moment the app is sure
   /// to run, since closing it from the app switcher starts by sending it here.
+  ///
+  /// A dial still going ends `cancelled` ([_cancelMeasurementConnections]) before the counts are
+  /// sent: an app the OS suspends in its first seconds away never hears the socket's answer, and
+  /// the dial would stay without an outcome.
   void handleAppPaused() {
     // The first pause of this time away: a second without a resume between (the OS repeating
     // itself) does not move the moment the phone actually left.
@@ -10600,6 +10617,7 @@ class AppNotifier extends ChangeNotifier {
     }
     // The agents this run learned between lists, for the next launch — see [_keepMachineCache].
     _keepMachineCache();
+    _cancelMeasurementConnections();
     _sendMeasurementBeforeBackground();
   }
 
