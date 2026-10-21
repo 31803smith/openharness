@@ -51,6 +51,12 @@ tries the other transport (HTTPS or SSH) once. For a private repository, every
 contributing owner needs access to it on that machine, either through
 `gh auth login` and `gh auth setup-git` or through an SSH key.
 
+The lead starts new agents only on the Swarm's listed machines: every
+contributed machine, plus every machine an agent of the Swarm already runs on
+(the lead's own machine is always one of them). To make another machine
+available, a person adds it to the Swarm under Machines; the host then clones
+the project there.
+
 A Builder starts in a new worktree of the project's checkout on that machine.
 The host clones a project once and reuses the checkout, so it is not kept up to
 date. A start that names no `branchRef` therefore bases its worktree on the
