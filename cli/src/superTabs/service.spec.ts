@@ -71,6 +71,14 @@ it('resolves a native caller to its exact contribution and rechecks it before ev
   expect(await t.ask({ action: 'status', tabId: 'tab', agentId: t.agentId }, owner)).toMatchObject({ error: 'AGENT_UNAVAILABLE' })
 })
 
+it('tells the Lead which branch a started agent works from, and how to choose another', async () => {
+  const t = setup()
+  const help = (await t.ask({ action: 'help' }, owner)).help as { start: string; startRequest: Record<string, unknown> }
+  expect(help.start).toContain('default branch, fetched first')
+  expect(help.start).toContain('branchRef')
+  expect(help.startRequest).toMatchObject({ worktree: true, branchRef: 'refs/remotes/origin/BASE_BRANCH' })
+})
+
 it('keeps host capacity separate from account authority and closes it on disconnect or identity change', async () => {
   const core = fakeCore()
   const reserve = vi.fn(async () => ({ ok: true, reservationId: 'native-creation-id' }))
