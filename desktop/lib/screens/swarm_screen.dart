@@ -7270,6 +7270,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
       onAdd: () => unawaited(_addPhone(from: AddPhoneOpening.offer)),
       onDismiss: app.dismissPhoneOffer,
       onShown: app.phoneOfferShown,
+      away: app.phoneOfferAway,
     );
   }
 
