@@ -902,6 +902,8 @@ export interface RecapSession {
   agentId: string
   /** Its display name, which a summary card carries for a machine whose tile is not loaded. */
   name?: string
+  /** Its engine (`claude`, `codex`, …): what a finished turn's tier is decided with (lib/notifyTier.ts). */
+  engine?: string
   /** Its transcript: a Claude sub-agent writes its own beside it, which a held turn end watches. */
   transcriptPath?: string
   /** An Orchestrator specialist's turn, or its director's while specialists are out: nobody's news. Said
@@ -911,8 +913,9 @@ export interface RecapSession {
 }
 
 /** Who watches this machine's turn cards: a device at all (through the backend or on the cable), and one
- *  rendering this machine right now. */
-export interface RecapWatchers { device: boolean; active: boolean }
+ *  rendering this machine right now. `remote`: an app away from this desk (the phone, a browser) holds a session
+ *  over the relay, and hears how loudly each turn ends (`turn_summary`'s `tier`); absent from an older core. */
+export interface RecapWatchers { device: boolean; active: boolean; remote?: boolean }
 
 /** The turn lifecycle, as the core tells the recaps. */
 export type TurnLifecycle =

@@ -119,6 +119,9 @@ export class BackendSocket {
   onCommanderJoin: (() => void) | null = null
   /** Called only when commander presence crosses zero; drives the disposable recap-worker grace. */
   onCommanderPresenceChanged: ((connected: boolean) => void) | null = null
+  /** An app away from this desk (the phone, a browser) gained an E2EE session: it is told again what is still
+   *  being asked (core/questions.ts), as a window on this computer is when it attaches (localWsServer.ts). */
+  onRemoteAppJoined: (() => void) | null = null
   /** Cancels an agent's turn, for the orchestrator (cli.ts binds core/turns/cancel.ts). */
   onCancel: ((sessionId: string) => void) | null = null
   /** Takes a `cancel` frame, a turn interrupted with C-c (cli.ts binds core/turns/cancel.ts). */
@@ -335,6 +338,12 @@ export class BackendSocket {
     return [...this.remoteClients.values()].some((client) => client.role === 'device')
   }
 
+  /** True while an app away from this desk (the phone, a browser) holds an E2EE session over the relay: someone
+   *  who hears how loudly a turn ends, with no device in sight (services/recaps.ts). */
+  hasRemoteApp(): boolean {
+    return [...this.remoteClients.values()].some((client) => client.role === 'web')
+  }
+
   /** Live backend link state (`/api/status`), as the gateway last said. */
   isConnected(): boolean {
     return this.linkUp
@@ -370,7 +379,17 @@ export class BackendSocket {
     binary: (connId, clear) => this.enqueueTerminalBinary(connId, clear),
     client: (connId, client) => {
       this.wifi?.session(connId, client)
-      if (client) { this.remoteClients.set(connId, client); return }
+      if (client) {
+        const joined = client.role === 'web' && this.remoteClients.get(connId)?.role !== 'web'
+        this.remoteClients.set(connId, client)
+        // The client is registered whatever its replay does: a re-announce that throws costs only itself.
+        if (joined) {
+          try { this.onRemoteAppJoined?.() } catch (error) {
+            console.warn(`[backend] re-announcing to a remote app failed: ${error instanceof Error ? error.message : String(error)}`)
+          }
+        }
+        return
+      }
       if (!this.remoteClients.delete(connId)) return
       this.viewerStreams?.closed(connId); this.ownerCommands.closeConnection(connId); this.onConnectionClosed?.(connId)
     },
@@ -532,10 +551,21 @@ export class BackendSocket {
     for (const [connId, sink] of this.localClients) {
       if (!sink.sendFrame(frame)) void this.unregisterLocalClient(connId)
     }
-    if (!this.thisComputerOnly) {
-      const guest = this.frameGuest(frame)
-      this.toGateway('web', (gateway) => gateway.broadcast(frame, guest ?? undefined))
-    }
+    this.toRemoteApps(frame)
+  }
+
+  /** An up-frame for the owner's apps away from this desk alone — the relay's web audience, sealed by the
+   *  gateway when it carries content — and never the windows here, which are told through `sendLocal`. An
+   *  agent's question goes both ways (core/questions.ts): `send` would add the tool connections too. */
+  sendRemote(frame: Frame): void {
+    if (env.LOG_FRAMES) logFrame('→', 'web', frame)
+    this.toRemoteApps(frame)
+  }
+
+  private toRemoteApps(frame: Frame): void {
+    if (this.thisComputerOnly) return
+    const guest = this.frameGuest(frame)
+    this.toGateway('web', (gateway) => gateway.broadcast(frame, guest ?? undefined))
   }
 
   /** The guest whose harness a frame is about (registry `guest`, through `agentGuest`), or null for the

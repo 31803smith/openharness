@@ -312,6 +312,13 @@ export function startDevices(core: CoreApi, ports: CorePorts, deps: DevicesDeps)
       const turn = ended.get(agentId) // a sub-agent's summary leaves the main turn's numbers alone
       ended.delete(agentId)
       const who = cableHost.describe(agentId)
+      // Decided once already, by the recaps (services/recaps.ts), for the phone as well: the dial follows it and
+      // nobody is asked again. A card without one (a cloud agent's, a recaps from before) is decided here.
+      if (event.tier) {
+        tally(who?.name ?? '', event.tier, 'recaps', 'decided upstream', 0)
+        void cable.summary(agentId, recap, event.text, event.tier, event.fullText, false)
+        return
+      }
       // Returned, so the agent's next card waits behind this one (inOrder): a late recap must not follow turn.started.
       return tierOf({ agent: who?.name ?? '', engine: who?.engine ?? '', recap, durationS: turn?.durationS ?? null,
         stats: turn?.stats ?? {}, subagent: false, onScreen: false, failed: event.failed === true })

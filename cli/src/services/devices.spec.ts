@@ -470,6 +470,19 @@ describe('what the windows say, reaching the dial', () => {
       expect(decideTier.mock.calls.map(([i]) => i.durationS)).toEqual([60, 10])
     })
 
+    it('follows a tier the recaps already decided, asking nobody again, and still silences the agent on screen', () => {
+      const decideTier = vi.fn()
+      const { port } = start({ decideTier })
+      port.card({ type: 'commander_event', agentId: 'a1', payload: { kind: 'summary', text: 'done', recap: 'Deployed', tier: 'list' } })
+      expect(calls('summary')).toEqual([['a1', 'Deployed', 'done', 'list', undefined, false]])
+      expect(decideTier).not.toHaveBeenCalled()
+      expect(logs).toContainEqual(expect.stringMatching(/^\[cable\] notify · .* · list · recaps · decided upstream · 0ms$/))
+      port.desk(['a2'], true)
+      port.card({ type: 'commander_event', agentId: 'a2', payload: { kind: 'summary', text: 'done', tier: 'alert' } })
+      expect(calls('summary').at(-1)).toEqual(['a2', 'done', 'done', 'silent', undefined, false])
+      expect(decideTier).not.toHaveBeenCalled()
+    })
+
     const summaryCalls = () => calls('summary')
     it('is silent without asking Jev when the agent is on screen or the turn was a sub-agent\'s', () => {
       const decideTier = vi.fn()
