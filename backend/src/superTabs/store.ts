@@ -5,7 +5,7 @@ import type { AuthUser } from '../lib/ssoAuth.js'
 import { machineAlive } from '../lib/prisma.js'
 import { machineShareGrant, sharedVia } from '../lib/machineSharePolicy.js'
 import { machineBillingAllowsDataPlane } from '../lib/billingState.js'
-import { applyCommand, authorizeCommandAccess, operationSchema, postable, type Command, type CommandContext } from './commands.js'
+import { applyCommand, authorizeCommandAccess, operationSchema, PAIR_CHAIN_LIMIT, postable, type Command, type CommandContext } from './commands.js'
 import { attachmentMime, attachmentName, AttachmentTooLarge, checkedType, MAX_ATTACHMENT_BYTES, objectKeyFor, publicUrl, type Attachment, type Attachments } from './attachments.js'
 import { randomBytes } from 'node:crypto'
 import type { Readable } from 'node:stream'
@@ -384,6 +384,11 @@ export class SuperTabStore {
         const reply = await tx.superTabMessage.findFirst({ where: { id: command.replyTo, tabId, conversationId: command.conversationId } })
         if (reply) context.reply = { id: reply.id, conversationId: reply.conversationId, author: reply.author as unknown as Author }
       }
+      if (command.type === 'message.send' && actor.kind === 'agent') {
+        const recent = await tx.superTabMessage.findMany({ where: { tabId, conversationId: command.conversationId },
+          orderBy: { sequence: 'desc' }, take: PAIR_CHAIN_LIMIT, select: { author: true, recipientIds: true } })
+        context.recent = recent.map(m => ({ author: m.author as unknown as Author, recipients: m.recipientIds }))
+      }
       if (command.type === 'work.status' && command.status === 'stopped') {
         const proof = await tx.superTabStopReceipt.findUnique({ where: { tabId_assignmentId: { tabId, assignmentId: command.assignmentId } } })
         const execution = conversation(original, command.conversationId).assignment?.execution
@@ -480,6 +485,9 @@ export class SuperTabStore {
         revision, state: json(effects.state), ...indexes(effects.state),
       } })
       await writeRouteEffects(tx, tabId, effects.routeDecisions, context.now)
+      if (command.type === 'work.cancel') {
+        await closeAssignment(tx, tabId, command.assignmentId, 'cancelled', context.now)
+      }
       if (command.type === 'work.status' && (command.status === 'done' || command.status === 'stopped')) {
         await closeAssignment(tx, tabId, command.assignmentId, command.status, context.now)
       }
