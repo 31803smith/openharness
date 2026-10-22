@@ -2,9 +2,9 @@ import { admitMachineStart, machineContribution } from './machines.js'
 import { assignAgentDisplayNames } from './agentNames.js'
 import { z } from 'zod'
 import {
-  activeWork, actorKey, agent, author, conversation, fail, person, stableId, numberConversations, nextConversationNumber, renderWorkTask,
-  finishWorker, requireWorkerDecisions,
-  type Actor, type Agent, type Author, type CommandEffects, type SuperTabState,
+  activeWork, actorKey, agent, agentRole, author, conversation, fail, person, stableId, numberConversations, nextConversationNumber, renderWorkTask,
+  finishWorker, requireWorkerDecisions, reviewing,
+  type Actor, type Agent, type Author, type CommandEffects, type Conversation, type SuperTabState,
 } from './model.js'
 import { routeRecordSchema, routeTitle, startedAs, type RouteCandidate, type RouteDecision, type RouteFinal, type RouteOverride } from './routeRecord.js'
 import { routingOverrideSchema } from './routingPolicy.js'
@@ -35,7 +35,7 @@ const repositoryUrl = z.string().max(4096).refine(value => {
 }, 'Share a repository URL without credentials.')
 const project = z.object({ cwd: path, repositoryUrl: repositoryUrl.nullable() }).strict()
 export const startRequestSchema = z.object({
-  conversationId: id, machineId: id, engine: z.string().min(1).max(80), name: title, cwd: path,
+  conversationId: id, machineId: id, engine: z.string().min(1).max(80), name: title, cwd: path, role: z.enum(['builder', 'reviewer']).optional(),
   worktree: z.boolean(), branchRef: z.string().max(1024).regex(/^refs\/(heads|remotes)\/[^\s\x00-\x1f\x7f]+$/).optional(),
   model: z.string().trim().min(1).max(200).optional(), effort: z.string().trim().min(1).max(80).optional(),
   permissionMode: z.string().min(1).max(80).optional(), codexHome: path.optional(),
@@ -65,7 +65,7 @@ export const commandSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('project.cadence'), projectId: id, minutes: z.union([z.literal(1), z.literal(5), z.literal(15), z.literal(30)]) }).strict(),
   z.object({ type: z.literal('project.report'), projectId: id, throughRevision: z.number().int().nonnegative().safe(), text: text.nullable() }).strict(),
   z.object({ type: z.literal('project.repository'), projectId: id, repositoryUrl }).strict(),
-  z.object({ type: z.literal('conversation.create'), projectId: id.optional(), title, brief: z.string().trim().max(8000).optional(), task: task.optional(), checks: z.array(check).max(40) }).strict()
+  z.object({ type: z.literal('conversation.create'), projectId: id.optional(), title, brief: z.string().trim().max(8000).optional(), task: task.optional(), reviewOf: id.optional(), checks: z.array(check).max(40) }).strict()
     .refine(c => c.task !== undefined || c.brief !== undefined, 'Provide a task or brief.')
     .refine(c => !c.task || renderWorkTask(c.task).length <= 8000, 'Keep the rendered task within 8,000 characters.'),
   z.object({ type: z.literal('conversation.rename'), conversationId: id, title }).strict(),
@@ -142,6 +142,13 @@ function leadWorkerBounced(recent: CommandContext['recent'] = [], leadId: string
     && (m.author.id === leadId ? m.recipients.includes(workerId) : m.author.id === workerId && m.recipients.includes(leadId))
   const run = recent.findIndex(m => !sentToPartner(m))
   return (run < 0 ? recent.length : run) >= PAIR_CHAIN_LIMIT
+}
+
+/** A Reviewer is assigned only review groups, and a review group only a Reviewer. */
+function assignable(group: Conversation, worker: Agent): void {
+  const reviewer = agentRole(worker) === 'reviewer'
+  if (reviewer && !group.reviewOf) fail('REVIEWER_NOT_ASSIGNABLE', 'A Reviewer is assigned only review groups. Assign a Builder.')
+  if (!reviewer && group.reviewOf) fail('REVIEW_GROUP', 'A review group is assigned only to a Reviewer.')
 }
 
 function controls(state: SuperTabState, actor: Actor, conversationId = 'lead'): void {
@@ -393,10 +400,17 @@ export function applyCommand(original: SuperTabState, actor: Actor, input: Comma
         fail('BRIEF_REQUIRED', 'Delegated work needs a brief and acceptance checks.', 400)
       }
       const leadId = conversation(state, project.leadConversationId).leadId
+      if (command.reviewOf) {
+        const reviewed = open(state, command.reviewOf)
+        if (reviewed.id === project.leadConversationId || reviewed.reviewOf || groupProject(state, reviewed).id !== project.id) {
+          fail('REVIEW_TARGET', 'A review group reviews one build group of the same project.', 400)
+        }
+      }
       const number = nextConversationNumber(state)
       state.conversations.push({ id: operationId, ...(state.projects ? { projectId: project.id } : {}),
         number, title: command.title, leadId, agentIds: leadId ? [leadId] : [],
-        archived: false, brief, ...(command.task ? { task: command.task } : {}), assignment: null, lastMessageSequence: 0,
+        archived: false, brief, ...(command.task ? { task: command.task } : {}), ...(command.reviewOf ? { reviewOf: command.reviewOf } : {}),
+        assignment: null, lastMessageSequence: 0,
         checks: command.checks.map((c, i) => ({ ...c, id: stableId(operationId, String(i)), evidence: null, passedBy: null })),
       })
       result.conversationId = operationId
@@ -433,6 +447,7 @@ export function applyCommand(original: SuperTabState, actor: Actor, input: Comma
       const existing = state.agents.find(a => a.id === agentId)
       if (existing) sameProject(state, group, existing)
       if (existing?.workDecision === 'stop' && command.lead) fail('STOP_REQUESTED', 'This worker is stopping. Wait for its execution host.')
+      if (existing && agentRole(existing) === 'reviewer' && command.lead) fail('REVIEWER_NOT_LEAD', 'A Reviewer reviews work and cannot lead a group.')
       if (!existing) reserveHarnessSlot(state, command.machineId, command.harnessId, operationId)
       if (!existing) state.agents.push({ id: agentId, machineId: command.machineId, harnessId: command.harnessId,
         ...(state.projects ? { projectId: project.id } : {}),
@@ -465,6 +480,9 @@ export function applyCommand(original: SuperTabState, actor: Actor, input: Comma
       routed(command.routeDecisionId)
       requireWorkerDecisions(state, actor, open(state, command.request.conversationId))
       if (state.paused) fail('PAUSED', 'New work is paused in this Super Tab.')
+      if (command.request.role === 'reviewer' && !['claude', 'codex'].includes(command.request.engine)) {
+        fail('REVIEWER_ENGINE', 'A Reviewer runs on Claude Code or Codex.', 400)
+      }
       // The Lead's account has machines the Swarm never prepared (no clone of the project), so a Lead may start only where the
       // Swarm already lists a machine: a contributed one, or one an agent of the Swarm runs on. A person's start may name any
       // machine of theirs, because the first Lead is created before anything is listed.
@@ -540,6 +558,7 @@ export function applyCommand(original: SuperTabState, actor: Actor, input: Comma
         ...(state.projects ? { projectId: groupProject(state, group).id } : {}),
         machineOwnerId: start.machineOwnerId, contributorId: start.contributorId, membershipGeneration: start.membershipGeneration,
         hostGrant: start.hostGrant, name: start.request.name, configuration: command.configuration, configurationVersion: operationId,
+        ...(start.request.role ? { role: start.request.role } : {}),
         ...(command.startedSession ? { startedSession: { ...command.startedSession, creationId: start.creationId } } : {}) })
       group.agentIds.push(agentId)
       start.harnessId = command.harnessId
@@ -569,7 +588,11 @@ export function applyCommand(original: SuperTabState, actor: Actor, input: Comma
       if (!isLead && !isOwner) fail('FORBIDDEN', 'Only this project’s Lead, the contributor or tab owner can release a worker.', 403)
       if (state.conversations.some(c => c.leadId === target.id)) fail('LEAD_REQUIRED', 'Release workers only; keep the Lead running.')
       if (state.conversations.some(c => activeWork(c) && c.assignment?.agentId === target.id)) fail('WORK_ACTIVE', 'Finish active work before releasing this worker.')
-      if (!target.workDecision && !state.conversations.some(c => c.assignment?.agentId === target.id)) fail('WORK_REQUIRED', 'This worker has no finished assignment to release.')
+      if (reviewing(state, target.id)) fail('WORK_ACTIVE', 'This Reviewer is reviewing active work. Remove it from that group or wait for the work to end.')
+      // A Reviewer is never assigned work, so the Lead may keep or stop it at any time.
+      if (!target.workDecision && agentRole(target) !== 'reviewer' && !state.conversations.some(c => c.assignment?.agentId === target.id)) {
+        fail('WORK_REQUIRED', 'This worker has no finished assignment to release.')
+      }
       if (target.workDecision === 'stop' && command.decision !== 'stop') fail('STOP_REQUESTED', 'This worker is stopping. Wait for its execution host.')
       if (command.decision === 'stop' && target.workDecision !== 'stop') target.releaseId = operationId
       target.workDecision = command.decision
@@ -637,6 +660,9 @@ export function applyCommand(original: SuperTabState, actor: Actor, input: Comma
       const member = agent(state, command.agentId)
       sameProject(state, group, member)
       if (member.workDecision === 'stop' && command.lead) fail('STOP_REQUESTED', 'This worker is stopping. Wait for its execution host.')
+      const reviewer = agentRole(member) === 'reviewer'
+      if (reviewer && command.lead) fail('REVIEWER_NOT_LEAD', 'A Reviewer reviews work and cannot lead a group.')
+      if (reviewer && command.present && member.workDecision === 'stop') fail('STOP_REQUESTED', 'This Reviewer is stopping. Wait for its execution host.')
       if (!command.present) {
         if (activeWork(group) && (group.assignment?.agentId === command.agentId || group.leadId === command.agentId)) {
           fail('WORK_ACTIVE', 'Reconcile this agent’s assignment before removing it from the conversation.')
@@ -645,6 +671,8 @@ export function applyCommand(original: SuperTabState, actor: Actor, input: Comma
         if (group.leadId === command.agentId) group.leadId = null
       } else {
         if (!group.agentIds.includes(command.agentId)) group.agentIds.push(command.agentId)
+        // Adding a Reviewer to a group reuses it, as assigning work reuses a Builder.
+        if (reviewer) delete member.workDecision
         if (command.lead) {
           if (group.leadId && group.leadId !== command.agentId && activeWork(group)) fail('WORK_ACTIVE', 'Reconcile active work before replacing its lead.')
           group.leadId = command.agentId
@@ -732,6 +760,8 @@ export function applyCommand(original: SuperTabState, actor: Actor, input: Comma
     case 'route.record': {
       controls(state, actor, command.conversationId)
       const chosen = command.decision.candidates.find(c => c.id === command.decision.pick)!
+      const member = chosen.kind === 'member' ? state.agents.find(a => a.id === chosen.agentId) : undefined
+      if (member) assignable(conversation(state, command.conversationId), member)
       requireWorkerDecisions(state, actor, open(state, command.conversationId), chosen.kind === 'member' ? chosen.agentId : undefined)
       if ((context.recentRoutes ?? 0) >= 30) fail('RATE_LIMITED', 'This Super Tab routed 30 tasks in the last hour. Wait before routing again.', 429)
       const decision = command.decision
@@ -805,12 +835,16 @@ export function applyCommand(original: SuperTabState, actor: Actor, input: Comma
       if (activeWork(group)) fail('WORK_ACTIVE', 'The current assignment must finish or be reconciled before reassignment.')
       if (!group.brief || !group.checks.length) fail('BRIEF_REQUIRED', 'Record the brief and acceptance checks before assigning work.', 400)
       const worker = agent(state, command.agentId)
+      assignable(group, worker)
       sameProject(state, group, worker)
       requireWorkerDecisions(state, actor, group, worker.id)
       if (worker.workDecision === 'stop') fail('STOP_REQUESTED', 'This worker is stopping. Wait for its execution host.')
       if (state.conversations.some(c => activeWork(c) && c.assignment?.agentId === worker.id)) fail('AGENT_BUSY', 'This agent already owns an active assignment.')
       delete worker.workDecision
       delete worker.releaseId
+      for (const reviewer of state.agents) {
+        if (agentRole(reviewer) === 'reviewer' && group.agentIds.includes(reviewer.id) && reviewer.workDecision !== 'stop') delete reviewer.workDecision
+      }
       if (!group.agentIds.includes(worker.id)) group.agentIds.push(worker.id)
       rememberAttempt(group)
       group.assignment = { id: operationId, agentId: worker.id, status: 'working', configuration: structuredClone(worker.configuration),
@@ -847,14 +881,17 @@ export function applyCommand(original: SuperTabState, actor: Actor, input: Comma
       const changed = assignment.status !== command.status || assignment.result !== command.result
       assignment.status = command.status
       assignment.result = command.result
-      if (['done', 'stopped'].includes(command.status)) finishWorker(state, assignment.agentId)
+      if (['done', 'stopped'].includes(command.status)) finishWorker(state, assignment.agentId, group)
       if (changed) {
         const label = { working: 'Working', needs_human: 'Needs a human', blocked: 'Stuck', review: 'Ready for review', done: 'Done', stopped: 'Stopped' }[command.status]
         const lead = group.leadId
         // Stuck is the Lead's to hear as a human decision is: either way the work waits on someone.
         const tellLead = actor.kind === 'agent' && actor.agentId === assignment.agentId && lead && lead !== actor.agentId &&
           ['needs_human', 'blocked', 'review', 'done'].includes(command.status)
-        message(group.id, `${label}${command.result ? `\n\n${command.result}` : ''}`, tellLead ? [lead] : [])
+        // Ready for review also wakes the group's Reviewers, whoever marked it.
+        const reviewers = command.status !== 'review' ? [] : group.agentIds.filter(id => id !== lead &&
+          (actor.kind !== 'agent' || id !== actor.agentId) && state.agents.some(a => a.id === id && agentRole(a) === 'reviewer' && a.workDecision !== 'stop'))
+        message(group.id, `${label}${command.result ? `\n\n${command.result}` : ''}`, [...(tellLead ? [lead] : []), ...reviewers])
       }
       break
     }
@@ -874,7 +911,7 @@ export function applyCommand(original: SuperTabState, actor: Actor, input: Comma
       const gone = assignment.status === 'reconciling'
       assignment.status = 'cancelled'
       assignment.result = command.reason
-      finishWorker(state, assignment.agentId)
+      finishWorker(state, assignment.agentId, group)
       message(group.id, `${isLead ? 'The Lead' : 'The tab owner'} cancelled this task: ${command.reason.replace(/[.\s]+$/, '')}.${gone ? '' : ' Stop working on it.'}`,
         gone ? [] : [assignment.agentId])
       break

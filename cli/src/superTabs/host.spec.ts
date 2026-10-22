@@ -48,6 +48,16 @@ function setup(messageFields: Record<string, unknown> = {}) {
 }
 
 describe('current Swarm role lookup', () => {
+  it('derives a Reviewer from its stored role while it is in a current group', async () => {
+    const t = setup()
+    const agent = { id: 'agent', harnessId: 'harness', machineId: 'machine-1', role: 'reviewer' }
+    let groups = [{ leadId: 'other', agentIds: ['agent'] }]
+    vi.mocked(t.call).mockImplementation(async (_method, path) => ({ status: 200, body: { success: true, data:
+      path.includes('/hosts/') ? [{ tabId: 'tab', agent }] : { state: { agents: [agent], conversations: groups } } } }))
+    expect(await swarmRoleFor(t.core, 'machine-1', 'harness')).toBe('review')
+    groups = []
+    expect(await swarmRoleFor(t.core, 'machine-1', 'harness')).toBeNull()
+  })
   it.each(['lead', 'member', 'assigned'] as const)('derives an old %s from current groups on its machine', async kind => {
     const t = setup()
     const agent = { id: 'agent', harnessId: 'harness', machineId: 'machine-1' }
@@ -117,7 +127,7 @@ describe('Super Tab native delivery handoff', () => {
       'In reply to message question-2. Read it before interpreting the answer:'
     ), 'team:service:superTabs:delivery')
     expect(vi.mocked(t.core.turns.deliver).mock.calls[0]?.[1]).toContain('Message message from Collaborator:\nYes, keep them.')
-    expect(vi.mocked(t.core.turns.deliver).mock.calls[0]?.[1]).toContain('On Claude Code or Codex, Leads use swarm-lead and workers use swarm-dev.')
+    expect(vi.mocked(t.core.turns.deliver).mock.calls[0]?.[1]).toContain('On Claude Code or Codex, Leads use swarm-lead, workers swarm-dev and Reviewers swarm-review.')
     expect(vi.mocked(t.core.turns.deliver).mock.calls[0]?.[1]).toContain('Leads coordinate: assign multi-part or 15+ minute work to Swarm agent groups; do only answers, lookups and small fixes yourself; your subagents only read/look up.')
   })
 

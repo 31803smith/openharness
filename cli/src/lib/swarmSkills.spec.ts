@@ -1,4 +1,5 @@
 import { execFileSync } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -22,7 +23,7 @@ describe('built-in Swarm skills', () => {
       expect(prepared.file.startsWith(join(realpathSync(workspace), '.harness', 'runtime'))).toBe(true)
       const text = readFileSync(prepared.file, 'utf8')
       expect(text).toContain(`name: swarm-${role}`)
-      if (role === 'lead') expect(text).toContain('goal, changes, constraints, owned code and acceptance checks')
+      if (role === 'lead') expect(text).toContain('Route every new agent and every assignment')
       else {
         expect(text).toContain('Needs:')
         expect(text).toContain("Do not touch other groups' code.")
@@ -36,6 +37,20 @@ describe('built-in Swarm skills', () => {
     expect(readFileSync(join(workspace, 'AGENTS.md'), 'utf8')).toBe('Project rules\n')
     expect(readdirSync(workspace).sort()).toEqual(['.harness', 'AGENTS.md'])
     expect(readdirSync(data)).toEqual([])
+  })
+
+  // The owner's approved text (2026-10-22), byte for byte.
+  it.each([
+    ['lead', 'a8d54ee204209946486c8d99960f1317e4bd3e51434af894b174e712b67b7941'],
+    ['dev', '86caf697c83365f000317845b0aaa929947a9591d637ab2bd0f8536da8e86763'],
+    ['review', '424dc9db5642ed7093128525f30877ffc301eb6957b33e8234916de0f0eaa208'],
+  ] as const)('writes the owner\'s %s skill byte for byte', (role, sha256) => {
+    expect(parseSwarmSkill({ role, key: 'session' })).toEqual({ role, key: 'session' })
+    const prepared = prepareSwarmSkill(fixture(), { role, key: 'session' })
+    expect(prepared.instructions).toContain(`swarm-${role} skill`)
+    const text = readFileSync(prepared.file, 'utf8')
+    expect(text.startsWith(`---\nname: swarm-${role}\n`)).toBe(true)
+    expect(createHash('sha256').update(text).digest('hex')).toBe(sha256)
   })
 
   it('keeps standalone session skills out of Git, including git add -A', () => {
@@ -90,7 +105,7 @@ describe('built-in Swarm skills', () => {
   })
 
   it('validates persisted role metadata and refuses an empty key', () => {
-    for (const value of [null, undefined, {}, { role: 'reviewer', key: 'x' }, { role: 'dev', key: '' }, { role: 'lead', key: 7 }]) expect(parseSwarmSkill(value)).toBeUndefined()
+    for (const value of [null, undefined, {}, { role: 'builder', key: 'x' }, { role: 'dev', key: '' }, { role: 'lead', key: 7 }]) expect(parseSwarmSkill(value)).toBeUndefined()
     expect(parseSwarmSkill({ role: 'dev', key: 'x' })).toEqual({ role: 'dev', key: 'x' })
     expect(() => prepareSwarmSkill(fixture(), { role: 'lead', key: '' })).toThrow()
   })
