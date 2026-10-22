@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:math' as math;
 import 'dart:ui' show PointerDeviceKind;
 
 import 'package:flutter/material.dart';
@@ -428,10 +429,10 @@ void main() {
       for (final a in five) {
         expect(a.center.dy, closeTo(rowFive.center.dy, .5));
       }
-      // The last mark, +2, centers where the heading's + does (embedded: 16 from the edge).
+      // The agents column ends half an avatar past the heading's + (embedded: 16 from the edge), so +2 ends there.
       expect(
-        tester.getCenter(inRow('five', find.text('+2'))).dx,
-        closeTo(rowFive.right - 16, .5),
+        tester.getRect(inRow('five', find.text('+2'))).right,
+        closeTo(rowFive.right - 16 + 9, .5),
       );
       expect(
         find.descendant(
@@ -593,7 +594,10 @@ void main() {
         find.bySemanticsLabel(RegExp('Claude Code 15% remaining')),
         findsOneWidget,
       );
-      expect(find.bySemanticsLabel(RegExp('Codex 5% remaining')), findsOneWidget);
+      expect(
+        find.bySemanticsLabel(RegExp('Codex 5% remaining')),
+        findsOneWidget,
+      );
       // No chip for an expired or unknown allowance, nor for an offline machine; no warning icon anywhere.
       expect(find.byKey(const ValueKey('super-machine-gone')), findsOneWidget);
       for (final id in ['expired', 'unknown', 'gone']) {
@@ -615,7 +619,151 @@ void main() {
   );
 
   testWidgets(
-    'as the line narrows the name keeps its minimum: agents become +N, then Codex goes, then Claude',
+    'every row shares the Claude, Codex and agents columns: their right edges line up, an empty slot keeps '
+    'its place, and a narrow list hides a column for every row at once',
+    (tester) async {
+      final server = ConversationServer();
+      final at = DateTime.now().millisecondsSinceEpoch;
+      Map<String, dynamic> quota(String engine, int used) => {
+        'engine': engine,
+        'known': true,
+        'windows': [
+          {'name': '5-hour', 'usedPercent': used},
+        ],
+      };
+      // Quota sets: both, Claude only, Codex only, none; agents: 7, 3, 1, 0; and one offline.
+      final machines = [
+        ('both', [quota('claude', 0), quota('codex', 57)], 7, 0),
+        ('claude', [quota('claude', 91)], 3, 0),
+        ('codex', [quota('codex', 100)], 1, 0),
+        ('none', <Map<String, dynamic>>[], 0, 0),
+        ('gone', [quota('claude', 50)], 1, 600000),
+      ];
+      server.state['machines'] = [
+        for (final (id, quotas, _, age) in machines)
+          {
+            'machineId': id,
+            'name': '$id machine',
+            'contributorId': 'owner',
+            'observation': {'receivedAt': at - age, 'quotas': quotas},
+          },
+      ];
+      server.state['agents'] = [
+        for (final (id, _, agents, _) in machines)
+          for (var i = 0; i < agents; i++)
+            {
+              'id': '$id-$i',
+              'name': 'Harness $i',
+              'displayName': 'Agent $i',
+              'machineId': id,
+              'harnessId': 'native-$id-$i',
+              'contributorId': 'owner',
+              'configuration': {'engine': 'claude'},
+            },
+      ];
+      final c = server.controller();
+      await c.refresh();
+      c.offlineMachinesOpen = true;
+      final ids = [for (final m in machines) m.$1];
+      Finder key(String k) => find.byKey(ValueKey(k));
+      bool has(String k) => key(k).evaluate().isNotEmpty;
+      double right(String k) => tester.getRect(key(k)).right;
+
+      // The sidebar's widths, less its 8 px padding on each side, and a wide one.
+      for (final width in [164.0, 188.0, 224.0, 264.0, 420.0]) {
+        for (final scale in [1.0, 2.0]) {
+          await tester.pumpWidget(
+            MaterialApp(
+              builder: (context, child) => MediaQuery(
+                data: MediaQuery.of(context)
+                    .copyWith(textScaler: TextScaler.linear(scale)),
+                child: child!,
+              ),
+              home: Scaffold(
+                body: Align(
+                  alignment: Alignment.topLeft,
+                  child: SizedBox(
+                    width: width,
+                    child: SuperTabMachines(
+                      controller: c,
+                      embedded: true,
+                      onAddAgent: (_) {},
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          );
+          final reason = 'at width $width, scale $scale';
+          expect(tester.takeException(), isNull, reason: reason);
+
+          // Each allowance column shows for every row that has the quota, or for none.
+          for (final (engine, owners) in [
+            ('claude', ['both', 'claude']),
+            ('codex', ['both', 'codex']),
+          ]) {
+            final shown = [
+              for (final id in owners) has('super-machine-figure-$id-$engine'),
+            ];
+            expect(shown.toSet(), hasLength(1), reason: '$engine $reason');
+            if (shown.first) {
+              // The % signs line up, whichever rows leave the other column blank.
+              final edges = {
+                for (final id in owners)
+                  right('super-machine-figure-$id-$engine').toStringAsFixed(2),
+              };
+              expect(edges, hasLength(1), reason: '$engine $reason');
+            }
+            // Offline: never a chip.
+            expect(
+              has('super-machine-figure-gone-$engine'),
+              isFalse,
+              reason: reason,
+            );
+          }
+          // The agents column: one right edge for every row, those without agents too,
+          // and either avatars on every row that has agents or a count on all of them.
+          final slots = {
+            for (final id in ids)
+              if (has('super-machine-agents-slot-$id'))
+                right('super-machine-agents-slot-$id').toStringAsFixed(2),
+          };
+          expect(slots, hasLength(1), reason: reason);
+          final stacked = {
+            for (final id in ['both', 'claude', 'codex', 'gone'])
+              find
+                  .descendant(
+                    of: key('super-machine-$id'),
+                    matching: find.byType(SuperTabAvatar),
+                  )
+                  .evaluate()
+                  .isNotEmpty,
+          };
+          expect(stacked, hasLength(1), reason: reason);
+          if (width == 420 && scale == 1) {
+            expect(stacked.single, isTrue, reason: reason);
+            expect(has('super-machine-figure-both-claude'), isTrue);
+            expect(has('super-machine-figure-both-codex'), isTrue);
+            // Claude's column comes before Codex's, and the agents after both.
+            expect(
+              right('super-machine-figure-both-claude'),
+              lessThan(right('super-machine-figure-both-codex')),
+            );
+            expect(
+              right('super-machine-figure-both-codex'),
+              lessThan(slots.single.isEmpty ? 0 : double.parse(slots.single)),
+            );
+          }
+        }
+      }
+      await tester.pumpWidget(const SizedBox());
+      await c.flush();
+      c.dispose();
+    },
+  );
+
+  testWidgets(
+    'as the list narrows the names keep their minimum: agents become a count, then Codex goes, then Claude',
     (tester) async {
       final server = ConversationServer();
       final now = DateTime.now();
@@ -701,14 +849,26 @@ void main() {
           // A chip goes only once the avatars have, Codex before Claude.
           if (!state.$3) expect(avatars, 0, reason: reason);
           if (!state.$2) expect(state.$3, isFalse, reason: reason);
-          // The name keeps its minimum while anything at the end remains.
-          final name = tester.getSize(
-            find.descendant(of: row, matching: find.byType(RichText)).first,
-          );
+          // The name's room, from where it starts to the first column, keeps its
+          // minimum while any column but the count remains.
+          final nameLeft = tester
+              .getTopLeft(
+                find.descendant(of: row, matching: find.byType(RichText)).first,
+              )
+              .dx;
+          final firstColumn = [
+            for (final key in [
+              'super-machine-allowance-m-claude',
+              'super-machine-allowance-m-codex',
+              'super-machine-agents-slot-m',
+            ])
+              if (find.byKey(ValueKey(key)).evaluate().isNotEmpty)
+                tester.getTopLeft(find.byKey(ValueKey(key))).dx,
+          ].reduce(math.min);
           if (state.$2 || avatars > 0) {
             expect(
-              name.width,
-              greaterThanOrEqualTo(56 * scale - 1),
+              firstColumn - nameLeft,
+              greaterThanOrEqualTo(48 * scale - 1),
               reason: reason,
             );
           }

@@ -900,7 +900,7 @@ class _SuperTabMachinesState extends State<SuperTabMachines> {
 
   /// One machine on one line: its state's dot in the icon column, its name on the text column, its agents at
   /// the end. Everything else is in its tooltip and its details.
-  Widget _machine(_MachineView v, {int level = 1}) {
+  Widget _machine(_MachineView v, _Columns columns, {int level = 1}) {
     final tipKey = _tips.putIfAbsent(v.id, GlobalKey<TooltipState>.new);
     final name = superTabMachineName(v.name);
     final row = Padding(
@@ -925,7 +925,7 @@ class _SuperTabMachinesState extends State<SuperTabMachines> {
               Tooltip.dismissAllToolTips();
             }
           },
-          child: _MachineLine(view: v, anchor: _anchor, level: level),
+          child: _MachineLine(view: v, columns: columns, level: level),
         ),
       ),
     );
@@ -1014,8 +1014,103 @@ class _SuperTabMachinesState extends State<SuperTabMachines> {
     );
   }
 
+  /// The right side of every row, decided once for the whole list from its [width], so each column lines up:
+  /// Claude's allowance, Codex's, then the agents. A column no machine uses is left out. When the name would
+  /// have less than its minimum, the agents column becomes a count first, then the Codex column goes, then
+  /// Claude's, for every row at once.
+  _Columns _columns(
+    BuildContext context,
+    double width,
+    List<_MachineView> views,
+  ) {
+    final scaler = MediaQuery.textScalerOf(context);
+    final direction = Directionality.of(context);
+    double measure(String text, TextStyle style) {
+      final painter = TextPainter(
+        text: TextSpan(text: text, style: style),
+        textDirection: direction,
+        textScaler: scaler,
+        maxLines: 1,
+      )..layout();
+      final result = painter.width;
+      painter.dispose();
+      return result;
+    }
+
+    final count = _MachineLine.countStyle;
+    final chip =
+        _MachineLine.gap +
+        _MachineLine.mark +
+        _MachineLine.markGap +
+        measure('100%', count);
+    bool uses(String engine) =>
+        views.any((v) => v.allowances.any((a) => a.engine == engine));
+    final most = views.fold(0, (n, v) => math.max(n, v.agents.length));
+    final stacked = math.min(most, _MachineLine.maxAvatars);
+    final rest = most - stacked;
+    final ringed = _MachineLine.ringed;
+    final full = most == 0
+        ? 0.0
+        : _MachineLine.gap +
+              ringed +
+              (ringed - _MachineLine.overlap) * (stacked - 1) +
+              (rest > 0 ? 4 + measure('+$rest', count) : 0);
+    final counted = most == 0
+        ? 0.0
+        : _MachineLine.gap + measure('+$most', count);
+    // With agents, their last avatar centers on the heading +; without, the row ends where project dots do.
+    final end = most == 0
+        ? _anchor - _MachineLine.dotHalf
+        : (_anchor - ringed / 2).clamp(0.0, _anchor);
+    final style = DesktopChrome.control();
+    final wanted = math.min(
+      views.fold(
+        0.0,
+        (w, v) => math.max(w, measure(superTabMachineName(v.name), style)),
+      ),
+      scaler.scale(_MachineLine.minName),
+    );
+    // Decided for the online rows, so opening "Offline · N" never moves a column; the offline rows' names,
+    // one step further in, give way a little sooner.
+    final text =
+        width -
+        SuperTabSectionHeading.indentFor(1) -
+        _MachineLine.iconColumn -
+        end;
+    final steps = [
+      (
+        agents: full,
+        counted: false,
+        claude: uses('claude'),
+        codex: uses('codex'),
+      ),
+      (
+        agents: counted,
+        counted: true,
+        claude: uses('claude'),
+        codex: uses('codex'),
+      ),
+      (agents: counted, counted: true, claude: uses('claude'), codex: false),
+      (agents: counted, counted: true, claude: false, codex: false),
+    ];
+    final pick = steps.firstWhere(
+      (s) =>
+          text - s.agents - (s.claude ? chip : 0) - (s.codex ? chip : 0) >=
+          wanted,
+      orElse: () => steps.last,
+    );
+    return _Columns(
+      claude: pick.claude,
+      codex: pick.codex,
+      chip: chip,
+      agents: pick.agents,
+      counted: pick.counted,
+      end: end,
+    );
+  }
+
   /// Online machines first, then "Offline · N" with the offline ones under it; each part by name.
-  List<Widget> _machines() {
+  List<Widget> _machines(BuildContext context, double width) {
     final views = [for (final id in _ids) _view(id)];
     String key(_MachineView v) => superTabMachineName(v.name).toLowerCase();
     // A machine being refreshed keeps its place; one whose state cannot be read follows the ones that report.
@@ -1034,13 +1129,19 @@ class _SuperTabMachinesState extends State<SuperTabMachines> {
     final offline = views
         .where((v) => v.status == SuperTabMachineStatus.offline)
         .toList();
+    final open = offline.isNotEmpty && c.offlineMachinesOpen;
+    final shown = [
+      for (final v in views)
+        if (v.status != SuperTabMachineStatus.offline || open) v,
+    ];
+    final columns = _columns(context, width, shown);
     return [
       for (final v in views)
-        if (v.status != SuperTabMachineStatus.offline) _machine(v),
+        if (v.status != SuperTabMachineStatus.offline) _machine(v, columns),
       if (offline.isNotEmpty) ...[
         _offlineToggle(offline.length),
-        if (c.offlineMachinesOpen)
-          for (final v in offline) _machine(v, level: 2),
+        if (open)
+          for (final v in offline) _machine(v, columns, level: 2),
       ],
     ];
   }
@@ -1086,7 +1187,14 @@ class _SuperTabMachinesState extends State<SuperTabMachines> {
             ),
           )
         else
-          ..._machines(),
+          // The rows share their columns, which depend on the list's width.
+          LayoutBuilder(
+            builder: (context, constraints) => Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              mainAxisSize: MainAxisSize.min,
+              children: _machines(context, constraints.maxWidth),
+            ),
+          ),
       ],
     ];
     return widget.embedded
@@ -1168,42 +1276,72 @@ class _Allowance {
   );
 }
 
+/// The right side every machine row shares: which columns show, and how wide each one is.
+class _Columns {
+  const _Columns({
+    required this.claude,
+    required this.codex,
+    required this.chip,
+    required this.agents,
+    required this.counted,
+    required this.end,
+  });
+
+  /// Whether the Claude and Codex allowance columns show.
+  final bool claude, codex;
+
+  /// The width of an allowance column: a gap, the mark, and room for "100%".
+  final double chip;
+
+  /// The width of the agents column; 0 when no machine has an agent.
+  final double agents;
+
+  /// Whether the agents column only counts them ("+3") rather than stacking their avatars.
+  final bool counted;
+
+  /// The space after the last column, from the row's right edge.
+  final double end;
+}
+
 /// A machine's line, at the height and on the columns of a project row: the dot centered in the icon column,
-/// the name on the text column, then each engine's allowance and up to three agents overlapping, then +N. The
-/// last agent mark centers on [anchor], the heading +'s column. When the line runs short, the name keeps
-/// [_minName]: the agents become +N first, then the Codex chip goes, then the Claude one.
+/// the name on the text column, then the list's shared [columns]: Claude's allowance, Codex's, and the agents.
+/// A machine without an allowance leaves its column blank, so every row's figures line up.
 class _MachineLine extends StatelessWidget {
   const _MachineLine({
     required this.view,
-    required this.anchor,
+    required this.columns,
     required this.level,
   });
 
   final _MachineView view;
-
-  /// From the row's right edge to the center of its last mark.
-  final double anchor;
+  final _Columns columns;
 
   /// 1 under the Machines heading, 2 under "Offline · N".
   final int level;
 
   static const iconColumn = SuperTabSectionHeading.actionWidth;
 
-  /// Half the project rows' dot, so that a row with no agents stops where theirs do.
+  /// Half the project rows' dot, so that a list without agents stops where their rows do.
   static const dotHalf = 3.0;
   static const _avatar = 16.0;
   static const _ring = 1.0;
-  static const _overlap = 5.0;
-  static const _maxAvatars = 3;
-  static const _mark = 14.0;
-  static const _markGap = 4.0;
-  static const _chipGap = 8.0;
-  static const _gap = 8.0;
+  static const overlap = 5.0;
+  static const maxAvatars = 3;
+  static const mark = 14.0;
+  static const markGap = 3.0;
 
-  /// What the name keeps, at the default text size, before anything at the end gives way.
-  static const _minName = 56.0;
+  /// Before each column, and between the name and the first.
+  static const gap = 6.0;
 
-  static double get _ringed => _avatar + 2 * _ring;
+  /// What the name keeps, at the default text size, before a column gives way: a readable start of it, small
+  /// enough that Claude's allowance still fits beside it in the default 204 px sidebar.
+  static const minName = 48.0;
+
+  static double get ringed => _avatar + 2 * _ring;
+
+  static TextStyle get countStyle => DesktopChrome.metadata().copyWith(
+    fontFeatures: const [FontFeature.tabularFigures()],
+  );
 
   @override
   Widget build(BuildContext context) {
@@ -1214,19 +1352,46 @@ class _MachineLine extends StatelessWidget {
     final style = DesktopChrome.control(
       color: muted ? DesktopChrome.muted : DesktopChrome.foreground,
     );
-    final countStyle = DesktopChrome.metadata().copyWith(
-      fontFeatures: const [FontFeature.tabularFigures()],
-    );
-    double measure(String text, [TextStyle? textStyle]) {
-      final painter = TextPainter(
-        text: TextSpan(text: text, style: textStyle ?? countStyle),
-        textDirection: Directionality.of(context),
-        textScaler: MediaQuery.textScalerOf(context),
-        maxLines: 1,
-      )..layout();
-      final result = painter.width;
-      painter.dispose();
-      return result;
+    final count = countStyle;
+    final agents = v.agents.length;
+    final shown = columns.counted ? 0 : math.min(agents, maxAvatars);
+    final hidden = agents - shown;
+    final roles = v.agents.map((a) => '${a.name} — ${a.role}').join('\n');
+
+    Widget allowance(String engine) {
+      final a = v.allowances.where((a) => a.engine == engine).firstOrNull;
+      return SizedBox(
+        width: columns.chip,
+        child: a == null
+            ? null
+            : Tooltip(
+                message: a.detail,
+                child: Semantics(
+                  label: '${a.name} ${a.figure} remaining',
+                  excludeSemantics: true,
+                  child: Row(
+                    key: ValueKey('super-machine-allowance-${v.id}-$engine'),
+                    children: [
+                      const SizedBox(width: gap),
+                      EngineMark(engine: engine, size: mark),
+                      const SizedBox(width: markGap),
+                      // Right-aligned in tabular figures, so every row's % sign lines up.
+                      Expanded(
+                        child: Text(
+                          a.figure,
+                          key: ValueKey('super-machine-figure-${v.id}-$engine'),
+                          textAlign: TextAlign.right,
+                          maxLines: 1,
+                          softWrap: false,
+                          overflow: TextOverflow.clip,
+                          style: count.copyWith(color: a.ink),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+      );
     }
 
     return Row(
@@ -1250,121 +1415,57 @@ class _MachineLine extends StatelessWidget {
             constraints: const BoxConstraints(minHeight: 36),
             child: Padding(
               padding: const EdgeInsets.symmetric(vertical: 8),
-              child: LayoutBuilder(
-                builder: (context, constraints) {
-                  final agents = v.agents.length;
-                  double chipWidth(_Allowance a) =>
-                      _mark + _markGap + measure(a.figure);
-
-                  /// How much the end takes with [shown] avatars and the first [chips] chips, and the space after
-                  /// it that puts its last mark on the anchor.
-                  ({double width, double end}) end(int shown, int chips) {
-                    final hidden = agents - shown;
-                    final more = hidden > 0 ? measure('+$hidden') : 0.0;
-                    final stack = shown > 0
-                        ? _ringed + (_ringed - _overlap) * (shown - 1)
-                        : 0.0;
-                    final double agentsWidth =
-                        stack + (hidden > 0 ? (shown > 0 ? 4 : 0) + more : 0);
-                    var chipsWidth = 0.0;
-                    for (var i = 0; i < chips; i++) {
-                      chipsWidth +=
-                          chipWidth(v.allowances[i]) + (i > 0 ? _chipGap : 0);
-                    }
-                    final double width =
-                        (chips > 0 ? _gap + chipsWidth : 0) +
-                        (agents > 0 ? _gap + agentsWidth : 0);
-                    final last = hidden > 0 ? more : _ringed;
-                    return (
-                      width: width,
-                      end: agents > 0
-                          ? (anchor - last / 2).clamp(0.0, anchor)
-                          : anchor - dotHalf,
-                    );
-                  }
-
-                  final name = superTabMachineName(v.name);
-                  final wanted = math.min(
-                    measure(name, style),
-                    MediaQuery.textScalerOf(context).scale(_minName),
-                  );
-                  // Agents to +N first, then chips from the end: Codex, then Claude.
-                  final steps = [
-                    for (var s = math.min(agents, _maxAvatars); s >= 0; s--)
-                      (s, v.allowances.length),
-                    for (var k = v.allowances.length - 1; k >= 0; k--) (0, k),
-                  ];
-                  var (shown, chips) = steps.last;
-                  for (final (s, k) in steps) {
-                    final e = end(s, k);
-                    if (constraints.maxWidth - e.width - e.end >= wanted) {
-                      (shown, chips) = (s, k);
-                      break;
-                    }
-                  }
-                  final hidden = agents - shown;
-                  final room =
-                      constraints.maxWidth -
-                      end(shown, chips).width -
-                      end(shown, chips).end;
-                  final roles = v.agents
-                      .map((a) => '${a.name} — ${a.role}')
-                      .join('\n');
-                  return Row(
-                    children: [
-                      Expanded(child: _name(context, name, style, room)),
-                      for (final (i, a)
-                          in v.allowances.take(chips).indexed) ...[
-                        SizedBox(width: i == 0 ? _gap : _chipGap),
-                        Tooltip(
-                          message: a.detail,
-                          child: Semantics(
-                            label: '${a.name} ${a.figure} remaining',
-                            excludeSemantics: true,
-                            child: Row(
-                              key: ValueKey(
-                                'super-machine-allowance-${v.id}-${a.engine}',
-                              ),
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                EngineMark(engine: a.engine, size: _mark),
-                                const SizedBox(width: _markGap),
-                                Text(
-                                  a.figure,
-                                  style: countStyle.copyWith(color: a.ink),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: LayoutBuilder(
+                      builder: (context, constraints) => Align(
+                        alignment: Alignment.centerLeft,
+                        child: _name(
+                          context,
+                          superTabMachineName(v.name),
+                          style,
+                          constraints.maxWidth,
+                        ),
+                      ),
+                    ),
+                  ),
+                  if (columns.claude) allowance('claude'),
+                  if (columns.codex) allowance('codex'),
+                  if (columns.agents > 0)
+                    SizedBox(
+                      key: ValueKey('super-machine-agents-slot-${v.id}'),
+                      width: columns.agents,
+                      child: agents == 0
+                          ? null
+                          : Align(
+                              alignment: Alignment.centerRight,
+                              child: Tooltip(
+                                message: roles,
+                                child: Semantics(
+                                  label: v.agents
+                                      .map((a) => '${a.name}, ${a.role}')
+                                      .join('; '),
+                                  excludeSemantics: true,
+                                  child: Row(
+                                    key: ValueKey(
+                                      'super-machine-agents-${v.id}',
+                                    ),
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      if (shown > 0) _stack(context, shown),
+                                      if (hidden > 0) ...[
+                                        if (shown > 0) const SizedBox(width: 4),
+                                        Text('+$hidden', style: count),
+                                      ],
+                                    ],
+                                  ),
                                 ),
-                              ],
+                              ),
                             ),
-                          ),
-                        ),
-                      ],
-                      if (agents > 0) ...[
-                        const SizedBox(width: _gap),
-                        Tooltip(
-                          message: roles,
-                          child: Semantics(
-                            label: v.agents
-                                .map((a) => '${a.name}, ${a.role}')
-                                .join('; '),
-                            excludeSemantics: true,
-                            child: Row(
-                              key: ValueKey('super-machine-agents-${v.id}'),
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                if (shown > 0) _stack(context, shown),
-                                if (hidden > 0) ...[
-                                  if (shown > 0) const SizedBox(width: 4),
-                                  Text('+$hidden', style: countStyle),
-                                ],
-                              ],
-                            ),
-                          ),
-                        ),
-                      ],
-                      SizedBox(width: end(shown, chips).end),
-                    ],
-                  );
-                },
+                    ),
+                  SizedBox(width: columns.end),
+                ],
               ),
             ),
           ),
@@ -1418,12 +1519,12 @@ class _MachineLine extends StatelessWidget {
 
   /// The first [shown] agents, overlapping, each on a ring of the surface so the one behind reads as behind.
   Widget _stack(BuildContext context, int shown) {
-    final step = _ringed - _overlap;
+    final step = ringed - overlap;
     return MediaQuery.withClampedTextScaling(
       maxScaleFactor: 1,
       child: SizedBox(
-        width: _ringed + step * (shown - 1),
-        height: _ringed,
+        width: ringed + step * (shown - 1),
+        height: ringed,
         child: Stack(
           children: [
             // The first agent is drawn last, on top.

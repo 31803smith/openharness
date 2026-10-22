@@ -150,6 +150,24 @@ void main() {
             'resources': {'cpuPercent': 40},
           },
         },
+        // A Codex-only machine: its Claude slot stays blank, so its Codex % lines up with the others'.
+        {
+          'machineId': 'm-codex',
+          'name': 'Build Box',
+          'contributorId': 'person-1',
+          'observation': {
+            'receivedAt': DateTime.now().millisecondsSinceEpoch,
+            'quotas': [
+              {
+                'engine': 'codex',
+                'known': true,
+                'windows': [
+                  {'name': '5-hour', 'usedPercent': 30},
+                ],
+              },
+            ],
+          },
+        },
         {
           'machineId': 'm-old',
           'name': 'Old Mini',
@@ -317,7 +335,16 @@ void main() {
           .evaluate()
           .isNotEmpty) {
         expect(chip('codex', '88%'), findsOneWidget);
+        // The Codex-only machine's figure lines up with Studio Mac's.
+        double figureRight(String id) => tester
+            .getRect(find.byKey(ValueKey('super-machine-figure-$id-codex')))
+            .right;
+        expect(figureRight('m-codex'), closeTo(figureRight('m'), .01));
       }
+      expect(
+        find.byKey(const ValueKey('super-machine-figure-m-codex-claude')),
+        findsNothing,
+      );
       expect(find.text('Offline · 1'), findsOneWidget);
       expect(find.byKey(const ValueKey('super-machine-m-old')), findsNothing);
       expect(find.textContaining('CPU'), findsNothing);
