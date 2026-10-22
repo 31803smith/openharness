@@ -1427,6 +1427,9 @@ class AppNotifier extends ChangeNotifier {
   CurrentUserProfile? get currentUser => _currentUser;
   set currentUser(CurrentUserProfile? profile) {
     if (_currentUser?.id != profile?.id) {
+      // Initial identity loading may follow a restored Swarm; leaving a known
+      // account must not reveal the feature to the next one.
+      if (_currentUser != null) _superTabsEntered = false;
       _closeAttachmentSessions();
       _closeOwnerMemories();
       deviceHosts.clear();
@@ -1710,10 +1713,14 @@ class AppNotifier extends ChangeNotifier {
     upload: uploadWith(() => api),
     discoveryInterval: kUnderTest ? Duration.zero : const Duration(seconds: 15),
     onTabs: (tabs, hidden) {
-      // The browser can learn its account before the saved layout finishes
-      // loading. Discovery must not persist over that workspace during boot.
+      // Discovery can finish while an already signed-in machine is re-seating
+      // its saved desk, too. Publishing a SuperTab then advances the layout
+      // revision and replaces regular tabs before their restore can finish.
       if (_disposed ||
           status != AppStatus.authenticated ||
+          _paneLayoutRestores != 0 ||
+          _workspaceCleanup != null ||
+          !_superTabsEntered ||
           currentUser?.id == null) {
         return;
       }
@@ -1756,7 +1763,12 @@ class AppNotifier extends ChangeNotifier {
       _announceOpenPanesToDial();
     },
     onSnapshot: (controller) {
-      if (_disposed || controller.accountId != currentUser?.id) return;
+      if (_disposed ||
+          _paneLayoutRestores != 0 ||
+          _workspaceCleanup != null ||
+          controller.accountId != currentUser?.id) {
+        return;
+      }
       var shown = false;
       for (final tab in swarms.where((s) => s.superTabId == controller.tabId)) {
         if (tab.name != controller.snapshot!.name || !tab.nameIsCustom) {
@@ -1787,6 +1799,12 @@ class AppNotifier extends ChangeNotifier {
   );
 
   Map<String, String> _superTabNames = {};
+  bool _superTabsEntered = false;
+
+  /// Membership alone must not reveal the hidden feature in a regular workspace.
+  /// The hidden shortcut, an explicit open, or a restored Swarm supplies that intent.
+  void enterSuperTabs() => _superTabsEntered = true;
+
   final StreamController<String> _superTabClosures =
       StreamController<String>.broadcast();
 
@@ -1877,6 +1895,7 @@ class AppNotifier extends ChangeNotifier {
   void bindSuperTab(String swarmId, String tabId, String name) {
     final swarm = swarms.where((s) => s.id == swarmId).firstOrNull;
     if (swarm == null) return;
+    enterSuperTabs();
     // A discovery response can beat the creation response back to this
     // computer. Keep the lead form's tab and retain any already-open panes.
     for (final duplicate
@@ -1906,6 +1925,7 @@ class AppNotifier extends ChangeNotifier {
   /// instead of being left behind. Any history entry for the tab is dropped, so
   /// Reopen later cannot add a second view.
   void openSuperTab(String tabId, String name, {String? intoSwarmId}) {
+    enterSuperTabs();
     _rememberSuperTabVisibility(tabId, true);
     _closedHistory.removeWhere(
       (entry) => entry is ClosedSwarm && entry.superTabId == tabId,
@@ -1953,6 +1973,7 @@ class AppNotifier extends ChangeNotifier {
   void markSuperTabDraft(String swarmId) {
     final swarm = swarms.where((s) => s.id == swarmId).firstOrNull;
     if (swarm == null) return;
+    enterSuperTabs();
     swarm.kind = 'superTab';
     _persistLayout();
     notifyListeners();
@@ -18454,6 +18475,7 @@ class AppNotifier extends ChangeNotifier {
   }
 
   int _layoutRevision = 0;
+  int _paneLayoutRestores = 0;
 
   Future<void> flushPaneLayout() => workspaceEnabled?.call() == false
       ? Future<void>.value()
@@ -19152,6 +19174,18 @@ class AppNotifier extends ChangeNotifier {
     if (workspaceEnabled?.call() == false) return;
     final store = _paneLayout;
     if (store == null) return;
+    _paneLayoutRestores++;
+    try {
+      await _readPaneLayout(store, claimOnAttach: claimOnAttach);
+    } finally {
+      _paneLayoutRestores--;
+    }
+  }
+
+  Future<void> _readPaneLayout(
+    PaneLayoutStore store, {
+    required bool claimOnAttach,
+  }) async {
     // Before any chat is restored: its Finder comes back with its agent.
     await finderRoots.load();
     final initialSwarm = activeSwarm;
@@ -19335,6 +19369,7 @@ class AppNotifier extends ChangeNotifier {
         swarms
           ..clear()
           ..addAll(restored);
+        if (restored.any((swarm) => swarm.isSuperTab)) enterSuperTabs();
         _activeSwarmId = restored.any((s) => s.id == saved['activeId'])
             ? saved['activeId'] as String
             : restored.first.id;
