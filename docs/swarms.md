@@ -97,14 +97,16 @@ a report every 15 seconds, so that a silent machine can be told from a quiet one
 that fails waits a whole 15 seconds before the next.
 
 Each machine in the sidebar is one line, at a project row's height and on its columns: a
-status dot where the project chevrons sit, the name where project names start, then a chip
-for each model allowance and up to three of its agents, overlapping, then +N, the last
-centered under the heading's +. A chip is the engine's mark and the share left of its tightest
-window, Claude first, then Codex; only a known, unexpired allowance gets one, and an offline
-or unreachable machine shows none. The share is amber below 20% and red below 10%, and
-hovering a chip shows its windows ("5-hour: 48% remaining · resets in 1h 59m"). When the
-line runs short, the name keeps about 56 points: the agents become +N first, then the Codex
-chip goes, then the Claude one. Online machines come first, by name; offline ones follow
+status dot where the project chevrons sit, the name where project names start, then three
+columns every row shares, so their figures line up down the list: Claude's allowance, Codex's,
+and the agents. An allowance is the engine's mark and the share left of its tightest window,
+right-aligned so the % signs line up; only a known, unexpired allowance shows, and a machine
+without one, or an offline or unreachable machine, leaves its slot blank. The share is amber
+below 20% and red below 10%, and hovering it shows its windows ("5-hour: 48% remaining ·
+resets in 1h 59m"). The agents column shows up to three overlapping avatars, then +N, and
+ends half an avatar past the heading's +. The list decides its columns once, never row by row:
+when the names would have less than about 48 points, the agents become a count, then the
+Codex column goes, then Claude's. Online machines come first, by name; offline ones follow
 under "Offline · N", closed until opened, which the Desktop remembers like the groups
 themselves. Clicking a machine opens its details.
 
