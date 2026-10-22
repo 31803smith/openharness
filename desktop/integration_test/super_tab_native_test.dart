@@ -223,10 +223,27 @@ void main() {
         const Duration(seconds: 10),
       );
       debugPrint('Swarm fixture: conversation settled');
+      final folder = Platform.environment['SUPER_TAB_NATIVE_SHOTS'];
+      Future<void> shot(String name) async {
+        if (folder == null) return;
+        final render =
+            boundary.currentContext!.findRenderObject()!
+                as RenderRepaintBoundary;
+        final image = await render.toImage(pixelRatio: 1);
+        final bytes = await image.toByteData(format: ui.ImageByteFormat.png);
+        await Directory(folder).create(recursive: true);
+        await File('$folder/$name.png')
+            .writeAsBytes(bytes!.buffer.asUint8List());
+        image.dispose();
+      }
+
       expect(find.byTooltip('Invite people'), findsOneWidget);
       expect(find.text('CHATS'), findsNothing);
       expect(find.text('New group'), findsNothing);
-      expect(find.text('New project'), findsOneWidget);
+      expect(find.byTooltip('New project'), findsOneWidget);
+      // Left sidebar: both Projects and Machines groups start open.
+      expect(find.text('Studio Mac'), findsOneWidget);
+      await shot('sidebar-groups');
       debugPrint('Swarm fixture: empty project disclosure');
       await tester.tap(
         find.byKey(const ValueKey('super-project-expand-design')),
@@ -255,20 +272,6 @@ void main() {
       f.app.selectSwarm(swarmId);
       await tester.pumpAndSettle();
       debugPrint('Swarm fixture: returned from Devices');
-      final folder = Platform.environment['SUPER_TAB_NATIVE_SHOTS'];
-      Future<void> shot(String name) async {
-        if (folder == null) return;
-        final render =
-            boundary.currentContext!.findRenderObject()!
-                as RenderRepaintBoundary;
-        final image = await render.toImage(pixelRatio: 1);
-        final bytes = await image.toByteData(format: ui.ImageByteFormat.png);
-        await Directory(folder).create(recursive: true);
-        await File('$folder/$name.png')
-            .writeAsBytes(bytes!.buffer.asUint8List());
-        image.dispose();
-      }
-
       await shot('conversation');
       expect(find.textContaining('Delivered '), findsOneWidget);
       expect(find.text('Queued'), findsNothing);
@@ -310,6 +313,18 @@ void main() {
       await tester.pump(const Duration(milliseconds: 100));
       expect(find.text('Replied · 1m 12s'), findsOneWidget);
       await shot('receipt-replied');
+      debugPrint('Swarm fixture: collapse both left sidebar groups');
+      await tester.tap(find.byTooltip('Collapse Projects'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byTooltip('Collapse Machines'));
+      await tester.pumpAndSettle();
+      expect(find.text('Design'), findsNothing);
+      expect(find.text('Studio Mac'), findsNothing);
+      await shot('sidebar-collapsed');
+      await tester.tap(find.byTooltip('Expand Projects'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byTooltip('Expand Machines'));
+      await tester.pumpAndSettle();
       expect(find.text('Lead'), findsNothing);
       expect(find.text('Atlas'), findsNWidgets(2));
       expect(find.text('Available capacity'), findsNothing);

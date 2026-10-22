@@ -15,6 +15,7 @@ import '../usage/models_menu_controller.dart';
 import '../widgets/desktop_chrome.dart';
 import '../widgets/engine_identity.dart';
 import '../widgets/workspace_subscription_usage.dart';
+import 'action_row.dart';
 import 'controller.dart';
 import 'dialog_scope.dart';
 import 'identity.dart';
@@ -34,10 +35,21 @@ class SuperTabMachines extends StatefulWidget {
     this.embedded = false,
     this.now = DateTime.now,
     this.readLocal,
+    this.collapsed = false,
+    this.onToggleCollapsed,
+    this.onYourDevices,
   });
   final SuperTabController controller;
   final AppNotifier? app;
   final bool embedded;
+
+  /// Whether the body below the heading is hidden. The heading itself, and
+  /// its Add machine action, remain visible so the group stays reachable.
+  final bool collapsed;
+  final VoidCallback? onToggleCollapsed;
+
+  /// Rendered as a row in the group's body, moved here from the roster.
+  final VoidCallback? onYourDevices;
   final ValueChanged<SuperTabConversation> onAddAgent;
 
   /// The clock the readings' ages are counted against.
@@ -822,12 +834,20 @@ class _SuperTabMachinesState extends State<SuperTabMachines> {
                           ),
                         ),
                         // At the end of the metrics line: how old all of it is.
+                        // Bounded so a long phrase at a large text scale in a
+                        // narrow drawer ellipsizes instead of overflowing the
+                        // row; well above any phrase's normal width.
                         if (tail != null) ...[
                           const SizedBox(width: 8),
-                          Text(
-                            tail,
-                            key: ValueKey('super-machine-age-$id'),
-                            style: superTabAgeStyle(status),
+                          ConstrainedBox(
+                            constraints: const BoxConstraints(maxWidth: 150),
+                            child: Text(
+                              tail,
+                              key: ValueKey('super-machine-age-$id'),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: superTabAgeStyle(status),
+                            ),
                           ),
                         ],
                       ],
@@ -969,17 +989,28 @@ class _SuperTabMachinesState extends State<SuperTabMachines> {
                     : widget.now().difference(failingSince))
               : null,
         ),
+        collapsed: widget.onToggleCollapsed == null ? null : widget.collapsed,
+        onToggleCollapsed: widget.onToggleCollapsed,
       ),
-      if (_ids.isEmpty)
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
-          child: Text(
-            'Add a machine for the product manager to use.',
-            style: DesktopChrome.metadata(),
+      if (!widget.collapsed) ...[
+        if (widget.onYourDevices != null)
+          SuperTabActionRow(
+            actionKey: 'super-your-devices',
+            icon: AppIcons.circle,
+            label: 'Your devices',
+            onPressed: widget.onYourDevices,
           ),
-        )
-      else
-        for (final id in _ids) _machine(id),
+        if (_ids.isEmpty)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+            child: Text(
+              'Add a machine for the product manager to use.',
+              style: DesktopChrome.metadata(),
+            ),
+          )
+        else
+          for (final id in _ids) _machine(id),
+      ],
     ];
     return widget.embedded
         ? Column(
