@@ -83,28 +83,27 @@ Finder _option(String id) => find.byKey(ValueKey('swarm-machine-option-$id'));
 void main() {
   final capture = Platform.environment['HARNESS_SUPER_TAB_CAPTURE'];
   setUpAll(() => loadCaptureFonts(capture));
-  test(
-    'generated computer names are readable and custom names stay intact',
-    () {
-      for (final hostname in [
-        'MacBookPro2021.local',
-        'MacBooks-MacBook-Pro-19.local',
-        'MacbookPro.local',
-      ]) {
-        expect(superTabMachineName(hostname), 'MacBook Pro');
-      }
-      expect(superTabMachineName('Mac-mini.local'), 'Mac mini');
-      expect(superTabMachineName('build-server.local'), 'build-server');
-      for (final name in [
-        'Ada’s Mac',
-        'M2',
-        'MacBook Pro lab',
-        'Build server',
-      ]) {
-        expect(superTabMachineName(name), name);
-      }
-    },
-  );
+  test('a computer is shown by its real hostname without ".local", and a name a person chose stays as it is', () {
+    for (final (hostname, shown) in [
+      ('MacBookPro2021.local', 'MacBookPro2021'),
+      ('MacBooks-MacBook-Pro-19.local', 'MacBooks-MacBook-Pro-19'),
+      ('MacbookPro.local', 'MacbookPro'),
+      ('Mac-mini.local', 'Mac-mini'),
+      ('build-server.LOCAL', 'build-server'),
+    ]) {
+      expect(superTabMachineName(hostname), shown);
+    }
+    for (final name in [
+      'Ada’s Mac',
+      'M2',
+      'MacBook Pro lab',
+      'Build server',
+      'locally.local.test',
+      '.local',
+    ]) {
+      expect(superTabMachineName(name), name);
+    }
+  });
   testWidgets(
     'a machine is one line; its numbers and age are in its tooltip, and an offline one waits under "Offline · 1"',
     (tester) async {
@@ -318,7 +317,7 @@ void main() {
   );
 
   testWidgets(
-    'a row never names its owner, even when another machine has the same name; its tooltip does',
+    'two machines of one model keep their real names, and a row never names its owner; its tooltip does',
     (tester) async {
       final server = ConversationServer();
       final now = DateTime.now().millisecondsSinceEpoch;
@@ -347,7 +346,8 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      expect(_lineOf(tester, 't'), 'MacBook Pro');
+      // Two MacBook Pros keep their real names, never a model name or an owner.
+      expect(_lineOf(tester, 't'), 'MacBooks-MacBook-Pro-9');
       expect(_lineOf(tester, 'd'), 'MacBook Pro');
       expect(find.textContaining('tony'), findsNothing);
       expect(find.textContaining('dee'), findsNothing);
@@ -355,7 +355,7 @@ void main() {
       expect(_tipOf(tester, row), 'Owned by tony');
       expect(
         tester.getSemantics(row).label,
-        startsWith('MacBook Pro, Live, Owned by tony'),
+        startsWith('MacBooks-MacBook-Pro-9, Live, Owned by tony'),
       );
       semantics.dispose();
       await tester.pumpWidget(const SizedBox());
@@ -707,10 +707,13 @@ void main() {
             ];
             expect(shown.toSet(), hasLength(1), reason: '$engine $reason');
             if (shown.first) {
-              // The % signs line up, whichever rows leave the other column blank.
+              // The figures start at one x, right after the mark, whichever rows leave the other column blank.
               final edges = {
                 for (final id in owners)
-                  right('super-machine-figure-$id-$engine').toStringAsFixed(2),
+                  tester
+                      .getTopLeft(key('super-machine-figure-$id-$engine'))
+                      .dx
+                      .toStringAsFixed(2),
               };
               expect(edges, hasLength(1), reason: '$engine $reason');
             }
@@ -744,6 +747,19 @@ void main() {
             expect(stacked.single, isTrue, reason: reason);
             expect(has('super-machine-figure-both-claude'), isTrue);
             expect(has('super-machine-figure-both-codex'), isTrue);
+            // The avatars stand 16 px clear of the figures before them.
+            final stackLeft = find
+                .descendant(
+                  of: key('super-machine-agents-both'),
+                  matching: find.byType(SuperTabAvatar),
+                )
+                .evaluate()
+                .map((e) => tester.getTopLeft(find.byWidget(e.widget)).dx)
+                .reduce(math.min);
+            expect(
+              stackLeft - right('super-machine-figure-both-codex'),
+              greaterThanOrEqualTo(16 - .01),
+            );
             // Claude's column comes before Codex's, and the agents after both.
             expect(
               right('super-machine-figure-both-claude'),

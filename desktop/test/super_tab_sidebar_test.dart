@@ -332,11 +332,12 @@ void main() {
         .map((e) => (e.widget as RichText).text.toPlainText())
         .join();
     expect(shared, isNot(contains('tony')), reason: reason);
-    if (!shared.startsWith('MacBook Pro')) {
+    // Its real hostname, without .local; cut short, it shows itself whole on hover.
+    if (shared != 'MacBooks-MacBook-Pro-9') {
       expect(
         find.descendant(
           of: find.byKey(const ValueKey('super-machine-mbp-b')),
-          matching: find.byTooltip('MacBook Pro'),
+          matching: find.byTooltip('MacBooks-MacBook-Pro-9'),
         ),
         findsOneWidget,
         reason: reason,

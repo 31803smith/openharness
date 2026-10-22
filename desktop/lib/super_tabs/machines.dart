@@ -1051,13 +1051,13 @@ class _SuperTabMachinesState extends State<SuperTabMachines> {
     final ringed = _MachineLine.ringed;
     final full = most == 0
         ? 0.0
-        : _MachineLine.gap +
+        : _MachineLine.avatarsGap +
               ringed +
               (ringed - _MachineLine.overlap) * (stacked - 1) +
               (rest > 0 ? 4 + measure('+$rest', count) : 0);
     final counted = most == 0
         ? 0.0
-        : _MachineLine.gap + measure('+$most', count);
+        : _MachineLine.countGap + measure('+$most', count);
     // With agents, their last avatar centers on the heading +; without, the row ends where project dots do.
     final end = most == 0
         ? _anchor - _MachineLine.dotHalf
@@ -1333,13 +1333,22 @@ class _MachineLine extends StatelessWidget {
   /// Before each column, and between the name and the first.
   static const gap = 6.0;
 
+  /// Before the agents column when it shows their avatars, so the avatars stand apart from the figures. A count
+  /// is a figure like the others and keeps their [gap], which leaves Claude's column room in the default 204 px
+  /// sidebar.
+  static const avatarsGap = 16.0;
+  static const countGap = gap;
+
   /// What the name keeps, at the default text size, before a column gives way: a readable start of it, small
   /// enough that Claude's allowance still fits beside it in the default 204 px sidebar.
   static const minName = 48.0;
 
   static double get ringed => _avatar + 2 * _ring;
 
+  /// The allowance figures and the agent count, in tabular figures, at the scale of the 16 px avatars beside
+  /// them.
   static TextStyle get countStyle => DesktopChrome.metadata().copyWith(
+    fontSize: 11,
     fontFeatures: const [FontFeature.tabularFigures()],
   );
 
@@ -1375,12 +1384,11 @@ class _MachineLine extends StatelessWidget {
                       const SizedBox(width: gap),
                       EngineMark(engine: engine, size: mark),
                       const SizedBox(width: markGap),
-                      // Right-aligned in tabular figures, so every row's % sign lines up.
+                      // Right after its mark, so every row's figure starts at the same x.
                       Expanded(
                         child: Text(
                           a.figure,
                           key: ValueKey('super-machine-figure-${v.id}-$engine'),
-                          textAlign: TextAlign.right,
                           maxLines: 1,
                           softWrap: false,
                           overflow: TextOverflow.clip,
