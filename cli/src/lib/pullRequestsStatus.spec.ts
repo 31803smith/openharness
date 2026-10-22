@@ -79,6 +79,16 @@ describe('linked pull requests read directly from GitHub', () => {
     ] })
     expect((await createPullRequestsStatusReader(run)([url(2)])).error).toBeUndefined()
   })
+  it.each(['HTTP 403: Resource protected by organization SAML enforcement', 'HTTP 403: Resource not accessible by integration'])('keeps a repository access refusal apart: %s', async stderr => {
+    const read = createPullRequestsStatusReader(async () => { throw { stderr } })
+    expect(await read([url()])).toMatchObject({ rows: [{ status: 'no_access' }] })
+    expect((await read([url()])).error).toBeUndefined()
+  })
+  it('still treats a 403 with rate-limit wording as a whole-machine rate limit', async () => {
+    const read = createPullRequestsStatusReader(async () => { throw { stderr: 'HTTP 403: secondary rate limit' } })
+    expect(await read([url()])).toMatchObject({ error: 'RATE_LIMITED' })
+  })
+
   it.each([
     [{ code: 'ENOENT' }, 'GH_MISSING'], [{ stderr: 'To get started run gh auth login' }, 'GH_SIGNED_OUT'],
     [{ stderr: 'API rate limit exceeded' }, 'RATE_LIMITED'], [{ killed: true }, 'TIMEOUT'], [{ stderr: 'bad gateway' }, 'GH_FAILED'],

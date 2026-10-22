@@ -13454,7 +13454,7 @@ class AppNotifier extends ChangeNotifier {
   /// An agent changing branch or stopping must not change whose account reads a link.
   Future<Map<String, dynamic>> readPullRequestsStatus(List<String> urls) async {
     final machine = localMachineState, revision = _authRevision;
-    if (machine == null) return {'error': 'UNAVAILABLE'};
+    if (machine == null) return {'error': 'LOCAL_GITHUB_UNAVAILABLE'};
     try {
       final result = await _conn(machine.machine.machineId).request(
         'git_pull_requests_status',

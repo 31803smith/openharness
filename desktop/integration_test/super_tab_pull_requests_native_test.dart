@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:async';
 import 'dart:convert';
 import 'dart:ui' as ui;
 
@@ -8,8 +9,13 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
 import 'package:window_manager/window_manager.dart';
 import 'package:harness/core/test_run.dart';
+import 'package:harness/widgets/desktop_chrome.dart';
 import 'package:harness/shared/theme/app_theme.dart' as grid;
 import 'package:harness/super_tabs/pull_requests.dart';
+import 'package:harness/ws/ws_conn.dart';
+import 'package:harness/ws/local_daemon_transport.dart';
+
+import '../test/swarm_state_test.dart' show createApp;
 
 import '../test/super_tab_pull_requests_test.dart'
     show prServer, allPrStates, prUrl;
@@ -41,13 +47,17 @@ void main() {
     final boundary = GlobalKey();
     await tester.pumpWidget(
       MaterialApp(
+        debugShowCheckedModeBanner: false,
         theme: grid.buildAppTheme(brightness: Brightness.dark),
         home: Scaffold(
           body: RepaintBoundary(
             key: boundary,
-            child: SuperTabPullRequests(
-              controller: c!,
-              read: (_) async => fail ? {'error': 'TIMEOUT'} : {'rows': rows},
+            child: Material(
+              color: DesktopChrome.surface,
+              child: SuperTabPullRequests(
+                controller: c!,
+                read: (_) async => fail ? {'error': 'TIMEOUT'} : {'rows': rows},
+              ),
             ),
           ),
         ),
@@ -73,6 +83,9 @@ void main() {
     await tester.runAsync(() => shot('pull-requests-all-states'));
     await tester.tap(find.text('Show 1 more'));
     await tester.pumpAndSettle();
+    await tester.drag(find.byType(ListView), const Offset(0, -600));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('Closed 1'));
     await tester.tap(find.text('Closed 1'));
     await tester.pumpAndSettle();
     expect(find.byKey(ValueKey('super-pr-${prUrl(16)}')), findsOneWidget);
@@ -86,6 +99,8 @@ void main() {
       find.textContaining("GitHub didn't answer. Showing what it said"),
       findsOneWidget,
     );
+    await tester.drag(find.byType(ListView), const Offset(0, 1200));
+    await tester.pumpAndSettle();
     expect(find.text('Pull request 1'), findsOneWidget);
     await tester.runAsync(() => shot('pull-requests-stale'));
     final receipt = Platform.environment['SUPER_TAB_PR_REAL_RECEIPT'];
@@ -110,13 +125,17 @@ void main() {
       });
       await tester.pumpWidget(
         MaterialApp(
+          debugShowCheckedModeBanner: false,
           theme: grid.buildAppTheme(brightness: Brightness.dark),
           home: Scaffold(
             body: RepaintBoundary(
               key: boundary,
-              child: SuperTabPullRequests(
-                controller: realController!,
-                read: (_) async => {'rows': real},
+              child: Material(
+                color: DesktopChrome.surface,
+                child: SuperTabPullRequests(
+                  controller: realController!,
+                  read: (_) async => {'rows': real},
+                ),
               ),
             ),
           ),
@@ -130,6 +149,75 @@ void main() {
       await tester.pumpWidget(const SizedBox());
       await tester.runAsync(realController.flush);
       realController.dispose();
+    }
+    // Opt-in manual compatibility check, explicitly pointed at the installed CLI.
+    // Normal native runs retain fixture traffic only.
+    final oldSocket = Platform.environment['SUPER_TAB_PR_OLD_SOCKET'];
+    final oldMachine = Platform.environment['SUPER_TAB_PR_OLD_MACHINE'];
+    if (oldSocket != null && oldMachine != null) {
+      await tester.pumpWidget(const SizedBox());
+      final connection = WsConn(
+        wsBaseUrl: 'ws://127.0.0.1:18473',
+        autonomousEnv: 'prod',
+        machineId: oldMachine,
+        accessTokenProvider: (_, _) async => '',
+        onAuthFailure: (_) {},
+        onEvent: (_) {},
+        onStatus: (_) {},
+        transportKind: WsTransportKind.localPlaintext,
+        localWsUri: Uri.parse('ws://127.0.0.1:18473/api/local-ws'),
+        localTransport: LocalDaemonTransport(candidate: oldSocket),
+        localToolClient: true,
+      );
+      await tester.runAsync(() async {
+        await connection.connect();
+        await connection.waitUntilReady(timeout: const Duration(seconds: 5));
+      });
+      final app = createApp(connectionForTest: (_) => connection);
+      app.stateOf('m')!.localOnly = true;
+      final oldController = await tester.runAsync(() async {
+        final c = prServer([1494]).controller();
+        await c.refresh();
+        return c;
+      });
+      final answered = Completer<void>(), elapsed = Stopwatch()..start();
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: grid.buildAppTheme(brightness: Brightness.dark),
+          home: Scaffold(
+            body: RepaintBoundary(
+              key: boundary,
+              child: Material(
+                color: DesktopChrome.surface,
+                child: SuperTabPullRequests(
+                  controller: oldController!,
+                  app: app,
+                  read: (urls) async {
+                    final answer = await app.readPullRequestsStatus(urls);
+                    answered.complete();
+                    return answer;
+                  },
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.runAsync(
+        () => answered.future.timeout(const Duration(seconds: 5)),
+      );
+      await tester.pumpAndSettle();
+      elapsed.stop();
+      expect(find.textContaining('View status on GitHub'), findsOneWidget);
+      expect(find.textContaining("GitHub didn't answer"), findsNothing);
+      debugPrint(
+        'Installed CLI fallback displayed in ${elapsed.elapsedMilliseconds} ms',
+      );
+      await tester.runAsync(() => shot('pull-requests-installed-cli-fallback'));
+      await tester.pumpWidget(const SizedBox());
+      oldController.dispose();
+      app.dispose();
+      await connection.close();
     }
     expect(tester.takeException(), isNull);
     await tester.pumpWidget(const SizedBox());

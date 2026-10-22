@@ -6,6 +6,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../core/pull_request_status.dart';
 import '../core/open_in_browser.dart';
 import '../shared/theme/pull_request_icon.dart';
+import '../shared/theme/app_theme.dart' as grid;
 import 'pull_request_entry.dart';
 import '../shared/theme/app_icons.dart';
 import '../state/app_state.dart';
@@ -233,7 +234,12 @@ class _SuperTabPullRequestsState extends State<SuperTabPullRequests> {
               ) ??
               <String, dynamic>{'error': 'UNAVAILABLE'};
           if (!mounted || revision != _revision) return;
-          if (answer['error'] == 'UNSUPPORTED') {
+          if (const [
+            'UNSUPPORTED',
+            'E2EE_REQUIRED',
+            'OWNER_REQUIRED',
+            'LOCAL_GITHUB_UNAVAILABLE',
+          ].contains(answer['error'])) {
             _unsupported = true;
             break;
           }
@@ -385,6 +391,10 @@ class _SuperTabPullRequestsState extends State<SuperTabPullRequests> {
                 ? Align(
                     alignment: Alignment.centerLeft,
                     child: TextButton.icon(
+                      style: TextButton.styleFrom(
+                        backgroundColor: Colors.transparent,
+                        foregroundColor: DesktopChrome.muted,
+                      ),
                       onPressed: () => setState(() => _closed = !_closed),
                       icon: Icon(
                         _closed ? AppIcons.chevronDown : AppIcons.chevronRight,
@@ -422,6 +432,10 @@ class _SuperTabPullRequestsState extends State<SuperTabPullRequests> {
                 child: Padding(
                   padding: const EdgeInsets.only(left: 78),
                   child: TextButton(
+                    style: TextButton.styleFrom(
+                      backgroundColor: Colors.transparent,
+                      foregroundColor: DesktopChrome.accent,
+                    ),
                     onPressed: () => setState(() => _showMerged = true),
                     child: Text('Show ${rows.length - shown.length} more'),
                   ),
@@ -575,8 +589,7 @@ class _SuperTabPullRequestsState extends State<SuperTabPullRequests> {
       brightness: Theme.of(context).brightness,
     ),
     PullRequestKind.review => DesktopChrome.accent,
-    PullRequestKind.behind ||
-    PullRequestKind.running => Theme.of(context).colorScheme.tertiary,
+    PullRequestKind.behind || PullRequestKind.running => grid.AppPalette.warn,
     _ => DesktopChrome.muted,
   };
   Widget _row(SuperTabPullRequestEntry entry, Set<String> groups) {
@@ -597,7 +610,20 @@ class _SuperTabPullRequestsState extends State<SuperTabPullRequests> {
     if (entry.status == 'found') {
       if (entry.kind != PullRequestKind.failed &&
           entry.kind != PullRequestKind.running) {
-        bit(entry.checksLabel);
+        bit(
+          entry.checksLabel,
+          color: entry.failed > 0
+              ? Theme.of(context).colorScheme.error
+              : entry.pending > 0
+              ? grid.AppPalette.warn
+              : entry.total > 0
+              ? pullRequestIconColor(
+                  'Open',
+                  null,
+                  brightness: Theme.of(context).brightness,
+                )
+              : null,
+        );
       }
       bit('+${entry.additions} −${entry.deletions}');
     }

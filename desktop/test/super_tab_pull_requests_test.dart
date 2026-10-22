@@ -306,13 +306,23 @@ void main() {
       );
     },
   );
-  testWidgets('older daemon uses the existing agent-based fallback', (
-    tester,
-  ) async {
-    await mount(tester, prServer([1]), (_) async => {'error': 'UNSUPPORTED'});
-    expect(find.textContaining('View status on GitHub'), findsOneWidget);
-    expect(find.textContaining("GitHub didn't answer"), findsNothing);
-  });
+  for (final code in [
+    'UNSUPPORTED',
+    'E2EE_REQUIRED',
+    'OWNER_REQUIRED',
+    'LOCAL_GITHUB_UNAVAILABLE',
+  ]) {
+    testWidgets(
+      '$code falls back immediately instead of claiming GitHub did not answer',
+      (tester) async {
+        await mount(tester, prServer([1]), (_) async => {'error': code});
+        expect(find.textContaining('View status on GitHub'), findsOneWidget);
+        expect(find.textContaining("GitHub didn't answer"), findsNothing);
+        expect(find.textContaining('Trying again'), findsNothing);
+        await tester.pumpWidget(const SizedBox());
+      },
+    );
+  }
   testWidgets(
     'refreshes only open PRs every minute and stops when the pane is hidden',
     (tester) async {

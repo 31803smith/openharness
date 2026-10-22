@@ -43,7 +43,8 @@ export function createPullRequestsStatusReader(run: Run = ghRun, now: () => numb
     } catch (error) {
       const e = ghError(error)
       const stderr = String((error as { stderr?: unknown } | null)?.stderr ?? '')
-      if (e.code === 'GH_FAILED' && /could not resolve to a (?:repository|pullrequest)|could not find|not found|HTTP 404|not accessible/i.test(stderr)) {
+      const denied = /HTTP 403/i.test(stderr) && !/rate limit|secondary rate/i.test(stderr)
+      if (denied || e.code === 'GH_FAILED' && /could not resolve to a (?:repository|pullrequest)|could not find|not found|HTTP 404|not accessible/i.test(stderr)) {
         return { url, status: 'no_access' }
       }
       return { url, status: 'unavailable', error: e.code }

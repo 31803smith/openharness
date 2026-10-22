@@ -113,6 +113,8 @@ void main() {
     connection.pending.last.completeError(StateError('Disconnected'));
     expect(await failed, {'error': 'UNAVAILABLE'});
     app.stateOf('m')!.localOnly = false;
-    expect(await app.readPullRequestsStatus([]), {'error': 'UNAVAILABLE'});
+    expect(await app.readPullRequestsStatus([]), {
+      'error': 'LOCAL_GITHUB_UNAVAILABLE',
+    });
   });
 }
