@@ -336,10 +336,10 @@ void main() {
           .isNotEmpty) {
         expect(chip('codex', '88%'), findsOneWidget);
         // The Codex-only machine's figure lines up with Studio Mac's.
-        double figureRight(String id) => tester
-            .getRect(find.byKey(ValueKey('super-machine-figure-$id-codex')))
-            .right;
-        expect(figureRight('m-codex'), closeTo(figureRight('m'), .01));
+        double figureLeft(String id) => tester
+            .getTopLeft(find.byKey(ValueKey('super-machine-figure-$id-codex')))
+            .dx;
+        expect(figureLeft('m-codex'), closeTo(figureLeft('m'), .01));
       }
       expect(
         find.byKey(const ValueKey('super-machine-figure-m-codex-claude')),

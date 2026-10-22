@@ -101,7 +101,7 @@ status dot where the project chevrons sit, the name where project names start (a
 real hostname without `.local`, such as `MacBookPro2021`, or the name a person gave it), then three
 columns every row shares, so their figures line up down the list: Claude's allowance, Codex's,
 and the agents, whose avatars stand 16 points clear of the figures. An allowance is the engine's mark and the share left of its tightest window,
-right-aligned so the % signs line up; only a known, unexpired allowance shows, and a machine
+each figure right after its mark, so the figures start at one x down the list; only a known, unexpired allowance shows, and a machine
 without one, or an offline or unreachable machine, leaves its slot blank. The share is amber
 below 20% and red below 10%, and hovering it shows its windows ("5-hour: 48% remaining ·
 resets in 1h 59m"). The agents column shows up to three overlapping avatars, then +N, and

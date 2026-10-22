@@ -1345,7 +1345,10 @@ class _MachineLine extends StatelessWidget {
 
   static double get ringed => _avatar + 2 * _ring;
 
+  /// The allowance figures and the agent count, in tabular figures, at the scale of the 16 px avatars beside
+  /// them.
   static TextStyle get countStyle => DesktopChrome.metadata().copyWith(
+    fontSize: 11,
     fontFeatures: const [FontFeature.tabularFigures()],
   );
 
@@ -1381,12 +1384,11 @@ class _MachineLine extends StatelessWidget {
                       const SizedBox(width: gap),
                       EngineMark(engine: engine, size: mark),
                       const SizedBox(width: markGap),
-                      // Right-aligned in tabular figures, so every row's % sign lines up.
+                      // Right after its mark, so every row's figure starts at the same x.
                       Expanded(
                         child: Text(
                           a.figure,
                           key: ValueKey('super-machine-figure-${v.id}-$engine'),
-                          textAlign: TextAlign.right,
                           maxLines: 1,
                           softWrap: false,
                           overflow: TextOverflow.clip,

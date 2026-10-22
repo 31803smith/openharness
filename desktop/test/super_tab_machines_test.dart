@@ -707,10 +707,13 @@ void main() {
             ];
             expect(shown.toSet(), hasLength(1), reason: '$engine $reason');
             if (shown.first) {
-              // The % signs line up, whichever rows leave the other column blank.
+              // The figures start at one x, right after the mark, whichever rows leave the other column blank.
               final edges = {
                 for (final id in owners)
-                  right('super-machine-figure-$id-$engine').toStringAsFixed(2),
+                  tester
+                      .getTopLeft(key('super-machine-figure-$id-$engine'))
+                      .dx
+                      .toStringAsFixed(2),
               };
               expect(edges, hasLength(1), reason: '$engine $reason');
             }
