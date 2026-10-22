@@ -103,8 +103,8 @@ Hovering or focusing a row says it in words ("Updated 4s ago", "Offline · last 
 ago", "Can't reach Harness · data from 1 min ago", "Refreshing…"), and the row's screen-reader
 label is the machine's name, its state and that text, so colour is never the only signal.
 Old numbers are always kept, dimmed, for offline, unknown and refreshing machines, never
-blanked. The Machines heading carries a pill, "Live" or "Reconnecting · 1m" while the Swarm
-cannot be read. The pings and the breathing stop when the platform asks for reduced motion.
+blanked. While the Swarm cannot be read, the Machines heading carries a pill, "Reconnecting ·
+1m"; a live Swarm shows none. The pings and the breathing stop when the platform asks for reduced motion.
 A machine reports every 15 s, so 35 s is two missed reports plus a margin.
 
 This computer is read directly by the Desktop, every 15 seconds, so it stays live while the

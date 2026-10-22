@@ -299,57 +299,72 @@ class _DotPainter extends CustomPainter {
       old.quiet != quiet;
 }
 
-/// The pill beside the Machines heading: "Live", or "Reconnecting · 1m" while the Swarm cannot be read.
+/// The pill beside the Machines heading while the Swarm cannot be read: "Reconnecting · 1m". A live
+/// Swarm shows no pill. Where the heading leaves too little room for the words (the minimum pane), it is
+/// only its dot, which says the same on hover.
 class SuperTabMachinesPill extends StatelessWidget {
-  const SuperTabMachinesPill({super.key, this.reconnectingFor});
+  const SuperTabMachinesPill({super.key, required this.reconnectingFor});
 
-  /// How long the Swarm has failed to be read; null while it reads.
-  final Duration? reconnectingFor;
+  /// How long the Swarm has failed to be read.
+  final Duration reconnectingFor;
+
+  /// Below this width the words would ellipsize to almost nothing.
+  static const _minWordsWidth = 56.0;
 
   @override
   Widget build(BuildContext context) {
-    final failing = reconnectingFor != null;
-    final text = failing
-        ? 'Reconnecting · ${superTabAgoShort(reconnectingFor!)}'
-        : 'Live';
+    final failingFor = superTabAgoShort(reconnectingFor);
+    final text = 'Reconnecting · $failingFor';
+    final dot = DecoratedBox(
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        color: grid.AppPalette.warn,
+      ),
+      child: const SizedBox.square(dimension: 6),
+    );
     return Semantics(
-      label: failing
-          ? 'Machines: reconnecting, for ${superTabAgoShort(reconnectingFor!)}'
-          : 'Machines: live',
+      label: 'Machines: reconnecting, for $failingFor',
       excludeSemantics: true,
-      child: DecoratedBox(
-        decoration: ShapeDecoration(
-          shape: StadiumBorder(side: BorderSide(color: DesktopChrome.rim)),
-        ),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              DecoratedBox(
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: failing
-                      ? grid.AppPalette.warn
-                      : grid.AppPalette.online,
+      child: LayoutBuilder(
+        builder: (context, constraints) => constraints.maxWidth < _minWordsWidth
+            ? Tooltip(
+                message: text,
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 4),
+                  child: dot,
                 ),
-                child: const SizedBox.square(dimension: 6),
-              ),
-              const SizedBox(width: 6),
-              Flexible(
-                child: Text(
-                  text,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: DesktopChrome.metadata().copyWith(
-                    fontSize: 11,
-                    fontFeatures: _tabular,
+              )
+            : DecoratedBox(
+                decoration: ShapeDecoration(
+                  shape: StadiumBorder(
+                    side: BorderSide(color: DesktopChrome.rim),
+                  ),
+                ),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 2,
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      dot,
+                      const SizedBox(width: 6),
+                      Flexible(
+                        child: Text(
+                          text,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: DesktopChrome.metadata().copyWith(
+                            fontSize: 11,
+                            fontFeatures: _tabular,
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ),
-            ],
-          ),
-        ),
       ),
     );
   }

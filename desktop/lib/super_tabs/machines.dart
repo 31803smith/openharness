@@ -9,13 +9,13 @@ import '../core/test_run.dart';
 import '../shared/theme/app_icons.dart';
 import '../shared/theme/app_theme.dart' as grid;
 import '../shared/widgets/app_dialog.dart';
+import '../shared/widgets/app_icon_button.dart';
 import '../shared/widgets/app_menu.dart';
 import '../state/app_state.dart';
 import '../usage/models_menu_controller.dart';
 import '../widgets/desktop_chrome.dart';
 import '../widgets/engine_identity.dart';
 import '../widgets/workspace_subscription_usage.dart';
-import 'action_row.dart';
 import 'controller.dart';
 import 'dialog_scope.dart';
 import 'identity.dart';
@@ -44,11 +44,12 @@ class SuperTabMachines extends StatefulWidget {
   final bool embedded;
 
   /// Whether the body below the heading is hidden. The heading itself, and
-  /// its Add machine action, remain visible so the group stays reachable.
+  /// its Your devices and Add machine actions, remain visible so the group
+  /// stays reachable.
   final bool collapsed;
   final VoidCallback? onToggleCollapsed;
 
-  /// Rendered as a row in the group's body, moved here from the roster.
+  /// The heading's Your devices action, just before Add machine; absent when null.
   final VoidCallback? onYourDevices;
   final ValueChanged<SuperTabConversation> onAddAgent;
 
@@ -982,24 +983,28 @@ class _SuperTabMachinesState extends State<SuperTabMachines> {
             ? () => unawaited(_contribute())
             : null,
         addTooltip: 'Add machine',
-        trailing: SuperTabMachinesPill(
-          reconnectingFor: c.backendUnreachable
-              ? (failingSince == null
+        // Only a Swarm that can't be read is news; a live one says nothing.
+        trailing: c.backendUnreachable
+            ? SuperTabMachinesPill(
+                reconnectingFor: failingSince == null
                     ? Duration.zero
-                    : widget.now().difference(failingSince))
-              : null,
-        ),
+                    : widget.now().difference(failingSince),
+              )
+            : null,
+        actions: [
+          if (widget.onYourDevices != null)
+            AppIconButton(
+              key: const ValueKey('super-your-devices'),
+              icon: AppIcons.monitorSmartphone,
+              tooltip: 'Your devices',
+              onPressed: widget.onYourDevices,
+            ),
+        ],
+        endInset: widget.embedded ? 0 : 12,
         collapsed: widget.onToggleCollapsed == null ? null : widget.collapsed,
         onToggleCollapsed: widget.onToggleCollapsed,
       ),
       if (!widget.collapsed) ...[
-        if (widget.onYourDevices != null)
-          SuperTabActionRow(
-            actionKey: 'super-your-devices',
-            icon: AppIcons.circle,
-            label: 'Your devices',
-            onPressed: widget.onYourDevices,
-          ),
         if (_ids.isEmpty)
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),

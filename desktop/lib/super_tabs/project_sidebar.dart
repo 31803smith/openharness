@@ -46,6 +46,12 @@ class ProjectSidebar extends StatelessWidget {
   // Actions, project names and workgroup names share one text column.
   static const _iconColumn = 32.0;
   static const _textGap = 4.0;
+  static const _dotSize = 6.0;
+
+  /// The space after a row's trailing unread dot: it centers the dot on the
+  /// headings' + ([SuperTabSectionHeading.endInset] 0), whatever the width.
+  static const markerInset =
+      SuperTabSectionHeading.actionWidth / 2 - _dotSize / 2;
 
   Widget _row(SuperTabConversation group, {SuperTabProject? project}) {
     final selected = controller.selectedId == group.id;
@@ -105,7 +111,12 @@ class ProjectSidebar extends StatelessWidget {
                     child: ConstrainedBox(
                       constraints: const BoxConstraints(minHeight: 36),
                       child: Padding(
-                        padding: const EdgeInsets.fromLTRB(_textGap, 8, 12, 8),
+                        padding: const EdgeInsets.fromLTRB(
+                          _textGap,
+                          8,
+                          markerInset,
+                          8,
+                        ),
                         child: Row(
                           children: [
                             Expanded(
@@ -149,8 +160,8 @@ class ProjectSidebar extends StatelessWidget {
                               Semantics(
                                 label: 'Unread messages',
                                 child: Container(
-                                  width: 6,
-                                  height: 6,
+                                  width: _dotSize,
+                                  height: _dotSize,
                                   decoration: BoxDecoration(
                                     shape: BoxShape.circle,
                                     color: DesktopChrome.accent,
@@ -212,6 +223,7 @@ class ProjectSidebar extends StatelessWidget {
             'Projects',
             onAdd: controller.canWrite ? onNewProject : null,
             addTooltip: 'New project',
+            endInset: 0,
             collapsed: !controller.projectsGroupOpen,
             onToggleCollapsed: controller.toggleProjectsGroup,
           ),

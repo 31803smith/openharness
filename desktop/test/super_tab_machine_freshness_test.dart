@@ -261,7 +261,7 @@ void main() {
           nameInkOf(tester, 'm', 'Studio Mac'),
           isNot(DesktopChrome.muted),
         );
-        expect(pill('Live'), findsOneWidget);
+        expect(find.byType(SuperTabMachinesPill), findsNothing);
 
         semantics.dispose();
         await tester.pumpWidget(const SizedBox());
@@ -344,7 +344,7 @@ void main() {
           ),
           findsNothing,
         );
-        expect(pill('Live'), findsOneWidget);
+        expect(find.byType(SuperTabMachinesPill), findsNothing);
 
         semantics.dispose();
         await tester.pumpWidget(const SizedBox());
@@ -471,7 +471,7 @@ void main() {
 
   group('the heading pill', () {
     testWidgets(
-      'says Live while the Swarm is read, and Reconnecting with how long when it is not',
+      'is absent while the Swarm is read, and says Reconnecting with how long when it is not',
       (tester) async {
         final server = ConversationServer();
         server.state['machines'] = [
@@ -480,8 +480,7 @@ void main() {
         final c = server.controller();
         await c.refresh();
         await show(tester, c);
-        expect(pill('Live'), findsOneWidget);
-        expect(find.byType(SuperTabMachinesPill), findsOneWidget);
+        expect(find.byType(SuperTabMachinesPill), findsNothing);
 
         server.failReads = true;
         await c.refresh();
@@ -498,7 +497,7 @@ void main() {
         await c.refresh();
         expect(c.unreachableSince, isNull);
         await show(tester, c);
-        expect(pill('Live'), findsOneWidget);
+        expect(find.byType(SuperTabMachinesPill), findsNothing);
         await tester.pumpWidget(const SizedBox());
       },
     );
