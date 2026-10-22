@@ -232,7 +232,7 @@ class _SuperTabPullRequestsState extends State<SuperTabPullRequests> {
               await (widget.read ?? widget.app?.readPullRequestsStatus)?.call(
                 urls.skip(i).take(50).toList(),
               ) ??
-              <String, dynamic>{'error': 'UNAVAILABLE'};
+              <String, dynamic>{'error': 'LOCAL_GITHUB_UNAVAILABLE'};
           if (!mounted || revision != _revision) return;
           if (const [
             'UNSUPPORTED',
