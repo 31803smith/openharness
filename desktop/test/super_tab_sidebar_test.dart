@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:harness/core/machine_resources.dart';
 import 'package:harness/shared/theme/app_icons.dart';
 import 'package:harness/shared/theme/app_theme.dart' as grid;
+import 'package:harness/super_tabs/machines.dart';
 import 'package:harness/super_tabs/project_sidebar.dart';
 import 'package:harness/super_tabs/view.dart';
 
@@ -180,20 +182,29 @@ void main() {
             onAddAgent: (_) {},
             needsHuman: (_) => 0,
             onSelect: (_) {},
+            // This computer reads its own machine; a sample gives the row a
+            // non-null age, so its status reflects `connected` immediately.
+            readLocal: (_) async => const MachineResources(cpuPercent: 10),
           ),
         ),
       ),
     );
     await tester.pumpAndSettle();
-    expect(find.byIcon(AppIcons.monitorOff), findsNothing);
+    // Let the first local read land.
+    await tester.pump();
+    await tester.pump();
+    Finder statusDot() => find.descendant(
+      of: find.byKey(const ValueKey('super-machine-m')),
+      matching: find.byType(SuperTabMachineDot),
+    );
+    expect(tester.widget<SuperTabMachineDot>(statusDot()).status, isNot(SuperTabMachineStatus.offline));
 
     // The Machines group has no listener of its own on the controller the
     // rest of this sidebar rebuilds on, so a bare app event (no controller
     // change, no re-pump) must still repaint it.
     await app.handleEventForTest('m', {'type': 'node_status', 'online': false});
     await tester.pump();
-    expect(find.byIcon(AppIcons.monitorOff), findsOneWidget);
-    expect(find.byTooltip('Offline'), findsOneWidget);
+    expect(tester.widget<SuperTabMachineDot>(statusDot()).status, SuperTabMachineStatus.offline);
 
     await tester.pumpWidget(const SizedBox());
     await c.flush();

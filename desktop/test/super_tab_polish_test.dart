@@ -385,8 +385,7 @@ void main() {
           await tester.pumpAndSettle();
           await tester.tap(find.byTooltip('Conversations'));
           await tester.pumpAndSettle();
-          await tester.ensureVisible(find.text('Machines'));
-          await tester.pumpAndSettle();
+          expect(find.text('Machines'), findsOneWidget);
           expect(tester.takeException(), isNull);
           await shot('-projects');
           expect(tester.takeException(), isNull);

@@ -65,12 +65,25 @@ class SuperTabSectionHeading extends StatelessWidget {
             Expanded(
               child: Text(
                 title,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
                 style: DesktopChrome.metadata().copyWith(
                   fontWeight: FontWeight.w600,
                 ),
               ),
             ),
-            if (trailing != null) ...[trailing!, const SizedBox(width: 4)],
+            if (trailing != null) ...[
+              // A narrow drawer at a large text scale has no room to spare;
+              // shrink the pill rather than overflow the row.
+              Flexible(
+                child: FittedBox(
+                  fit: BoxFit.scaleDown,
+                  alignment: Alignment.centerRight,
+                  child: trailing!,
+                ),
+              ),
+              const SizedBox(width: 4),
+            ],
             if (onAdd != null)
               AppIconButton(
                 icon: AppIcons.plus,

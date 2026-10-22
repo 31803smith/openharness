@@ -834,12 +834,20 @@ class _SuperTabMachinesState extends State<SuperTabMachines> {
                           ),
                         ),
                         // At the end of the metrics line: how old all of it is.
+                        // Bounded so a long phrase at a large text scale in a
+                        // narrow drawer ellipsizes instead of overflowing the
+                        // row; well above any phrase's normal width.
                         if (tail != null) ...[
                           const SizedBox(width: 8),
-                          Text(
-                            tail,
-                            key: ValueKey('super-machine-age-$id'),
-                            style: superTabAgeStyle(status),
+                          ConstrainedBox(
+                            constraints: const BoxConstraints(maxWidth: 150),
+                            child: Text(
+                              tail,
+                              key: ValueKey('super-machine-age-$id'),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: superTabAgeStyle(status),
+                            ),
                           ),
                         ],
                       ],

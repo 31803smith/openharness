@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../core/machine_resources.dart';
 import '../shared/theme/app_icons.dart';
 import '../shared/theme/app_theme.dart' as grid;
 import '../shared/theme/appearance_prefs_store.dart';
@@ -21,6 +22,7 @@ class ProjectSidebar extends StatelessWidget {
     this.app,
     this.onNewProject,
     this.onYourDevices,
+    this.readLocal,
   });
   final SuperTabController controller;
   final ValueChanged<String> onSelect;
@@ -29,6 +31,11 @@ class ProjectSidebar extends StatelessWidget {
   final AppNotifier? app;
   final VoidCallback? onNewProject;
   final VoidCallback? onYourDevices;
+
+  /// Forwarded to the embedded [SuperTabMachines]; a test gives it to have
+  /// the Machines group's readings taken without a real machine.
+  @visibleForTesting
+  final Future<MachineResources?> Function(String machineId)? readLocal;
 
   // Actions, project names and workgroup names share one text column.
   static const _iconColumn = 32.0;
@@ -237,6 +244,7 @@ class ProjectSidebar extends StatelessWidget {
                 collapsed: !controller.machinesGroupOpen,
                 onToggleCollapsed: controller.toggleMachinesGroup,
                 onYourDevices: onYourDevices,
+                readLocal: readLocal,
               );
             },
           ),
