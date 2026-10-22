@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { applyCommand, commandSchema, type Command, type CommandContext } from './commands.js'
+import { applyCommand, commandSchema, PAIR_CHAIN_LIMIT, type Command, type CommandContext } from './commands.js'
 import { machineSlots } from './machines.js'
 import { activeWork, createSuperTab, visibleState, type Actor, type AgentConfiguration } from './model.js'
 import type { RouteDecision } from './routeRecord.js'
@@ -234,9 +234,101 @@ describe('Super Tab collaboration policy', () => {
     expect(post(as(worker))).toEqual([lead])
     expect(post(as(worker), [other])).toEqual([other])
     expect(post(as(other))).toEqual([])
-    expect(post(as(lead))).toEqual([])
+    expect(post(as(lead))).toEqual([worker])
     f.run({ type: 'work.status', conversationId: group, assignmentId: f.state.conversations[1]!.assignment!.id, status: 'blocked', result: 'Stuck.' }, as(worker))
     expect(post(as(worker))).toEqual([lead])
+  })
+
+  describe('a Lead\'s message to the assigned worker (#1549)', () => {
+    const setup = () => {
+      const f = fixture()
+      const lead = f.add('lead', 'owner', 'lead', true)
+      const group = f.group(), worker = f.add('worker', 'owner', group), other = f.add('other', 'owner', group)
+      const as = (agentId: string): Actor => ({ kind: 'agent', agentId, machineOwnerId: 'host-owner' })
+      const history: { author: { kind: 'agent' | 'person'; id: string }; recipients: string[]; id: string }[] = []
+      const post = (agentId: string, recipientIds: string[] = [], replyTo: string | null = null) => {
+        const reply = history.find(m => m.id === replyTo)
+        const sent = f.run({ type: 'message.send', conversationId: group, text: 'Update.', replyTo, recipientIds }, as(agentId), {
+          recent: history.slice().reverse().slice(0, PAIR_CHAIN_LIMIT).map(m => ({ author: m.author as never, recipients: m.recipients })),
+          ...(reply ? { reply: { id: reply.id, conversationId: group, author: reply.author as never } } : {}),
+        }).messages[0]!
+        history.push({ author: { kind: 'agent', id: agentId }, recipients: sent.recipients, id: sent.id })
+        return sent
+      }
+      const assign = (assigner: 'lead' | 'person') => {
+        const sent = f.run({ type: 'work.assign', conversationId: group, agentId: worker }, assigner === 'lead' ? as(lead) : owner).messages[0]!
+        history.push({ author: { kind: assigner === 'lead' ? 'agent' : 'person', id: assigner === 'lead' ? lead : 'owner' }, recipients: sent.recipients, id: sent.id })
+        return sent
+      }
+      return { f, lead, group, worker, other, as, post, assign, history }
+    }
+
+    it('reaches the assigned worker for a plain post, only while the work is active', () => {
+      const { f, lead, group, worker, post } = setup()
+      expect(post(lead).recipients).toEqual([])
+      f.run({ type: 'work.assign', conversationId: group, agentId: worker })
+      expect(post(lead).recipients).toEqual([worker])
+      f.run({ type: 'work.cancel', conversationId: group, assignmentId: f.state.conversations[1]!.assignment!.id, reason: 'Duplicate of another task' })
+      expect(post(lead).recipients).toEqual([])
+    })
+
+    it('reaches the assigned worker for a reply to the worker\'s message', () => {
+      const { f, lead, group, worker, post } = setup()
+      f.run({ type: 'work.assign', conversationId: group, agentId: worker })
+      const report = post(worker)
+      expect(report.recipients).toEqual([lead])
+      expect(post(lead, [], report.id).recipients).toEqual([worker])
+    })
+
+    it('lets explicit recipients win and leaves other members, replies to others and person routing alone', () => {
+      const { f, lead, group, worker, other, as, post, history } = setup()
+      f.run({ type: 'work.assign', conversationId: group, agentId: worker })
+      expect(post(lead, [other]).recipients).toEqual([other])
+      const aside = post(other)
+      expect(aside.recipients).toEqual([])
+      expect(post(lead, [], aside.id).recipients).toEqual([])
+      const personMessage = f.run({ type: 'message.send', conversationId: group, text: 'Status?', replyTo: null, recipientIds: [] }).messages[0]!
+      history.push({ author: { kind: 'person', id: 'owner' }, recipients: personMessage.recipients, id: personMessage.id })
+      expect(personMessage.recipients).toEqual([lead])
+      const reply = f.run({ type: 'message.send', conversationId: group, text: 'Ask the worker', replyTo: personMessage.id, recipientIds: [] }, as(lead), {
+        reply: { id: personMessage.id, conversationId: group, author: personMessage.author },
+      }).messages[0]!
+      expect(reply.recipients).toEqual([])
+    })
+
+    it('delivers the Lead\'s approval of the worker\'s plan after the Lead\'s own brief (#1549)', () => {
+      for (const assigner of ['lead', 'person'] as const) {
+        const { lead, worker, post, assign } = setup()
+        expect(assign(assigner).recipients).toEqual([worker])
+        const plan = post(worker)
+        expect(plan.recipients).toEqual([lead])
+        expect(post(lead).recipients).toEqual([worker])
+        expect(post(worker, [], plan.id).recipients).toEqual([lead])
+        expect(post(lead, [], plan.id).recipients).toEqual([worker])
+      }
+    })
+
+    it('stops an unattended Lead and worker loop, and a person message or explicit recipients start a new one', () => {
+      const { f, lead, group, worker, post, assign, history } = setup()
+      assign('lead')
+      const hops: string[][] = []
+      let speaker = worker
+      // Each agent answers every message it receives, the worst case for a loop.
+      for (let turn = 0; turn < 50; turn++) {
+        const sent = post(speaker)
+        hops.push(sent.recipients)
+        const next = sent.recipients[0]
+        if (!next) break
+        speaker = next
+      }
+      expect(hops.slice(0, -1).every(recipients => recipients.length === 1)).toBe(true)
+      expect(hops.at(-1)).toEqual([])
+      expect(hops).toHaveLength(PAIR_CHAIN_LIMIT)
+      expect(post(lead, [worker]).recipients).toEqual([worker])
+      const person = f.run({ type: 'message.send', conversationId: group, text: 'Carry on.', replyTo: null, recipientIds: [worker] }).messages[0]!
+      history.push({ author: { kind: 'person', id: 'owner' }, recipients: person.recipients, id: person.id })
+      expect(post(lead).recipients).toEqual([worker])
+    })
   })
 
   it('lets a viewer read and leave, but not send, assign, attach or invite', () => {
@@ -850,10 +942,21 @@ describe('cancelling work', () => {
     const text = f.run({ ...cancel, reason: 'Obsolete.' } as Command).messages[0]!.text
     expect(text).toBe('The tab owner cancelled this task: Obsolete. Stop working on it.')
   })
-  it('refuses cancelling work whose worker already left', () => {
-    const { f, worker, cancel } = active()
+  it('closes a task whose worker was removed, tells nobody, and ignores a retry', () => {
+    const { f, group, worker, leadActor, cancel } = active()
     f.run({ type: 'agent.remove', agentId: worker })
-    expect(() => f.run(cancel)).toThrow('left the Super Tab')
+    expect(f.state.conversations.find(c => c.id === group)!.assignment!.status).toBe('reconciling')
+    const effects = f.run(cancel, leadActor)
+    expect(f.state.conversations.find(c => c.id === group)!.assignment).toMatchObject({ status: 'cancelled', result: 'Duplicate of another task' })
+    expect(effects.messages).toHaveLength(1)
+    expect(effects.messages[0]).toMatchObject({ recipients: [], text: 'The Lead cancelled this task: Duplicate of another task.' })
+    expect(f.run(cancel, leadActor).messages).toHaveLength(0)
+  })
+  it('still refuses a worker or collaborator cancelling a removed worker’s task', () => {
+    const { f, worker, workerActor, cancel } = active()
+    f.run({ type: 'agent.remove', agentId: worker })
+    expect(() => f.run(cancel, workerActor)).toThrow()
+    expect(() => f.run(cancel, peer)).toThrow('Lead')
   })
   it('refuses work that already finished', () => {
     const { f, group, leadActor, assignmentId, cancel } = active()

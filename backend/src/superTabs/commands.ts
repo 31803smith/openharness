@@ -108,6 +108,8 @@ export interface CommandContext {
   contribution?: { machineOwnerId: string; contributorId: string; hostGrant?: string | null }
   /** Loaded from this tab and conversation by the store. */
   reply?: { id: string; conversationId: string; author: Author }
+  /** The newest messages of this conversation before the one being sent, newest first, loaded by the store for `message.send`. */
+  recent?: { author: Author; recipients: string[] }[]
   /** A host's receipt, not an elapsed lease, proves that an assignment stopped. */
   confirmedStopped?: boolean
   /** An uncertain receipt and its original message, read transactionally. */
@@ -118,6 +120,21 @@ export interface CommandContext {
   recentRoutes?: number
   /** The decision a command names, read from SuperTabRouteDecision by the store. */
   routeDecision?: RouteDecision
+}
+
+/** Messages in a row between the Lead and its worker after which the Lead's message is no longer delivered automatically. */
+export const PAIR_CHAIN_LIMIT = 6
+
+/** A Lead's automatic delivery to the assigned worker answers the worker's post. Worker posts reach the Lead automatically, so
+ * without a bound the two agents would keep answering each other. Count the messages in a row between the pair, newest first,
+ * until one is anyone else's or is not addressed to the other (a person's message, a notice, a message to someone else). A normal
+ * exchange (brief, plan, approval, report) stays well under the limit; an unattended loop stops at it. Explicit recipients still
+ * deliver, so the Lead can always continue on purpose. */
+function leadWorkerBounced(recent: CommandContext['recent'] = [], leadId: string, workerId: string): boolean {
+  const sentToPartner = (m: NonNullable<CommandContext['recent']>[number]) => m.author.kind === 'agent'
+    && (m.author.id === leadId ? m.recipients.includes(workerId) : m.author.id === workerId && m.recipients.includes(leadId))
+  const run = recent.findIndex(m => !sentToPartner(m))
+  return (run < 0 ? recent.length : run) >= PAIR_CHAIN_LIMIT
 }
 
 function controls(state: SuperTabState, actor: Actor, conversationId = 'lead'): void {
@@ -647,10 +664,16 @@ export function applyCommand(original: SuperTabState, actor: Actor, input: Comma
       const replyAgent = context.reply?.author.kind === 'agent' ? context.reply.author.id : null
       // An assigned worker's own post in its group reaches the Lead. Workers reported results as plain posts, which went to no
       // one: the Lead heard only at the next scheduled consolidation, and the owner saw no summary of finished work for up to
-      // 19 minutes (2026-10-21/22). Only the worker's posts are routed, never the Lead's back, so agents cannot loop.
-      const worker = actor.kind === 'agent' && activeWork(group) && group.assignment?.agentId === actor.agentId
+      // 19 minutes (2026-10-21/22). The Lead's message reaches the worker the same way (#1549), except for a reply to someone
+      // else and a message that would continue an automatic round trip (leadWorkerBounced), so agents cannot loop.
+      const assigned = activeWork(group) ? group.assignment!.agentId : null
+      const leadToWorker = actor.kind === 'agent' && actor.agentId === group.leadId && assigned && assigned !== group.leadId
+        && group.agentIds.includes(assigned) && (!context.reply || replyAgent === assigned)
+        && !leadWorkerBounced(context.recent, group.leadId, assigned) ? assigned : null
+      const workerToLead = actor.kind === 'agent' && activeWork(group) && group.assignment?.agentId === actor.agentId
         && group.leadId && group.leadId !== actor.agentId && group.agentIds.includes(group.leadId) ? group.leadId : null
-      const automatic = actor.kind === 'person' ? (replyAgent && group.agentIds.includes(replyAgent) ? replyAgent : group.leadId) : worker
+      const agentRecipient = leadToWorker ?? workerToLead
+      const automatic = actor.kind === 'person' ? (replyAgent && group.agentIds.includes(replyAgent) ? replyAgent : group.leadId) : agentRecipient
       const recipients = [...new Set(command.recipientIds.length ? command.recipientIds : automatic ? [automatic] : [])]
       for (const id of recipients) {
         agent(state, id)
@@ -819,11 +842,13 @@ export function applyCommand(original: SuperTabState, actor: Actor, input: Comma
       // A retry after the cancel keeps the first reason and tells the worker once.
       if (assignment.status === 'cancelled') break
       if (!activeWork(group)) fail('ATTEMPT_CLOSED', 'This attempt has already ended.')
-      if (assignment.status === 'reconciling') fail('RECONCILING', 'This worker left the Super Tab. Reconcile the assignment instead of cancelling it.')
+      // A removed worker (reconciling) can never confirm a stop, so this is the only way to close its task; nobody is left to tell.
+      const gone = assignment.status === 'reconciling'
       assignment.status = 'cancelled'
       assignment.result = command.reason
       finishWorker(state, assignment.agentId)
-      message(group.id, `${isLead ? 'The Lead' : 'The tab owner'} cancelled this task: ${command.reason.replace(/[.\s]+$/, '')}. Stop working on it.`, [assignment.agentId])
+      message(group.id, `${isLead ? 'The Lead' : 'The tab owner'} cancelled this task: ${command.reason.replace(/[.\s]+$/, '')}.${gone ? '' : ' Stop working on it.'}`,
+        gone ? [] : [assignment.agentId])
       break
     }
     case 'work.check': {
