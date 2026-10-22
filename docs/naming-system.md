@@ -91,10 +91,11 @@ Agents have individual display names and the same avatar treatment as people. Th
 are **PM** and **Dev**; project context appears underneath. Engine names belong in details.
 Chat headings and quoted replies use the same current agent identity as the roster, including
 older messages. When an agent has left, its recorded author name remains available in history.
-Machine rows are one line: a status dot, the name (followed by the owner's name only when
-two machines share it) and the agents' avatars. Capacity, reading age and allowances are in
-the row's tooltip, a warning appears only below 10% allowance, and the row opens labeled
-details. Offline machines are listed under **Offline · N** and omit stale readings from their details.
+Machine rows are one line: a status dot, the name, a chip for each known model allowance
+(the engine's mark and the share left, amber below 20% and red below 10%) and the agents'
+avatars. The owner and hardware are in the row's tooltip, never the reading's age, and the
+row opens labeled details. Offline machines are listed under **Offline · N**, without chips,
+and omit stale readings from their details.
 The stored `lead` and `builder` routing roles and native harness names remain compatible.
 People, agents and machines belong to the Swarm. A project's **Public** visibility means everyone
 in that Swarm; **Private** means its owner and explicitly invited project members. Swarms are

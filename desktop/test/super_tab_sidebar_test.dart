@@ -329,7 +329,8 @@ void main() {
       // Enlarged text wider than the column ends at the row's edge instead.
       expect(moreRect.right, closeTo(studio.right, 0.5), reason: reason);
     }
-    // A shared name gives way before its owner, and a name cut short shows itself whole on hover.
+    // The row never names the owner, even when another machine shares the name; a name cut short shows itself
+    // whole on hover.
     final shared = find
         .descendant(
           of: find.byKey(const ValueKey('super-machine-mbp-b')),
@@ -338,8 +339,8 @@ void main() {
         .evaluate()
         .map((e) => (e.widget as RichText).text.toPlainText())
         .join();
-    expect(shared, contains(' · tony'), reason: reason);
-    if (!shared.startsWith('MacBook Pro ·')) {
+    expect(shared, isNot(contains('tony')), reason: reason);
+    if (!shared.startsWith('MacBook Pro')) {
       expect(
         find.descendant(
           of: find.byKey(const ValueKey('super-machine-mbp-b')),
@@ -610,11 +611,28 @@ void main() {
             closeTo(add, .01),
             reason: reason,
           );
-          expect(
-            centerX(inRow('super-machine-on', find.byType(SuperTabAvatar))),
-            closeTo(add, .5),
-            reason: reason,
+          // The last agent mark: the avatar, or +1 once the name needs its room.
+          // Enlarged text wider than the column ends at the row's edge instead.
+          final more = inRow('super-machine-on', find.text('+1'));
+          final last = tester.getRect(
+            more.evaluate().isNotEmpty
+                ? more
+                : inRow('super-machine-on', find.byType(SuperTabAvatar)),
           );
+          if (last.width <= SuperTabSectionHeading.actionWidth) {
+            expect(last.center.dx, closeTo(add, .5), reason: reason);
+          } else {
+            expect(
+              last.right,
+              closeTo(
+                tester
+                    .getRect(find.byKey(const ValueKey('super-machine-on')))
+                    .right,
+                .5,
+              ),
+              reason: reason,
+            );
+          }
 
           // Every row's fill spans the full row, whatever its level.
           final rows = [
