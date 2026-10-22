@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:harness/core/machine_resources.dart';
 import 'package:harness/shared/theme/app_icons.dart';
 import 'package:harness/shared/theme/app_theme.dart' as grid;
+import 'package:harness/super_tabs/machine_status.dart';
 import 'package:harness/super_tabs/machines.dart';
 import 'package:harness/super_tabs/project_sidebar.dart';
 import 'package:harness/super_tabs/view.dart';
@@ -151,6 +152,65 @@ void main() {
       },
     );
   }
+
+  testWidgets(
+    "the Machines heading's + lines up with the Projects heading's +, "
+    'with the pill flush before it',
+    (tester) async {
+      final app = createApp(connected: true);
+      addTearDown(app.dispose);
+      final server = ConversationServer();
+      server.state['projects'] = [projectFixture('lead', 'web-project', 'lead')];
+      final c = server.controller();
+      await c.refresh();
+      for (final width in [280.0, 420.0]) {
+        await tester.binding.setSurfaceSize(Size(width, 700));
+        await tester.pumpWidget(
+          MaterialApp(
+            theme: grid.buildAppTheme(brightness: Brightness.dark),
+            home: Scaffold(
+              body: SizedBox(
+                width: width,
+                child: ProjectSidebar(
+                  controller: c,
+                  app: app,
+                  onAddAgent: (_) {},
+                  needsHuman: (_) => 0,
+                  onSelect: (_) {},
+                  onNewProject: () {},
+                ),
+              ),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        final projectAdd = tester.getRect(find.byTooltip('New project'));
+        final machinesAdd = tester.getRect(find.byTooltip('Add machine'));
+        expect(
+          machinesAdd.right,
+          closeTo(projectAdd.right, 1),
+          reason: 'at width $width',
+        );
+
+        final pill = tester.getRect(find.byType(SuperTabMachinesPill));
+        expect(
+          pill.right,
+          lessThanOrEqualTo(machinesAdd.left),
+          reason: 'at width $width',
+        );
+        expect(
+          machinesAdd.left - pill.right,
+          lessThan(20),
+          reason: 'the pill sits flush before the +, at width $width',
+        );
+      }
+      await tester.binding.setSurfaceSize(null);
+      await tester.pumpWidget(const SizedBox());
+      await c.flush();
+      c.dispose();
+    },
+  );
 
   testWidgets('the left Machines group repaints on a live app change alone', (
     tester,

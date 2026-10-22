@@ -73,14 +73,13 @@ class SuperTabSectionHeading extends StatelessWidget {
               ),
             ),
             if (trailing != null) ...[
-              // A narrow drawer at a large text scale has no room to spare;
-              // shrink the pill rather than overflow the row.
-              Flexible(
-                child: FittedBox(
-                  fit: BoxFit.scaleDown,
-                  alignment: Alignment.centerRight,
-                  child: trailing!,
-                ),
+              // A plain (non-flex) child, so it keeps its natural width right
+              // before the add action instead of splitting the row's free
+              // space with the title — only the cap below is new, to keep a
+              // narrow drawer at a large text scale from overflowing.
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 150),
+                child: trailing!,
               ),
               const SizedBox(width: 4),
             ],

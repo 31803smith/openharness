@@ -336,11 +336,15 @@ class SuperTabMachinesPill extends StatelessWidget {
                 child: const SizedBox.square(dimension: 6),
               ),
               const SizedBox(width: 6),
-              Text(
-                text,
-                style: DesktopChrome.metadata().copyWith(
-                  fontSize: 11,
-                  fontFeatures: _tabular,
+              Flexible(
+                child: Text(
+                  text,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: DesktopChrome.metadata().copyWith(
+                    fontSize: 11,
+                    fontFeatures: _tabular,
+                  ),
                 ),
               ),
             ],
