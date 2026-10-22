@@ -1051,13 +1051,13 @@ class _SuperTabMachinesState extends State<SuperTabMachines> {
     final ringed = _MachineLine.ringed;
     final full = most == 0
         ? 0.0
-        : _MachineLine.gap +
+        : _MachineLine.avatarsGap +
               ringed +
               (ringed - _MachineLine.overlap) * (stacked - 1) +
               (rest > 0 ? 4 + measure('+$rest', count) : 0);
     final counted = most == 0
         ? 0.0
-        : _MachineLine.gap + measure('+$most', count);
+        : _MachineLine.countGap + measure('+$most', count);
     // With agents, their last avatar centers on the heading +; without, the row ends where project dots do.
     final end = most == 0
         ? _anchor - _MachineLine.dotHalf
@@ -1332,6 +1332,12 @@ class _MachineLine extends StatelessWidget {
 
   /// Before each column, and between the name and the first.
   static const gap = 6.0;
+
+  /// Before the agents column when it shows their avatars, so the avatars stand apart from the figures. A count
+  /// is a figure like the others and keeps their [gap], which leaves Claude's column room in the default 204 px
+  /// sidebar.
+  static const avatarsGap = 16.0;
+  static const countGap = gap;
 
   /// What the name keeps, at the default text size, before a column gives way: a readable start of it, small
   /// enough that Claude's allowance still fits beside it in the default 204 px sidebar.
