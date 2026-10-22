@@ -212,6 +212,75 @@ void main() {
     },
   );
 
+  testWidgets(
+    'a wide reconnecting pill does not overflow a dragged-down narrow '
+    'drawer, and the + stays aligned',
+    (tester) async {
+      final app = createApp(connected: true);
+      addTearDown(app.dispose);
+      final server = ConversationServer();
+      server.state['projects'] = [projectFixture('lead', 'web-project', 'lead')];
+      final c = server.controller();
+      await c.refresh();
+      server.failReads = true;
+      await c.refresh();
+      expect(c.backendUnreachable, isTrue);
+      // "Reconnecting · 12m" is close to the pill's widest normal content.
+      final pinned = c.unreachableSince!.add(const Duration(minutes: 12));
+
+      for (final width in [180.0, 240.0]) {
+        for (final scale in [1.0, 2.0]) {
+          await tester.binding.setSurfaceSize(Size(width, 700));
+          await tester.pumpWidget(
+            MaterialApp(
+              theme: grid.buildAppTheme(brightness: Brightness.dark),
+              builder: (context, child) => MediaQuery(
+                data: MediaQuery.of(
+                  context,
+                ).copyWith(textScaler: TextScaler.linear(scale)),
+                child: child!,
+              ),
+              home: Scaffold(
+                body: SizedBox(
+                  width: width,
+                  child: ProjectSidebar(
+                    controller: c,
+                    app: app,
+                    onAddAgent: (_) {},
+                    needsHuman: (_) => 0,
+                    onSelect: (_) {},
+                    onNewProject: () {},
+                    now: () => pinned,
+                  ),
+                ),
+              ),
+            ),
+          );
+          await tester.pumpAndSettle();
+          final reason = 'at width $width, scale $scale';
+          expect(tester.takeException(), isNull, reason: reason);
+          expect(
+            find.textContaining('Reconnecting'),
+            findsOneWidget,
+            reason: reason,
+          );
+
+          final projectAdd = tester.getRect(find.byTooltip('New project'));
+          final machinesAdd = tester.getRect(find.byTooltip('Add machine'));
+          expect(
+            machinesAdd.right,
+            closeTo(projectAdd.right, 1),
+            reason: reason,
+          );
+        }
+      }
+      await tester.binding.setSurfaceSize(null);
+      await tester.pumpWidget(const SizedBox());
+      await c.flush();
+      c.dispose();
+    },
+  );
+
   testWidgets('the left Machines group repaints on a live app change alone', (
     tester,
   ) async {

@@ -23,6 +23,7 @@ class ProjectSidebar extends StatelessWidget {
     this.onNewProject,
     this.onYourDevices,
     this.readLocal,
+    this.now = DateTime.now,
   });
   final SuperTabController controller;
   final ValueChanged<String> onSelect;
@@ -36,6 +37,11 @@ class ProjectSidebar extends StatelessWidget {
   /// the Machines group's readings taken without a real machine.
   @visibleForTesting
   final Future<MachineResources?> Function(String machineId)? readLocal;
+
+  /// Forwarded to the embedded [SuperTabMachines]; a test gives it to pin
+  /// the clock its readings' ages are counted against.
+  @visibleForTesting
+  final DateTime Function() now;
 
   // Actions, project names and workgroup names share one text column.
   static const _iconColumn = 32.0;
@@ -245,6 +251,7 @@ class ProjectSidebar extends StatelessWidget {
                 onToggleCollapsed: controller.toggleMachinesGroup,
                 onYourDevices: onYourDevices,
                 readLocal: readLocal,
+                now: now,
               );
             },
           ),
