@@ -46,6 +46,18 @@ class SuperTabSectionHeading extends StatelessWidget {
   /// before the actions is 4 px; the title always keeps at least this
   /// much room, even when the trailing pill is at its widest.
   static const actionWidth = 32.0;
+
+  /// One step of the sidebar's tree: a group's rows sit one step in from its heading, and the rows under one
+  /// of those (a project's workgroups, the offline machines) two.
+  static const indentStep = 16.0;
+
+  /// Where a collapsible heading's chevron column starts.
+  static const _leadingInset = 4.0;
+
+  /// Where the icon column of a row at [level] starts, from the row's leading edge; its text starts right
+  /// after that 32 px column, as the heading's does. Level 0 is the heading's own.
+  static double indentFor(int level) => _leadingInset + level * indentStep;
+
   static const _trailingGap = 4.0;
   static const _minTitleWidth = 40.0;
 
@@ -53,7 +65,12 @@ class SuperTabSectionHeading extends StatelessWidget {
   Widget build(BuildContext context) {
     final collapsible = onToggleCollapsed != null;
     return Padding(
-      padding: EdgeInsets.fromLTRB(collapsible ? 4 : 16, 0, endInset, 4),
+      padding: EdgeInsets.fromLTRB(
+        collapsible ? _leadingInset : 16,
+        0,
+        endInset,
+        4,
+      ),
       child: ConstrainedBox(
         constraints: const BoxConstraints(minHeight: 32),
         child: LayoutBuilder(

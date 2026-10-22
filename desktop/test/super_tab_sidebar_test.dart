@@ -6,6 +6,7 @@ import 'package:harness/shared/theme/app_icons.dart';
 import 'package:harness/shared/theme/app_theme.dart' as grid;
 import 'package:harness/state/app_state.dart';
 import 'package:harness/super_tabs/controller.dart';
+import 'package:harness/super_tabs/identity.dart';
 import 'package:harness/super_tabs/machine_status.dart';
 import 'package:harness/super_tabs/machines.dart';
 import 'package:harness/super_tabs/project_sidebar.dart';
@@ -100,10 +101,17 @@ void main() {
         expect(c.selectedId, 'empty-lead');
         final work = find.byKey(const ValueKey('super-group-offline'));
         expect(work, findsOneWidget);
+        // Projects share a column; their workgroups sit one step further in.
         final projectX = tester.getTopLeft(inside(find.text('web-project'))).dx;
-        for (final label in ['sample-project', '#12 Offline editing']) {
-          expect(tester.getTopLeft(inside(find.text(label))).dx, projectX);
-        }
+        const step = SuperTabSectionHeading.indentStep;
+        expect(
+          tester.getTopLeft(inside(find.text('sample-project'))).dx,
+          projectX,
+        );
+        expect(
+          tester.getTopLeft(inside(find.text('#12 Offline editing'))).dx,
+          projectX + step,
+        );
         // Your devices is a heading action beside Add machine, not a row.
         expect(inside(find.text('Your devices')), findsNothing);
         final yourDevices = find.byKey(const ValueKey('super-your-devices'));
@@ -135,7 +143,7 @@ void main() {
         expect(inside(find.text('No workgroups yet')), findsOneWidget);
         expect(
           tester.getTopLeft(inside(find.text('No workgroups yet'))).dx,
-          projectX,
+          projectX + step,
         );
         expect(find.byTooltip('Collapse sample-project'), findsOneWidget);
         expect(
@@ -451,6 +459,174 @@ void main() {
                 reason: 'the pill sits flush before the actions, $reason',
               );
             }
+          }
+        }
+      }
+      await tester.pumpWidget(const SizedBox());
+      await c.flush();
+      c.dispose();
+    },
+  );
+
+  testWidgets(
+    'one indent step makes a tree: headings, then projects, machines and '
+    '"Offline · N", then workgroups and offline machines; the trailing column stays',
+    (tester) async {
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      final app = createApp(connected: true);
+      addTearDown(app.dispose);
+      final server = ConversationServer();
+      server.state['projects'] = [
+        projectFixture('lead', 'web-project', 'lead'),
+        projectFixture('empty', 'sample-project', 'empty-lead'),
+      ];
+      (server.state['conversations'] as List)[1]
+        ..['projectId'] = 'lead'
+        ..['number'] = 12
+        ..['lastMessageSequence'] = 5;
+      (server.state['conversations'] as List).add({
+        ...conversationFixture('empty-lead', 'Lead'),
+        'projectId': 'empty',
+      });
+      final at = DateTime.now().millisecondsSinceEpoch;
+      server.state['machines'] = [
+        for (final (id, name, age) in [
+          ('on', 'Studio Mac', 0),
+          ('off', 'Old Mini', 600000),
+        ])
+          {
+            'machineId': id,
+            'name': name,
+            'contributorId': 'owner',
+            'observation': {'receivedAt': at - age},
+          },
+      ];
+      server.state['agents'] = [
+        {
+          'id': 'agent-0',
+          'name': 'Lead',
+          'displayName': 'Atlas',
+          'machineId': 'on',
+          'harnessId': 'a0',
+          'contributorId': 'owner',
+          'configuration': {'engine': 'claude'},
+        },
+      ];
+      final c = server.controller();
+      await c.refresh();
+      c.expandedProjects.addAll(['lead', 'empty']);
+      c.offlineMachinesOpen = true;
+      const step = SuperTabSectionHeading.indentStep;
+      for (final width in [180.0, 280.0]) {
+        for (final scale in [1.0, 2.0]) {
+          await pumpSidebar(tester, c, app, width: width, scale: scale);
+          final reason = 'at width $width, scale $scale';
+          expect(tester.takeException(), isNull, reason: reason);
+          double centerX(Finder f) => tester.getCenter(f).dx;
+          double leftX(Finder f) => tester.getTopLeft(f).dx;
+          Finder inRow(String key, Finder f) =>
+              find.descendant(of: find.byKey(ValueKey(key)), matching: f);
+          Finder nameOf(String id) =>
+              inRow('super-machine-$id', find.byType(RichText)).first;
+
+          // Level 0: both headings share one chevron column and one text column.
+          final icon = centerX(find.byTooltip('Collapse Projects'));
+          final text = leftX(find.text('Projects'));
+          expect(
+            centerX(find.byTooltip('Collapse Machines')),
+            icon,
+            reason: reason,
+          );
+          expect(leftX(find.text('Machines')), text, reason: reason);
+
+          // Level 1: one step in.
+          for (final (what, mark, name) in [
+            (
+              'project',
+              find.byKey(const ValueKey('super-project-expand-lead')),
+              find.text('web-project'),
+            ),
+            (
+              'machine',
+              inRow('super-machine-on', find.byType(SuperTabMachineDot)),
+              nameOf('on'),
+            ),
+            (
+              'offline disclosure',
+              inRow('super-machines-offline', find.byType(Icon)),
+              find.text('Offline · 1'),
+            ),
+          ]) {
+            expect(
+              centerX(mark),
+              closeTo(icon + step, .01),
+              reason: '$what $reason',
+            );
+            expect(
+              leftX(name),
+              closeTo(text + step, .01),
+              reason: '$what $reason',
+            );
+          }
+
+          // Level 2: two steps in.
+          expect(
+            leftX(find.text('#12 Offline editing')),
+            closeTo(text + 2 * step, .01),
+            reason: reason,
+          );
+          expect(
+            leftX(find.text('No workgroups yet')),
+            closeTo(text + 2 * step, .01),
+            reason: reason,
+          );
+          expect(
+            centerX(
+              inRow('super-machine-off', find.byType(SuperTabMachineDot)),
+            ),
+            closeTo(icon + 2 * step, .01),
+            reason: reason,
+          );
+          expect(
+            leftX(nameOf('off')),
+            closeTo(text + 2 * step, .01),
+            reason: reason,
+          );
+
+          // The trailing column does not move with the level: a workgroup's
+          // unread dot and a machine's last avatar center on the heading +.
+          final add = centerX(find.byTooltip('New project'));
+          expect(centerX(find.byTooltip('Add machine')), add, reason: reason);
+          expect(
+            centerX(
+              inRow(
+                'super-group-offline',
+                find.byWidgetPredicate(
+                  (w) =>
+                      w is Semantics && w.properties.label == 'Unread messages',
+                ),
+              ),
+            ),
+            closeTo(add, .01),
+            reason: reason,
+          );
+          expect(
+            centerX(inRow('super-machine-on', find.byType(SuperTabAvatar))),
+            closeTo(add, .5),
+            reason: reason,
+          );
+
+          // Every row's fill spans the full row, whatever its level.
+          final rows = [
+            'super-group-lead',
+            'super-group-offline',
+            'super-machine-on',
+            'super-machines-offline',
+            'super-machine-off',
+          ].map((k) => tester.getRect(find.byKey(ValueKey(k))));
+          for (final r in rows) {
+            expect(r.left, rows.first.left, reason: reason);
+            expect(r.right, rows.first.right, reason: reason);
           }
         }
       }

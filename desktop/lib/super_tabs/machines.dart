@@ -874,7 +874,7 @@ class _SuperTabMachinesState extends State<SuperTabMachines> {
 
   /// One machine on one line: its state's dot in the icon column, its name on the text column, its agents at
   /// the end. Everything else is in its tooltip and its details.
-  Widget _machine(_MachineView v, {String? owner}) {
+  Widget _machine(_MachineView v, {String? owner, int level = 1}) {
     final tipKey = _tips.putIfAbsent(v.id, GlobalKey<TooltipState>.new);
     final name = superTabMachineName(v.name);
     final row = Padding(
@@ -899,7 +899,12 @@ class _SuperTabMachinesState extends State<SuperTabMachines> {
               Tooltip.dismissAllToolTips();
             }
           },
-          child: _MachineLine(view: v, owner: owner, anchor: _anchor),
+          child: _MachineLine(
+            view: v,
+            owner: owner,
+            anchor: _anchor,
+            level: level,
+          ),
         ),
       ),
     );
@@ -947,6 +952,7 @@ class _SuperTabMachinesState extends State<SuperTabMachines> {
             excludeSemantics: true,
             child: Row(
               children: [
+                SizedBox(width: SuperTabSectionHeading.indentFor(1)),
                 SizedBox(
                   width: _MachineLine.iconColumn,
                   child: Icon(
@@ -960,7 +966,7 @@ class _SuperTabMachinesState extends State<SuperTabMachines> {
                     constraints: const BoxConstraints(minHeight: 36),
                     child: Padding(
                       padding: EdgeInsets.fromLTRB(
-                        _MachineLine.textGap,
+                        0,
                         8,
                         _anchor - _MachineLine.dotHalf,
                         8,
@@ -1020,7 +1026,7 @@ class _SuperTabMachinesState extends State<SuperTabMachines> {
       if (offline.isNotEmpty) ...[
         _offlineToggle(offline.length),
         if (c.offlineMachinesOpen)
-          for (final v in offline) _machine(v, owner: owner(v)),
+          for (final v in offline) _machine(v, owner: owner(v), level: 2),
       ],
     ];
   }
@@ -1130,6 +1136,7 @@ class _MachineLine extends StatelessWidget {
     required this.view,
     required this.owner,
     required this.anchor,
+    required this.level,
   });
 
   final _MachineView view;
@@ -1140,8 +1147,10 @@ class _MachineLine extends StatelessWidget {
   /// From the row's right edge to the center of its last mark.
   final double anchor;
 
-  static const iconColumn = 32.0;
-  static const textGap = 4.0;
+  /// 1 under the Machines heading, 2 under "Offline · N".
+  final int level;
+
+  static const iconColumn = SuperTabSectionHeading.actionWidth;
 
   /// Half the project rows' dot, so that a row with nothing at its end stops where theirs do.
   static const dotHalf = 3.0;
@@ -1182,6 +1191,7 @@ class _MachineLine extends StatelessWidget {
 
     return Row(
       children: [
+        SizedBox(width: SuperTabSectionHeading.indentFor(level)),
         SizedBox(
           width: iconColumn,
           child: Center(
@@ -1199,7 +1209,7 @@ class _MachineLine extends StatelessWidget {
           child: ConstrainedBox(
             constraints: const BoxConstraints(minHeight: 36),
             child: Padding(
-              padding: const EdgeInsets.only(left: textGap, top: 8, bottom: 8),
+              padding: const EdgeInsets.symmetric(vertical: 8),
               child: LayoutBuilder(
                 builder: (context, constraints) {
                   final warning = v.low.isNotEmpty;

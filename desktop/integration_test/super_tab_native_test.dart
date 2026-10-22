@@ -90,6 +90,12 @@ void main() {
         ...conversationFixture('design-lead', 'Lead'),
         'projectId': 'design',
       });
+      // A workgroup under Lamp OS, so the sidebar's tree shows a second level.
+      (server.state['conversations'] as List).add({
+        ...conversationFixture('polish', 'Sidebar polish'),
+        'projectId': 'lead',
+        'number': 20,
+      });
       server.state['machines'] = [
         {
           'machineId': 'm',
@@ -270,11 +276,38 @@ void main() {
       expect(find.byKey(const ValueKey('super-machine-m-old')), findsNothing);
       expect(find.textContaining('CPU'), findsNothing);
       await shot('sidebar-groups');
-      debugPrint('Swarm fixture: open the offline machines');
+      debugPrint(
+        'Swarm fixture: open the tree: a workgroup and the offline machines',
+      );
+      final leadWasOpen = c!.expandedProjects.contains('lead');
+      if (!leadWasOpen) {
+        await tester.tap(
+          find.byKey(const ValueKey('super-project-expand-lead')),
+        );
+      }
       await tester.tap(find.byKey(const ValueKey('super-machines-offline')));
       await tester.pumpAndSettle();
+      expect(find.text('#20 Sidebar polish'), findsOneWidget);
       expect(find.byKey(const ValueKey('super-machine-m-old')), findsOneWidget);
-      await shot('sidebar-offline-open');
+      // Each level one step further in than the one above it.
+      double textX(String row, String label) => tester
+          .getTopLeft(
+            find.descendant(
+              of: find.byKey(ValueKey(row)),
+              matching: find.text(label),
+            ),
+          )
+          .dx;
+      expect(
+        textX('super-group-polish', '#20 Sidebar polish'),
+        greaterThan(textX('super-group-lead', 'Lamp OS')),
+      );
+      await shot('sidebar-tree');
+      if (!leadWasOpen) {
+        await tester.tap(
+          find.byKey(const ValueKey('super-project-expand-lead')),
+        );
+      }
       await tester.tap(find.byKey(const ValueKey('super-machines-offline')));
       await tester.pumpAndSettle();
       debugPrint('Swarm fixture: empty project disclosure');
@@ -282,7 +315,7 @@ void main() {
         find.byKey(const ValueKey('super-project-expand-design')),
       );
       await tester.pumpAndSettle();
-      expect(c!.selectedId, 'lead');
+      expect(c.selectedId, 'lead');
       expect(c.expandedProjects.contains('design'), isTrue);
       expect(find.text('No workgroups yet'), findsOneWidget);
       await tester.tap(find.byKey(const ValueKey('super-group-lead')));

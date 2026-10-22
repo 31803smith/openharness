@@ -12,6 +12,7 @@ import 'package:harness/super_tabs/machines.dart';
 import 'package:harness/super_tabs/machine_details.dart';
 import 'package:harness/super_tabs/identity.dart';
 import 'package:harness/super_tabs/model.dart';
+import 'package:harness/super_tabs/section_heading.dart';
 import 'package:harness/shared/theme/app_theme.dart' as grid;
 import 'package:harness/widgets/desktop_chrome.dart';
 import 'package:harness/widgets/engine_identity.dart';
@@ -656,7 +657,9 @@ void main() {
                 matching: find.byType(SuperTabMachineDot),
               ),
             );
-            expect(dot.center.dx, closeTo(rowRect.left + 16, .01));
+            // Level 1, one indent step in from the heading's columns.
+            final indent = SuperTabSectionHeading.indentFor(1);
+            expect(dot.center.dx, closeTo(rowRect.left + indent + 16, .01));
             expect(dot.center.dy, closeTo(rowRect.center.dy, .5));
             expect(
               tester
@@ -666,7 +669,7 @@ void main() {
                         .first,
                   )
                   .dx,
-              rowRect.left + 36,
+              rowRect.left + indent + 32,
             );
             // Left to right, as they read: the first agent is drawn last, on top.
             final avatars =
