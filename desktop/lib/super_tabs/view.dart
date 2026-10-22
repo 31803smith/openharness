@@ -684,6 +684,8 @@ class _SuperTabViewState extends State<SuperTabView>
 
   Widget _sidebar() => ProjectSidebar(
     controller: c,
+    app: widget.app,
+    onAddAgent: widget.onAddAgent,
     onNewProject: widget.onNewProject,
     onYourDevices: widget.app?.devicesEnabled != true
         ? null

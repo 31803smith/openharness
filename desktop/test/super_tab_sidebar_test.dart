@@ -68,16 +68,8 @@ void main() {
         expect(expand, findsOneWidget);
         expect(empty, findsOneWidget);
         expect(inside(find.byType(OutlinedButton)), findsNothing);
-        expect(
-          tester
-              .widget<TextButton>(
-                find.byKey(const ValueKey('super-new-project')),
-              )
-              .style!
-              .side!
-              .resolve({}),
-          BorderSide.none,
-        );
+        expect(inside(find.text('Projects')), findsOneWidget);
+        expect(inside(find.text('Machines')), findsOneWidget);
 
         // Project names always select the lead; disclosure never switches chats.
         await tester.tap(inside(find.text('sample-project')));
@@ -89,14 +81,11 @@ void main() {
         final work = find.byKey(const ValueKey('super-group-offline'));
         expect(work, findsOneWidget);
         final projectX = tester.getTopLeft(inside(find.text('web-project'))).dx;
-        for (final label in [
-          'sample-project',
-          '#12 Offline editing',
-          'New project',
-          'Your devices',
-        ]) {
+        for (final label in ['sample-project', '#12 Offline editing']) {
           expect(tester.getTopLeft(inside(find.text(label))).dx, projectX);
         }
+        final yourDevices = inside(find.text('Your devices'));
+        expect(tester.getTopLeft(yourDevices).dx, projectX);
         final projectRect = tester.getRect(
           find.byKey(const ValueKey('super-group-lead')),
         );
@@ -131,10 +120,10 @@ void main() {
         expect(c.selectedId, 'offline');
 
         // Both navigation actions retain keyboard activation.
-        final newProject = find.byKey(const ValueKey('super-new-project'));
+        final newProject = find.byTooltip('New project');
         Focus.of(
           tester.element(
-            find.descendant(of: newProject, matching: find.text('New project')),
+            find.descendant(of: newProject, matching: find.byIcon(AppIcons.plus)),
           ),
         ).requestFocus();
         await tester.pump();
@@ -160,4 +149,117 @@ void main() {
       },
     );
   }
+
+  testWidgets('the left Machines group repaints on a live app change alone', (
+    tester,
+  ) async {
+    final app = createApp(connected: true);
+    addTearDown(app.dispose);
+    final server = ConversationServer();
+    server.state['agents'] = [
+      {
+        'id': 'agent-0',
+        'projectId': null,
+        'name': 'Lead',
+        'displayName': 'Atlas',
+        'machineId': 'm',
+        'harnessId': 'a0',
+        'contributorId': 'owner',
+        'configuration': {'engine': 'claude'},
+      },
+    ];
+    final c = server.controller();
+    await c.refresh();
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: grid.buildAppTheme(brightness: Brightness.dark),
+        home: Scaffold(
+          body: ProjectSidebar(
+            controller: c,
+            app: app,
+            onAddAgent: (_) {},
+            needsHuman: (_) => 0,
+            onSelect: (_) {},
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.byIcon(AppIcons.monitorOff), findsNothing);
+
+    // The Machines group has no listener of its own on the controller the
+    // rest of this sidebar rebuilds on, so a bare app event (no controller
+    // change, no re-pump) must still repaint it.
+    await app.handleEventForTest('m', {'type': 'node_status', 'online': false});
+    await tester.pump();
+    expect(find.byIcon(AppIcons.monitorOff), findsOneWidget);
+    expect(find.byTooltip('Offline'), findsOneWidget);
+
+    await tester.pumpWidget(const SizedBox());
+    await c.flush();
+    c.dispose();
+  });
+
+  testWidgets('Projects and Machines groups collapse and persist', (
+    tester,
+  ) async {
+    final app = createApp(connected: true);
+    addTearDown(app.dispose);
+    final server = ConversationServer();
+    server.state['projects'] = [projectFixture('lead', 'web-project', 'lead')];
+    final c = server.controller();
+    await c.refresh();
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: grid.buildAppTheme(brightness: Brightness.dark),
+        home: Scaffold(
+          body: SuperTabView(
+            controller: c,
+            app: app,
+            onInvite: () {},
+            onAddAgent: (_) {},
+            onOpenTerminal: (_) {},
+            onNewProject: () {},
+            machineName: (_) => 'Test Mac',
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    final sidebar = find.byType(ProjectSidebar);
+    Finder inside(Finder finder) =>
+        find.descendant(of: sidebar, matching: finder);
+
+    expect(inside(find.text('web-project')), findsOneWidget);
+    expect(inside(find.text('Your devices')), findsOneWidget);
+
+    await tester.tap(find.byTooltip('Collapse Projects'));
+    await tester.pumpAndSettle();
+    expect(inside(find.text('web-project')), findsNothing);
+    expect(c.projectsGroupOpen, isFalse);
+
+    await tester.tap(find.byTooltip('Collapse Machines'));
+    await tester.pumpAndSettle();
+    expect(inside(find.text('Your devices')), findsNothing);
+    expect(c.machinesGroupOpen, isFalse);
+
+    // Persisted state survives a restart of the sidebar's controller.
+    await c.flush();
+    final saved = server.saved!;
+    expect(saved['projectsGroupOpen'], isFalse);
+    expect(saved['machinesGroupOpen'], isFalse);
+    final reopened = server.controller(initial: saved);
+    await reopened.refresh();
+    expect(reopened.projectsGroupOpen, isFalse);
+    expect(reopened.machinesGroupOpen, isFalse);
+
+    await tester.tap(find.byTooltip('Expand Projects'));
+    await tester.pumpAndSettle();
+    expect(inside(find.text('web-project')), findsOneWidget);
+    await tester.pumpWidget(const SizedBox());
+    await c.flush();
+    c.dispose();
+    await reopened.flush();
+    reopened.dispose();
+  });
 }

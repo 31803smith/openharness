@@ -14,7 +14,6 @@ import '../widgets/engine_identity.dart';
 import '../widgets/harness_activity_mark.dart';
 import 'controller.dart';
 import 'identity.dart';
-import 'machines.dart';
 import 'model.dart';
 import 'section_heading.dart';
 
@@ -334,16 +333,7 @@ class _SuperTabRosterState extends State<SuperTabRoster> {
         builder: (context, _) => ListView(
           key: PageStorageKey('super-tab-resources-${c.tabId}'),
           padding: const EdgeInsets.symmetric(vertical: 12),
-          children: [
-            ..._members(),
-            const SizedBox(height: 16),
-            SuperTabMachines(
-              controller: c,
-              app: widget.app,
-              onAddAgent: widget.onAddAgent,
-              embedded: true,
-            ),
-          ],
+          children: _members(),
         ),
       ),
     );

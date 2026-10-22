@@ -48,6 +48,8 @@ class SuperTabController extends ChangeNotifier {
       expandedProjects.addAll(
         (initial['expandedProjects'] as List? ?? const []).whereType<String>(),
       );
+      projectsGroupOpen = initial['projectsGroupOpen'] as bool? ?? true;
+      machinesGroupOpen = initial['machinesGroupOpen'] as bool? ?? true;
       selectedId = initial['selectedId'] as String? ?? 'lead';
       final drafts = initial['drafts'];
       if (drafts is Map) {
@@ -145,9 +147,22 @@ class SuperTabController extends ChangeNotifier {
   final _before = <String, int?>{};
   final _reading = <String>{};
   final expandedProjects = <String>{};
+  bool projectsGroupOpen = true, machinesGroupOpen = true;
 
   void toggleProject(String id) {
     if (!expandedProjects.remove(id)) expandedProjects.add(id);
+    _saveSoon();
+    _changed();
+  }
+
+  void toggleProjectsGroup() {
+    projectsGroupOpen = !projectsGroupOpen;
+    _saveSoon();
+    _changed();
+  }
+
+  void toggleMachinesGroup() {
+    machinesGroupOpen = !machinesGroupOpen;
     _saveSoon();
     _changed();
   }
@@ -280,6 +295,8 @@ class SuperTabController extends ChangeNotifier {
     'accountId': accountId,
     'selectedId': selectedId,
     'expandedProjects': expandedProjects.toList(),
+    'projectsGroupOpen': projectsGroupOpen,
+    'machinesGroupOpen': machinesGroupOpen,
     'drafts': Map<String, String>.of(_drafts),
     'terminals': Map<String, String>.of(_terminals),
 
