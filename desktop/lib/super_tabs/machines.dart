@@ -9,6 +9,7 @@ import '../core/models.dart';
 import '../core/test_run.dart';
 import '../shared/theme/app_icons.dart';
 import '../shared/theme/app_theme.dart' as grid;
+import '../shared/theme/status_line_style.dart';
 import '../shared/widgets/app_dialog.dart';
 import '../shared/widgets/app_icon_button.dart';
 import '../shared/widgets/app_menu.dart';
@@ -634,8 +635,8 @@ class _SuperTabMachinesState extends State<SuperTabMachines> {
         : '${minutes ~/ 1440}d';
   }
 
-  /// Below this share of an allowance left, a machine's row shows its one warning.
-  static const _lowAllowance = 10;
+  /// The engines whose allowance a machine row shows, in this order.
+  static const _chipEngines = ['claude', 'codex'];
 
   /// Everything a machine's row, its tooltip and its details say of it, read once per build.
   _MachineView _view(String id) {
@@ -750,17 +751,42 @@ class _SuperTabMachinesState extends State<SuperTabMachines> {
           );
     String available(double used) =>
         resourcePercent((100 - used).clamp(0, 100));
-    // An old reading's allowance is not a warning about now.
-    final low = dim
-        ? const <String>[]
+    // Each engine with a known, unexpired allowance, Claude first. Offline or out of reach, an allowance is an
+    // old reading and no chip shows it as now.
+    final allowances =
+        status == SuperTabMachineStatus.offline ||
+            status == SuperTabMachineStatus.unknown
+        ? const <_Allowance>[]
         : [
-            for (final row in accounts)
-              if (row['remainingPercent'] case final num left
-                  when left < _lowAllowance)
+            for (final engine in _chipEngines)
+              if (accounts
+                      .where(
+                        (row) =>
+                            row['engine'] == engine &&
+                            row['remainingPercent'] is num,
+                      )
+                      .firstOrNull
+                  case final row?)
                 for (final account in WorkspaceSubscriptionUsage.fromRows([
                   row,
-                ]).accounts)
-                  '${account.name}: ${account.figure} left',
+                ]).accounts.take(1))
+                  _Allowance(
+                    engine: engine,
+                    name: account.name,
+                    figure: account.figure,
+                    left: (row['remainingPercent'] as num).toDouble().clamp(
+                      0,
+                      100,
+                    ),
+                    detail: [
+                      account.name,
+                      ...switch (row['details']) {
+                        final List lines when lines.isNotEmpty =>
+                          lines.whereType<String>(),
+                        _ => ['${account.figure} remaining'],
+                      },
+                    ].join('\n'),
+                  ),
           ];
     return _MachineView(
       id: id,
@@ -785,11 +811,12 @@ class _SuperTabMachinesState extends State<SuperTabMachines> {
       resources: value,
       accounts: accounts,
       engines: allowed,
-      low: low,
-      // What the line leaves out, for hover, focus and a screen reader: how old the reading is, the numbers
-      // behind it and an allowance running out. Old numbers are kept here, never blanked.
+      allowances: allowances,
+      // What the line leaves out, for hover, focus and a screen reader: whose machine it is and its hardware,
+      // after its state when that is not online. Never an age. Old numbers are kept here, never blanked.
       tip: [
-        superTabMachineTip(status, age),
+        ?superTabMachineTip(status),
+        if (person != null) 'Owned by ${superTabPersonName(person.email)}',
         if (paused) 'New work paused',
         if (value?.cpuPercent case final cpu?) 'CPU ${available(cpu)} free',
         if (value?.busiestGpu?.utilizationPercent case final gpu?)
@@ -797,7 +824,6 @@ class _SuperTabMachinesState extends State<SuperTabMachines> {
         if (memoryFree != null)
           'RAM ${resourceBytes(memoryFree.toDouble())} free',
         if (diskFree != null) 'SSD ${resourceBytes(diskFree)} free',
-        ...low,
       ].join(' · '),
     );
   }
@@ -874,7 +900,7 @@ class _SuperTabMachinesState extends State<SuperTabMachines> {
 
   /// One machine on one line: its state's dot in the icon column, its name on the text column, its agents at
   /// the end. Everything else is in its tooltip and its details.
-  Widget _machine(_MachineView v, {String? owner, int level = 1}) {
+  Widget _machine(_MachineView v, {int level = 1}) {
     final tipKey = _tips.putIfAbsent(v.id, GlobalKey<TooltipState>.new);
     final name = superTabMachineName(v.name);
     final row = Padding(
@@ -899,27 +925,24 @@ class _SuperTabMachinesState extends State<SuperTabMachines> {
               Tooltip.dismissAllToolTips();
             }
           },
-          child: _MachineLine(
-            view: v,
-            owner: owner,
-            anchor: _anchor,
-            level: level,
-          ),
+          child: _MachineLine(view: v, anchor: _anchor, level: level),
         ),
       ),
     );
     // One label for the row, so that colour is never the only signal: the machine, its state in words, and
-    // what hovering it says.
+    // what hovering it says. Its allowances and agents follow, each in its own words.
     return Semantics(
       // Rows move as states change; each keeps its own element, tooltip and all.
       key: ValueKey('super-machine-entry-${v.id}'),
       container: true,
-      label:
-          '$name${owner == null ? '' : ' · $owner'}, '
-          '${superTabMachineStateLabel(v.status)}, ${v.tip}',
+      label: [
+        name,
+        superTabMachineStateLabel(v.status),
+        if (v.tip.isNotEmpty) v.tip,
+      ].join(', '),
       child: Tooltip(
         key: tipKey,
-        message: v.tip,
+        message: v.tip.isEmpty ? superTabMachineStateLabel(v.status) : v.tip,
         excludeFromSemantics: true,
         child: row,
       ),
@@ -994,15 +1017,7 @@ class _SuperTabMachinesState extends State<SuperTabMachines> {
   /// Online machines first, then "Offline · N" with the offline ones under it; each part by name.
   List<Widget> _machines() {
     final views = [for (final id in _ids) _view(id)];
-    // A name two machines share is told apart by whose each is.
     String key(_MachineView v) => superTabMachineName(v.name).toLowerCase();
-    final named = <String, int>{};
-    for (final v in views) {
-      named.update(key(v), (n) => n + 1, ifAbsent: () => 1);
-    }
-    String? owner(_MachineView v) => named[key(v)]! > 1 && v.owner != null
-        ? superTabPersonName(v.owner!.email)
-        : null;
     // A machine being refreshed keeps its place; one whose state cannot be read follows the ones that report.
     int rank(_MachineView v) => switch (v.status) {
       SuperTabMachineStatus.unknown => 1,
@@ -1021,12 +1036,11 @@ class _SuperTabMachinesState extends State<SuperTabMachines> {
         .toList();
     return [
       for (final v in views)
-        if (v.status != SuperTabMachineStatus.offline)
-          _machine(v, owner: owner(v)),
+        if (v.status != SuperTabMachineStatus.offline) _machine(v),
       if (offline.isNotEmpty) ...[
         _offlineToggle(offline.length),
         if (c.offlineMachinesOpen)
-          for (final v in offline) _machine(v, owner: owner(v), level: 2),
+          for (final v in offline) _machine(v, level: 2),
       ],
     ];
   }
@@ -1103,7 +1117,7 @@ class _MachineView {
     required this.resources,
     required this.accounts,
     required this.engines,
-    required this.low,
+    required this.allowances,
     required this.tip,
   });
 
@@ -1124,25 +1138,48 @@ class _MachineView {
   final List<Map<String, Object?>> accounts;
   final List<String>? engines;
 
-  /// Each allowance under [_SuperTabMachinesState._lowAllowance], as "Claude Code: 2% left".
-  final List<String> low;
+  /// What the row's chips show, Claude first; empty while offline or out of reach.
+  final List<_Allowance> allowances;
+}
+
+/// One engine's allowance on a machine: its mark and remaining share on the row, its windows on hover.
+class _Allowance {
+  const _Allowance({
+    required this.engine,
+    required this.name,
+    required this.figure,
+    required this.left,
+    required this.detail,
+  });
+
+  final String engine, name, figure, detail;
+
+  /// The share left, 0–100.
+  final double left;
+
+  /// Amber below 20%, red below 10%, otherwise the row's quiet metadata ink.
+  Color get ink => statusLineInkOnSurface(
+    left < 10
+        ? grid.AppPalette.usageCritical
+        : left < 20
+        ? grid.AppPalette.usageLow
+        : DesktopChrome.muted,
+    DesktopChrome.surface,
+  );
 }
 
 /// A machine's line, at the height and on the columns of a project row: the dot centered in the icon column,
-/// the name on the text column, and at the end the allowance warning when there is one and up to three agents
-/// overlapping, then +N. The last mark centers on [anchor], the heading +'s column.
+/// the name on the text column, then each engine's allowance and up to three agents overlapping, then +N. The
+/// last agent mark centers on [anchor], the heading +'s column. When the line runs short, the name keeps
+/// [_minName]: the agents become +N first, then the Codex chip goes, then the Claude one.
 class _MachineLine extends StatelessWidget {
   const _MachineLine({
     required this.view,
-    required this.owner,
     required this.anchor,
     required this.level,
   });
 
   final _MachineView view;
-
-  /// Whose machine it is, when another has the same name.
-  final String? owner;
 
   /// From the row's right edge to the center of its last mark.
   final double anchor;
@@ -1152,16 +1189,19 @@ class _MachineLine extends StatelessWidget {
 
   static const iconColumn = SuperTabSectionHeading.actionWidth;
 
-  /// Half the project rows' dot, so that a row with nothing at its end stops where theirs do.
+  /// Half the project rows' dot, so that a row with no agents stops where theirs do.
   static const dotHalf = 3.0;
   static const _avatar = 16.0;
   static const _ring = 1.0;
   static const _overlap = 5.0;
   static const _maxAvatars = 3;
-  static const _warning = 14.0;
+  static const _mark = 14.0;
+  static const _markGap = 4.0;
+  static const _chipGap = 8.0;
+  static const _gap = 8.0;
 
-  /// Agents give way to the name, down to +N, until it fits or has this share of the line.
-  static const _nameShare = .5;
+  /// What the name keeps, at the default text size, before anything at the end gives way.
+  static const _minName = 56.0;
 
   static double get _ringed => _avatar + 2 * _ring;
 
@@ -1212,72 +1252,94 @@ class _MachineLine extends StatelessWidget {
               padding: const EdgeInsets.symmetric(vertical: 8),
               child: LayoutBuilder(
                 builder: (context, constraints) {
-                  final warning = v.low.isNotEmpty;
-                  ({double width, double end}) end(int shown) {
-                    final hidden = v.agents.length - shown;
-                    final last = hidden > 0
-                        ? measure('+$hidden')
-                        : shown > 0
-                        ? _ringed
-                        : warning
-                        ? _warning
-                        : 2 * dotHalf;
-                    final width =
-                        (warning ? _warning : 0) +
-                        (warning && v.agents.isNotEmpty ? 6 : 0) +
-                        (shown > 0
-                            ? _ringed + (_ringed - _overlap) * (shown - 1)
-                            : 0) +
-                        (hidden > 0 ? (shown > 0 ? 4 : 0) + last : 0);
+                  final agents = v.agents.length;
+                  double chipWidth(_Allowance a) =>
+                      _mark + _markGap + measure(a.figure);
+
+                  /// How much the end takes with [shown] avatars and the first [chips] chips, and the space after
+                  /// it that puts its last mark on the anchor.
+                  ({double width, double end}) end(int shown, int chips) {
+                    final hidden = agents - shown;
+                    final more = hidden > 0 ? measure('+$hidden') : 0.0;
+                    final stack = shown > 0
+                        ? _ringed + (_ringed - _overlap) * (shown - 1)
+                        : 0.0;
+                    final double agentsWidth =
+                        stack + (hidden > 0 ? (shown > 0 ? 4 : 0) + more : 0);
+                    var chipsWidth = 0.0;
+                    for (var i = 0; i < chips; i++) {
+                      chipsWidth +=
+                          chipWidth(v.allowances[i]) + (i > 0 ? _chipGap : 0);
+                    }
+                    final double width =
+                        (chips > 0 ? _gap + chipsWidth : 0) +
+                        (agents > 0 ? _gap + agentsWidth : 0);
+                    final last = hidden > 0 ? more : _ringed;
                     return (
-                      width: width == 0 ? 0 : width + 8,
-                      end: (anchor - last / 2).clamp(0.0, anchor),
+                      width: width,
+                      end: agents > 0
+                          ? (anchor - last / 2).clamp(0.0, anchor)
+                          : anchor - dotHalf,
                     );
                   }
 
                   final name = superTabMachineName(v.name);
-                  final suffix = owner == null ? null : ' · $owner';
                   final wanted = math.min(
-                    measure(name, style) +
-                        (suffix == null ? 0 : measure(suffix, style)),
-                    constraints.maxWidth * _nameShare,
+                    measure(name, style),
+                    MediaQuery.textScalerOf(context).scale(_minName),
                   );
-                  var shown = v.agents.length.clamp(0, _maxAvatars);
-                  while (shown > 0) {
-                    final e = end(shown);
+                  // Agents to +N first, then chips from the end: Codex, then Claude.
+                  final steps = [
+                    for (var s = math.min(agents, _maxAvatars); s >= 0; s--)
+                      (s, v.allowances.length),
+                    for (var k = v.allowances.length - 1; k >= 0; k--) (0, k),
+                  ];
+                  var (shown, chips) = steps.last;
+                  for (final (s, k) in steps) {
+                    final e = end(s, k);
                     if (constraints.maxWidth - e.width - e.end >= wanted) {
+                      (shown, chips) = (s, k);
                       break;
                     }
-                    shown--;
                   }
-                  final hidden = v.agents.length - shown;
+                  final hidden = agents - shown;
                   final room =
-                      constraints.maxWidth - end(shown).width - end(shown).end;
+                      constraints.maxWidth -
+                      end(shown, chips).width -
+                      end(shown, chips).end;
                   final roles = v.agents
                       .map((a) => '${a.name} — ${a.role}')
                       .join('\n');
                   return Row(
                     children: [
-                      Expanded(
-                        child: _name(context, name, suffix, style, room),
-                      ),
-                      if (warning) ...[
-                        const SizedBox(width: 8),
+                      Expanded(child: _name(context, name, style, room)),
+                      for (final (i, a)
+                          in v.allowances.take(chips).indexed) ...[
+                        SizedBox(width: i == 0 ? _gap : _chipGap),
                         Tooltip(
-                          message: v.low.join('\n'),
+                          message: a.detail,
                           child: Semantics(
-                            label: v.low.join(', '),
-                            child: Icon(
-                              AppIcons.triangleAlert,
-                              key: ValueKey('super-machine-attention-${v.id}'),
-                              size: _warning,
-                              color: grid.AppPalette.warn,
+                            label: '${a.name} ${a.figure} remaining',
+                            excludeSemantics: true,
+                            child: Row(
+                              key: ValueKey(
+                                'super-machine-allowance-${v.id}-${a.engine}',
+                              ),
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                EngineMark(engine: a.engine, size: _mark),
+                                const SizedBox(width: _markGap),
+                                Text(
+                                  a.figure,
+                                  style: countStyle.copyWith(color: a.ink),
+                                ),
+                              ],
                             ),
                           ),
                         ),
                       ],
-                      if (v.agents.isNotEmpty) ...[
-                        SizedBox(width: warning ? 6 : 8),
+                      if (agents > 0) ...[
+                        const SizedBox(width: _gap),
                         Tooltip(
                           message: roles,
                           child: Semantics(
@@ -1299,7 +1361,7 @@ class _MachineLine extends StatelessWidget {
                           ),
                         ),
                       ],
-                      SizedBox(width: end(shown).end),
+                      SizedBox(width: end(shown, chips).end),
                     ],
                   );
                 },
@@ -1311,12 +1373,10 @@ class _MachineLine extends StatelessWidget {
     );
   }
 
-  /// The name, then a shared name's owner in muted ink. The name gives way first, since the owner is what
-  /// tells it apart, and a name cut short shows itself whole on hover.
+  /// The name, fitted to [room]; a name cut short shows itself whole on hover.
   Widget _name(
     BuildContext context,
     String name,
-    String? suffix,
     TextStyle style,
     double room,
   ) {
@@ -1332,18 +1392,13 @@ class _MachineLine extends StatelessWidget {
       return result;
     }
 
-    // Up to half the room for the owner, so a long address cannot crowd the name out.
-    final ownerWidth = suffix == null
-        ? 0.0
-        : math.min(measure(suffix), room / 2);
-    final fits = room - ownerWidth;
     var shown = name;
-    if (measure(name) > fits) {
+    if (measure(name) > room) {
       final chars = name.characters.toList();
       var keep = 0;
       for (var lo = 1, hi = chars.length - 1; lo <= hi;) {
         final mid = (lo + hi) ~/ 2;
-        if (measure('${chars.take(mid).join().trimRight()}…') <= fits) {
+        if (measure('${chars.take(mid).join().trimRight()}…') <= room) {
           keep = mid;
           lo = mid + 1;
         } else {
@@ -1352,17 +1407,8 @@ class _MachineLine extends StatelessWidget {
       }
       shown = '${chars.take(keep).join().trimRight()}…';
     }
-    final text = Text.rich(
-      TextSpan(
-        children: [
-          TextSpan(text: shown),
-          if (suffix != null)
-            TextSpan(
-              text: suffix,
-              style: TextStyle(color: DesktopChrome.muted),
-            ),
-        ],
-      ),
+    final text = Text(
+      shown,
       maxLines: 1,
       overflow: TextOverflow.ellipsis,
       style: style,

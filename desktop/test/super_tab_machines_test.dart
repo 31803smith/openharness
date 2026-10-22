@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:harness/core/models.dart';
 import 'package:harness/shared/theme/app_icons.dart';
+import 'package:harness/shared/theme/status_line_style.dart';
 import 'package:harness/state/app_state.dart';
 import 'package:harness/super_tabs/machines.dart';
 import 'package:harness/super_tabs/machine_details.dart';
@@ -151,18 +152,26 @@ void main() {
       await tester.pumpAndSettle();
       final offline = find.byKey(const ValueKey('super-machine-offline'));
       final online = find.byKey(const ValueKey('super-machine-online'));
-      // The list says no number, age or allowance; the row's tooltip does.
+      // The line shows the one known allowance, Codex's, and no hardware number or age; the row's tooltip
+      // says whose machine it is and its hardware.
       expect(find.textContaining('CPU'), findsNothing);
       expect(find.textContaining('GB'), findsNothing);
       expect(find.textContaining('ago'), findsNothing);
-      expect(find.byType(EngineMark), findsNothing);
+      expect(
+        tester
+            .widget<EngineMark>(
+              find.descendant(of: online, matching: find.byType(EngineMark)),
+            )
+            .engine,
+        'codex',
+      );
+      expect(
+        find.descendant(of: online, matching: find.text('100%')),
+        findsOneWidget,
+      );
       expect(
         _tipOf(tester, online),
-        matches(
-          RegExp(
-            r'^Updated (just now|\ds ago) · CPU 100% free · RAM 0 GB free · SSD 141 GB free$',
-          ),
-        ),
+        'Owned by owner · CPU 100% free · RAM 0 GB free · SSD 141 GB free',
       );
       expect(tester.getSize(online).height, 36);
       // Offline machines start out of sight, under their disclosure.
@@ -171,9 +180,14 @@ void main() {
       await tester.tap(find.byKey(const ValueKey('super-machines-offline')));
       await tester.pumpAndSettle();
       expect(c.offlineMachinesOpen, isTrue);
+      // Offline: its state in words, never when it was last seen, and no allowance chip.
       expect(
         _tipOf(tester, offline),
-        'Offline · last seen 1 min ago · CPU 100% free · RAM 0 GB free · SSD 141 GB free',
+        'Offline · Owned by owner · CPU 100% free · RAM 0 GB free · SSD 141 GB free',
+      );
+      expect(
+        find.descendant(of: offline, matching: find.byType(EngineMark)),
+        findsNothing,
       );
       expect(
         tester.getTopLeft(offline).dy,
@@ -303,7 +317,7 @@ void main() {
   );
 
   testWidgets(
-    'a name two machines share is told apart by its owner, and only then',
+    'a row never names its owner, even when another machine has the same name; its tooltip does',
     (tester) async {
       final server = ConversationServer();
       final now = DateTime.now().millisecondsSinceEpoch;
@@ -320,7 +334,6 @@ void main() {
       server.state['machines'] = [
         machine('t', 'MacBooks-MacBook-Pro-9.local', 'tony'),
         machine('d', 'MacBook Pro', 'dee'),
-        machine('s', 'Studio', 'dee'),
       ];
       final c = server.controller();
       await c.refresh();
@@ -333,29 +346,15 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      expect(_lineOf(tester, 't'), 'MacBook Pro · tony');
-      expect(_lineOf(tester, 'd'), 'MacBook Pro · dee');
-      expect(_lineOf(tester, 's'), 'Studio');
-      // The owner is in muted ink, after the name.
-      final span = tester
-          .widget<RichText>(
-            find.descendant(
-              of: find.byKey(const ValueKey('super-machine-t')),
-              matching: find.byType(RichText),
-            ),
-          )
-          .text;
-      TextSpan? owner;
-      span.visitChildren((child) {
-        if (child is TextSpan && child.text == ' · tony') owner = child;
-        return owner == null;
-      });
-      expect(owner!.style!.color, DesktopChrome.muted);
+      expect(_lineOf(tester, 't'), 'MacBook Pro');
+      expect(_lineOf(tester, 'd'), 'MacBook Pro');
+      expect(find.textContaining('tony'), findsNothing);
+      expect(find.textContaining('dee'), findsNothing);
+      final row = find.byKey(const ValueKey('super-machine-t'));
+      expect(_tipOf(tester, row), 'Owned by tony');
       expect(
-        tester
-            .getSemantics(find.byKey(const ValueKey('super-machine-t')))
-            .label,
-        startsWith('MacBook Pro · tony, Live, Updated'),
+        tester.getSemantics(row).label,
+        startsWith('MacBook Pro, Live, Owned by tony'),
       );
       semantics.dispose();
       await tester.pumpWidget(const SizedBox());
@@ -469,36 +468,57 @@ void main() {
   );
 
   testWidgets(
-    'an allowance under 10% is the one warning a row shows, and says which',
+    'each known, unexpired allowance is a chip, Claude first: amber under 20%, red under 10%, its windows on hover',
     (tester) async {
       final server = ConversationServer();
-      final now = DateTime.now().millisecondsSinceEpoch;
-      Map<String, dynamic> machine(String id, int used, {int age = 0}) => {
+      final now = DateTime.now();
+      final at = now.millisecondsSinceEpoch;
+      Map<String, dynamic> quota(
+        String engine,
+        int used, {
+        bool known = true,
+        DateTime? resetsAt,
+      }) => {
+        'engine': engine,
+        'known': known,
+        'windows': [
+          {
+            'name': '5-hour',
+            'usedPercent': used,
+            'resetsAt': (resetsAt ?? now.add(const Duration(hours: 2)))
+                .millisecondsSinceEpoch,
+          },
+        ],
+      };
+      Map<String, dynamic> machine(
+        String id,
+        List<Map<String, dynamic>> quotas, {
+        int age = 0,
+      }) => {
         'machineId': id,
         'name': id,
         'contributorId': 'owner',
-        'observation': {
-          'receivedAt': now - age,
-          'quotas': [
-            {
-              'engine': 'codex',
-              'known': true,
-              'windows': [
-                {'name': '5-hour', 'usedPercent': used},
-              ],
-            },
-          ],
-        },
+        'observation': {'receivedAt': at - age, 'quotas': quotas},
       };
       server.state['machines'] = [
-        machine('low', 98),
-        machine('fine', 90),
-        // An old reading's allowance is no warning about now.
-        machine('gone', 99, age: 600000),
+        // Listed Codex first; shown Claude first.
+        machine('both', [quota('codex', 95), quota('claude', 85)]),
+        machine('fine', [quota('claude', 50)]),
+        machine('expired', [
+          quota(
+            'codex',
+            10,
+            resetsAt: now.subtract(const Duration(minutes: 1)),
+          ),
+        ]),
+        machine('unknown', [quota('claude', 10, known: false)]),
+        // An old reading's allowance is not shown as now.
+        machine('gone', [quota('claude', 50)], age: 600000),
       ];
       final c = server.controller();
       await c.refresh();
       c.offlineMachinesOpen = true;
+      final semantics = tester.ensureSemantics();
       await tester.pumpWidget(
         MaterialApp(
           home: Scaffold(
@@ -507,26 +527,216 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      final warning = find.byKey(const ValueKey('super-machine-attention-low'));
-      expect(warning, findsOneWidget);
-      expect(find.byTooltip('Codex: 2% left'), findsOneWidget);
+      Finder chip(String id, String engine) =>
+          find.byKey(ValueKey('super-machine-allowance-$id-$engine'));
+      Color? ink(Finder chip, String figure) => tester
+          .widget<Text>(find.descendant(of: chip, matching: find.text(figure)))
+          .style
+          ?.color;
+
       expect(
-        _tipOf(tester, find.byKey(const ValueKey('super-machine-low'))),
-        endsWith(' · Codex: 2% left'),
+        tester.getTopLeft(chip('both', 'claude')).dx,
+        lessThan(tester.getTopLeft(chip('both', 'codex')).dx),
       );
       expect(
-        find.byKey(const ValueKey('super-machine-attention-fine')),
-        findsNothing,
+        tester
+            .widget<EngineMark>(
+              find.descendant(
+                of: chip('both', 'claude'),
+                matching: find.byType(EngineMark),
+              ),
+            )
+            .size,
+        14,
+      );
+      final surface = DesktopChrome.surface;
+      expect(
+        ink(chip('both', 'claude'), '15%'),
+        statusLineInkOnSurface(grid.AppPalette.usageLow, surface),
       );
       expect(
-        find.byKey(const ValueKey('super-machine-attention-gone')),
-        findsNothing,
+        ink(chip('both', 'codex'), '5%'),
+        statusLineInkOnSurface(grid.AppPalette.usageCritical, surface),
       );
-      // At the end, centered on the + column when nothing follows it.
-      final row = tester.getRect(
-        find.byKey(const ValueKey('super-machine-low')),
+      expect(
+        ink(chip('fine', 'claude'), '50%'),
+        statusLineInkOnSurface(DesktopChrome.muted, surface),
       );
-      expect(tester.getCenter(warning).dx, closeTo(row.right - 28, .5));
+      expect(
+        tester
+            .widget<Text>(
+              find.descendant(
+                of: chip('fine', 'claude'),
+                matching: find.text('50%'),
+              ),
+            )
+            .style
+            ?.fontFeatures,
+        contains(const FontFeature.tabularFigures()),
+      );
+      // Each chip says its windows on hover, and its share in words to a screen reader.
+      final claudeTip = tester
+          .widget<Tooltip>(
+            find
+                .ancestor(
+                  of: chip('both', 'claude'),
+                  matching: find.byType(Tooltip),
+                )
+                .first,
+          )
+          .message!;
+      expect(
+        claudeTip,
+        startsWith('Claude Code\n5-hour: 15% remaining · resets in '),
+      );
+      expect(
+        find.bySemanticsLabel(RegExp('Claude Code 15% remaining')),
+        findsOneWidget,
+      );
+      expect(find.bySemanticsLabel(RegExp('Codex 5% remaining')), findsOneWidget);
+      // No chip for an expired or unknown allowance, nor for an offline machine; no warning icon anywhere.
+      expect(find.byKey(const ValueKey('super-machine-gone')), findsOneWidget);
+      for (final id in ['expired', 'unknown', 'gone']) {
+        expect(
+          find.descendant(
+            of: find.byKey(ValueKey('super-machine-$id')),
+            matching: find.byType(EngineMark),
+          ),
+          findsNothing,
+          reason: id,
+        );
+      }
+      expect(find.byIcon(AppIcons.triangleAlert), findsNothing);
+      semantics.dispose();
+      await tester.pumpWidget(const SizedBox());
+      await c.flush();
+      c.dispose();
+    },
+  );
+
+  testWidgets(
+    'as the line narrows the name keeps its minimum: agents become +N, then Codex goes, then Claude',
+    (tester) async {
+      final server = ConversationServer();
+      final now = DateTime.now();
+      server.state['agents'] = [
+        for (var i = 0; i < 5; i++)
+          {
+            'id': 'agent-$i',
+            'name': 'Harness $i',
+            'displayName': 'Engineer $i',
+            'machineId': 'm',
+            'harnessId': 'native-$i',
+            'contributorId': 'owner',
+            'configuration': {'engine': 'claude'},
+          },
+      ];
+      server.state['machines'] = [
+        {
+          'machineId': 'm',
+          'name': "Diego's Mac Studio",
+          'contributorId': 'owner',
+          'observation': {
+            'receivedAt': now.millisecondsSinceEpoch,
+            'quotas': [
+              for (final (engine, used) in [('claude', 52), ('codex', 8)])
+                {
+                  'engine': engine,
+                  'known': true,
+                  'windows': [
+                    {'name': '5-hour', 'usedPercent': used},
+                  ],
+                },
+            ],
+          },
+        },
+      ];
+      final c = server.controller();
+      await c.refresh();
+      for (final scale in [1.0, 2.0]) {
+        // What the end shows at each width, widest first: avatars, then the chips.
+        final states = <(int, bool, bool)>[];
+        for (var width = 460.0; width >= 180; width -= 10) {
+          await tester.pumpWidget(
+            MaterialApp(
+              builder: (context, child) => MediaQuery(
+                data: MediaQuery.of(context)
+                    .copyWith(textScaler: TextScaler.linear(scale)),
+                child: child!,
+              ),
+              home: Scaffold(
+                body: Align(
+                  alignment: Alignment.topLeft,
+                  child: SizedBox(
+                    width: width,
+                    child: SuperTabMachines(
+                      controller: c,
+                      embedded: true,
+                      onAddAgent: (_) {},
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          );
+          final reason = 'at width $width, scale $scale';
+          expect(tester.takeException(), isNull, reason: reason);
+          final row = find.byKey(const ValueKey('super-machine-m'));
+          final avatars = find
+              .descendant(of: row, matching: find.byType(SuperTabAvatar))
+              .evaluate()
+              .length;
+          bool shows(String engine) => find
+              .byKey(ValueKey('super-machine-allowance-m-$engine'))
+              .evaluate()
+              .isNotEmpty;
+          final state = (avatars, shows('claude'), shows('codex'));
+          states.add(state);
+          // The count always stays; with fewer avatars it says the rest.
+          expect(
+            find.descendant(of: row, matching: find.text('+${5 - avatars}')),
+            avatars == 5 ? findsNothing : findsOneWidget,
+            reason: reason,
+          );
+          // A chip goes only once the avatars have, Codex before Claude.
+          if (!state.$3) expect(avatars, 0, reason: reason);
+          if (!state.$2) expect(state.$3, isFalse, reason: reason);
+          // The name keeps its minimum while anything at the end remains.
+          final name = tester.getSize(
+            find.descendant(of: row, matching: find.byType(RichText)).first,
+          );
+          if (state.$2 || avatars > 0) {
+            expect(
+              name.width,
+              greaterThanOrEqualTo(56 * scale - 1),
+              reason: reason,
+            );
+          }
+        }
+        // Widest: everything; and every step after only takes away.
+        expect(states.first, (3, true, true), reason: 'scale $scale');
+        int rank((int, bool, bool) s) =>
+            s.$1 * 4 + (s.$2 ? 2 : 0) + (s.$3 ? 1 : 0);
+        for (var i = 1; i < states.length; i++) {
+          expect(
+            rank(states[i]),
+            lessThanOrEqualTo(rank(states[i - 1])),
+            reason: 'scale $scale, step $i',
+          );
+        }
+        // Each stage is reached on the way down.
+        expect(
+          states.any((s) => s == (0, true, true)),
+          isTrue,
+          reason: 'scale $scale',
+        );
+        expect(
+          states.any((s) => s == (0, true, false)),
+          isTrue,
+          reason: 'scale $scale',
+        );
+        expect(states.last, (0, false, false), reason: 'scale $scale');
+      }
       await tester.pumpWidget(const SizedBox());
       await c.flush();
       c.dispose();
@@ -755,19 +965,29 @@ void main() {
               ),
               findsOneWidget,
             );
-            // Paused, the numbers and the age are in the row's tooltip, not on the line.
+            // The owner, paused and the numbers are in the row's tooltip, not on the line, and never an age.
             expect(
               _tipOf(tester, row),
-              matches(
-                RegExp(
-                  r'^Updated (just now|\ds ago) · New work paused · CPU 73% free · GPU 93% free · RAM 28 GB free · SSD 141 GB free$',
-                ),
-              ),
+              'Owned by dee · New work paused · CPU 73% free · GPU 93% free · RAM 28 GB free · SSD 141 GB free',
             );
             expect(find.byIcon(AppIcons.pause), findsNothing);
-            for (final value in ['CPU', 'GPU', 'RAM', 'SSD', '70%', 'dee']) {
+            for (final value in ['CPU', 'GPU', 'RAM', 'SSD', 'dee', 'ago']) {
               expect(find.textContaining(value), findsNothing);
             }
+            // Codex's tightest window, when the line has room for it; Claude's allowance is unknown.
+            final codex = find.byKey(
+              const ValueKey('super-machine-allowance-m-codex'),
+            );
+            if (codex.evaluate().isNotEmpty) {
+              expect(
+                find.descendant(of: codex, matching: find.text('70%')),
+                findsOneWidget,
+              );
+            }
+            expect(
+              find.byKey(const ValueKey('super-machine-allowance-m-claude')),
+              findsNothing,
+            );
             final ink = find.descendant(
               of: row,
               matching: find.byType(InkWell),
@@ -1375,8 +1595,13 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    // The list shows no allowance at all; the details show the known one.
-    expect(find.byType(EngineMark), findsNothing);
+    // Only the known allowance of the two the list shows, Claude's, has a chip; so do the details.
+    expect(
+      tester
+          .widgetList<EngineMark>(find.byType(EngineMark))
+          .map((mark) => mark.engine),
+      ['claude'],
+    );
     await tester.tap(find.byKey(const ValueKey('super-machine-m')));
     await tester.pumpAndSettle();
     expect(

@@ -139,7 +139,7 @@ void main() {
             'runningHarnessIds': [f.connection.native!['id']],
           },
         },
-        // A second Studio Mac, so the list tells the two apart by owner, and one long offline, under its
+        // A second Studio Mac, owned by someone else, and one long offline, under its
         // closed "Offline · 1".
         {
           'machineId': 'm-twin',
@@ -268,10 +268,22 @@ void main() {
       expect(find.text('CHATS'), findsNothing);
       expect(find.text('New group'), findsNothing);
       expect(find.byTooltip('New project'), findsOneWidget);
-      // Left sidebar: both Projects and Machines groups start open, one line a machine, the two Studio Macs told
-      // apart by owner, and the offline machine under its closed disclosure.
-      expect(find.text('Studio Mac · owner'), findsOneWidget);
-      expect(find.text('Studio Mac · person0'), findsOneWidget);
+      // Left sidebar: both Projects and Machines groups start open, one line a machine: its name, its Claude and
+      // Codex allowances and its agents, never its owner, and the offline machine under its closed disclosure.
+      expect(find.text('Studio Mac'), findsNWidgets(2));
+      expect(find.textContaining('owner'), findsNothing);
+      // Claude's chip always shows here; Codex's is the first to give way when the sidebar is narrow.
+      Finder chip(String engine, String figure) => find.descendant(
+        of: find.byKey(ValueKey('super-machine-allowance-m-$engine')),
+        matching: find.text(figure),
+      );
+      expect(chip('claude', '50%'), findsOneWidget);
+      if (find
+          .byKey(const ValueKey('super-machine-allowance-m-codex'))
+          .evaluate()
+          .isNotEmpty) {
+        expect(chip('codex', '88%'), findsOneWidget);
+      }
       expect(find.text('Offline · 1'), findsOneWidget);
       expect(find.byKey(const ValueKey('super-machine-m-old')), findsNothing);
       expect(find.textContaining('CPU'), findsNothing);
