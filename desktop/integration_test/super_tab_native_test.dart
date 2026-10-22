@@ -270,8 +270,42 @@ void main() {
       expect(find.byTooltip('New project'), findsOneWidget);
       // Left sidebar: both Projects and Machines groups start open, one line a machine: its name, its Claude and
       // Codex allowances and its agents, never its owner, and the offline machine under its closed disclosure.
-      expect(find.text('Studio Mac'), findsNWidgets(2));
-      expect(find.textContaining('owner'), findsNothing);
+      // Both Studio Macs are online rows. A busy one's name may be shortened to
+      // keep its allowance on the line; it then carries its whole name on hover.
+      for (final id in ['m', 'm-twin']) {
+        final row = find.byKey(ValueKey('super-machine-$id'));
+        expect(row, findsOneWidget, reason: id);
+        final shown = tester
+            .widget<RichText>(
+              find.descendant(of: row, matching: find.byType(RichText)).first,
+            )
+            .text
+            .toPlainText();
+        expect(
+          shown == 'Studio Mac' ||
+              (shown.endsWith('…') &&
+                  'Studio Mac'.startsWith(
+                    shown.substring(0, shown.length - 1),
+                  ) &&
+                  find
+                      .descendant(
+                        of: row,
+                        matching: find.byTooltip('Studio Mac'),
+                      )
+                      .evaluate()
+                      .isNotEmpty),
+          isTrue,
+          reason: '$id shows "$shown"',
+        );
+        // Never its owner.
+        for (final who in ['owner', 'person0']) {
+          expect(
+            find.descendant(of: row, matching: find.textContaining(who)),
+            findsNothing,
+            reason: '$id names $who',
+          );
+        }
+      }
       // Claude's chip always shows here; Codex's is the first to give way when the sidebar is narrow.
       Finder chip(String engine, String figure) => find.descendant(
         of: find.byKey(ValueKey('super-machine-allowance-m-$engine')),
