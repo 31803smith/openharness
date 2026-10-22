@@ -56,7 +56,7 @@ SuperTabMachineStatus superTabMachineStatus({
       : SuperTabMachineStatus.live;
 }
 
-/// How long ago, as the end of a machine's metrics line says it: "just now", "4s ago", "3 min ago", "2 h ago".
+/// How long ago, as a machine's tooltip says it: "just now", "4s ago", "3 min ago", "2 h ago".
 String superTabAgo(Duration age) {
   final seconds = age.inSeconds;
   if (seconds < 1) return 'just now';
@@ -100,24 +100,10 @@ String superTabMachineStateLabel(SuperTabMachineStatus status) =>
       SuperTabMachineStatus.refreshing => 'Refreshing',
     };
 
-/// The tabular figures the ages and the heading's pill count in.
+/// The tabular figures the heading's pill counts in.
 const _tabular = [FontFeature.tabularFigures()];
 
-TextStyle superTabAgeStyle(SuperTabMachineStatus status) {
-  final base = DesktopChrome.metadata().copyWith(fontFeatures: _tabular);
-  return switch (status) {
-    SuperTabMachineStatus.late => base.copyWith(
-      color: grid.AppPalette.warn,
-      fontWeight: FontWeight.w500,
-    ),
-    SuperTabMachineStatus.refreshing => base.copyWith(
-      fontStyle: FontStyle.italic,
-    ),
-    _ => base,
-  };
-}
-
-/// The 8 px mark before a machine's name: green when live (with one short ping as each new reading arrives),
+/// The 8 px mark in a machine row's icon column: green when live (with one short ping as each new reading arrives),
 /// amber when late, a hollow ring when offline, a dashed ring when unknown, a breathing grey when refreshing.
 /// Motion stops when the platform asks for reduced motion.
 class SuperTabMachineDot extends StatefulWidget {

@@ -133,6 +133,27 @@ void main() {
             'runningHarnessIds': [f.connection.native!['id']],
           },
         },
+        // A second Studio Mac, so the list tells the two apart by owner, and one long offline, under its
+        // closed "Offline · 1".
+        {
+          'machineId': 'm-twin',
+          'name': 'Studio Mac',
+          'contributorId': 'person-0',
+          'observation': {
+            'receivedAt': DateTime.now().millisecondsSinceEpoch,
+            'resources': {'cpuPercent': 40},
+          },
+        },
+        {
+          'machineId': 'm-old',
+          'name': 'Old Mini',
+          'contributorId': 'person-1',
+          'observation': {
+            'receivedAt': DateTime.now()
+                .subtract(const Duration(minutes: 20))
+                .millisecondsSinceEpoch,
+          },
+        },
       ];
       (server.state['conversations'] as List)[0]['agentIds'] = ['lead-agent'];
       (server.state['conversations'] as List)[0]['leadId'] = 'lead-agent';
@@ -241,9 +262,21 @@ void main() {
       expect(find.text('CHATS'), findsNothing);
       expect(find.text('New group'), findsNothing);
       expect(find.byTooltip('New project'), findsOneWidget);
-      // Left sidebar: both Projects and Machines groups start open.
-      expect(find.text('Studio Mac'), findsOneWidget);
+      // Left sidebar: both Projects and Machines groups start open, one line a machine, the two Studio Macs told
+      // apart by owner, and the offline machine under its closed disclosure.
+      expect(find.text('Studio Mac · owner'), findsOneWidget);
+      expect(find.text('Studio Mac · person0'), findsOneWidget);
+      expect(find.text('Offline · 1'), findsOneWidget);
+      expect(find.byKey(const ValueKey('super-machine-m-old')), findsNothing);
+      expect(find.textContaining('CPU'), findsNothing);
       await shot('sidebar-groups');
+      debugPrint('Swarm fixture: open the offline machines');
+      await tester.tap(find.byKey(const ValueKey('super-machines-offline')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('super-machine-m-old')), findsOneWidget);
+      await shot('sidebar-offline-open');
+      await tester.tap(find.byKey(const ValueKey('super-machines-offline')));
+      await tester.pumpAndSettle();
       debugPrint('Swarm fixture: empty project disclosure');
       await tester.tap(
         find.byKey(const ValueKey('super-project-expand-design')),
@@ -319,7 +352,7 @@ void main() {
       await tester.tap(find.byTooltip('Collapse Machines'));
       await tester.pumpAndSettle();
       expect(find.text('Design'), findsNothing);
-      expect(find.text('Studio Mac'), findsNothing);
+      expect(find.textContaining('Studio Mac'), findsNothing);
       await shot('sidebar-collapsed');
       await tester.tap(find.byTooltip('Expand Projects'));
       await tester.pumpAndSettle();

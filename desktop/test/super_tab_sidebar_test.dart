@@ -197,8 +197,59 @@ void main() {
       'projectId': 'other',
       'lastMessageSequence': 5,
     });
+    // Machines at their busiest: a long name with five agents and an allowance running out, two that share a
+    // name, and one offline under its open disclosure.
+    (server.state['people'] as List).add({
+      'id': 'tony',
+      'email': 'tony.with.a.long.address@example.com',
+      'role': 'collaborator',
+    });
+    final at = DateTime.now().millisecondsSinceEpoch;
+    Map<String, dynamic> machine(
+      String id,
+      String name, {
+      String owner = 'owner',
+      int age = 0,
+      int used = 20,
+    }) => {
+      'machineId': id,
+      'name': name,
+      'contributorId': owner,
+      'observation': {
+        'receivedAt': at - age,
+        'resources': {'cpuPercent': 37, 'gpuPercent': 4},
+        'quotas': [
+          {
+            'engine': 'claude',
+            'known': true,
+            'windows': [
+              {'name': '5-hour', 'usedPercent': used},
+            ],
+          },
+        ],
+      },
+    };
+    server.state['machines'] = [
+      machine('studio', 'Design Studio’s long-named Mac Studio', used: 98),
+      machine('mbp-a', 'MacBook Pro'),
+      machine('mbp-b', 'MacBooks-MacBook-Pro-9.local', owner: 'tony'),
+      machine('old', 'Old Mini', age: 600000),
+    ];
+    server.state['agents'] = [
+      for (var i = 0; i < 5; i++)
+        {
+          'id': 'agent-$i',
+          'name': 'Harness $i',
+          'displayName': 'Engineer $i',
+          'machineId': 'studio',
+          'harnessId': 'native-$i',
+          'contributorId': 'owner',
+          'configuration': {'engine': 'claude'},
+        },
+    ];
     final c = server.controller();
     await c.refresh();
+    c.offlineMachinesOpen = true;
     return c;
   }
 
@@ -254,6 +305,53 @@ void main() {
     expect(devices.size, machinesAdd.size, reason: reason);
     expect(devices.center.dy, machinesAdd.center.dy, reason: reason);
     expect(devices.right, closeTo(machinesAdd.left, 0.01), reason: reason);
+    // A machine row's last mark, its +N, centers on the same column.
+    final more = find.descendant(
+      of: find.byKey(const ValueKey('super-machine-studio')),
+      matching: find.textContaining('+'),
+    );
+    expect(more, findsOneWidget, reason: reason);
+    final moreRect = tester.getRect(more);
+    final studio = tester.getRect(
+      find.byKey(const ValueKey('super-machine-studio')),
+    );
+    if (moreRect.width <= SuperTabSectionHeading.actionWidth) {
+      expect(moreRect.center.dx, closeTo(dot, 0.5), reason: reason);
+    } else {
+      // Enlarged text wider than the column ends at the row's edge instead.
+      expect(moreRect.right, closeTo(studio.right, 0.5), reason: reason);
+    }
+    // A shared name gives way before its owner, and a name cut short shows itself whole on hover.
+    final shared = find
+        .descendant(
+          of: find.byKey(const ValueKey('super-machine-mbp-b')),
+          matching: find.byType(RichText),
+        )
+        .evaluate()
+        .map((e) => (e.widget as RichText).text.toPlainText())
+        .join();
+    expect(shared, contains(' · tony'), reason: reason);
+    if (!shared.startsWith('MacBook Pro ·')) {
+      expect(
+        find.descendant(
+          of: find.byKey(const ValueKey('super-machine-mbp-b')),
+          matching: find.byTooltip('MacBook Pro'),
+        ),
+        findsOneWidget,
+        reason: reason,
+      );
+    }
+    // Every machine is one line, as tall as a project row at this text size.
+    final projectRow = tester.getSize(
+      find.byKey(const ValueKey('super-group-other-lead')),
+    );
+    for (final id in ['studio', 'mbp-a', 'mbp-b', 'old']) {
+      expect(
+        tester.getSize(find.byKey(ValueKey('super-machine-$id'))).height,
+        closeTo(projectRow.height, 0.01),
+        reason: '$id $reason',
+      );
+    }
   }
 
   testWidgets(
@@ -416,6 +514,11 @@ void main() {
     // rest of this sidebar rebuilds on, so a bare app event (no controller
     // change, no re-pump) must still repaint it.
     await app.handleEventForTest('m', {'type': 'node_status', 'online': false});
+    await tester.pump();
+    // Offline, it moves under the closed "Offline · 1"; opened, its dot says so.
+    expect(statusDot(), findsNothing);
+    expect(find.text('Offline · 1'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('super-machines-offline')));
     await tester.pump();
     expect(
       tester.widget<SuperTabMachineDot>(statusDot()).status,
