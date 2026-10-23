@@ -35,6 +35,7 @@ import '../models/model_search_catalog.dart';
 import '../widgets/resting_section.dart'
     show confirmStopInUse, confirmSwitchAnyway;
 import '../widgets/session_close_dialog.dart';
+import '../super_tabs/lead_guard.dart';
 import '../notify/system_notifications.dart';
 import '../widgets/account_device_detail.dart';
 import '../widgets/approve_device_code.dart';
@@ -2882,6 +2883,11 @@ class _SwarmScreenState extends State<SwarmScreen> {
                 SessionCloseItem(
                   name: targets[i].$2.displayName,
                   activity: activities[i],
+                  protectionReason: superTabLeadProtectionReason(
+                    app,
+                    targets[i].$1,
+                    targets[i].$2.id,
+                  ),
                   machineName: showMachines
                       ? app.stateOf(targets[i].$1)?.machine.displayName ??
                             targets[i].$1
