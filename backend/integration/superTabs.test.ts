@@ -15,7 +15,8 @@ import { errorHandler } from '../src/middlewares/errorHandler.js'
 import type { Command } from '../src/superTabs/commands.js'
 import { nextMachineShareGrants } from '../src/lib/machineSharePolicy.js'
 import { DEFAULT_ROUTING_POLICY } from '../src/superTabs/routingPolicy.js'
-import { stableId } from '../src/superTabs/model.js'
+import { stableId, type SuperTabState } from '../src/superTabs/model.js'
+import { ensureTerminalExpiry, TERMINAL_EXPIRY_MS } from '../src/superTabs/terminal.js'
 
 // A fresh loopback replica set, created here. This suite never reads DATABASE_URL or an existing database.
 let replica: MongoMemoryReplSet
@@ -2089,5 +2090,116 @@ describe('Lead safety on the host roster', () => {
     expect(await rows()).toEqual([closing(lead, leadHarness)])
     await confirm(lead, leadHarness)
     expect(await rows()).toEqual([])
+  })
+})
+
+describe('the Lead reads and types in an agent terminal', () => {
+  async function terminalFixture() {
+    const { tab, lead } = await fixture()
+    const group = (await run(tab, { type: 'conversation.create', title: 'Terminal', brief: 'Answer the prompt', checks: [] })).result.conversationId as string
+    const harnessId = randomUUID()
+    const worker = (await run(tab, { type: 'agent.add', conversationId: group, machineId: 'test-host', harnessId,
+      name: 'Terminal Engineer', configuration: config, lead: false })).result.agentId as string
+    const claim = async (at = store) => (await at.hostTerminal(host, 'test-host')).filter(row => row.tabId === tab)
+    return { tab, lead, worker, group, harnessId, claim }
+  }
+  const later = (ms: number) => new SuperTabStore(db, () => Date.now() + ms)
+
+  it('relays a screen read to the owning host once and returns it only to the requester, outside history', async () => {
+    const { tab, lead, worker, group, harnessId, claim } = await terminalFixture()
+    const requestId = (await run(tab, { type: 'agent.screen', agentId: worker, scrollback: 20 }, host, lead)).result.requestId as string
+    await expect(store.hostTerminal(peer, 'test-host')).rejects.toThrow('unavailable')
+    expect(await claim()).toEqual([{ tabId: tab, agentId: worker, harnessId, request: { id: requestId, kind: 'screen', scrollback: 20 } }])
+    expect(await claim()).toEqual([])
+    expect(await store.terminalResult(host, tab, requestId, lead)).toEqual({ requestId, pending: true })
+    await expect(run(tab, { type: 'agent.screenResult', requestId, ok: true, text: 'x' }, host, lead)).rejects.toThrow('host')
+    await run(tab, { type: 'agent.screenResult', requestId, ok: true, text: 'TOKEN=fixture-secret' }, host, worker)
+    await expect(store.terminalResult(owner, tab, requestId)).rejects.toThrow('unavailable')
+    expect(await store.terminalResult(host, tab, requestId, lead)).toEqual({ requestId, ok: true, text: 'TOKEN=fixture-secret' })
+    await expect(store.terminalResult(host, tab, requestId, lead)).rejects.toThrow('unavailable')
+    const history = [...(await store.messages(owner, tab, 'lead', {})).messages, ...(await store.messages(owner, tab, group, {})).messages]
+    const receipts = await db.superTabOperation.findMany({ where: { tabId: tab } })
+    expect(JSON.stringify([history, receipts, await store.read(owner, tab)])).not.toContain('fixture-secret')
+  })
+
+  it('logs typed input in the agent group and hands the host the text and keys', async () => {
+    const { tab, worker, group, harnessId, claim } = await terminalFixture()
+    const requestId = (await run(tab, { type: 'agent.input', agentId: worker, text: '/model', keys: ['Enter'] })).result.requestId as string
+    expect(await claim()).toEqual([{ tabId: tab, agentId: worker, harnessId, request: { id: requestId, kind: 'input', text: '/model', keys: ['Enter'] } }])
+    const rows = (await store.messages(owner, tab, group, {})).messages.filter(m => (m.source as { kind?: string } | null)?.kind === 'terminal-input')
+    expect(rows.map(m => [m.text, m.recipientIds])).toEqual([[expect.stringMatching(/^owner typed `\/model` \+ Enter in .+'s terminal$/), []]])
+    await run(tab, { type: 'agent.inputResult', requestId, ok: true }, host, worker)
+    expect(await store.terminalResult(owner, tab, requestId)).toEqual({ requestId, ok: true })
+  })
+
+  it('fails with a plain reason when the host never picks up or never answers, and never types late', async () => {
+    const { tab, lead, worker, claim } = await terminalFixture()
+    const unseen = (await run(tab, { type: 'agent.screen', agentId: worker }, host, lead)).result.requestId as string
+    expect(await claim(later(11_000))).toEqual([])
+    expect(await store.terminalResult(host, tab, unseen, lead)).toEqual({ requestId: unseen, ok: false, error: expect.stringContaining('did not pick up') })
+    const typed = (await run(tab, { type: 'agent.input', agentId: worker, keys: ['Enter'] }, host, lead)).result.requestId as string
+    expect(await claim()).toHaveLength(1)
+    expect(await later(31_000).terminalResult(host, tab, typed, lead)).toEqual({ requestId: typed, ok: false, error: expect.stringContaining('did not answer') })
+    await expect(run(tab, { type: 'agent.inputResult', requestId: typed, ok: true }, host, worker)).rejects.toThrow('unavailable')
+  })
+
+  it('never hands the host a request for a terminal that was replaced', async () => {
+    const { tab, lead, worker, claim } = await terminalFixture()
+    const requestId = (await run(tab, { type: 'agent.input', agentId: worker, keys: ['Enter'] }, host, lead)).result.requestId as string
+    await db.superTabTerminalRequest.update({ where: { id: requestId }, data: { harnessId: 'replaced-terminal' } })
+    expect(await claim()).toEqual([])
+    expect(await store.terminalResult(host, tab, requestId, lead)).toEqual({ requestId, ok: false, error: expect.stringContaining('changed') })
+  })
+
+  // Neither demotion has a command (the Lead guard keeps a project's Lead), so the state is edited the way a future one would.
+  async function edit(tab: string, change: (state: SuperTabState) => void) {
+    const row = (await db.superTab.findUnique({ where: { id: tab } }))!
+    const state = structuredClone(row.state) as unknown as SuperTabState
+    change(state)
+    await db.superTab.update({ where: { id: tab }, data: { state: state as never, revision: row.revision + 1 } })
+  }
+  async function answered(tab: string, worker: string, requester: AuthUser = host, asAgentId?: string) {
+    const requestId = (await run(tab, { type: 'agent.screen', agentId: worker }, requester, asAgentId)).result.requestId as string
+    await store.hostTerminal(host, 'test-host')
+    await run(tab, { type: 'agent.screenResult', requestId, ok: true, text: 'TOKEN=fixture-secret' }, host, worker)
+    return requestId
+  }
+
+  it('gives a former Lead and a demoted person nothing, even for their own request', async () => {
+    const { tab, lead, worker } = await terminalFixture()
+    const asLead = await answered(tab, worker, host, lead)
+    await edit(tab, state => { state.conversations.find(c => c.id === 'lead')!.leadId = null })
+    await expect(store.terminalResult(host, tab, asLead, lead)).rejects.toThrow()
+    await invite(tab)
+    const asPeer = await answered(tab, worker, peer)
+    await edit(tab, state => { state.people.find(p => p.id === peer.sub)!.role = 'viewer' })
+    await expect(store.terminalResult(peer, tab, asPeer)).rejects.toThrow()
+  })
+
+  it('refuses a host answer after 30 seconds, even before the sender asked for it', async () => {
+    const { tab, lead, worker, claim } = await terminalFixture()
+    const requestId = (await run(tab, { type: 'agent.screen', agentId: worker }, host, lead)).result.requestId as string
+    expect(await claim()).toHaveLength(1)
+    await expect(later(31_000).execute(host, tab, { operationId: randomUUID(), command: { type: 'agent.screenResult', requestId, ok: true, text: 'late' } }, worker))
+      .rejects.toThrow('no longer waiting')
+  })
+
+  it('expires an unread answer after two minutes, without waiting for another request', async () => {
+    const { tab, lead, worker } = await terminalFixture()
+    const requestId = await answered(tab, worker, host, lead)
+    await expect(later(121_000).terminalResult(host, tab, requestId, lead)).rejects.toThrow('unavailable')
+    await ensureTerminalExpiry(db)
+    const indexes = await db.$runCommandRaw({ listIndexes: 'SuperTabTerminalRequest' }) as { cursor: { firstBatch: Array<{ key: object; expireAfterSeconds?: number }> } }
+    expect(indexes.cursor.firstBatch).toContainEqual(expect.objectContaining({ key: { createdAt: 1 }, expireAfterSeconds: TERMINAL_EXPIRY_MS / 1000 }))
+  })
+
+  it('serves the host and the requester over HTTP', async () => {
+    const { tab, lead, worker } = await terminalFixture()
+    const requestId = (await run(tab, { type: 'agent.screen', agentId: worker }, host, lead)).result.requestId as string
+    const claimed = await app.inject({ method: 'POST', url: '/api/super-tabs/hosts/test-host/terminal', headers: { authorization: `Bearer ${host.sub}` } })
+    expect(claimed.json().data.filter((row: { tabId: string }) => row.tabId === tab)).toHaveLength(1)
+    await run(tab, { type: 'agent.screenResult', requestId, ok: false, error: 'The pane closed.' }, host, worker)
+    const answer = await app.inject({ method: 'GET', url: `/api/super-tabs/${tab}/terminal/${requestId}?asAgentId=${lead}`, headers: { authorization: `Bearer ${host.sub}` } })
+    expect(answer.json().data).toEqual({ requestId, ok: false, error: 'The pane closed.' })
   })
 })
