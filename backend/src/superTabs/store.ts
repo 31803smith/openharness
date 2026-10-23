@@ -1,4 +1,4 @@
-import { contributedEngines, machineContribution, machineObservationSchema, machineSlots, recordAgentPresence, type MachineObservation } from './machines.js'
+import { contributedEngines, machineContribution, machineObservationSchema, machineSlots, recordAgentPresence, removalPreview, type MachineObservation } from './machines.js'
 import { createHash } from 'node:crypto'
 import type { Prisma, PrismaClient, SuperTab, SuperTabDelivery } from '@prisma/client'
 import type { AuthUser } from '../lib/ssoAuth.js'
@@ -64,8 +64,20 @@ async function restorePullRequestUrls(tx: Transaction, tabId: string, state: Sup
 const indexes = (state: SuperTabState) => ({
   memberIds: state.people.map(p => p.id), invitedEmails: state.invitations.map(i => i.email),
   machineIds: [...new Set([...state.agents.map(a => a.machineId), ...(state.machines ?? []).map(m => m.machineId),
-    ...state.conversations.filter(activeWork).map(c => c.assignment!.execution.machineId), ...(state.closingSessions ?? []).map(c => c.machineId)])],
+    ...state.conversations.filter(activeWork).map(c => c.assignment!.execution.machineId), ...(state.closingSessions ?? []).map(c => c.machineId),
+    ...(state.machineCleanups ?? []).map(c => c.machineId)])],
+  cleanupMachineIds: cleanups(state).map(c => c.machineId),
 })
+/** Removed machines whose host has not yet said it cleaned up: still listed (machine.removal), or past the 24 h fallback. */
+const cleanups = (state: SuperTabState) => [
+  ...(state.machines ?? []).flatMap(m => m.removal ? [{ machineId: m.machineId, removalId: m.removal.id, machineOwnerId: m.contributorId }] : []),
+  ...(state.machineCleanups ?? [])]
+
+/** A machine its owner removed: its host deletes the Swarm's folders for this tab, then says so (machine.cleaned).
+ *  The row has no agent, so a host from before removals skips it. */
+const cleanupRows = (tabId: string, state: SuperTabState, machineId: string, ownerId: string) =>
+  cleanups(state).filter(c => c.machineId === machineId && c.machineOwnerId === ownerId)
+    .map(({ removalId }) => ({ tabId, cleanup: { machineId, removalId } }))
 
 /** A host reads its 100 most recently changed Swarms. Unordered, a Swarm just joined could be cut by older ones, such as
  *  Swarms only waiting for this machine to close a removed agent's session. */
@@ -360,8 +372,8 @@ export class SuperTabStore {
         fail('FORBIDDEN', 'Only the execution host can confirm this removal.', 403)
       }
       if (hostMachineId && !['agent.startDispatch', 'agent.started', 'agent.startFailed', 'agent.startSettled', 'route.modelResult'].includes(command.type)) fail('FORBIDDEN', 'A host can only settle its queued starts.', 403)
-      // A removed agent's host confirms its close as the machine owner, who may have left the Swarm with it.
-      const actor: Actor = command.type === 'agent.sessionClosed' ? { kind: 'person', userId: user.sub, email: user.email }
+      // A removed agent's or machine's host confirms its close or cleanup as the machine owner, who may have left the Swarm with it.
+      const actor: Actor = command.type === 'agent.sessionClosed' || command.type === 'machine.cleaned' ? { kind: 'person', userId: user.sub, email: user.email }
         : hostMachineId && 'startId' in command
           ? await this.poolHostActor(tx, user, original, hostMachineId, command.startId)
           : await this.actor(tx, user, original, asAgentId)
@@ -397,7 +409,7 @@ export class SuperTabStore {
         }
         return { revision: prior.revision, result: prior.result }
       }
-      if (command.type !== 'invite.accept' && command.type !== 'agent.sessionClosed') author(original, actor)
+      if (command.type !== 'invite.accept' && command.type !== 'agent.sessionClosed' && command.type !== 'machine.cleaned') author(original, actor)
       const context: CommandContext = { operationId, now: this.now() }
       if ('startId' in command && ['agent.startDispatch', 'agent.started', 'agent.startFailed', 'agent.startSettled', 'route.modelResult'].includes(command.type)) {
         const start = original.starts?.find(s => s.id === command.startId)
@@ -972,6 +984,16 @@ export class SuperTabStore {
     })
   }
 
+  /** What removing a machine would do, for its owner's confirmation (machines.ts removalPreview). */
+  async machineRemoval(user: AuthUser, tabId: string, machineId: string) {
+    return transaction(this.db, async tx => {
+      const state = stateOf(await this.row(tx, user, tabId))
+      const actor = await this.actor(tx, user, state)
+      author(state, actor)
+      return removalPreview(state, actor, machineId)
+    })
+  }
+
   async observeMachine(user: AuthUser, tabId: string, machineId: string, input: MachineObservation) {
     const observation = machineObservationSchema.parse(input)
     return transaction(this.db, async tx => {
@@ -1004,6 +1026,9 @@ export class SuperTabStore {
       const owned = await tx.machine.findFirst({ where: { machineId, userId: user.sub, autonomousEnv: user.autonomousEnv, ...machineAlive } })
       if (!owned || !machineBillingAllowsDataPlane(owned)) fail('HOST_UNAVAILABLE', 'This execution host is unavailable.', 403)
       const rows = await tx.superTab.findMany({ where: { autonomousEnv: user.autonomousEnv, machineIds: { has: machineId } }, ...HOST_TABS })
+      // A cleanup is never cut by that limit: a machine in more than 100 Swarms would otherwise keep a removed Swarm's folders.
+      const cleaning = await tx.superTab.findMany({ where: { autonomousEnv: user.autonomousEnv, cleanupMachineIds: { has: machineId },
+        id: { notIn: rows.map(r => r.id) } } })
       const result = []
       for (const row of rows) {
         const state = stateOf(row)
@@ -1039,7 +1064,9 @@ export class SuperTabStore {
         for (const { agentId: id, harnessId } of (state.closingSessions ?? []).filter(c => c.machineId === machineId && c.machineOwnerId === user.sub)) {
           result.push({ tabId: row.id, agent: { id, harnessId, machineId }, closeSession: true as const, active: false })
         }
+        result.push(...cleanupRows(row.id, state, machineId, user.sub))
       }
+      for (const row of cleaning) result.push(...cleanupRows(row.id, stateOf(row), machineId, user.sub))
       return result
     })
   }
