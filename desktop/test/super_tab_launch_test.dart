@@ -13,6 +13,7 @@ import 'package:harness/terminal/terminal_binary.dart';
 import 'package:harness/super_tabs/launch.dart';
 import 'package:harness/super_tabs/client.dart';
 import 'package:harness/super_tabs/controller.dart';
+import 'package:harness/ws/local_cli_discovery.dart';
 import 'package:harness/ws/ws_conn.dart';
 
 import 'support/super_tab_fixture.dart';
@@ -342,6 +343,7 @@ class SuperTabLaunchFixture {
   SuperTabLaunchFixture({
     bool local = false,
     SuperTabFixtureConnection Function(MemoryStore)? connectionFactory,
+    LocalCliDiscovery? discovery,
   }) {
     connection =
         connectionFactory?.call(store) ??
@@ -350,6 +352,7 @@ class SuperTabLaunchFixture {
       store: store,
       connectionForTest: (_) => connection,
       connected: true,
+      localCliDiscovery: discovery,
     );
     app.machineStates['m']!
       ..localOnly = true
@@ -366,11 +369,20 @@ class SuperTabLaunchFixture {
       email: 'owner@example.com',
     );
     app.markSuperTabDraft(app.activeSwarmId);
-    addTearDown(app.dispose);
+    addTearDown(dispose);
   }
   final store = MemoryStore();
   late final AppNotifier app;
   late final SuperTabFixtureConnection connection;
+  bool _disposed = false;
+
+  /// Once. A widget test whose app read a machine list must call it itself: Flutter checks for pending timers (the
+  /// list's safety net) before tear-downs run.
+  void dispose() {
+    if (_disposed) return;
+    _disposed = true;
+    app.dispose();
+  }
 
   Future<NewHarnessController> box({
     String engine = 'codex',
