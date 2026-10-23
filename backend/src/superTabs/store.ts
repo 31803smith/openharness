@@ -20,7 +20,7 @@ import {
 } from './model.js'
 import { holdNoticeText, type HoldReason } from './holdNotice.js'
 import { mayDrive, TERMINAL_ANSWER_MS, TERMINAL_EXPIRY_MS, TERMINAL_PICKUP_MS, type TerminalEffect } from './terminal.js'
-import { closeAssignment, readDecision, recentRoutes, timedDecisionOf, writeRouteEffects } from './routeDecisions.js'
+import { closeAssignment, closeUnassignedStart, readDecision, recentRoutes, timedDecisionOf, writeRouteEffects } from './routeDecisions.js'
 import { DEFAULT_ROUTING_POLICY, effectivePolicy, routingPolicySchema, type RoutingPolicy } from './routingPolicy.js'
 import { authenticatedEmail, authorizeSwarmJoin, configureSharing, joinSwarmSchema, requireSharingOwner,
   saveSharingSchema, sharingDetails, type JoinSwarm, type SaveSharing } from './sharing.js'
@@ -589,6 +589,23 @@ export class SuperTabStore {
         revision, state: json(effects.state), ...indexes(effects.state),
       } })
       await writeRouteEffects(tx, tabId, effects.routeDecisions, context.now)
+      if (command.type === 'agent.startFailed') {
+        const start = original.starts?.find(s => s.id === command.startId)
+        if (start?.routeDecisionId) await closeUnassignedStart(tx, tabId, start.routeDecisionId, start.id, 'failed', context.now)
+      }
+      if (command.type === 'machine.remove') {
+        for (const start of original.starts ?? []) {
+          if (!start.routeDecisionId || start.request.machineId !== command.machineId || start.harnessId || start.error) continue
+          if (effects.state.starts?.find(s => s.id === start.id)?.error) {
+            await closeUnassignedStart(tx, tabId, start.routeDecisionId, start.id, 'failed', context.now)
+          }
+        }
+      }
+      if (command.type === 'agent.remove' && actor.kind === 'agent' && actor.agentId === command.agentId) {
+        const start = original.starts?.find(s => s.routeDecisionId && s.harnessId &&
+          stableId(s.request.machineId, s.harnessId) === command.agentId)
+        if (start?.routeDecisionId) await closeUnassignedStart(tx, tabId, start.routeDecisionId, start.id, 'stopped', context.now)
+      }
       if (effects.terminal) await this.writeTerminal(tx, tabId, effects.terminal, context.now)
       if (command.type === 'work.cancel') {
         await closeAssignment(tx, tabId, command.assignmentId, 'cancelled', context.now)
