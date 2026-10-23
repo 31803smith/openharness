@@ -5,7 +5,7 @@ import { prepareSwarmSkill } from '../lib/swarmSkills.js'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { CoreApi, TurnDelivery } from '../core/api.js'
 import { fakeCore } from '../testing/fakeCore.js'
-import { backend, swarmRoleFor, hostJournalFile, SuperTabHost } from './host.js'
+import { backend, swarmRoleFor, hostJournalFile, SuperTabHost, type SuperTabHostOptions } from './host.js'
 import { retainedHarnesses, retentionFile } from './retention.js'
 import { observerSource } from './observers.js'
 
@@ -41,7 +41,7 @@ function setup(messageFields: Record<string, unknown> = {}) {
     turns: { onDelivery: vi.fn(fn => { listeners.add(fn); return () => { listeners.delete(fn) } }) },
   })
   const log = vi.fn()
-  const open = () => { const host = new SuperTabHost(core, 'machine-1', { log, now: () => clock }); hosts.push(host); return host }
+  const open = (options: SuperTabHostOptions = {}) => { const host = new SuperTabHost(core, 'machine-1', { log, now: () => clock, ...options }); hosts.push(host); return host }
   const event = (state: TurnDelivery['state'], reason?: string) => {
     for (const fn of listeners) fn({ deliveryId: 'team:service:superTabs:delivery', sessionId: 'harness', state, reason })
   }
@@ -733,6 +733,24 @@ function releaseFixture(nativeKind = 'swarm', result: Record<string, unknown> = 
   return { ...t, host, target, native, lookup, close, lease, remove, sent, poll }
 }
 
+// On 2026-10-23 a worker its machine's restart had stopped, reopened on the same conversation, could no longer be stopped by
+// the Swarm ("not started by the Swarm"): the reopen marks the row resume-only, though it is still the Swarm's session.
+it('stops a Swarm worker reopened after a restart on the conversation the Swarm started', async () => {
+  const t = releaseFixture('swarm', { closed: true })
+  Object.assign(t.native, { resumeOnly: true })
+  await t.poll()
+  await vi.waitFor(() => expect(t.remove).toHaveBeenCalledOnce())
+  expect(t.close).toHaveBeenCalledWith(expect.objectContaining({ agentId: 'harness', creationId: 'super-original-creation', sessionId: 'native' }))
+})
+
+it('still refuses, as changed, a reopened worker that now runs another conversation', async () => {
+  const t = releaseFixture('changed', { closed: true })
+  Object.assign(t.native, { resumeOnly: true })
+  for (let i = 0; i < 3; i++) await t.poll(130_000)
+  expect(t.close).not.toHaveBeenCalled()
+  expect(t.remove).not.toHaveBeenCalled()
+})
+
 // A Swarm start before #1527 left only its start record and the native creation receipt (super-<startId>).
 const group = { id: 'group', leadId: 'lead', agentIds: ['lead', 'agent'], assignment: { agentId: 'agent', status: 'done' } }
 const legacyStarts = { starts: [{ id: 'start-1', creationId: 'super-start-1', harnessId: 'harness', request: { machineId: 'machine-1', name: 'Permission builder' }, error: null }] }
@@ -1181,5 +1199,181 @@ describe('built-in skill text after a CLI update', () => {
     expect(f.sent.map(s => s.asAgentId).sort()).toEqual(['a-builder', 'a-lead', 'a-reviewer'])
     await f.pass(host, 60_000)
     expect(f.sent).toHaveLength(3)
+  })
+})
+
+/** A host on this machine whose roster is [rows] (changeable), with the core's keep-alive and member close mocked. */
+function lifeFixture(rows: Record<string, unknown>[], options: SuperTabHostOptions = {}) {
+  const t = setup(), host = t.open(options)
+  const commands: Record<string, unknown>[] = []
+  let live = false
+  const keepLeadAlive = vi.fn(async () => ({ ok: false as const, error: 'AGENT_BUSY' } as { ok: true } | { ok: false; error: string }))
+  const closeMember = vi.fn(async () => ({ closed: true as const } as { closed?: true; error?: string }))
+  t.core.agents.byAgent = vi.fn(() => (live ? { agentId: 'harness' } : undefined) as never)
+  t.core.agents.keepLeadAlive = keepLeadAlive
+  t.core.agents.closeMember = closeMember
+  t.core.account.backend = async (_method, path, body) => {
+    if ((body as any)?.command) { commands.push(body as Record<string, unknown>); return { status: 200, body: { data: {} } } }
+    if (path.includes('/hosts/')) return { status: 200, body: { data: rows } }
+    return { status: 200, body: { data: [] } }
+  }
+  const poll = async (advance = 0) => { t.wait(advance); await host.tick(); for (let i = 0; i < 5; i++) await new Promise(resolve => setImmediate(resolve)) }
+  return { ...t, host, rows, commands, keepLeadAlive, closeMember, poll, live: (value: boolean) => { live = value } }
+}
+const leadRow = (extra: Record<string, unknown> = {}) => ({ tabId: 'tab', lead: true, active: true, agent: { id: 'agent', harnessId: 'harness', machineId: 'machine-1' }, ...extra })
+
+describe('keeping a Swarm Lead alive', () => {
+  // The owner, 2026-10-23: a Lead whose session died (a machine restart, a kill) stalls its whole project until someone
+  // reopens it by hand. Its host reopens it on its own conversation; a crash loop must not spin.
+  it('reopens a Lead whose session is gone, backing off while it cannot, and leaves a live one alone', async () => {
+    const t = lifeFixture([leadRow()])
+    await t.poll()
+    expect(t.keepLeadAlive).toHaveBeenCalledTimes(1)
+    expect(t.keepLeadAlive).toHaveBeenCalledWith('harness')
+    await t.poll(4_000)
+    expect(t.keepLeadAlive).toHaveBeenCalledTimes(1)
+    await t.poll(1_000)
+    expect(t.keepLeadAlive).toHaveBeenCalledTimes(2)
+    await t.poll(9_000)
+    expect(t.keepLeadAlive).toHaveBeenCalledTimes(2)
+    await t.poll(1_000)
+    expect(t.keepLeadAlive).toHaveBeenCalledTimes(3)
+    // The wait doubles, up to half an hour.
+    for (let i = 0; i < 20; i++) await t.poll(30 * 60_000)
+    const calls = t.keepLeadAlive.mock.calls.length
+    await t.poll(30 * 60_000 - 1)
+    expect(t.keepLeadAlive).toHaveBeenCalledTimes(calls)
+    await t.poll(1)
+    expect(t.keepLeadAlive).toHaveBeenCalledTimes(calls + 1)
+    expect(t.log).toHaveBeenCalledWith(expect.stringContaining('Could not reopen the Product Manager'))
+    t.keepLeadAlive.mockResolvedValue({ ok: true })
+    await t.poll(30 * 60_000)
+    t.live(true)
+    for (let i = 0; i < 3; i++) await t.poll(60 * 60_000)
+    expect(t.keepLeadAlive).toHaveBeenCalledTimes(calls + 2)
+    // Gone again later: reopened at once, its backoff started over.
+    t.live(false)
+    await t.poll()
+    expect(t.keepLeadAlive).toHaveBeenCalledTimes(calls + 3)
+  })
+
+  it('waits a minute after a reopen it asked for before asking again', async () => {
+    const t = lifeFixture([leadRow()])
+    t.keepLeadAlive.mockResolvedValue({ ok: true })
+    await t.poll()
+    await t.poll(59_000)
+    expect(t.keepLeadAlive).toHaveBeenCalledTimes(1)
+    await t.poll(1_000)
+    expect(t.keepLeadAlive).toHaveBeenCalledTimes(2)
+  })
+
+  it('reopens no agent the roster does not mark Lead: once its project is deleted, or while it is being stopped', async () => {
+    const t = lifeFixture([leadRow()])
+    await t.poll()
+    expect(t.keepLeadAlive).toHaveBeenCalledTimes(1)
+    t.rows.splice(0, 1, leadRow({ lead: false }))
+    for (let i = 0; i < 3; i++) await t.poll(30 * 60_000)
+    t.rows.splice(0, 1, leadRow({ stopRequested: true }), leadRow({ closeSession: true, agent: { id: 'other', harnessId: 'other', machineId: 'machine-1' } }))
+    for (let i = 0; i < 3; i++) await t.poll(30 * 60_000)
+    t.rows.splice(0, 2)
+    for (let i = 0; i < 3; i++) await t.poll(30 * 60_000)
+    expect(t.keepLeadAlive).toHaveBeenCalledTimes(1)
+  })
+
+  it('reopens nothing on a core that cannot', async () => {
+    const t = lifeFixture([leadRow()])
+    t.core.agents.keepLeadAlive = undefined
+    await t.poll()
+    expect(t.keepLeadAlive).not.toHaveBeenCalled()
+  })
+})
+
+describe('closing the sessions the backend ends', () => {
+  const ended = (extra: Record<string, unknown> = {}) => ({ tabId: 'tab', closeSession: true, agent: { id: 'agent', harnessId: 'harness', machineId: 'machine-1' }, ...extra })
+
+  // Deleting a project left its Lead's session running, and removing an ordinary agent left its session behind (owner,
+  // 2026-10-23: no zombie agents). The backend marks the session; this host closes it and says so.
+  it('closes a member it knew, says it closed once, and never closes it again', async () => {
+    const t = lifeFixture([leadRow({ lead: false })])
+    await t.poll()
+    t.rows.splice(0, 1, ended())
+    await t.poll()
+    await vi.waitFor(() => expect(t.commands).toHaveLength(1))
+    expect(t.closeMember).toHaveBeenCalledWith('harness', undefined)
+    expect(t.commands[0]).toEqual({ operationId: 'session-closed-agent-harness', command: { type: 'agent.sessionClosed', agentId: 'agent', harnessId: 'harness' } })
+    for (let i = 0; i < 3; i++) await t.poll(60_000)
+    expect(t.closeMember).toHaveBeenCalledTimes(1)
+    expect(t.commands).toHaveLength(1)
+  })
+
+  it('closes after a host restart a member the last roster named, and retries a lost acknowledgement without closing twice', async () => {
+    const t = lifeFixture([leadRow({ lead: false })])
+    await t.poll()
+    t.host.stop()
+    t.rows.splice(0, 1, ended())
+    let refused = 1
+    const backend = t.core.account.backend
+    t.core.account.backend = async (method, path, body) => (body as any)?.command?.type === 'agent.sessionClosed' && refused-- > 0
+      ? { status: 503, body: { success: false, error: { code: 'BACKEND_UNAVAILABLE', message: 'down' } } } : backend(method, path, body)
+    const restarted = t.open()
+    const poll = async (advance = 0) => { t.wait(advance); await restarted.tick(); for (let i = 0; i < 5; i++) await new Promise(resolve => setImmediate(resolve)) }
+    await poll()
+    expect(t.log).toHaveBeenCalledWith('down')
+    await poll(5_000)
+    await vi.waitFor(() => expect(t.commands).toHaveLength(1))
+    expect(t.closeMember).toHaveBeenCalledTimes(1)
+  })
+
+  it('never asks to close a Lead, and acknowledges nothing the core refuses as not its member', async () => {
+    const t = lifeFixture([ended({ lead: true })])
+    for (let i = 0; i < 3; i++) await t.poll(60_000)
+    expect(t.closeMember).not.toHaveBeenCalled()
+    t.rows.splice(0, 1, ended())
+    t.closeMember.mockResolvedValue({ error: 'NOT_A_MEMBER' })
+    for (let i = 0; i < 3; i++) await t.poll(60_000)
+    expect(t.closeMember).toHaveBeenCalledWith('harness', undefined)
+    expect(t.commands).toHaveLength(0)
+  })
+
+  // The review of #1635: an agent removed before this host wrote its first roster was never a member here, so it was never
+  // closed nor acknowledged, and its row stayed for good. The released backend's row names only the harness; this host's
+  // own record of the Swarm start that created it is the proof, which the core checks against its receipt.
+  it('closes an agent removed before any roster named it, proven by this host\'s start of it', async () => {
+    const t = lifeFixture([ended()], { startReceipt: harnessId => harnessId === 'harness' ? 'super-0123456789abcdef' : null })
+    await t.poll()
+    await vi.waitFor(() => expect(t.commands).toHaveLength(1))
+    expect(t.closeMember).toHaveBeenCalledWith('harness', 'super-0123456789abcdef')
+  })
+
+  it('still closes a known member when this host\'s start record cannot be read', async () => {
+    const t = lifeFixture([ended()], { startReceipt: () => { throw new Error('The capacity ledger is unreadable.') } })
+    await t.poll()
+    await vi.waitFor(() => expect(t.commands).toHaveLength(1))
+    expect(t.closeMember).toHaveBeenCalledWith('harness', undefined)
+  })
+
+  it('backs off a close the core refuses, and acknowledges nothing until it closes', async () => {
+    const t = lifeFixture([leadRow({ lead: false })])
+    await t.poll()
+    t.rows.splice(0, 1, ended())
+    t.closeMember.mockResolvedValue({ error: 'LEAD_PROTECTED' })
+    await t.poll()
+    await t.poll(4_000)
+    expect(t.closeMember).toHaveBeenCalledTimes(1)
+    await t.poll(1_000)
+    expect(t.closeMember).toHaveBeenCalledTimes(2)
+    expect(t.log).toHaveBeenCalledWith(expect.stringContaining('LEAD_PROTECTED'))
+    t.closeMember.mockResolvedValue({ closed: true })
+    await t.poll(10_000)
+    await vi.waitFor(() => expect(t.commands).toHaveLength(1))
+  })
+
+  it('closes nothing on a core that cannot', async () => {
+    const t = lifeFixture([leadRow({ lead: false })])
+    await t.poll()
+    t.core.agents.closeMember = undefined
+    t.rows.splice(0, 1, ended())
+    await t.poll()
+    expect(t.commands).toHaveLength(0)
   })
 })
