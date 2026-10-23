@@ -12,7 +12,8 @@ import { messageIdOf } from './attach.js'
 import { cardId, SwarmCards } from './cards.js'
 
 const HELP = {
-  status: 'Read the shared tab roster and work. Its rules are the project owners\' routing rules, each in the owner\'s own words; each binds only the agents of its projectId.',
+  status: 'Read the shared tab roster and work. Its rules are the project owners\' routing rules, each in the owner\'s own words; each binds only the agents of its projectId. A Lead\'s status also lists otherProjectsWork: the active work of the Swarm\'s other projects (group, project, title, owned code, status, Engineer, PR), read only.',
+  leads: 'The Leads conversation (leadsConversationId in a Lead\'s status) is one conversation for the whole Swarm, outside every project. Only Leads and people post there, and only Leads among agents receive it. Before assigning, look at otherProjectsWork; if your task touches the same code, say so there and agree an order first, then tell your own project. The Swarm posts there by itself when two projects\' active tasks own the same code.',
   messages: 'messages GROUP: read recent messages in a conversation.',
   message: 'message GROUP MESSAGE_ID: read one exact message, including an earlier question or result referenced by a reply.',
   post: 'post GROUP TEXT OPERATION_ID [--reply-to MESSAGE_ID] [--attach PATH]...: reply in that conversation. Use a unique ID per message and reuse it after an interrupted request. Answer a message once, with --reply-to its ID. --attach sends a file (a screenshot, a log; up to 10 files of 10 MB each), and TEXT may then be empty.',
@@ -54,6 +55,21 @@ const HELP = {
 }
 
 const list = (value: unknown) => Array.isArray(value) ? value.map(object) : []
+const OTHER_WORK_FIELDS = ['conversationId', 'projectName', 'title', 'owns', 'status', 'agentName', 'pr'] as const
+
+/** Leads see each other's work and talk (spec 2026-10-23): a Lead reads other projects' active work in the backend's
+ *  fields alone; any other agent reads neither it nor the Leads conversation, even from a server that sent it. */
+function statusView(answer: Record<string, unknown>, agentId: string): Record<string, unknown> {
+  const { otherProjectsWork, leadsConversationId, ...state } = object(answer.state)
+  // A project's Lead is its Lead conversation's, as the backend reads it; a Swarm from before projects has one, 'lead'.
+  const leads = Array.isArray(state.projects) ? list(state.projects).map(p => p.leadConversationId) : ['lead']
+  if (list(state.conversations).some(c => leads.includes(c.id) && c.leadId === agentId)) {
+    return { ...answer, state: { ...state, ...(leadsConversationId !== undefined ? { leadsConversationId } : {}),
+      ...(Array.isArray(otherProjectsWork) ? { otherProjectsWork: list(otherProjectsWork).map(work =>
+        Object.fromEntries(OTHER_WORK_FIELDS.filter(key => key in work).map(key => [key, work[key]]))) } : {}) } }
+  }
+  return { ...answer, state: { ...state, conversations: list(state.conversations).filter(c => c.kind !== 'leads' && c.id !== leadsConversationId) } }
+}
 
 function taskCommand(command: Record<string, unknown>): Record<string, unknown> {
   if (command.type !== 'conversation.create' && command.type !== 'work.define') return command
@@ -208,7 +224,7 @@ export function superTabService(core: CoreApi, options: SuperTabServiceOptions =
         if (payload.action === 'startStatus' && identifier(payload.startId)) {
           return { ok: true, value: await backend(core, 'GET', `${path}/starts/${payload.startId}?${identity}`) }
         }
-        if (payload.action === 'status') return { ok: true, value: answer }
+        if (payload.action === 'status') return { ok: true, value: statusView(answer, agentId) }
         // A Lead's terminal read or typing (`screen`, `type`): the backend answers only the agent that asked.
         if (payload.action === 'terminalResult') {
           if (!identifier(payload.terminalRequestId)) return { error: 'INVALID_REQUEST' }
