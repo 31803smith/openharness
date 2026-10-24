@@ -35,6 +35,7 @@ import 'swarm_search_preview.dart';
 import 'swarm_preview_scroll.dart';
 import 'terminal_text_action.dart';
 import 'desktop_chrome.dart';
+import '../models/coding_model.dart';
 import 'swarm_model_tile.dart';
 import 'key_hints.dart';
 
@@ -1819,6 +1820,8 @@ class _SwarmResourcePreviewState extends State<SwarmResourcePreview> {
                       )
                       ? 'Offered: the PM can start Builders on your machines on it'
                       : 'Offer to Swarm lets the PM start Builders on your machines on it'
+                : codingRefusal(local) != null
+                ? 'The Lead routes Builders only onto models that can drive a coding agent.'
                 : local.servedOn(swarm.grid)
                 ? 'Running for this Swarm: the Lead can route Builders on any machine in it onto this model.'
                 : 'Run for Swarm lets the Lead route Builders on any machine in the Swarm onto this model.',
@@ -1967,6 +1970,13 @@ class _SwarmResourcePreviewState extends State<SwarmResourcePreview> {
           : swarmBlurb,
       facts: facts,
       errors: errors,
+      // Too small or too slow for a coding agent: Builders are never offered it, running or not (coding_model.dart).
+      note: switch (codingRefusal(local!)) {
+        final why? when local.servedOn(widget.search.swarmModels!.grid) =>
+          'Not offered to Builders: $why',
+        final why? => why,
+        null => null,
+      },
     );
   }
 

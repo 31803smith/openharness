@@ -9,6 +9,7 @@ import '../models/api_connections_controller.dart'
     show ApiConnection, ApiModel, agentOnApiModel;
 import '../models/local_model.dart';
 import '../models/model_search_catalog.dart';
+import '../models/coding_model.dart';
 import '../models/swarm_models_target.dart';
 import '../usage/models_menu_controller.dart' show subscriptionSearchId;
 import '../core/dsh_catalog.dart';
@@ -498,11 +499,14 @@ class SwarmSearchController extends ChangeNotifier {
           run: ready ? act('stop', grid: swarm.grid) : null,
         );
       }
+      // Too small or too slow to drive a coding agent: no Builder would be offered it, so neither Get nor Run is
+      // (coding_model.dart; the preview says why).
+      final capable = codingRefusal(local) == null;
       if (!local.downloaded && !local.canStop) {
         return (
           label: 'Get',
           command: 'picker.model_download',
-          run: ready && local.canStart && owner.supportsDownload
+          run: ready && capable && local.canStart && owner.supportsDownload
               ? act('download')
               : null,
         );
@@ -510,7 +514,9 @@ class SwarmSearchController extends ChangeNotifier {
       return (
         label: 'Run for Swarm',
         command: 'picker.model_start',
-        run: ready && local.canStart ? act('start', grid: swarm.grid) : null,
+        run: ready && capable && local.canStart
+            ? act('start', grid: swarm.grid)
+            : null,
       );
     }
     if (entry.apiModel case final model?) {

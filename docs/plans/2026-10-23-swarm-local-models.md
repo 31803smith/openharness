@@ -11,7 +11,7 @@ Builders on them when that fits the work. It is an add-on: nothing calls grid un
 | 1 | Owner | Machines heading → Local models (chip icon) → Use local models | Backend mints `state.localModels.grid` (`swarm-<12 hex>`). The owner's host creates the grid (`grid --remote start`, `permissioned-public`), keeps its members in step with the Swarm's people (`grid members add|remove`, role `both`), and reports `localModels.status`. |
 | 2 | A member | Local models window (⌘I's Models: APIs, Your models, Get for this Mac, Shared with you) → a model → Run for Swarm, or an API's model → Share with Swarm | That machine's daemon signs in to grid (Harness sign-in handed to `grid login --harness`), serves the model on the Swarm's grid, and lists it in its machine readings (`observation.localModels`). |
 | 3 | Everyone | Sees it in the machine's details and the Local models dialog ("Qwen 3 on Studio") | Served models come from fresh readings only (45 s). |
-| 4 | Lead | Routes as usual | Local candidates exist only while a model is served: free, quality from the policy (`localModels.quality`, default 1), one Builder per served model. A person asking for a local model overrides the floor. |
+| 4 | Lead | Routes as usual | Local candidates exist only while a model is served: free, quality from the policy (`localModels.quality`, default 1), one Builder per local engine and up to four per shared API model (2026-10-24). A person asking for a local model overrides the floor. When nothing is offered because a model is taken, the route names the Builders on it. |
 | 5 | Lead | Starts the Builder | Any Swarm machine with a slot runs Claude Code or Codex on the model through the grid relay. The backend admits `gridModel`/`gridName` on a contributed machine only for the Swarm's grid while a fresh reading serves the model. |
 | 6 | Member | Stops the model | It leaves the readings; routing stops offering it. |
 | 7 | Owner | Turns Local models off | No new local starts. The grid is kept. |
@@ -24,13 +24,23 @@ Builders on them when that fits the work. It is an add-on: nothing calls grid un
 - Local models count as quality 1 unless the owner raises it; a person's explicit request overrides.
 - Turning it off keeps the grid.
 - Not limited to the machine serving the model: a Builder on another machine reaches it through the grid relay.
+- (2026-10-24) A local model must be able to drive a coding agent: 7B parameters or more and, when measured, 10 tok/s or
+  more (`lib/codingModel.ts`, mirrored in `desktop/lib/models/coding_model.dart`). A smaller one gets no Run or Get for
+  the Swarm; one already served is reported as `refusedModels` with why, never offered, and a Lead asked for it is told
+  why. A llama3.2:3b Builder made over a thousand requests for a one-line edit.
+- (2026-10-24) A Builder whose engine keeps retrying its model for ten minutes alerts its Lead (`agent.alert` `model`).
+- (2026-10-24) A machine keeps what it serves on the grid: shares keep their address across restarts, and
+  `lib/swarmHeal.ts` joins again what the grid stopped listing.
+- Known limit (grid): a local model answers a Claude Code turn only after reading its whole prompt (~45K tokens, over
+  three minutes for Qwen3.6 35B on an M-series Mac); the relay ends the transaction first and every retry starts again.
+  It still finished a one-line edit in 14 minutes. Needs a relay keepalive and prompt-cache reuse in grid.
 
 ## Where the code is
 
 - Backend: `superTabs/commands.ts` (`localModels.set`, `localModels.status`), `machines.ts` (admission, `swarmGridRow`,
   `hostLocalGrid`), `routingPolicy.ts` (`localModels` policy), `GET /api/super-tabs/grids`.
 - CLI: `superTabs/swarmGrids.ts` + `lib/swarmGrid.ts` (owner's computer keeps the grid), `superTabs/machines.ts`
-  (`servedOn`), `superTabs/routeCommand.ts` (`localProbes`), `superTabs/route.ts` (`local`, `LOCAL_NONE`),
+  (`servedOn`, `refusedOn`, the `grid_swarm_heal` reading), `superTabs/routeCommand.ts` (`localProbes`, `heldLocalModels`), `superTabs/route.ts` (`local`, `LOCAL_NONE`),
   `services/models.ts` (`grid_swarm_sync`, Swarm-grid start/stop, `swarmLaunchTarget`), Lead skill line in `lib/swarmSkills.ts`.
 - Desktop: `super_tabs/local_models.dart`, wired in `super_tabs/machines.dart`.
 

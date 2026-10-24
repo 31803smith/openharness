@@ -1,6 +1,6 @@
 // cli/src/superTabs/route.spec.ts
 import { describe, expect, it } from 'vitest'
-import { LOCAL_NONE, breaks, choose, decide, floorFor, parseAssessment, quotaOf2, rateFor, recordOf, repoMatch, type Assessment, type Commitment, type MemberFrame, type Policy, type Probe, type SwarmRule, type TaskFolder } from './route.js'
+import { API_BUILDERS, LOCAL_NONE, breaks, choose, decide, floorFor, parseAssessment, quotaOf2, rateFor, recordOf, repoMatch, type Assessment, type Commitment, type MemberFrame, type Policy, type Probe, type SwarmRule, type TaskFolder } from './route.js'
 
 const object = (v: unknown) => v as Record<string, unknown>
 
@@ -532,10 +532,43 @@ describe('local models on the Swarm\'s grid', () => {
     expect(ok(choose([opus, api], policy, a({ model: 'Claude Opus' }), NOW)).shown.map(s => s.model)).toEqual(['opus'])
     expect(ok(choose([older], policy, a({ difficulty: 'low' }), NOW)).shown[0]!.title).toContain('(shared)')
     expect(choose([opus], policy, a({ model: 'gpt 9' }), NOW)).toEqual({ error: 'NO_CANDIDATE',
-      excluded: [{ title: 'Named model', reason: 'No candidate runs "gpt 9". Share it with the Swarm (Local models), or check its name.' }] })
+      excluded: [{ title: 'Named model', reason: 'No candidate runs "gpt 9". Share it with the Swarm (Manage models), or check its name.' }] })
     expect(parseAssessment({ difficulty: 'low', risk: 'low', why: 'x', model: ' deepseek 4.1 flash ' })).toMatchObject({ model: 'deepseek 4.1 flash' })
     expect(parseAssessment({ difficulty: 'low', risk: 'low', why: 'x', model: '...' })).toContain('model')
     expect(parseAssessment({ difficulty: 'low', risk: 'low', why: 'x', model: 7 })).toContain('model')
     expect(parseAssessment({ difficulty: 'low', risk: 'low', why: 'x', model: 'x'.repeat(201) })).toContain('model')
+  })
+
+  it('puts a model that runs on a machine before an API or another grid\'s model, at equal cost and strength', () => {
+    const api = local({ gridModel: 'aaa-api', gridLabel: 'aaa-api', gridKind: 'api' })
+    const shared = local({ gridModel: 'aab-shared', gridLabel: 'aab-shared', gridKind: 'shared' })
+    const engine = local({ gridModel: 'zzz-llama', gridLabel: 'zzz-llama', gridKind: 'local' })
+    expect(ok(choose([api, shared, engine], policy, a({ local: true }), NOW)).shown.map(s => s.gridModel)).toEqual(['zzz-llama', 'aaa-api', 'aab-shared'])
+    // A model with no kind runs on the Swarm's grid, as an engine does.
+    const bare = local({ gridModel: 'zzz-bare', gridLabel: 'zzz-bare', gridKind: undefined })
+    expect(ok(choose([api, bare], policy, a({ local: true }), NOW)).shown.map(s => s.gridModel)).toEqual(['zzz-bare', 'aaa-api'])
+  })
+
+  it('offers the Builder already on a named model, and says who holds a named or local model it cannot offer', () => {
+    // A member running the named model is a candidate like any other.
+    const wren = probe({ kind: 'member', agentId: 'wren', name: 'Wren', model: 'deepseek/deepseek-v4.1-flash-1017', effort: 'xhigh', quality: 1, cost: 1 })
+    expect(ok(choose([probe(), wren], policy, a({ model: 'deepseek 4.1 flash' }), NOW)).shown.map(s => s.agentId)).toEqual(['wren'])
+    const ds = { model: 'deepseek/deepseek-v4.1-flash-1017', label: 'deepseek/deepseek-v4.1-flash-1017 · OpenRouter', kind: 'api' as const, holders: ['Wren', 'Ada', 'Bo', 'Cy'] }
+    const qwen = { model: 'qwen3:4b', label: 'Qwen 3 4B', kind: 'local' as const, holders: ['Faye'] }
+    expect(choose([probe()], policy, a({ model: 'deepseek 4.1 flash' }), NOW, [], [], [qwen, ds])).toEqual({ error: 'NO_CANDIDATE', excluded: [{ title: 'Named model',
+      reason: `"deepseek/deepseek-v4.1-flash-1017 · OpenRouter" is shared with the Swarm, but Builders Wren, Ada, Bo and Cy are on it: an API model takes ${API_BUILDERS} Builders at a time. Assign the work to one of them once it is free, or stop one to free the model.` }] })
+    // A name nothing holds still reads as not shared.
+    expect(choose([probe()], policy, a({ model: 'gpt 9' }), NOW, [], [], [qwen])).toMatchObject({ excluded: [{ reason: expect.stringContaining('No candidate runs "gpt 9"') }] })
+    expect(choose([probe()], policy, a({ local: true }), NOW, [], [], [qwen])).toEqual({ error: 'NO_CANDIDATE', excluded: [{ title: 'Local models',
+      reason: '"Qwen 3 4B" is shared with the Swarm, but Builder Faye is on it: a local model serves one Builder at a time. Assign the work to that Builder once it is free, or stop it to free the model.' }] })
+    expect(LOCAL_NONE).toContain('Manage models')
+  })
+
+  it('says why a named model the Swarm has is never offered to Builders, rather than to share it', () => {
+    const llama = { model: 'llama3.2:3b', label: 'llama3.2:3b', kind: 'local' as const, holders: [],
+      refused: 'llama3.2:3b is too small for a coding agent (about 3B parameters; Builders need 7B or more).' }
+    const reason = '"llama3.2:3b" is shared with the Swarm, but Builders are not offered it: llama3.2:3b is too small for a coding agent (about 3B parameters; Builders need 7B or more). Ask a member to run a larger model, or share an API (Manage models).'
+    expect(choose([probe()], policy, a({ model: 'llama 3.2 3b' }), NOW, [], [], [llama])).toEqual({ error: 'NO_CANDIDATE', excluded: [{ title: 'Named model', reason }] })
+    expect(choose([probe()], policy, a({ local: true }), NOW, [], [], [llama])).toEqual({ error: 'NO_CANDIDATE', excluded: [{ title: 'Local models', reason }] })
   })
 })

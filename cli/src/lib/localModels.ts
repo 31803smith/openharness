@@ -515,7 +515,10 @@ export class LocalModels {
     grids ??= rows(await this.json(['--remote', 'ls', '--json']))
     const gridId = str(grids.find(g => g.grid === grid)?.id)
     const { owned, blocker } = await this.engineRecords(gridId)
-    if (blocker) this.blockers.set(grid, blocker)
+    // An app's engine this daemon joined there is named, as the list names it: read again before a start, the grid's
+    // record alone said only to open Model Manager, with llama3.2:3b from Ollama running for a Swarm (2026-10-24).
+    const app = blocker ? (await this.records()).find(record => record.grid === grid) : undefined
+    if (blocker) this.blockers.set(grid, app ? `Stop ${cleanName(app.name)} first to start another local model.` : blocker)
     return owned
   }
 
@@ -763,6 +766,30 @@ export class LocalModels {
     await writeAppRecords(this.appRecordsFile, kept)
     for (const record of left) void this.retire(record)
     return kept
+  }
+
+  /** The names this computer's app engines are joined to [grid] under (`swarmHeal.ts` compares them with what the grid
+   *  lists). An engine whose process is gone is not served by anything here. */
+  async servedApps(grid: string): Promise<string[]> {
+    const served: string[] = []
+    for (const record of (await this.records()).filter(r => r.grid === grid)) {
+      if (await this.options.appEngines?.alive(record).catch(() => false)) served.push(record.alias)
+    }
+    return served
+  }
+
+  /** Joins this computer's first live app engine on [grid] again, as it was started: grid restarts its one engine
+   *  process for the grid with every model this computer joined there, so this also brings back an API shared beside it
+   *  (2026-10-24: after a daemon restart the grid listed nothing this Mac served). Whether grid took it. */
+  async rejoinApp(grid: string): Promise<boolean> {
+    for (const record of (await this.records()).filter(r => r.grid === grid)) {
+      if (!await this.options.appEngines?.alive(record).catch(() => false)) continue
+      const named = this.options.machineName?.()?.trim()
+      return (await this.run(['--remote', 'join', grid, '--at', `http://127.0.0.1:${record.port}/v1`, '-m', record.served,
+        '--advertise-as', record.alias, '--max-concurrency', String(NODE_CONCURRENCY),
+        ...(named && validArg(named) ? ['--name', named] : [])], undefined, 10 * 60_000)).ok
+    }
+    return false
   }
 
   /** A Jev engine still running: stopped, and off its grid (best effort — its record is already gone). */

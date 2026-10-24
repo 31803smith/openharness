@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { RegisteredSession } from '../lib/registry.js'
 import { fakeCore } from '../testing/fakeCore.js'
-import { apisOn, ContributedMachines, offered, servedOn, sharedWith, swarmWorktreesFile } from './machines.js'
+import { apisOn, ContributedMachines, liveOn, offered, refusedOn, servedOn, sharedWith, swarmWorktreesFile } from './machines.js'
 import { SuperTabHostError } from './host.js'
 import { startAgent } from './start.js'
 
@@ -167,6 +167,20 @@ describe('contributed machine executor', () => {
       ? { models: [{ name: 'Qwen 3', contextWindow: 32768, servedOn: [{ grid: GRID, servedAs: ['qwen3'] }] }] } : { providers: [] }) as never)
     f.advance(); await f.machine.tick()
     expect(f.backend.mock.calls.filter(c => c[1] === 'POST').at(-1)![3]).toMatchObject({ localModels: [{ grid: GRID, model: 'qwen3', name: 'Qwen 3', contextWindow: 32768, kind: 'local' }] })
+    expect(f.backend.mock.calls.filter(c => c[1] === 'POST').at(-1)![3]).not.toHaveProperty('refusedModels')
+    // A model too small for Builders is reported apart, with why; an older backend that refuses the field gets it without.
+    local.request.mockImplementation((async (type: string) => type === 'grid_fleet_models_list'
+      ? { models: [{ name: 'llama3.2:3b', servedOn: [{ grid: GRID, servedAs: ['llama3.2:3b'] }] }] } : { providers: [] }) as never)
+    const before = f.backend.getMockImplementation()!
+    f.backend.mockImplementation(async (core, method, path, body) => {
+      if (method === 'POST' && (body as Record<string, unknown>)?.refusedModels) throw new SuperTabHostError('VALIDATION_ERROR', 'Unrecognized key: refusedModels', 400)
+      return before(core, method, path, body)
+    })
+    f.advance(); await f.machine.tick()
+    const refusedPosts = f.backend.mock.calls.filter(c => c[1] === 'POST')
+    expect(refusedPosts.at(-2)![3]).toMatchObject({ localModels: [], refusedModels: [{ grid: GRID, model: 'llama3.2:3b', name: 'llama3.2:3b', why: expect.stringContaining('too small') }] })
+    expect(refusedPosts.at(-1)![3]).not.toHaveProperty('refusedModels')
+    f.backend.mockImplementation(before)
     // A failed read serves nothing; an older backend that refuses the field gets the observation without it.
     local.request.mockImplementation((async (type: string) => { if (type === 'grid_fleet_models_list') throw new Error('timeout'); return { providers: [] } }) as never)
     const original = f.backend.getMockImplementation()!
@@ -201,6 +215,30 @@ describe('contributed machine executor', () => {
     f.step(60_000); await f.machine.tick()
     expect(reads()).toBe(before + 1)
   })
+  it('reports what it serves on the Swarm\'s grid only while the grid lists it, and everything when the grid is unread', async () => {
+    const GRID = 'swarm-0123456789ab'
+    const f = fixture()
+    Object.assign(f.pool, { localGrid: GRID })
+    await f.machine.tick()
+    const local = (await f.open.mock.results[0]!.value) as { request: ReturnType<typeof vi.fn> }
+    let heal: unknown = { live: ['qwen3'], missing: ['deepseek/deepseek-chat'] }
+    local.request.mockImplementation((async (type: string) => type === 'grid_swarm_api_shares'
+      ? { shares: [{ grid: GRID, connectionId: 'c1', model: 'deepseek/deepseek-chat' }] }
+      : type === 'grid_fleet_models_list' ? { models: [{ servedOn: [{ grid: GRID, servedAs: ['qwen3'] }] }] }
+      : type === 'grid_swarm_heal' ? heal : { providers: [] }) as never)
+    const reported = async () => { f.advance(); await f.machine.tick(); return (f.backend.mock.calls.filter(c => c[1] === 'POST').at(-1)![3] as { localModels: Array<{ model: string }> }).localModels.map(m => m.model) }
+    expect(await reported()).toEqual(['qwen3'])
+    expect(local.request).toHaveBeenCalledWith('grid_swarm_heal', { grid: GRID }, 30_000)
+    heal = { live: null, missing: [] }
+    expect(await reported()).toEqual(['qwen3', 'deepseek/deepseek-chat'])
+    heal = Promise.reject(new Error('older daemon'))
+    expect(await reported()).toEqual(['qwen3', 'deepseek/deepseek-chat'])
+  })
+  it('reads the models a heal answer says are live', () => {
+    expect(liveOn({ live: ['a', 7, 'b'] })).toEqual(new Set(['a', 'b']))
+    expect(liveOn({ live: null })).toBeNull()
+    expect(liveOn(null)).toBeNull()
+  })
   it('keeps of the models shared with its owner only those they offer', () => {
     const shared = [{ grid: 'team', model: 'a', kind: 'shared' as const }, { grid: 'team', model: 'b', kind: 'shared' as const }]
     expect(offered(shared, { offers: [{ sharedGrid: 'team', model: 'b' }] })).toEqual([shared[1]])
@@ -217,6 +255,20 @@ describe('contributed machine executor', () => {
     expect(apisOn({ shares: [{ grid: GRID, model: 'm' }, { grid: 'other', model: 'n' }, { grid: GRID, model: '' }, { grid: GRID, model: 'x'.repeat(201) }] }, GRID))
       .toEqual([{ grid: GRID, model: 'm', kind: 'api' }])
     expect(apisOn(null, GRID)).toEqual([])
+  })
+  it('leaves out a served model too small or too slow for a coding agent', () => {
+    const GRID = 'swarm-0123456789ab'
+    const on = (servedAs: string, more: Record<string, unknown> = {}) => ({ ...more, servedOn: [{ grid: GRID, servedAs: [servedAs] }] })
+    expect(servedOn({ models: [
+      on('llama3.2:3b', { name: 'llama3.2:3b', sizeBytes: 2e9 }), on('Qwen3-4B'), on('slow', { name: 'Qwen3.6-35B-A3B', estTokS: 3 }),
+      on('fast', { name: 'Qwen3.6-35B-A3B', estTokS: 3, tokensPerSecond: 40, paramsB: 35, quant: 'Q4_K_M' }), on('gemma', { name: 'gemma-4-E2B-it', sizeBytes: 3.2e9 }),
+    ] }, GRID).map(m => m.model)).toEqual(['fast'])
+    // What is left out is reported with why, so a Lead asked for it hears that rather than to share it.
+    expect(refusedOn({ models: [on('llama3.2:3b', { name: 'llama3.2:3b', sizeBytes: 2e9 }), on('Qwen3-4B'), on('fast', { paramsB: 35, tokensPerSecond: 40 })] }, GRID)).toEqual([
+      { grid: GRID, model: 'llama3.2:3b', name: 'llama3.2:3b', why: 'llama3.2:3b is too small for a coding agent (about 3B parameters; Builders need 7B or more).' },
+      { grid: GRID, model: 'Qwen3-4B', why: 'Qwen3-4B is too small for a coding agent (about 4B parameters; Builders need 7B or more).' },
+    ])
+    expect(refusedOn(null, GRID)).toEqual([])
   })
   it('reads a served model by the first name grid lists it under, and keeps sixteen at most', () => {
     const GRID = 'swarm-0123456789ab'

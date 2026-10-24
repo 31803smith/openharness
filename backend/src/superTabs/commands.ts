@@ -131,7 +131,7 @@ export const commandSchema = z.discriminatedUnion('type', [
   ...(['agent.screenResult', 'agent.inputResult'] as const).map(type => z.object({ type: z.literal(type), requestId: id, ok: z.boolean(),
     text: z.string().refine(value => Buffer.byteLength(value) <= 65_536, 'A screen is at most 64 KB.').optional(),
     error: z.string().trim().min(1).max(500).optional() }).strict().refine(c => c.ok || c.error !== undefined, 'Say why the request failed.')),
-  z.object({ type: z.literal('agent.alert'), agentId: id, alert: z.enum(['prompt', 'limit']), active: z.boolean(), resetAt: z.iso.datetime().optional() }).strict(),
+  z.object({ type: z.literal('agent.alert'), agentId: id, alert: z.enum(['prompt', 'limit', 'model']), active: z.boolean(), resetAt: z.iso.datetime().optional() }).strict(),
   z.object({ type: z.literal('work.check'), conversationId: id, assignmentId: id, checkId: id, passed: z.boolean(), evidence: text }).strict(),
 ])
 export type Command = z.infer<typeof commandSchema>

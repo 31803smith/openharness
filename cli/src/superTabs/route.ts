@@ -186,7 +186,23 @@ function runsNamed(p: Probe, named: string): boolean {
   const name = words([p.gridModel ?? p.model, p.gridLabel ?? '', ENGINE[p.engine]].join(' ')).join('')
   return words(named).every(w => name.includes(w))
 }
-const NAMED_NONE = (named: string) => `No candidate runs "${named}". Share it with the Swarm (Local models), or check its name.`
+const NAMED_NONE = (named: string) => `No candidate runs "${named}". Share it with the Swarm (Manage models), or check its name.`
+
+/** How many Builders may run on one API model a member shares: the share answers four requests at once
+ * (cli/src/lib/swarmApiShares.ts CONCURRENCY), unlike a local engine, which answers one conversation at a time. */
+export const API_BUILDERS = 4
+
+/** A model served for the Swarm that takes no more Builders, and who is on it, or that Builders are never offered and why
+ *  ([refused]: too small or too slow to drive a coding agent) (routeCommand.ts heldLocalModels). */
+export interface HeldModel { model: string; label: string; kind: 'local' | 'api' | 'shared'; holders: string[]; refused?: string }
+
+/** Why a held model is not offered, and what frees it: a model in use reads as unshared otherwise (owner, 2026-10-24). */
+function heldReason(m: HeldModel): string {
+  if (m.refused) return `"${m.label}" is shared with the Swarm, but Builders are not offered it: ${m.refused} Ask a member to run a larger model, or share an API (Manage models).`
+  const who = m.holders.length === 1 ? `Builder ${m.holders[0]} is on it` : `Builders ${m.holders.slice(0, -1).join(', ')} and ${m.holders.at(-1)} are on it`
+  const limit = m.kind === 'api' ? `an API model takes ${API_BUILDERS} Builders at a time` : 'a local model serves one Builder at a time'
+  return `"${m.label}" is shared with the Swarm, but ${who}: ${limit}. Assign the work to ${m.holders.length === 1 ? 'that Builder once it is free, or stop it' : 'one of them once it is free, or stop one'} to free the model.`
+}
 const titleOf = (p: Probe) => cut(`${p.kind === 'member' ? p.name ?? 'Member' : 'New agent'} · ${runs(p)} · ${p.machineName}`, 160)
 /** A reset or a last activity is told as how far away it is, which reads the same whenever the log is opened. */
 function span(ms: number): string {
@@ -275,19 +291,24 @@ function sizeUp(p: Probe, policy: Policy, a: Assessment, now: number, open: Comm
 const WAY = ['right away', 'about a quarter of the way in', 'about halfway', 'about three quarters of the way in', 'near the end']
 const runsOut = (w: Measured) => `The ${w.name} window is expected to run out ${WAY[Math.round(Math.max(0, w.usable / w.needed) * 4)]}${w.resetsIn === null ? '' : `; resets in ${span(w.resetsIn)}`}.`
 const UNREAD = 'Its quota could not be read in full, and another candidate\'s quota fits this task.'
-export const LOCAL_NONE = 'No local model is being served on this Swarm\'s grid. Ask a member to run one (their machine\'s details → Run a local model).'
+export const LOCAL_NONE = 'No local model is being served on this Swarm\'s grid. Ask a member to run one or share an API (Manage models, in the Swarm\'s sidebar).'
 
 /** The fixed order: the owner's preferred engine, an idle member before a new agent and a less busy machine first when the
- * owner prefers idle agents; then the policy order: cheaper in effect, stronger, more room on the tightest window, an idle
- * member in the task's repository before a new agent, then by title. */
+ * owner prefers idle agents; then the policy order: cheaper in effect, stronger, a model that runs on a machine before one
+ * reached through a shared API or another grid, more room on the tightest window, an idle member in the task's repository
+ * before a new agent, then by title. */
 function compare(x: Probe & Sized, y: Probe & Sized, soft: Soft): number {
   const placed = (p: Probe) => p.kind === 'member' && (p.repo ?? 'same') === 'same' ? 0 : 1
   const preferred = (p: Probe) => soft.engine && p.engine !== soft.engine ? 1 : 0
   const fresh = (p: Probe) => soft.idle && p.kind === 'new' ? 1 : 0
   const busy = (p: Probe) => soft.idle && p.kind === 'new' ? p.load?.agents ?? 1000 : 0
+  // On-machine first (owner, 2026-10-24): an API spends a member's key and credits, and a model shared on another grid is
+  // someone else's machine; at equal cost and strength the Swarm's own engine goes first.
+  const remote = (p: Probe) => p.gridModel && (p.gridKind === 'api' || p.gridKind === 'shared') ? 1 : 0
   return preferred(x) - preferred(y) || fresh(x) - fresh(y) || busy(x) - busy(y)
     || x.fit.effectiveCost - y.fit.effectiveCost
     || y.quality - x.quality
+    || remote(x) - remote(y)
     || (y.tight?.usable ?? -Infinity) - (x.tight?.usable ?? -Infinity)
     || placed(x) - placed(y)
     || titleOf(x).localeCompare(titleOf(y))
@@ -303,7 +324,7 @@ function withEveryMachine<T extends { machineId: string }>(ranked: T[]): T[] {
   return ranked.filter(p => keep.has(p))
 }
 
-export function choose(probes: Probe[], policy: Policy, a: Assessment, now: number = Date.now(), open: Commitment[] = [], rules: SwarmRule[] = []): Choice | { error: 'NO_CANDIDATE'; excluded: Array<{ title: string; reason: string }> } {
+export function choose(probes: Probe[], policy: Policy, a: Assessment, now: number = Date.now(), open: Commitment[] = [], rules: SwarmRule[] = [], held: HeldModel[] = []): Choice | { error: 'NO_CANDIDATE'; excluded: Array<{ title: string; reason: string }> } {
   // A lifted row can equal another row on the same machine (Codex `default` lifted to high beside Codex high); one is kept.
   // A person asking for a local model considers local models alone, whatever their strength.
   if (a.local) probes = probes.filter(p => p.gridModel)
@@ -315,8 +336,15 @@ export function choose(probes: Probe[], policy: Policy, a: Assessment, now: numb
     .map(p => { const why = breaks(rules, p); return why ? { ...p, refusals: [...p.refusals, why] } : p })
   const excluded = ruled.filter(p => p.refusals.length).map(p => ({ title: titleOf(p), reason: p.refusals.join(' ') }))
   const viable = ruled.filter(p => !p.refusals.length)
-  if (named && !probes.length) excluded.push({ title: 'Named model', reason: NAMED_NONE(named) })
-  else if (a.local && !probes.length) excluded.push({ title: 'Local models', reason: LOCAL_NONE })
+  // Nothing offered: a model that is served but taken says who has it, rather than reading as unshared.
+  const heldNamed = named ? held.filter(m => words(named).every(w => words(`${m.model} ${m.label}`).join('').includes(w))) : []
+  if (named && !probes.length) {
+    if (heldNamed.length) excluded.push(...heldNamed.map(m => ({ title: 'Named model', reason: heldReason(m) })))
+    else excluded.push({ title: 'Named model', reason: NAMED_NONE(named) })
+  } else if (a.local && !probes.length) {
+    if (held.length) excluded.push(...held.map(m => ({ title: 'Local models', reason: heldReason(m) })))
+    else excluded.push({ title: 'Local models', reason: LOCAL_NONE })
+  }
   if (!viable.length) return { error: 'NO_CANDIDATE', excluded }
   const floor = floorFor(policy, a)
   const meeting = a.local || named ? viable : viable.filter(p => p.quality >= floor)

@@ -43,6 +43,7 @@ import { parseRuntimeProfile } from '../lib/runtimeProfileWire.js'
 import { ensureManagedGrid, startGridPinRecheck } from '../lib/runtimeInstall.js'
 import { syncSwarmGrid } from '../lib/swarmGrid.js'
 import { SwarmApiShares } from '../lib/swarmApiShares.js'
+import { liveModels, SwarmHeal } from '../lib/swarmHeal.js'
 import { SwarmOffers } from '../lib/swarmOffers.js'
 import { internalOnThrow } from './requestErrors.js'
 
@@ -276,6 +277,17 @@ function modelsRequests(core: CoreApi, grid: GridSetUp, privateGridName: () => P
     appEngines: appEngineOps(process.env),
     gpuProcesses: nvidiaComputeApps,
   })
+  // One set of shared APIs for the process, and the check that keeps them and the local models on each Swarm's grid
+  // (lib/swarmHeal.ts).
+  const shares = swarmApiShares(core.dataDir)
+  const heal = new SwarmHeal({
+    live: async (name) => {
+      const answer = await gridExec(['--remote', 'models', name, '--json'])
+      return answer.code === 'OK' ? liveModels(answer.stdout) : null
+    },
+    shares: { list: (name) => shares.list(name), rejoin: (name, connectionId, model) => shares.rejoin(name, connectionId, model) },
+    apps: { served: (name) => localModels.servedApps(name), rejoin: (name) => localModels.rejoinApp(name) },
+  })
   /** The grid listing currently out, shared by every `grid_models_list` for the same own grid that lands
    *  meanwhile. */
   let listing: { gridName: string | null; grids: Promise<GridSection[]> } | null = null
@@ -382,7 +394,13 @@ function modelsRequests(core: CoreApi, grid: GridSetUp, privateGridName: () => P
     grid_fleet_model_download: localModel('grid_fleet_model_download'),
     grid_fleet_model_start: localModel('grid_fleet_model_start'),
     grid_fleet_model_stop: localModel('grid_fleet_model_stop'),
-    ...gridCommands(grid, core.dataDir),
+    // What this computer serves on a Swarm's grid that the grid really lists, joined again when it lost them: read by
+    // every machine reading (superTabs/machines.ts).
+    grid_swarm_heal: async (payload) => {
+      if (typeof payload.grid !== 'string' || !SWARM_GRID.test(payload.grid)) return { error: 'INVALID_REQUEST' }
+      return { ...await heal.check(payload.grid) }
+    },
+    ...gridCommands(grid, core.dataDir, shares),
     ...launchTargetRequests(core),
   }
 }

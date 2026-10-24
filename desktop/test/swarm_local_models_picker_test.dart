@@ -120,6 +120,18 @@ void main() {
           'state': 'available',
           'canStart': true,
         },
+        {
+          'id': 'tiny',
+          'name': 'llama3.2:3b',
+          'state': 'downloaded',
+          'canStart': true,
+        },
+        {
+          'id': 'tiny-get',
+          'name': 'qwen3:4b',
+          'state': 'available',
+          'canStart': true,
+        },
       ],
     };
     subscriptions = _Subscriptions();
@@ -257,6 +269,16 @@ void main() {
     );
     search.setModelScope(null);
     expect(search.rows.map(search.modelSection).toSet(), sections);
+  });
+
+  test('offers neither Run nor Get for a model too small to drive a coding agent', () {
+    final run = search.swarmModelAction(row('tiny'))!;
+    expect(run.label, 'Run for Swarm');
+    expect(run.run, isNull);
+    final get = search.swarmModelAction(row('tiny-get'))!;
+    expect(get.label, 'Get');
+    expect(get.run, isNull);
+    expect(search.swarmModelAction(row('downloaded'))!.run, isNotNull);
   });
 
   test('stops a model running for the Swarm on the Swarm\'s grid', () async {

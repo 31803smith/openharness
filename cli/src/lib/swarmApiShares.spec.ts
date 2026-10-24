@@ -96,27 +96,72 @@ describe('an API shared with a Swarm', () => {
     expect(stuck.shares.list()).toHaveLength(1)
   })
 
-  it('notes its shares without the key, and the next process shares them again', async () => {
+  it('joins a share again at the address it has, never leaving first, and shares one it does not have', async () => {
+    const f = setup(); open = f.shares
+    await f.shares.share(GRID, 'c1', 'm')
+    const before = f.at()
+    expect(await f.shares.rejoin(GRID, 'c1', 'm')).toEqual({ ok: true })
+    expect(f.exec.mock.calls.map(c => c[0].slice(0, 2))).toEqual([['--remote', 'join'], ['--remote', 'join']])
+    expect(f.exec.mock.calls[1]![0][f.exec.mock.calls[1]![0].indexOf('--at') + 1]).toBe(before)
+    f.exec.mockResolvedValueOnce({ ...ok, code: 'GRID_FAILED', exitCode: 1, stderr: 'busy' })
+    expect(await f.shares.rejoin(GRID, 'c1', 'm')).toEqual({ error: 'busy' })
+    f.exec.mockRejectedValueOnce(new Error('gone'))
+    expect(await f.shares.rejoin(GRID, 'c1', 'm')).toEqual({ error: 'grid could not be run on this computer.' })
+    expect(f.shares.list(GRID)).toHaveLength(1)
+    expect(await f.shares.rejoin(GRID, 'c1', 'other')).toEqual({ ok: true })
+    expect(f.shares.list(GRID)).toHaveLength(2)
+  })
+
+  it('runs its joins and leaves one at a time, whoever asks', async () => {
+    let running = 0, most = 0
+    const f = setup({ exec: async () => { running++; most = Math.max(most, running); await new Promise(r => setTimeout(r, 10)); running--; return ok } })
+    open = f.shares
+    await Promise.all([f.shares.share(GRID, 'c1', 'a'), f.shares.share(GRID, 'c1', 'b'), f.shares.rejoin(GRID, 'c1', 'a'), f.shares.stop(GRID, 'c1', 'b')])
+    expect(most).toBe(1)
+    expect(f.shares.list(GRID).map(s => s.model)).toEqual(['a'])
+    // A join that throws does not hold the rest up.
+    f.exec.mockRejectedValueOnce(new Error('gone'))
+    expect(await f.shares.share(GRID, 'c1', 'c')).toEqual({ error: 'grid could not be run on this computer.' })
+    expect(await f.shares.share(GRID, 'c1', 'd')).toEqual({ ok: true })
+  })
+
+  it('notes its shares and their addresses without the key, and the next process shares them again where they were', async () => {
     const stateFile = join(await mkdtemp(join(tmpdir(), 'swarm-api-shares-')), 'shares.json')
     const f = setup({ stateFile }); open = f.shares
     await f.shares.share(GRID, 'c1', 'm')
+    const at = f.at()
     const noted = await readFile(stateFile, 'utf8')
-    expect(JSON.parse(noted)).toEqual([{ grid: GRID, alias: 'm', connectionId: 'c1' }])
+    const [port, token] = /^http:\/\/127\.0\.0\.1:(\d+)\/([0-9a-f]{36})\/v1$/.exec(at)!.slice(1)
+    expect(JSON.parse(noted)).toEqual([{ grid: GRID, alias: 'm', connectionId: 'c1', port: Number(port), token }])
     expect(noted).not.toContain(KEY)
     await f.shares.stopAll()
-    // The process ended without stopping it: the note is still there.
+    // The process ended without stopping it: the note is still there, and the share comes back at the same address,
+    // joined without a leave.
     await writeFile(stateFile, noted)
     const next = setup({ stateFile }); open = next.shares
     await next.shares.restore()
-    expect(next.exec.mock.calls.map(c => c[0].slice(0, 3))).toEqual([['--remote', 'leave', GRID], ['--remote', 'join', GRID]])
+    expect(next.exec.mock.calls.map(c => c[0].slice(0, 3))).toEqual([['--remote', 'join', GRID]])
+    expect(next.at()).toBe(at)
     expect(next.shares.list()).toEqual([{ grid: GRID, connectionId: 'c1', model: 'm', name: 'OpenRouter' }])
-    expect(JSON.parse(await readFile(stateFile, 'utf8'))).toEqual([{ grid: GRID, alias: 'm', connectionId: 'c1' }])
+    expect(JSON.parse(await readFile(stateFile, 'utf8'))).toEqual(JSON.parse(noted))
+    // Its port taken meanwhile: the old address leaves first, and it joins at a new one.
     await next.shares.stopAll()
-    // A note from before connections were noted is taken off and not shared; junk, failures and no file break nothing.
-    await writeFile(stateFile, JSON.stringify([null, { grid: 7 }, { grid: GRID, alias: 'x' }]))
-    const old = setup({ stateFile })
+    const blocker = (await import('node:net')).createServer()
+    await new Promise<void>(resolve => blocker.listen(Number(port), '127.0.0.1', resolve))
+    await writeFile(stateFile, noted)
+    const moved = setup({ stateFile }); open = moved.shares
+    await moved.shares.restore()
+    expect(moved.exec.mock.calls.map(c => c[0].slice(0, 2))).toEqual([['--remote', 'leave'], ['--remote', 'join']])
+    expect(moved.at()).not.toBe(at)
+    await moved.shares.stopAll()
+    blocker.close()
+    // A note from before connections were noted is taken off and not shared; one from before addresses were noted is taken
+    // off and shared anew; a token that is not one is no address. Junk, failures and no file break nothing.
+    await writeFile(stateFile, JSON.stringify([null, { grid: 7 }, { grid: GRID, alias: 'x' }, { grid: GRID, alias: 'y', connectionId: 'c1', port: 70000, token: 'zz' }]))
+    const old = setup({ stateFile }); open = old.shares
     await old.shares.restore()
-    expect(old.exec.mock.calls).toEqual([[['--remote', 'leave', GRID, '--engine', 'x']]])
+    expect(old.exec.mock.calls.map(c => c[0].slice(0, 2))).toEqual([['--remote', 'leave'], ['--remote', 'leave'], ['--remote', 'join']])
+    await old.shares.stopAll()
     await writeFile(stateFile, JSON.stringify([{ grid: GRID, alias: 'x', connectionId: 'c1' }]))
     const failing = setup({ stateFile, exec: async () => { throw new Error('gone') } })
     await failing.shares.restore()
@@ -127,4 +172,5 @@ describe('an API shared with a Swarm', () => {
     await setup({ stateFile: join(stateFile, 'missing', 'x.json') }).shares.restore()
     await setup().shares.restore()
   })
+
 })

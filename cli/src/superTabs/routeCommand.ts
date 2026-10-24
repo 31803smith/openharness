@@ -7,7 +7,7 @@ import { openDaemon, type Daemon, type Where } from '../agentClient/daemon.js'
 import { requiredToolReason, startRequirements } from './capacity.js'
 import { inspectCapacity, type ScopedRequest } from './start.js'
 import { ENDED_WORK, object, within } from './wire.js'
-import { choose, decide, parseAssessment, quotaOf2, rateFor, recordOf, repoMatch, type Assessment, type Commitment, type MemberFrame, type Policy, type Probe, type SwarmRule, type TaskFolder } from './route.js'
+import { API_BUILDERS, choose, decide, parseAssessment, quotaOf2, rateFor, recordOf, repoMatch, type Assessment, type Commitment, type HeldModel, type MemberFrame, type Policy, type Probe, type SwarmRule, type TaskFolder } from './route.js'
 import { stat } from 'node:fs/promises'
 import { describeScmProject } from '../scm/scmProjects.js'
 
@@ -184,7 +184,7 @@ export async function routeTask(input: { tabId: string; conversationId: string; 
   // Picks started or assigned and still at work hold part of their account's quota; the log, and so this, is per Swarm.
   const working = (decisions ?? []).filter(d => d.final && d.outcome === null && typeof d.account === 'string')
     .map(d => ({ account: d.account, spend: object(d.spend), size: d.size, createdAt: Date.parse(String(d.createdAt)) }) as Commitment)
-  const choice = choose(probes, policy, assessment, Date.now(), working, rules)
+  const choice = choose(probes, policy, assessment, Date.now(), working, rules, heldLocalModels(state))
   if ('error' in choice) return choice
   const verdict = decide(choice)
   const operationId = `route-${newId()}`
@@ -226,17 +226,13 @@ const LOCAL_FRESH_MS = 45_000
 /** Refusals about a subscription's allowance, which a local model does not spend. */
 const SUBSCRIPTION = /subscription/i
 
-/** New agents on local models (docs/plans/2026-10-23-swarm-local-models.md), only while the owner has the add-on on and a
- * fresh reading lists the model. One served on the Swarm's grid, an engine of a member's or an API one shares, is reached
- * through the grid relay from any Swarm machine that can start Claude Code or Codex. One on another grid, shared with a
- * machine's owner, only from that machine (owner, 2026-10-23). One Builder per model, since a node answers one
- * conversation at a time. Never for a review. */
-export function localProbes(state: Json, policy: Policy, probes: Probe[], a: Assessment, review: boolean, now: number = Date.now()): Probe[] {
-  const addOn = object(state.localModels)
-  const swarm = addOn.enabled === true && typeof addOn.grid === 'string' ? addOn.grid : null
-  if (!swarm || review || (policy.localModels?.enabled === false && !a.local)) return []
+interface Served { grid: string; model: string; label: string; kind: 'local' | 'api' | 'shared'; machines: Set<string> | null; holders: string[] }
+
+/** The models served for the Swarm while the owner has the add-on on and a fresh reading lists them, by grid and model, each
+ * with the Builders on it: one started on a model, or starting on it, holds it until it leaves the Swarm. */
+function servedModels(state: Json, swarm: string, now: number): Map<string, Served> {
   // By grid and model: its label, and the machines that may run it (null: any).
-  const served = new Map<string, { grid: string; model: string; label: string; kind: 'local' | 'api' | 'shared'; machines: Set<string> | null }>()
+  const served = new Map<string, Served>()
   for (const machine of list(state.machines)) {
     const observed = object(machine.observation)
     if (!finite(observed.receivedAt) || now - observed.receivedAt > LOCAL_FRESH_MS) continue
@@ -244,19 +240,52 @@ export function localProbes(state: Json, policy: Policy, probes: Probe[], a: Ass
       if (typeof l.grid !== 'string' || typeof l.model !== 'string') continue
       const key = `${l.grid}\0${l.model}`, anywhere = l.grid === swarm
       const kind = l.kind === 'api' || l.kind === 'shared' ? l.kind : anywhere ? 'local' : 'shared'
-      const known = served.get(key) ?? { grid: l.grid, model: l.model, label: text(l.name) ?? l.model, kind, machines: anywhere ? null : new Set<string>() }
+      const known = served.get(key) ?? { grid: l.grid, model: l.model, label: text(l.name) ?? l.model, kind, machines: anywhere ? null : new Set<string>(), holders: [] }
       known.machines?.add(String(machine.machineId))
       served.set(key, known)
     }
   }
-  // A model a Builder started on, or is starting on, is taken until that Builder leaves the Swarm.
-  const members = new Set(list(state.agents).map(agent => String(agent.harnessId)))
+  const agents = new Map(list(state.agents).map(agent => [String(agent.harnessId), text(agent.displayName) ?? text(agent.name) ?? 'a Builder']))
   for (const start of list(state.starts)) {
     const request = object(start.request)
-    if (typeof request.gridModel === 'string' && !start.error && (!start.harnessId || members.has(String(start.harnessId)))) {
-      served.delete(`${typeof request.gridName === 'string' ? request.gridName : swarm}\0${request.gridModel}`)
+    if (typeof request.gridModel !== 'string' || start.error || (start.harnessId && !agents.has(String(start.harnessId)))) continue
+    served.get(`${typeof request.gridName === 'string' ? request.gridName : swarm}\0${request.gridModel}`)?.holders
+      .push(start.harnessId ? agents.get(String(start.harnessId))! : 'a Builder that is starting')
+  }
+  return served
+}
+
+/** Whether [m] can take another Builder: a local engine or a model shared with a member takes one, an API model up to [API_BUILDERS]. */
+const takesBuilder = (m: Served) => m.holders.length < (m.kind === 'api' ? API_BUILDERS : 1)
+
+/** The Swarm's served models that take no more Builders, and who is on them, then those a fresh reading says Builders are
+ *  never offered, and why (superTabs/machines.ts refusedOn): what the route says when it offers none. */
+export function heldLocalModels(state: Json, now: number = Date.now()): HeldModel[] {
+  const addOn = object(state.localModels)
+  if (addOn.enabled !== true || typeof addOn.grid !== 'string') return []
+  const held: HeldModel[] = [...servedModels(state, addOn.grid, now).values()].filter(m => !takesBuilder(m))
+    .map(({ model, label, kind, holders }) => ({ model, label, kind, holders }))
+  for (const machine of list(state.machines)) {
+    const observed = object(machine.observation)
+    if (!finite(observed.receivedAt) || now - observed.receivedAt > LOCAL_FRESH_MS) continue
+    for (const r of list(observed.refusedModels)) {
+      if (r.grid !== addOn.grid || typeof r.model !== 'string' || typeof r.why !== 'string' || held.some(m => m.model === r.model)) continue
+      held.push({ model: r.model, label: text(r.name) ?? r.model, kind: 'local', holders: [], refused: r.why })
     }
   }
+  return held
+}
+
+/** New agents on local models (docs/plans/2026-10-23-swarm-local-models.md), only while the owner has the add-on on and a
+ * fresh reading lists the model. One served on the Swarm's grid, an engine of a member's or an API one shares, is reached
+ * through the grid relay from any Swarm machine that can start Claude Code or Codex. One on another grid, shared with a
+ * machine's owner, only from that machine (owner, 2026-10-23). One Builder per local engine, since it answers one
+ * conversation at a time; up to [API_BUILDERS] per API model (owner, 2026-10-24). Never for a review. */
+export function localProbes(state: Json, policy: Policy, probes: Probe[], a: Assessment, review: boolean, now: number = Date.now()): Probe[] {
+  const addOn = object(state.localModels)
+  const swarm = addOn.enabled === true && typeof addOn.grid === 'string' ? addOn.grid : null
+  if (!swarm || review || (policy.localModels?.enabled === false && !a.local)) return []
+  const served = new Map([...servedModels(state, swarm, now)].filter(([, m]) => takesBuilder(m)))
   if (!served.size) return []
   // One base per machine and engine: the first new-agent row the policy offers there, which carries the machine's refusals.
   const bases = new Map<string, Probe>()

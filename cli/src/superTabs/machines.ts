@@ -3,6 +3,7 @@ import { lstat, readFile, realpath, rm } from 'node:fs/promises'
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import type { CoreApi } from '../core/api.js'
 import { openDaemon } from '../agentClient/daemon.js'
+import { codingRefusal } from '../lib/codingModel.js'
 import { backend, SuperTabHostError } from './host.js'
 import { identifier, object } from './wire.js'
 import { readCapabilities, quotaOf, meteredEngine } from './capacity.js'
@@ -183,13 +184,22 @@ export class ContributedMachines {
           : listedEngines.filter(supported)
         // Only while the owner has the Local models add-on on: the models this machine serves on the Swarm's grid (its own
         // engines, the APIs it shares), then the ones shared with its owner that they offer to this Swarm (usable here alone).
+        // What this machine serves there counts only while the Swarm's grid lists it: the grid can lose a model this
+        // machine still thinks it shares, and a Builder sent to one waits without end (lib/swarmHeal.ts, which also joins
+        // it again). Unknown — the grid could not be read — keeps the reading as it is.
+        const live = typeof row.localGrid === 'string'
+          ? liveOn(await local.request('grid_swarm_heal', { grid: row.localGrid }, 30_000).catch(() => ({}))) : null
+        const listed = (m: LocalModelReading) => !live || live.has(m.model)
+        const fleet = typeof row.localGrid === 'string' ? await local.request('grid_fleet_models_list', {}, 20_000).catch(() => ({})) : null
+        const refusedModels = typeof row.localGrid === 'string' ? refusedOn(fleet, row.localGrid) : []
         const localModels = typeof row.localGrid === 'string' ? [
-          ...servedOn(await local.request('grid_fleet_models_list', {}, 20_000).catch(() => ({})), row.localGrid),
-          ...apisOn(await local.request('grid_swarm_api_shares', { grid: row.localGrid }, 10_000).catch(() => ({})), row.localGrid),
+          ...servedOn(fleet, row.localGrid).filter(listed),
+          ...apisOn(await local.request('grid_swarm_api_shares', { grid: row.localGrid }, 10_000).catch(() => ({})), row.localGrid).filter(listed),
           ...offered(sharedWith(await this.gridModels(local), row.localGrid),
             await local.request('grid_swarm_offers', { grid: row.localGrid }, 10_000).catch(() => ({}))),
         ].slice(0, MAX_LOCAL_MODELS) : null
         const observation = { generation: pool.generation, tools: reportedTools, ...(localModels ? { localModels } : {}),
+          ...(refusedModels.length ? { refusedModels } : {}),
           ...(Object.keys(toolProbeErrors).length ? { toolProbeErrors } : {}),
           resources: { cpuPercent: finite(resources.cpuPercent), memoryUsedBytes: finite(resources.memoryUsedBytes), memoryTotalBytes: finite(resources.memoryTotalBytes),
             diskFreeBytes: finite(resources.diskFreeBytes), diskTotalBytes: finite(resources.diskTotalBytes), projectDiskFreeBytes: finite(resources.projectDiskFreeBytes), projectDiskTotalBytes: finite(resources.projectDiskTotalBytes),
@@ -207,9 +217,9 @@ export class ContributedMachines {
           const path = `/api/super-tabs/${row.tabId}/machines/${this.machineId}`
           try { await this.deps.backend(this.core, 'POST', path, observation) }
           catch (error) {
-            if (!(error instanceof SuperTabHostError) || error.status !== 400 || error.code !== 'VALIDATION_ERROR' || !('toolProbeErrors' in observation || 'localModels' in observation)) throw error
+            if (!(error instanceof SuperTabHostError) || error.status !== 400 || error.code !== 'VALIDATION_ERROR' || !('toolProbeErrors' in observation || 'localModels' in observation || 'refusedModels' in observation)) throw error
             // Older backends reject the additive fields. Their boolean-only view still safely refuses an unverified tool.
-            const { toolProbeErrors: _probeErrors, localModels: _served, ...legacy } = observation
+            const { toolProbeErrors: _probeErrors, localModels: _served, refusedModels: _refused, ...legacy } = observation
             await this.deps.backend(this.core, 'POST', path, legacy)
           }
           this.published.set(String(row.tabId), { at: began, signature })
@@ -344,6 +354,13 @@ const SWARM_GRID = /^swarm-[0-9a-f]{12}$/
 
 type LocalModelReading = { grid: string; model: string; name?: string; contextWindow?: number; kind: 'local' | 'api' | 'shared' }
 
+/** The models a `grid_swarm_heal` answer says the Swarm's grid lists, or null when it could not say (an older daemon, or
+ *  the grid unread). */
+export function liveOn(answer: unknown): Set<string> | null {
+  const live = object(answer).live
+  return Array.isArray(live) ? new Set(live.filter((m): m is string => typeof m === 'string')) : null
+}
+
 /** The APIs a `grid_swarm_api_shares` answer says this machine shares on [grid] (`lib/swarmApiShares.ts`). */
 export function apisOn(answer: unknown, grid: string): LocalModelReading[] {
   return list(object(answer).shares).filter(s => s.grid === grid && typeof s.model === 'string' && s.model.length > 0 && s.model.length <= 200)
@@ -372,15 +389,31 @@ export function offered(shared: LocalModelReading[], answer: unknown): LocalMode
   return shared.filter(m => offers.has(`${m.grid}\0${m.model}`))
 }
 
-/** The models a `grid_fleet_models_list` answer says this machine serves on [grid], by the name grid lists each under. */
-export function servedOn(answer: unknown, grid: string): LocalModelReading[] {
-  const out: LocalModelReading[] = []
+/** The models a `grid_fleet_models_list` answer says this machine serves on [grid], by the name grid lists each under,
+ *  each with why Builders are not offered it when it is too small or too slow to drive a coding agent (lib/codingModel.ts). */
+function fleetOn(answer: unknown, grid: string): Array<LocalModelReading & { why: string | null }> {
+  const out: Array<LocalModelReading & { why: string | null }> = []
+  const num = (v: unknown) => typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : undefined
   for (const model of list(object(answer).models)) {
     const on = list(model.servedOn).find(s => s.grid === grid)
     const served = Array.isArray(on?.servedAs) ? on.servedAs.find((n): n is string => typeof n === 'string' && n.length > 0 && n.length <= 200) : undefined
     if (!served || out.length >= 16) continue
+    const why = codingRefusal({ name: typeof model.name === 'string' ? model.name : served, paramsB: num(model.paramsB), sizeBytes: num(model.sizeBytes),
+      quantization: typeof model.quant === 'string' ? model.quant : undefined, tokensPerSecond: num(model.tokensPerSecond), estTokS: num(model.estTokS) })
     out.push({ grid, model: served, ...(typeof model.name === 'string' ? { name: model.name.slice(0, 200) } : {}),
-      ...(typeof model.contextWindow === 'number' && Number.isInteger(model.contextWindow) && model.contextWindow > 0 ? { contextWindow: model.contextWindow } : {}), kind: 'local' })
+      ...(typeof model.contextWindow === 'number' && Number.isInteger(model.contextWindow) && model.contextWindow > 0 ? { contextWindow: model.contextWindow } : {}), kind: 'local', why })
   }
   return out
+}
+
+/** The models this machine serves on [grid] that Builders may run on. One too small or too slow to drive a coding agent is
+ *  left out: the route never offers it ([refusedOn] says why). */
+export function servedOn(answer: unknown, grid: string): LocalModelReading[] {
+  return fleetOn(answer, grid).filter(m => m.why === null).map(({ why: _why, ...reading }) => reading)
+}
+
+/** The models this machine serves on [grid] that Builders are not offered, with why: a Lead asked for one is told that,
+ *  not to share a model the Swarm already has (2026-10-24). */
+export function refusedOn(answer: unknown, grid: string): Array<{ grid: string; model: string; name?: string; why: string }> {
+  return fleetOn(answer, grid).flatMap(({ grid: g, model, name, why }) => why === null ? [] : [{ grid: g, model, ...(name ? { name } : {}), why: why.slice(0, 300) }])
 }

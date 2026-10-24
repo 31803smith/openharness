@@ -489,16 +489,19 @@ class _SwarmModelsHints extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final row = search.selected;
+    final action = row == null ? null : search.swarmModelAction(row);
     final enter = row == null
         ? null
         : row.isCreate
         ? 'Add API connection'
-        : search.swarmModelAction(row)?.label ??
-              (search.canExpandApi(row) ||
-                      search.isModelDownloadsRow(row) ||
-                      search.canGetModel(row)
-                  ? search.actionLabel(row)
-                  : null);
+        // Enter does nothing on an action that cannot run (a model too small for Builders): no hint for it.
+        : action != null
+        ? (action.run == null ? null : action.label)
+        : search.canExpandApi(row) ||
+              search.isModelDownloadsRow(row) ||
+              search.canGetModel(row)
+        ? search.actionLabel(row)
+        : null;
     Widget hint(String key, String label) => Row(
       mainAxisSize: MainAxisSize.min,
       children: [

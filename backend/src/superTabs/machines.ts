@@ -57,6 +57,10 @@ export const machineObservationSchema = z.object({ generation: z.string().max(16
   localModels: z.array(z.object({ grid: z.string().min(1).max(160), model: z.string().min(1).max(200),
     name: z.string().max(200).optional(), contextWindow: z.number().int().positive().nullable().optional(),
     kind: z.enum(['local', 'api', 'shared']).optional() }).strict()).max(64).optional(),
+  /** Models this machine serves on the Swarm's grid that Builders are not offered, too small or too slow to drive a coding
+   *  agent (cli/src/lib/codingModel.ts), with why: so the route can tell a Lead asked for one why it is not offered. */
+  refusedModels: z.array(z.object({ grid: z.string().min(1).max(160), model: z.string().min(1).max(200),
+    name: z.string().max(200).optional(), why: z.string().min(1).max(300) }).strict()).max(16).optional(),
 }).strict()
 export type MachineObservation = z.infer<typeof machineObservationSchema>
 

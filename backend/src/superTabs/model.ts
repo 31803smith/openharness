@@ -46,7 +46,7 @@ export interface Agent {
   /** A usage limit seen on its terminal; routing skips the agent until then. Shown as null once passed (terminal.ts). */
   limitedUntil?: string | null
   /** Terminal alert episodes in progress, so each one posts a single row (terminal.ts). */
-  alerting?: Array<'prompt' | 'limit'>
+  alerting?: Array<'prompt' | 'limit' | 'model'>
 }
 export type AgentRole = 'builder' | 'reviewer'
 export const agentRole = (agent: Pick<Agent, 'role'>): AgentRole => agent.role ?? 'builder'

@@ -43,6 +43,7 @@ const apiShares = vi.hoisted(() => ({
   share: vi.fn(async () => ({ ok: true })), stop: vi.fn(async () => ({ ok: true })),
   list: vi.fn((_grid?: string) => [{ grid: 'swarm-0123456789ab', connectionId: 'c1', model: 'm', name: 'OpenRouter' }]),
   restore: vi.fn(async (): Promise<void> => {}),
+  rejoin: vi.fn(async () => ({ ok: true })),
 }))
 const swarmOffers = vi.hoisted(() => ({
   set: vi.fn((): unknown[] => [{ grid: 'swarm-0123456789ab', sharedGrid: 'team', model: 'muse' }]),
@@ -104,6 +105,8 @@ const local = vi.hoisted(() => ({
   list: vi.fn(async (_grid: string | null, _force?: boolean): Promise<Record<string, unknown>> => ({ models: [], busy: false, observedAt: 'now' })),
   act: vi.fn(async (_grid: string | null, _modelId: unknown, _action: string): Promise<Record<string, unknown>> => ({})),
   communityGrid: vi.fn(async (): Promise<string | null> => 'Omagrid'),
+  servedApps: vi.fn(async (_grid: string): Promise<string[]> => []),
+  rejoinApp: vi.fn(async (_grid: string): Promise<boolean> => true),
 }))
 vi.mock('../lib/localModels.js', () => ({
   LocalModels: class {
@@ -111,6 +114,8 @@ vi.mock('../lib/localModels.js', () => ({
     list = local.list
     act = local.act
     communityGrid = local.communityGrid
+    servedApps = local.servedApps
+    rejoinApp = local.rejoinApp
   },
 }))
 
@@ -439,6 +444,31 @@ describe('the models service', () => {
       expect(deps.access('c1')).toEqual({ connection: { id: 'c1' }, apiKey: 'fixture' })
       await deps.exec(['--remote', 'ls'])
       expect(gridExec).toHaveBeenLastCalledWith(['--remote', 'ls'])
+    })
+
+    it('says what a Swarm\'s grid lists, and joins this computer\'s models again when it lost them', async () => {
+      vi.useFakeTimers({ toFake: ['Date'] })
+      const { requests } = setup()
+      // Past the first minutes of the process, when the shares' restore joins them itself.
+      vi.setSystemTime(Date.now() + 10 * 60_000)
+      const heal = requests.grid_swarm_heal!
+      vi.mocked(gridExec).mockResolvedValueOnce({ code: 'OK', exitCode: 0, stdout: '[{"model":"llama"}]', stderr: '', message: '' })
+      local.servedApps.mockResolvedValueOnce(['llama'])
+      // The shared API is missing: it is joined again, which brings the rest back beside it.
+      expect(await heal({ grid: 'swarm-0123456789ab' }, asker)).toEqual({ live: ['llama'], missing: ['m'] })
+      expect(apiShares.rejoin).toHaveBeenCalledWith('swarm-0123456789ab', 'c1', 'm')
+      expect(gridExec).toHaveBeenCalledWith(['--remote', 'models', 'swarm-0123456789ab', '--json'])
+      // A grid that cannot be read says nothing, and joins nothing.
+      vi.mocked(gridExec).mockResolvedValueOnce({ code: 'GRID_FAILED', exitCode: 1, stdout: '', stderr: 'offline', message: '' })
+      expect(await heal({ grid: 'swarm-0123456789ab' }, asker)).toEqual({ live: null, missing: [] })
+      expect(await heal({ grid: 'team' }, asker)).toEqual({ error: 'INVALID_REQUEST' })
+      // Only an app engine missing, on another grid not tried yet: the app engine is joined again.
+      apiShares.list.mockReturnValueOnce([])
+      vi.mocked(gridExec).mockResolvedValueOnce({ code: 'OK', exitCode: 0, stdout: '[]', stderr: '', message: '' })
+      local.servedApps.mockResolvedValueOnce(['llama'])
+      expect(await heal({ grid: 'swarm-ba9876543210' }, asker)).toEqual({ live: [], missing: ['llama'] })
+      expect(local.rejoinApp).toHaveBeenCalledWith('swarm-ba9876543210')
+      vi.useRealTimers()
     })
 
     it('offers a model shared with this computer\'s person to a Swarm, for them only, and lists what is offered', async () => {
