@@ -150,7 +150,10 @@ export function teamWorkRefusal(pool: ContributedMachine, now: number, teamRow =
   const reading = pool.observation, name = pool.name
   if (!teamRow && reading?.sessionKind !== 'team' && !teamAccountRequired()) return null
   if (!reading || now - reading.receivedAt > MACHINE_FRESH_MS) {
-    return { code: 'MACHINE_OFFLINE', reason: `${name} is offline, so it cannot show that its Harness Team account is private.` }
+    // A Mac's team account goes by its Mac's name ("One machine"), and the Mac itself may well be online.
+    return { code: 'MACHINE_OFFLINE', reason: pool.hostMachineId
+      ? `The Harness Team account on ${name} is offline, so it cannot show that it is private.`
+      : `${name} is offline, so it cannot show that its Harness Team account is private.` }
   }
   if (!teamRow && reading.sessionKind !== 'team') return { code: 'TEAM_ACCOUNT_REQUIRED', reason: `${name} has no Harness Team account yet, ${ONLY_OWN}.` }
   const privacy = reading.privacy
@@ -198,19 +201,21 @@ export function teamPoolsOf(state: SuperTabState, pool: ContributedMachine): Con
 }
 
 /** The one of them that runs teammates' work on the Mac: not being removed, and the last to report. Undefined when none. */
-export function teamPoolOf(state: SuperTabState, pool: ContributedMachine): ContributedMachine | undefined {
-  return teamPoolsOf(state, pool).filter(m => !m.removal)
+export function teamPoolOf(state: SuperTabState, pool: ContributedMachine, live?: readonly string[]): ContributedMachine | undefined {
+  // [live]: the account rows still signed in as team accounts (store.ts teamMachines). One removed since (`harness team
+  // remove` deletes its machine) leaves its pool behind, and the Mac goes back to what a Mac without one does.
+  return teamPoolsOf(state, pool).filter(m => !m.removal && (!live || live.includes(m.machineId)))
     .reduce<ContributedMachine | undefined>((best, m) => !best || (m.observation?.receivedAt ?? -1) >= (best.observation?.receivedAt ?? -1) ? m : best, undefined)
 }
 
 /** Where a new agent for [project] runs when a start names [machineId]: the Mac's team account when the project is not
  *  its contributor's own and the Mac has one in this Swarm, else the machine named. */
-export function teamMachineFor(state: SuperTabState, machineId: string, project: SwarmProject, idle = false): string {
+export function teamMachineFor(state: SuperTabState, machineId: string, project: SwarmProject, idle = false, live?: readonly string[]): string {
   // With no GitHub App on this server a team account cannot fetch or push, so the work stays on the Mac, as before.
   if (idle) return machineId
   const pool = state.machines?.find(m => m.machineId === machineId)
   if (!pool || project.ownerId === pool.contributorId) return machineId
-  return teamPoolOf(state, pool)?.machineId ?? machineId
+  return teamPoolOf(state, pool, live)?.machineId ?? machineId
 }
 
 /** The folder a start for [project] uses on [pool]: what admitMachineStart accepts there. */
@@ -225,8 +230,9 @@ export function projectFolder(pool: ContributedMachine, project: SwarmProject): 
  * place of the Mac's own for that project. Every other start is returned as it is, so the Mac's owner's own projects
  * stay with the owner's daemon, and a Mac without a team account here refuses it as before (teamWorkCheck).
  */
-export function teamStartRequest(state: SuperTabState, request: AgentStartRequest, project: SwarmProject, idle = false): AgentStartRequest {
-  const machineId = teamMachineFor(state, request.machineId, project, idle)
+export function teamStartRequest(state: SuperTabState, request: AgentStartRequest, project: SwarmProject, idle = false,
+  live?: readonly string[]): AgentStartRequest {
+  const machineId = teamMachineFor(state, request.machineId, project, idle, live)
   if (machineId === request.machineId) return request
   const pool = state.machines!.find(m => m.machineId === request.machineId)!, team = state.machines!.find(m => m.machineId === machineId)!
   return { ...request, machineId, cwd: request.cwd === projectFolder(pool, project) ? projectFolder(team, project) : request.cwd }
