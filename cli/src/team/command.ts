@@ -16,7 +16,8 @@
 import type { AuthSession } from '../lib/authSession.js'
 import type { RunAdmin } from './admin.js'
 import { teamConfigJson, type TeamConfig } from './config.js'
-import { mintTeamHandoff, redeemTeamHandoff, revokeHarnessRefresh, teamSession, TeamSignInError, type Post } from './handoff.js'
+import { engineLines, type TeamEngines } from './engines.js'
+import { mintTeamConversion, mintTeamHandoff, redeemTeamHandoff, revokeHarnessRefresh, teamSession, TeamSignInError, type Get, type Post } from './handoff.js'
 import {
   SENTINEL_NAME, TEAM_CONFIG_FILE, TEAM_HOME, TEAM_LABEL, TEAM_PLIST, TEAM_PORT, TEAM_REAL_NAME, TEAM_STATUS_DIR, TEAM_STATUS_FILE,
   TEAM_USER, TeamInputError, carriedBackendEnv, checkPath, checkUser, teamPaths,
@@ -29,8 +30,9 @@ export const TEAM_USAGE = [
   '',
   '  setup     make the Harness Team account on this Mac for Swarm work: a separate standard user, "Harness Team"',
   `            (${TEAM_USER}), whose own Harness daemon runs teammates' agents so they cannot read your files. macOS asks`,
-  '            for an administrator password once. Running it again repairs it (--sign-in-again: a new sign-in for it)',
-  '  status    whether the account exists and runs, its sign-in and privacy check, and everything setup made',
+  '            for an administrator password once. It installs the account\'s own Claude Code and Codex, which you sign in',
+  '            once in a terminal on its machine. Running it again repairs it (--sign-in-again: a new sign-in for it)',
+  '  status    whether the account exists and runs, its sign-in, privacy check and engines, and everything setup made',
   '  remove    delete the account, its home folder and its daemon (administrator password); your home stays private',
   '  on        for a computer used only for agents (a Mac mini, a Linux or Windows box): sign it in for team work',
   '            only. It then runs Swarm agents and reaches none of your other computers (--yes skips the question)',
@@ -76,6 +78,10 @@ export interface TeamCommandDeps {
   /** Bearer headers for this computer's sign-in, refreshed when stale (lib/controlPlane.ts). */
   auth(): Promise<{ session: AuthSession; headers: Record<string, string> }>
   post: Post
+  get: Get
+  /** This computer's machine key on the account's device key log (lib/e2ee/store.ts), never made here; null when it has
+   *  none. `team on` signs with it to show the backend it is this computer. */
+  machineKey(): { priv: Uint8Array } | null
   computerId(): string
   autonomousEnv: 'prod' | 'stag'
 
@@ -90,15 +96,19 @@ export interface TeamCommandDeps {
   accountExists(user: string): Promise<boolean>
   jobState(label: string): Promise<JobState>
 
-  /** The team account's side: its handed-over code, and the privacy check. */
+  /** The team account's side: its handed-over code, the privacy check, and its own Claude Code and Codex (./engines.ts). */
   takeHandoff(path: string): string | null
   privacy(config: TeamConfig): PrivacyResult
+  engines(config: TeamConfig): Promise<TeamEngines>
 
   /** This computer's daemon: stopped (true when one was running), started again (prints its status and may exit),
    *  and the ordinary sign-in, for `team off` (which starts the daemon again when [restart]). */
   stopDaemon(): Promise<boolean>
   startDaemon(): Promise<void>
   signIn?(restart: boolean): Promise<void>
+  /** What Desktop's automatic offer remembers (./autoSetup.ts): a setup that made the account forgets a cancelled prompt,
+   *  and a removal is remembered as one, so the account is not made again on its own. */
+  setupDecision?: { clear(): void; decline(): void }
 }
 
 export async function teamCommand(argv: string[], deps: TeamCommandDeps): Promise<number> {
@@ -146,6 +156,7 @@ function madeLines(ownerHome: string): string[] {
     `  log       ${team.log} (inside the account's home)`,
     `  setup     ${TEAM_CONFIG_FILE} and ${TEAM_STATUS_DIR}/`,
     `  check     ${ownerHome}/${SENTINEL_NAME}, a file the account must not be able to read`,
+    `  engines   Claude Code and Codex in ${TEAM_HOME}/.local, installed by the account itself`,
     `  your home ${ownerHome}, made private (mode 700)`,
   ]
 }
@@ -204,6 +215,7 @@ async function setup(deps: TeamCommandDeps, json: boolean, signInAgain: boolean)
     if (result.code === 'CANCELLED') return fail(deps, json, 'CANCELLED', 'Nothing was changed: the administrator prompt was cancelled.')
     return fail(deps, json, 'SETUP_FAILED', `The Harness Team account was not finished: ${result.message} Run \`harness team setup\` again; it repairs what is there.`)
   }
+  try { deps.setupDecision?.clear() } catch { /* only Desktop's offer reads it */ }
   const handedOver = /handed a sign-in to the team account/.test(result.stdout)
   if (!json) deps.out(handedOver ? 'Waiting for the team daemon to sign in and check its privacy…' : 'Waiting for the team daemon to check its privacy…')
   // The daemon reports through its status file (./privacy.ts): the sign-in when it redeemed one, the check every start.
@@ -219,9 +231,10 @@ async function setup(deps: TeamCommandDeps, json: boolean, signInAgain: boolean)
   }
   const privacy = report?.privacy && report.privacy.checkedAt >= startedAt ? report.privacy : null
   const signIn = report?.signIn && (!handedOver || report.signIn.at >= startedAt) ? report.signIn : null
+  const engines = report?.engines && report.engines.checkedAt >= startedAt ? report.engines : undefined
   if (json) {
     const ok = privacy?.passed === true && (!handedOver || signIn?.state === 'signed-in')
-    deps.out(JSON.stringify({ ok, user: TEAM_USER, home: TEAM_HOME, label: TEAM_LABEL, plist: TEAM_PLIST, privacy, signIn }))
+    deps.out(JSON.stringify({ ok, user: TEAM_USER, home: TEAM_HOME, label: TEAM_LABEL, plist: TEAM_PLIST, privacy, signIn, engines: engines ?? null }))
     return ok ? 0 : 1
   }
   let code = 0
@@ -231,6 +244,8 @@ async function setup(deps: TeamCommandDeps, json: boolean, signInAgain: boolean)
   if (privacy?.passed) deps.out('✓ Private: the team account cannot read your files.')
   else if (privacy) { deps.err(`✗ Not private (${privacy.item}): ${privacy.detail}`); code = 1 }
   else deps.out('! The team daemon has not reported its privacy check yet: harness team status')
+  // Installed by setup into the team account's own home; signed in once by the owner, in a terminal on the team machine.
+  for (const line of engineLines(engines, (at) => ago(deps.now(), at))) deps.out(line)
   deps.out('  status: harness team status   ·   undo: harness team remove')
   return code
 }
@@ -265,7 +280,7 @@ async function status(deps: TeamCommandDeps, json: boolean): Promise<number> {
       account: exists, user, realName: config?.realName ?? TEAM_REAL_NAME, home, homePresent: deps.exists(home),
       label: config?.label ?? TEAM_LABEL, plist: config?.plist ?? TEAM_PLIST, plistPresent, job, port: config?.port ?? TEAM_PORT,
       config: config ? TEAM_CONFIG_FILE : null, ownerHomeMode: homeMode === null ? null : homeMode.toString(8),
-      signIn: report?.signIn ?? null, privacy: report?.privacy ?? null, dedicated,
+      signIn: report?.signIn ?? null, privacy: report?.privacy ?? null, engines: report?.engines ?? null, dedicated,
     }))
     return 0
   }
@@ -278,6 +293,7 @@ async function status(deps: TeamCommandDeps, json: boolean): Promise<number> {
   const privacy = report?.privacy
   deps.out(`  privacy     ${!privacy ? '? not checked yet' : privacy.passed ? `Private ✓ (checked ${ago(now, privacy.checkedAt)})` : `✗ ${privacy.item}: ${privacy.detail} (checked ${ago(now, privacy.checkedAt)})`}`)
   deps.out(`  your home   ${ownerHome} · mode ${homeMode === null ? 'unknown' : homeMode.toString(8)}${homeMode === 0o700 ? ' ✓' : ' ✗ should be 700: harness team setup makes it private again'}`)
+  for (const line of engineLines(report?.engines, (at) => ago(now, at))) deps.out(line)
   deps.out('')
   deps.out('  What setup made:')
   for (const line of madeLines(ownerHome)) deps.out(`  ${line}`)
@@ -305,10 +321,12 @@ async function remove(deps: TeamCommandDeps, json: boolean): Promise<number> {
     if (result.code === 'CANCELLED') return fail(deps, json, 'CANCELLED', 'Nothing was removed: the administrator prompt was cancelled.')
     return fail(deps, json, 'REMOVE_FAILED', `The Harness Team account was not fully removed: ${result.message} Run \`harness team remove\` again.`)
   }
+  try { deps.setupDecision?.decline() } catch { /* only Desktop's offer reads it */ }
   if (json) deps.out(JSON.stringify({ ok: true, removed: true }))
   else {
     deps.out(`✓ Removed the Harness Team account (${TEAM_USER}), ${TEAM_HOME} and the daemon ${TEAM_LABEL}.`)
     deps.out(`  Your home folder stays private (mode 700). Its computer stays in your list until you remove it: harness machines`)
+    deps.out('  Harness will not make it again on its own when you join a Swarm; harness team setup makes it again.')
   }
   return 0
 }
@@ -332,22 +350,30 @@ async function teamOn(deps: TeamCommandDeps, json: boolean, yes: boolean): Promi
     if (!/^y(es)?$/i.test(answer)) return fail(deps, json, 'CANCELLED', 'Nothing was changed.')
   }
   const label = `${deps.hostname().slice(0, 60)} · Team`
+  const unchanged = (error: unknown) => error instanceof TeamSignInError
+    ? new TeamSignInError(`${error.message}${/[.!?]$/.test(error.message) ? '' : '.'} Nothing was changed on this computer.`, error.code) : error
+  // A code that turns this very computer into a team machine, keeping its computer id (./handoff.ts).
+  let code: string
+  try {
+    ({ code } = await mintTeamConversion({ auth: () => deps.auth(), post: deps.post, get: deps.get, machineKey: deps.machineKey, now: deps.now }))
+  } catch (error) { throw unchanged(error) }
+  // Stopped before the code is redeemed: redeeming ends this computer's ordinary sign-in on the backend, and a daemon still
+  // running on it, an Autonomous one above all, would connect again under it and make this an ordinary machine again.
+  const wasRunning = await deps.stopDaemon()
   let tokens: Awaited<ReturnType<typeof redeemTeamHandoff>>
   try {
-    const { code } = await mintTeamHandoff(() => deps.auth(), deps.post)
     tokens = await redeemTeamHandoff(code, label, session.computerId, { post: deps.post, sleep: deps.sleep, now: deps.now })
   } catch (error) {
-    if (error instanceof TeamSignInError) throw new TeamSignInError(`${error.message} Nothing was changed on this computer.`, error.code)
-    throw error
+    if (wasRunning) await deps.startDaemon()
+    throw unchanged(error)
   }
-  // The daemon holds the computer's sign-in in memory: it stops before the file changes, and comes back on the new one.
-  const wasRunning = await deps.stopDaemon()
+  // The team sign-in takes the previous one's place in the session file, so nothing here can sign in with that one again.
   const previous = deps.session() ?? session
   deps.writeSession(teamSession(tokens, session.computerId, deps.autonomousEnv, deps.now(),
     session.machineId ? { machineId: session.machineId } : {}))
   await revokeHarnessRefresh(deps.post, previous.refreshToken)
   if (json) deps.out(JSON.stringify({ ok: true, changed: true }))
-  else deps.out('✓ This computer now runs team work only. undo: harness team off')
+  else deps.out('✓ This computer now runs team work only. Its previous sign-in was discarded. undo: harness team off')
   if (wasRunning) await deps.startDaemon()
   return 0
 }
@@ -428,6 +454,11 @@ async function jobStart(deps: TeamCommandDeps, file: string | undefined): Promis
     const privacy = deps.privacy(mine)
     log(privacy.passed ? 'privacy check passed' : `privacy check FAILED (${privacy.item}): ${privacy.detail}`)
     report({ privacy })
+    try {
+      const engines = await deps.engines(mine)
+      log(`engines: ${(['claude', 'codex'] as const).map((e) => `${e} ${engines[e].installed ? engines[e].signedIn === true ? 'signed in' : 'installed' : 'missing'}`).join(', ')}`)
+      report({ engines })
+    } catch (error) { log(`could not check the engines: ${(error as Error).message}`) }
   }
   return 0
 }

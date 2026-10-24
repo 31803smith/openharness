@@ -5,8 +5,9 @@ import { dirname, join } from 'node:path'
 import { createInterface } from 'node:readline'
 import { env } from '../config/env.js'
 import { clearAuthSession, readAuthSession, writeAuthSession } from '../lib/authSession.js'
-import { controlPlaneAuth, postJson } from '../lib/controlPlane.js'
+import { controlPlaneAuth, postJson, requestJson } from '../lib/controlPlane.js'
 import { computerId } from '../lib/daemonState.js'
+import { peekIdentity } from '../lib/e2ee/store.js'
 import { runGuestCommand, type GuestRunner } from '../lib/guestAccounts.js'
 import { managedNodeRuntimeDir } from '../lib/guestHelperInstall.js'
 import { managedNodePath } from '../lib/nodeRuntime.js'
@@ -16,6 +17,8 @@ import type { JobState, TeamCommandDeps } from './command.js'
 import { readTeamConfig } from './config.js'
 import { realPrivacyDeps, readTeamStatus, runPrivacyCheck, writeTeamStatus } from './privacy.js'
 import { takeHandoffFile } from './handoff.js'
+import { checkTeamEngines, realEngineCheckDeps } from './engines.js'
+import { teamSetupDecisionFile, writeTeamSetupDecision } from './autoSetup.js'
 
 /** What `launchctl print system/<label>` says of a job; not loaded when launchd does not know it. Readable without root. */
 export function parseLaunchctlPrint(code: number | null, stdout: string): JobState {
@@ -53,6 +56,8 @@ export function teamCommandDeps(options: {
     clearSession: clearAuthSession,
     auth: controlPlaneAuth,
     post: (path, body, headers) => postJson(path, body, headers ?? {}),
+    get: (path, headers) => requestJson('GET', path, undefined, headers ?? {}),
+    machineKey: () => peekIdentity(),
     computerId,
     autonomousEnv: env.AUTONOMOUS_ENV,
     installed: () => {
@@ -78,6 +83,11 @@ export function teamCommandDeps(options: {
     },
     takeHandoff: (path) => takeHandoffFile(path),
     privacy: (config) => runPrivacyCheck(config, realPrivacyDeps),
+    engines: (config) => checkTeamEngines(realEngineCheckDeps(config.home)),
+    setupDecision: {
+      clear: () => writeTeamSetupDecision(teamSetupDecisionFile(env.ADAPTER_DATA_DIR), null),
+      decline: () => writeTeamSetupDecision(teamSetupDecisionFile(env.ADAPTER_DATA_DIR), { state: 'declined', at: Date.now() }),
+    },
     stopDaemon: options.stopDaemon,
     startDaemon: options.startDaemon,
     ...(options.signIn ? { signIn: options.signIn } : {}),

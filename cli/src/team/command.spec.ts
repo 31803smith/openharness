@@ -7,6 +7,7 @@ import type { AdminScript, RunAdmin } from './admin.js'
 import { teamCommand, type TeamCommandDeps } from './command.js'
 import type { TeamConfig } from './config.js'
 import type { PrivacyResult, TeamStatus } from './privacy.js'
+import type { TeamEngines } from './engines.js'
 import { parseLaunchctlPrint } from './deps.js'
 
 const OWNER_HOME = '/Users/owner-placeholder'
@@ -45,6 +46,7 @@ function fake(over: Partial<TeamCommandDeps> & { adminResult?: Awaited<ReturnTyp
     env: {}, interactive: false, ask: vi.fn(async () => 'y'), now: () => now, sleep: vi.fn(async (ms: number) => { now += ms }),
     session: () => session, writeSession: vi.fn((s: AuthSession) => { session = s }), clearSession: vi.fn(() => { session = null }),
     auth: vi.fn(async () => ({ session: session!, headers: { authorization: 'Bearer x' } })), post: post as never,
+    get: vi.fn(async () => ({ user: { id: 'user-placeholder-1' } })) as never, machineKey: () => ({ priv: new Uint8Array(32).fill(9) }),
     computerId: () => 't'.repeat(32), autonomousEnv: 'prod',
     installed: () => ({ cliDir: `${OWNER_HOME}/.harness/cli`, cliJs: `${OWNER_HOME}/.harness/cli/cli.js`,
       node: `${OWNER_HOME}/.harness/runtime/node-v1/bin/node`, nodeRuntimeDir: `${OWNER_HOME}/.harness/runtime/node-v1`, tmuxRuntimeDir: null }),
@@ -54,6 +56,7 @@ function fake(over: Partial<TeamCommandDeps> & { adminResult?: Awaited<ReturnTyp
     writeStatus: vi.fn((path: string, update: Partial<TeamStatus>) => { status.set(path, { ...(status.get(path) ?? { version: 1 }), ...update, version: 1 }) }),
     accountExists: vi.fn(async () => false), jobState: vi.fn(async () => ({ loaded: true, pid: 4242, state: 'running' })),
     takeHandoff: vi.fn(() => CODE), privacy: vi.fn((): PrivacyResult => ({ passed: true, checkedAt: now })),
+    engines: vi.fn(async (): Promise<TeamEngines> => ({ checkedAt: now, claude: { installed: true, signedIn: false }, codex: { installed: true, signedIn: true } })),
     stopDaemon: vi.fn(async () => true), startDaemon: vi.fn(async () => {}),
     ...over,
   }
@@ -91,6 +94,35 @@ describe('harness team setup', () => {
     expect(text).toContain('/Library/LaunchDaemons/ai.autonomous.harness.team.plist')
     expect(text).toContain('✓ The Harness Team account is signed in.')
     expect(text).toContain('✓ Private')
+    // The engines setup installed in the team account, and how to sign them in (none were reported in this run).
+    expect(text).toContain('engines     ? not reported yet')
+  })
+
+  it('shows the team account\'s engines as its daemon reported them in this run, and how to sign them in', async () => {
+    const f = fake({ statusAfter: (t) => ({ ...reported(t), engines: { checkedAt: t + 3_000, claude: { installed: true, signedIn: false }, codex: { installed: true, signedIn: false } } }) })
+    expect(await teamCommand(['setup'], f.deps)).toBe(0)
+    const text = f.out.join('\n')
+    expect(text).toContain('Claude Code ✓ installed · ✗ not signed in')
+    expect(text).toContain('    codex login --device-auth   Codex')
+    const json = fake({ statusAfter: (t) => ({ ...reported(t), engines: { checkedAt: t - 1, claude: { installed: true, signedIn: true }, codex: { installed: true, signedIn: true } } }) })
+    await teamCommand(['setup', '--json'], json.deps)
+    expect(JSON.parse(json.out.at(-1)!)).toMatchObject({ ok: true, engines: null })
+  })
+
+  it('forgets a prompt Desktop saw cancelled once it makes the account, and a removal is remembered as declined', async () => {
+    const decision = { clear: vi.fn(), decline: vi.fn() }
+    const made = fake({ statusAfter: reported, setupDecision: decision })
+    expect(await teamCommand(['setup'], made.deps)).toBe(0)
+    expect(decision.clear).toHaveBeenCalledTimes(1)
+    const cancelled = fake({ adminResult: { ok: false, code: 'CANCELLED', message: 'x' }, setupDecision: decision })
+    await teamCommand(['setup'], cancelled.deps)
+    expect(decision.clear).toHaveBeenCalledTimes(1)
+    const removed = fake({ readConfig: () => config, setupDecision: decision })
+    expect(await teamCommand(['remove'], removed.deps)).toBe(0)
+    expect(decision.decline).toHaveBeenCalledTimes(1)
+    expect(removed.out.join('\n')).toContain('will not make it again on its own')
+    const failing = fake({ statusAfter: reported, setupDecision: { clear: () => { throw new Error('read-only') }, decline: vi.fn() } })
+    expect(await teamCommand(['setup'], failing.deps)).toBe(0)
   })
 
   it('reports a failed privacy check or sign-in, and returns failure', async () => {
@@ -160,6 +192,22 @@ describe('harness team status', () => {
     }
   })
 
+  it('says whether the team account\'s engines are installed and signed in, and exactly how to sign them in', async () => {
+    const f = fake({ readConfig: () => config, accountExists: vi.fn(async () => true) })
+    f.status.set(STATUS, { version: 1, engines: { checkedAt: 1_000_000 - 60_000, claude: { installed: true, signedIn: false }, codex: { installed: false, signedIn: null } } })
+    await teamCommand(['status'], f.deps)
+    const text = f.out.join('\n')
+    expect(text).toContain('engines     Claude Code ✓ installed · ✗ not signed in')
+    expect(text).toContain('Codex       ✗ not installed · harness team setup installs it')
+    expect(text).toContain('(checked 60s ago)')
+    expect(text).toContain('in Harness, open a terminal on this Mac\'s Harness Team machine')
+    expect(text).toContain('    claude                      Claude Code')
+    const json = fake({ readConfig: () => config, accountExists: vi.fn(async () => true) })
+    json.status.set(STATUS, { version: 1, engines: { checkedAt: 5, claude: { installed: true, signedIn: true }, codex: { installed: true, signedIn: true } } })
+    await teamCommand(['status', '--json'], json.deps)
+    expect(JSON.parse(json.out[0]!).engines).toEqual({ checkedAt: 5, claude: { installed: true, signedIn: true }, codex: { installed: true, signedIn: true } })
+  })
+
   it('shows what is wrong: a failed check, an open home, a stopped daemon', async () => {
     const f = fake({ readConfig: () => config, accountExists: vi.fn(async () => true), mode: () => 0o750,
       jobState: vi.fn(async () => ({ loaded: false, pid: null, state: null })), exists: (p) => p !== config.plist })
@@ -214,15 +262,59 @@ describe('harness team remove', () => {
 })
 
 describe('harness team on and off', () => {
-  it('on: mints a team sign-in with this computer\'s, redeems it here, and swaps the daemon onto it', async () => {
-    const f = fake({ platform: 'linux' })
+  it('on: mints a code that converts this very computer, with its machine key\'s proof, redeems it here, and swaps the daemon onto it', async () => {
+    const f = fake({ platform: 'linux', now: () => 1761300000000 })
+    const order: string[] = []
+    f.post.mockImplementation(async (path: string) => {
+      order.push(path)
+      if (path === '/api/auth/handoff') return { code: CODE, expiresIn: 90, kind: 'team' }
+      if (path === '/api/auth/handoff/redeem') return { token: 'hta_team', refreshToken: 'htr_team', expiresIn: 3600, kind: 'team' }
+      return {}
+    })
+    ;(f.deps.stopDaemon as ReturnType<typeof vi.fn>).mockImplementation(async () => { order.push('stop'); return true })
     expect(await teamCommand(['on', '--yes'], f.deps)).toBe(0)
-    expect(f.post).toHaveBeenCalledWith('/api/auth/handoff', { kind: 'team' }, { authorization: 'Bearer x' })
+    expect(f.post).toHaveBeenCalledWith('/api/auth/handoff', { kind: 'team', computerId: 'c'.repeat(32),
+      proof: { machineId: 'm1', at: 1761300000000, sig: expect.any(String) } }, { authorization: 'Bearer x' })
     expect(f.post).toHaveBeenCalledWith('/api/auth/handoff/redeem', { code: CODE, label: 'Mac-placeholder · Team', computerId: computer.computerId })
-    expect(f.session()).toMatchObject({ kind: 'team', accessToken: 'hna_team', computerId: computer.computerId, machineId: 'm1' })
+    // The daemon stops before the redeem: a daemon still on the old sign-in would make this an ordinary machine again.
+    expect(order.slice(0, 3)).toEqual(['/api/auth/handoff', 'stop', '/api/auth/handoff/redeem'])
+    // The team sign-in replaces the previous one in the session file; that one is signed out where it can be.
+    expect(f.session()).toEqual(expect.objectContaining({ kind: 'team', accessToken: 'hta_team', refreshToken: 'htr_team', computerId: computer.computerId, machineId: 'm1' }))
     expect(f.post).toHaveBeenCalledWith('/api/auth/revoke', { refreshToken: 'hnr_old' })
+    expect(f.out.join('\n')).toContain('previous sign-in was discarded')
+    expect(f.deps.startDaemon).toHaveBeenCalled()
+  })
+
+  it('on: an Autonomous sign-in is discarded too, and one this computer cannot prove changes nothing', async () => {
+    const sso: AuthSession = { ...computer, accessToken: 'eyJ.sso-placeholder', refreshToken: 'sso-refresh-placeholder' }
+    const f = fake({ platform: 'linux' })
+    f.setSession(sso)
+    expect(await teamCommand(['on', '--yes'], f.deps)).toBe(0)
+    expect(f.session()).toMatchObject({ kind: 'team', accessToken: 'hna_team' })
+    expect(JSON.stringify(f.session())).not.toContain('sso')
+    expect(f.post).not.toHaveBeenCalledWith('/api/auth/revoke', expect.anything())
+    const nokey = fake({ platform: 'linux', machineKey: () => null })
+    nokey.setSession(sso)
+    expect(await teamCommand(['on', '--yes'], nokey.deps)).toBe(1)
+    expect(nokey.err[0]).toContain('no device key yet')
+    expect(nokey.err[0]).toContain('Nothing was changed on this computer.')
+    expect(nokey.post).not.toHaveBeenCalled()
+    expect(nokey.deps.stopDaemon).not.toHaveBeenCalled()
+    expect(nokey.session()).toBe(sso)
+  })
+
+  it('on: a refused redeem starts the daemon again on the sign-in it had, and changes nothing', async () => {
+    const f = fake({ platform: 'linux' })
+    f.post.mockImplementation(async (path: string) => {
+      if (path === '/api/auth/handoff') return { code: CODE, expiresIn: 90, kind: 'team' }
+      throw Object.assign(new Error('That code has expired.'), { status: 401 })
+    })
+    expect(await teamCommand(['on', '--yes', '--json'], f.deps)).toBe(1)
+    expect(JSON.parse(f.out.at(-1)!)).toMatchObject({ ok: false, code: 'EXPIRED', message: expect.stringContaining('Nothing was changed on this computer.') })
+    expect(f.session()).toBe(computer)
     expect(f.deps.stopDaemon).toHaveBeenCalled()
     expect(f.deps.startDaemon).toHaveBeenCalled()
+    expect(f.deps.writeSession).not.toHaveBeenCalled()
   })
 
   it('on: asks first at a terminal, needs --yes otherwise, and leaves a Mac with a team account alone', async () => {
@@ -255,15 +347,16 @@ describe('harness team on and off', () => {
     expect(JSON.parse(old.out.at(-1)!)).toMatchObject({ ok: false, code: 'NOT_TEAM' })
     expect(old.post).toHaveBeenCalledWith('/api/auth/revoke', { refreshToken: 'hnr_phone' })
     expect(old.session()).toBe(computer)
-    expect(old.deps.stopDaemon).not.toHaveBeenCalled()
+    // Stopped for the redeem, and started again on the sign-in it had.
+    expect(old.deps.startDaemon).toHaveBeenCalled()
   })
 
   it('off: signs the team session out, then the ordinary sign-in at a terminal, or says how', async () => {
     const signIn = vi.fn(async () => {})
     const f = fake({ interactive: true, signIn })
-    f.setSession({ ...computer, kind: 'team', refreshToken: 'hnr_team' })
+    f.setSession({ ...computer, kind: 'team', refreshToken: 'htr_team' })
     expect(await teamCommand(['off'], f.deps)).toBe(0)
-    expect(f.post).toHaveBeenCalledWith('/api/auth/revoke', { refreshToken: 'hnr_team' })
+    expect(f.post).toHaveBeenCalledWith('/api/auth/revoke', { refreshToken: 'htr_team' })
     expect(f.session()).toBeNull()
     expect(signIn).toHaveBeenCalledWith(true)
     const quiet = fake()
@@ -304,8 +397,14 @@ describe('internal verbs', () => {
     expect(f.deps.takeHandoff).toHaveBeenCalledWith('/Users/harnessteam/.harness/team-handoff')
     expect(f.post).toHaveBeenCalledWith('/api/auth/handoff/redeem', { code: CODE, label: 'Mac-placeholder · Team', computerId: 't'.repeat(32) })
     expect(f.session()).toMatchObject({ kind: 'team', computerId: 't'.repeat(32), refreshToken: 'hnr_team' })
-    expect(f.status.get(STATUS)).toMatchObject({ signIn: { state: 'signed-in' }, privacy: { passed: true } })
+    expect(f.status.get(STATUS)).toMatchObject({ signIn: { state: 'signed-in' }, privacy: { passed: true },
+      engines: { claude: { installed: true, signedIn: false }, codex: { installed: true, signedIn: true } } })
+    expect(f.deps.engines).toHaveBeenCalledWith(config)
     expect(f.out.join('\n')).toContain('[team] signed in for team work')
+    expect(f.out.join('\n')).toContain('[team] engines: claude installed, codex signed in')
+    const broken = inTeam({ engines: vi.fn(async () => { throw new Error('no home') }) })
+    expect(await teamCommand(['__start'], broken.deps)).toBe(0)
+    expect(broken.out.join('\n')).toContain('could not check the engines: no home')
   })
 
   it('__start stores nothing when the backend makes a session that is not a team one', async () => {
