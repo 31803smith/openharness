@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { applyCommand, commandSchema, PAIR_CHAIN_LIMIT, withoutCredentials, type Command, type CommandContext } from './commands.js'
+import { applyCommand, commandSchema, PAIR_CHAIN_LIMIT, swarmGridName, withoutCredentials, type Command, type CommandContext } from './commands.js'
 import { CREDENTIAL_MARKER, type CredentialKind } from './credentials.js'
 import { hostLocalGrid, machineSlots, removalPreview, swarmGridRow } from './machines.js'
 import { activeWork, agentRole, createSuperTab, visibleState, type Actor, type AgentConfiguration } from './model.js'
@@ -2039,9 +2039,15 @@ describe('the Local models add-on', () => {
     requirements: { memoryBytes: 0, diskBytes: 0, maxCpuPercent: 100, tools: [], devices: [], quotaRequired: false } })
   const grant = { contribution: { machineOwnerId: 'host-owner', contributorId: 'owner' } }
 
-  it('is off until the owner turns it on, mints one grid name, and keeps it when turned off', () => {
+  it('is on in a new Swarm, its grid named, so the owner\'s computer sets it up in the background', () => {
     const f = fixture()
-    expect(f.state.localModels).toBeUndefined()
+    expect(f.state.localModels).toEqual({ grid: swarmGridName('tab'), enabled: true })
+    expect(swarmGridRow('tab', f.state)).toMatchObject({ grid: swarmGridName('tab'), enabled: true, ready: null })
+  })
+
+  it('is off in a Swarm from before until the owner turns it on, mints one grid name, and keeps it when turned off', () => {
+    const f = fixture()
+    delete f.state.localModels
     f.invite()
     expect(() => f.run({ type: 'localModels.set', enabled: true }, peer)).toThrow(expect.objectContaining({ code: 'OWNER_REQUIRED' }))
     const on = f.run({ type: 'localModels.set', enabled: true })
@@ -2054,6 +2060,7 @@ describe('the Local models add-on', () => {
 
   it('gives the owner\'s computer the grid and the people who may act, and a host the grid only while it is on', () => {
     const f = fixture()
+    delete f.state.localModels
     expect(swarmGridRow('tab', f.state)).toBeNull()
     expect(hostLocalGrid(f.state)).toEqual({})
     f.invite()
@@ -2066,6 +2073,7 @@ describe('the Local models add-on', () => {
     expect(hostLocalGrid(f.state)).toEqual({})
     // A viewer may not act in the Swarm, so is no member of its grid.
     const viewing = fixture()
+    delete viewing.state.localModels
     viewing.invite('viewer')
     viewing.run({ type: 'localModels.set', enabled: true })
     expect(swarmGridRow('tab', viewing.state)!.members).toEqual([])

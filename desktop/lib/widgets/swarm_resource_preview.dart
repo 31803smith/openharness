@@ -1464,6 +1464,9 @@ class _SwarmResourcePreviewState extends State<SwarmResourcePreview> {
               key: const ValueKey('swarm-model-setup-note'),
               swarm.settingUp
                   ? 'Setting up this Swarm\'s models… The first time can take a few minutes.'
+                  : swarm.canSetUp && swarm.setupPending
+                  ? 'This Swarm\'s models are being set up in the background. If that has not finished, your first '
+                        'share or run finishes it.'
                   : swarm.canSetUp
                   ? 'This Swarm\'s models are not set up yet. Your first share or run sets them up: it connects this '
                         'computer to the Swarm with your Harness account, and everyone in the Swarm can then use them.'

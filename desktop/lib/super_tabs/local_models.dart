@@ -15,6 +15,7 @@ import '../widgets/desktop_chrome.dart';
 import '../widgets/key_hints.dart';
 import '../widgets/swarm_resource_preview.dart';
 import '../widgets/swarm_switcher.dart';
+import '../ws/ws_conn.dart';
 import 'controller.dart';
 import 'dialog_scope.dart';
 import 'model.dart';
@@ -97,6 +98,12 @@ class _SwarmModelsWindowState extends State<_SwarmModelsWindow> {
       Map<String, dynamic> answer;
       try {
         answer = await app.swarmGridSync(machineId, grid, members);
+      } on WsRequestFailure catch (failure) {
+        // Grid's own answer, refused: its words, not "unreachable" (2026-10-24: a plan's network limit read as this
+        // computer could not be reached).
+        answer = failure.payload.isNotEmpty
+            ? {...failure.payload, 'ready': false}
+            : {'ready': false, 'error': failure.detail ?? failure.code};
       } catch (_) {
         answer = {
           'ready': false,
@@ -276,6 +283,7 @@ class _SwarmModelsWindowState extends State<_SwarmModelsWindow> {
                             ? 'The Swarm owner is setting up its models.'
                             : 'The Swarm owner has not set up models yet.',
                         setupError: _settingUp ? null : failed,
+                        setupPending: on && local?.ready == null,
                       ),
                     ),
                   ] else
@@ -300,6 +308,7 @@ class _SwarmModelsPicker extends StatefulWidget {
     this.onSetUp,
     this.setupNote,
     this.setupError,
+    this.setupPending = false,
   });
 
   final AppNotifier app;
@@ -309,6 +318,7 @@ class _SwarmModelsPicker extends StatefulWidget {
   final Future<({String? grid, String? error})> Function()? onSetUp;
   final String? setupNote;
   final String? setupError;
+  final bool setupPending;
 
   @override
   State<_SwarmModelsPicker> createState() => _SwarmModelsPickerState();
@@ -339,6 +349,7 @@ class _SwarmModelsPickerState extends State<_SwarmModelsPicker> {
       onSetUp: widget.onSetUp,
       setupNote: widget.setupNote,
       setupError: widget.setupError,
+      setupPending: widget.setupPending,
     );
     unawaited(_target.refresh());
     // `adding`/`offersCreate`: the APIs section ends in Add API connection, as ⌘I's does.
