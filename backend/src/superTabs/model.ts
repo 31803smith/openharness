@@ -365,6 +365,12 @@ export function author(state: SuperTabState, actor: Actor, write = false): Autho
   return { kind: 'agent', id: member.id, name: member.name, displayName: agentDisplayName(state.agents, member.id), membershipGeneration: member.membershipGeneration }
 }
 
+/** The Swarm's grid name: `swarm-` and 12 hex of sha256(tab id). Derived so it is reproducible when supported; the
+ * stored value is authoritative and never renamed. */
+export function swarmGridName(tabId: string): string {
+  return `swarm-${createHash('sha256').update(tabId).digest('hex').slice(0, 12)}`
+}
+
 export function createSuperTab(id: string, name: string, owner: { id: string; email: string }, environment: string, visibility?: ProjectVisibility): SuperTabState {
   const state: SuperTabState = {
     version: 1, id, name, ownerId: owner.id, environment, paused: false,
@@ -374,6 +380,10 @@ export function createSuperTab(id: string, name: string, owner: { id: string; em
   }
   // A new Swarm's first project starts in Default; only a project from before skill modes reads as Harness orchestration.
   state.projects = [{ ...projectsOf(state)[0]!, ...(visibility ? { visibility } : {}), skillMode: 'default' }]
+  // Its models are on from the start (owner, 2026-10-24): the owner's computer makes the Swarm's grid in the background
+  // (CLI `superTabs/swarmGrids.ts`) and reports how it went. Fire and forget: a grid that could not be made leaves the
+  // Swarm as it is, and the owner's first share or run in Manage models sets the models up then.
+  state.localModels = { grid: swarmGridName(id), enabled: true }
   syncLeads(state)
   return state
 }

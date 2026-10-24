@@ -491,7 +491,11 @@ class SwarmSearchController extends ChangeNotifier {
       command: action.command,
       run: run == null || !swarm.canSetUp || swarm.settingUp
           ? null
-          : () => swarm.whenSetUp(run),
+          : () async {
+              final error = await swarm.whenSetUp(run);
+              // A set up that failed is said in the preview, once; what the share or run itself answered is said here.
+              return swarm.setupNeeded ? null : error;
+            },
     );
   }
 

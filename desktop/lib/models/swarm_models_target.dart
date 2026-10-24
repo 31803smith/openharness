@@ -20,7 +20,12 @@ class SwarmModelsTarget extends ChangeNotifier {
     this.onSetUp,
     this.setupNote,
     this.setupError,
+    this.setupPending = false,
   });
+
+  /// Turned on and not yet answered: the owner's computer is setting the models up in the background (a new Swarm's
+  /// are, from its creation). A share or run still sets them up at once if it has not finished.
+  final bool setupPending;
 
   /// Whether the Swarm's models are set up, its grid made. Until they are, nothing is shared or run for it: the owner's
   /// first share or run sets them up first ([whenSetUp]), and anyone else waits for the owner (2026-10-24: a list of

@@ -1,10 +1,9 @@
-import { createHash } from 'node:crypto'
 import { admitMachineStart, expireRemoval, expireRemovals, failTeamWork, machineContribution, machineOffline, ownedMachine, requireTeamWork, teamWorkCheck, type ContributedMachine } from './machines.js'
 import { assignAgentDisplayNames } from './agentNames.js'
 import { z } from 'zod'
 import {
   activeWork, actorKey, agent, agentRole, author, conversation, crossProjectActive, fail, isLeads, person, stableId, syncLeads, numberConversations, nextConversationNumber, renderWorkTask,
-  finishWorker, requireWorkerDecisions, reviewing, AGENT_ONLY,
+  finishWorker, requireWorkerDecisions, reviewing, swarmGridName, AGENT_ONLY,
   type Actor, type Agent, type Author, type CommandEffects, type Conversation, type SuperTabState,
 } from './model.js'
 import { routeRecordSchema, routeTitle, startedAs, type RouteCandidate, type RouteDecision, type RouteFinal, type RouteOverride } from './routeRecord.js'
@@ -1543,11 +1542,7 @@ export function applyCommand(original: SuperTabState, actor: Actor, input: Comma
 }
 
 /** A contribution owns capacity independently of membership. Reuse invalidates every prior stop proof. */
-/** The Swarm's grid name: `swarm-` and 12 hex of sha256(tab id). Derived so it is reproducible when supported; the
- * stored value is authoritative and never renamed. */
-export function swarmGridName(tabId: string): string {
-  return `swarm-${createHash('sha256').update(tabId).digest('hex').slice(0, 12)}`
-}
+export { swarmGridName } from './model.js'
 
 function reserveHarnessSlot(state: SuperTabState, machineId: string, harnessId: string, generation: string) {
   const observation = state.machines?.find(m => m.machineId === machineId)?.observation
