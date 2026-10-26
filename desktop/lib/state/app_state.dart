@@ -1810,6 +1810,9 @@ class AppNotifier extends ChangeNotifier {
   Map<String, String> _superTabNames = {};
   bool _superTabsEntered = false;
 
+  /// Whether a machine could serve Swarm reads at the last connection change.
+  bool _superTabsServed = false;
+
   /// Membership alone must not reveal the hidden feature in a regular workspace.
   /// The hidden shortcut, an explicit open, or a restored Swarm supplies that intent.
   void enterSuperTabs() => _superTabsEntered = true;
@@ -8780,6 +8783,11 @@ class AppNotifier extends ChangeNotifier {
         );
       }
     }
+    // Swarm reads go through a connected machine: the moment one can serve
+    // them again, the Swarm on screen reads (`SuperTabReading.readsOnConnect`).
+    final served = sharedTabsTarget != null;
+    if (served && !_superTabsServed) superTabs.serverAvailable();
+    _superTabsServed = served;
     notifyListeners();
   }
 
