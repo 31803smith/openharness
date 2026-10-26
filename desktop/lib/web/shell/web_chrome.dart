@@ -42,4 +42,5 @@ WorkspaceChrome _webWorkspaceChrome(AppNotifier app) => WorkspaceChrome(
   menuOnEveryTab: true,
   labelsPaneStatus: true,
   compactPaneHeader: true,
+  superTabRecovers: true,
 );
