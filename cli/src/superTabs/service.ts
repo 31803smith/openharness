@@ -16,8 +16,11 @@ import { cardId, SwarmCards } from './cards.js'
 import { GitHubTokenRefresher, githubToken } from './github.js'
 import { teamEngineReporter, type TeamEngineReporter } from '../team/engines.js'
 import { AUTO_SETUP_REASONS, realTeamAutoSetup, type AutoSetupReason, type TeamAutoSetup } from '../team/autoSetup.js'
+import { openDaemon } from '../agentClient/daemon.js'
 import { readTeamConfig } from '../team/config.js'
 import { realTeamRelayPublisher, type TeamRelayPublisher } from '../team/relay.js'
+import { readLastTry, refreshCreationId, refreshTeamAccount, teamRefreshFile, writeLastTry, type TeamRefreshDeps } from '../team/refresh.js'
+import { readTeamStatus } from '../team/privacy.js'
 import { ensureTeamTmux, TMUX_MANIFEST_URL, tmuxRunsAt, untarGz, type TeamTmuxDeps, type TeamTmuxOutcome } from '../team/tmux.js'
 import { downloadVerified } from '../lib/selfUpdate.js'
 import { managedTmuxPath, tmuxInstallDirectories } from '../lib/tmuxOnPath.js'
@@ -236,7 +239,9 @@ export function superTabService(core: CoreApi, options: SuperTabServiceOptions =
   // relay of its own (team/relay.ts). Kept through a lost backend connection, which running agents do not need.
   const relay = (options.teamRelay ?? (() => realTeamRelayPublisher(
     () => startSubscriptionRelay({ owner: createOwnerSubscriptions(), log: line => console.log(`[team] relay · ${line}`) }),
-    () => readTeamConfig(), options.team ?? (() => readAuthSession()?.kind === 'team'), line => console.log(`[team] ${line}`))))()
+    () => readTeamConfig(), options.team ?? (() => readAuthSession()?.kind === 'team'), line => console.log(`[team] ${line}`),
+    // A team account still on a build that cannot use the relay is updated from here (team/refresh.ts).
+    (publishedAt) => refreshTeamAccount(realTeamRefreshDeps(core, publishedAt)))))()
   let autoSetup: Promise<Pick<TeamAutoSetup, 'offer' | 'decline'>> | null = null
   // In the Harness Team account: a tmux of its own when it has none it can run (team/tmux.ts). Looked at as it connects,
   // and a failed install again half an hour later.
@@ -506,6 +511,36 @@ function realTeamTmuxDeps(): TeamTmuxDeps {
     untar: untarGz,
     runtimeDir: appEnv.ADAPTER_RUNTIME_DIR,
     binDir: join(homedir(), '.local', 'bin'),
+    log: (line) => console.log(`[team] ${line}`),
+  }
+}
+
+/** The owner's daemon's own: its account's machine list, and the link to its Mac's team account (team/refresh.ts). */
+function realTeamRefreshDeps(core: CoreApi, publishedAt: number | null): TeamRefreshDeps {
+  const file = teamRefreshFile(core.dataDir)
+  return {
+    config: () => readTeamConfig(),
+    status: readTeamStatus,
+    publishedAt: () => publishedAt,
+    machines: async () => {
+      const reply = await core.account.backend('GET', '/api/machines')
+      const body = object(reply.body), data = object(body.data)
+      const rows = Array.isArray(data.machines) ? data.machines : Array.isArray(body.machines) ? body.machines : []
+      return rows.map(object).filter(m => typeof m.machineId === 'string')
+        .map(m => ({ machineId: m.machineId as string, sessionKind: typeof m.sessionKind === 'string' ? m.sessionKind : null,
+          hostMachineId: typeof m.hostMachineId === 'string' ? m.hostMachineId : null }))
+    },
+    machineId: () => core.daemon.machineId(),
+    run: async (machineId, argv, cwd) => {
+      const link = await openDaemon({ dataDir: core.dataDir, port: core.daemon.port, machineId: core.daemon.machineId() }, machineId)
+      try {
+        const answer = object(await link.request('shell_open', { argv, cwd, creationId: refreshCreationId() }, 30_000))
+        return answer.state === 'created' ? { ok: true } : { ok: false, error: String(answer.error ?? answer.state ?? 'no answer') }
+      } finally { link.close() }
+    },
+    lastTry: () => readLastTry(file),
+    remember: (at) => writeLastTry(file, at),
+    now: () => Date.now(),
     log: (line) => console.log(`[team] ${line}`),
   }
 }
