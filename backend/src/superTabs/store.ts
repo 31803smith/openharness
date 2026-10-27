@@ -12,10 +12,11 @@ import { attachmentMime, attachmentName, AttachmentTooLarge, checkedType, MAX_AT
 import { randomBytes } from 'node:crypto'
 import type { Readable } from 'node:stream'
 import { logger } from '../utils/logger.js'
-import { canReadAgent, canReadGroup, canWatchAgent, groupProject, ledProject, projectsOf, agentProjectId, readConversation, roleVersion, type ProjectVisibility } from './projects.js'
+import { canReadAgent, canReadGroup, canWatchAgent, groupProject, ledProject, projectOf, projectsOf, agentProjectId, readConversation, roleVersion, type ProjectVisibility } from './projects.js'
 import { bindSession, makeProjectPrivate } from './sessionScope.js'
 import { confidentialSessions, otherRegistrations, recordConfidential } from './confidential.js'
 import { answersRequest, noteProjectReports, projectUpdateRequest } from './projectUpdates.js'
+import { digestDue, digestRequest, digestSince } from './digest.js'
 import { judgedMachines, loseTasks, sweepLiveness, SWEEP_EVERY_MS } from './liveness.js'
 import { clock, insertParts, lastChangedAt, loadActive, reassemble, split, type HeadData, type SwarmParts } from './parts/index.js'
 import { commitParts, indexesOf, numberMessages, type Touch, type Written } from './parts/commit.js'
@@ -28,9 +29,11 @@ import {
 import { holdNoticeText, type HoldReason } from './holdNotice.js'
 import { agentDisplayName } from './agentNames.js'
 import { endedHolds, HOLDING, type WorkHold } from '../github/holds.js'
+import { accrueLent } from './leaderboard/lent.js'
 import { mayDrive, TERMINAL_ANSWER_MS, TERMINAL_EXPIRY_MS, TERMINAL_PICKUP_MS, type TerminalEffect } from './terminal.js'
 import { closeAssignment, closeUnassignedStart, readDecision, recentRoutes, timedDecisionOf, writeRouteEffects } from './routeDecisions.js'
 import { listMentions, markDone, mentionsWaiting, readMention, resolveByReply, writeMentions } from './mentions.js'
+import { answerable, listDecisions, readAskedDecision, recordAnswer, writeDecisions } from './decisions.js'
 import { DEFAULT_ROUTING_POLICY, effectivePolicy, routingPolicySchema, type RoutingPolicy } from './routingPolicy.js'
 import { authenticatedEmail, authorizeSwarmJoin, configureSharing, joinSwarmSchema, requireSharingOwner,
   saveSharingSchema, sharingDetails, type JoinSwarm, type SaveSharing } from './sharing.js'
@@ -169,6 +172,10 @@ export interface SuperTabStoreHooks {
 }
 
 /** Persistent coordination. Host adapters own execution and must confirm their local session grants. */
+/** The routing decision a command names. `decision.answer` names a person's decision instead (decisions.ts). */
+const routeDecisionOf = (command: Command): string | undefined => command.type === 'decision.answer' ? undefined
+  : 'decisionId' in command ? command.decisionId : 'routeDecisionId' in command ? command.routeDecisionId : undefined
+
 export class SuperTabStore {
   readonly native: SuperTabNativeStore
   constructor(readonly db: PrismaClient, readonly now: () => number = Date.now,
@@ -322,11 +329,16 @@ export class SuperTabStore {
     const groupIds = [...named.groupIds ?? []], startIds = [...named.startIds ?? []], agentIds: string[] = [], startAgentIds: string[] = []
     const start = 'startId' in command ? state.starts?.find(s => s.id === command.startId) : undefined
     if (start) groupIds.push(start.request.conversationId)
-    const decisionId = 'decisionId' in command ? command.decisionId : 'routeDecisionId' in command ? command.routeDecisionId : undefined
+    const decisionId = routeDecisionOf(command)
     if (decisionId) {
       const decision = await readDecision(tx, tabId, decisionId)
       if (decision) groupIds.push(decision.conversationId)
       if (decision?.final?.kind === 'new') startIds.push(decision.final.startId)
+    }
+    // A person's decision may sit in a quiet or archived conversation: it is loaded to answer it (review of #1753).
+    if (command.type === 'decision.answer') {
+      const asked = await readAskedDecision(tx, tabId, command.decisionId)
+      if (asked) groupIds.push(asked.conversationId)
     }
     if (command.type === 'delivery.resolve') {
       const delivery = await tx.superTabDelivery.findFirst({ where: { id: command.deliveryId, tabId }, select: { conversationId: true } })
@@ -651,7 +663,9 @@ export class SuperTabStore {
             if (!delivery) fail('NOT_FOUND', 'This delivery is unavailable.', 404)
             readConversation(original, actor, delivery.conversationId)
           }
-          if ('decisionId' in command) {
+          // A retried answer is checked again: the person must still read the decision's conversation (review of #1753).
+          if (command.type === 'decision.answer') answerable(original, actor, await readAskedDecision(tx, tabId, command.decisionId))
+          else if ('decisionId' in command) {
             const decision = await readDecision(tx, tabId, command.decisionId) ?? fail('NOT_FOUND', 'This routing decision is unavailable.', 404)
             readConversation(original, actor, decision.conversationId)
           }
@@ -720,6 +734,7 @@ export class SuperTabStore {
           proof.harnessId === execution.harnessId && proof.machineOwnerId === execution.machineOwnerId
       }
       if (command.type === 'mention.done') context.mention = await readMention(tx, tabId, command.mentionId)
+      if (command.type === 'decision.answer') context.decision = await readAskedDecision(tx, tabId, command.decisionId)
       if (command.type === 'message.send' && command.attachmentIds?.length) context.attachments = await this.sendable(tx, tabId, actor, command)
       if (command.type === 'route.record') context.recentRoutes = await recentRoutes(tx, tabId, context.now)
       if (TEAM_WORK_COMMANDS.has(command.type)) {
@@ -908,6 +923,11 @@ export class SuperTabStore {
       if (command.type === 'message.send' && actor.kind === 'person') await resolveByReply(tx, tabId, command.conversationId, actor.userId, context.now)
       await writeMentions(tx, tabId, effects.state, effects.messages, context.now)
       if (command.type === 'mention.done') await markDone(tx, tabId, command.mentionId, context.mention!.personId, context.now)
+      if (effects.decisions) {
+        const ids = await writeDecisions(tx, tabId, effects.decisions, context.now)
+        if (command.type === 'decision.ask') effects.result.decisionIds = ids
+      }
+      if (effects.decisionAnswer) await recordAnswer(tx, tabId, effects.decisionAnswer, context.now)
       if (context.attachments?.length) {
         // Conflicts with a concurrent send of the same file: only one message can take it.
         const taken = await tx.superTabAttachment.updateMany({ where: { tabId, id: { in: context.attachments.map(a => a.id) }, ...unused },
@@ -1312,6 +1332,17 @@ export class SuperTabStore {
     })
   }
 
+  /** The caller's decisions in this Swarm, newest first: a person's asked of them, an agent's asked by it (a Lead's also
+   *  those asked in its project), still open or answered. */
+  async decisions(user: AuthUser, tabId: string, state: 'open' | 'answered', asAgentId?: string) {
+    return transaction(this.db, async tx => {
+      const { state: tab } = await this.load(tx, user, tabId, { allGroups: true })
+      const actor = await this.actor(tx, user, tab, asAgentId)
+      author(tab, actor)
+      return { decisions: await listDecisions(tx, tabId, tab, actor, state === 'open') }
+    })
+  }
+
   /**
    * Every earlier attempt of one group. `work.define` takes a stopped assignment out of the state, so this is the
    * only place a reader (the Lead choosing an agent for a retry) can still see who tried and how it ended
@@ -1443,6 +1474,7 @@ export class SuperTabStore {
       const { privacy: reported, harnessProgress, ...reading } = observation
       const progress = harnessProgress && Object.fromEntries(Object.entries(harnessProgress).filter(([id]) => observation.runningHarnessIds.includes(id)))
       const privacy = observedPrivacy(pool.observation?.privacy, reported, team, now)
+      accrueLent(state, pool, now)
       pool.observation = { ...reading, quotas: observation.quotas.filter(q => contributedEngines(pool, observation).includes(q.engine)), receivedAt: now,
         // How the machine is signed in, from the session that reported and never from the report (lib/teamSession.ts).
         sessionKind: team ? 'team' : 'computer', ...(privacy ? { privacy } : {}), ...(progress ? { harnessProgress: progress } : {}) }
@@ -1520,7 +1552,16 @@ export class SuperTabStore {
 
   async deliveries(user: AuthUser, tabId: string, agentId: string) {
     return transaction(this.db, async tx => {
-      const loaded = await this.load(tx, user, tabId), state = structuredClone(loaded.state)
+      let loaded = await this.load(tx, user, tabId)
+      // Work finished since the last digest and archived or asleep since still shipped, but ordinary loads leave it out
+      // (#1757 review, 4): a due digest loads it.
+      const led = ledProject(loaded.state, agentId)
+      if (led && digestDue(led, this.now())) {
+        const finished = await tx.swarmGroup.findMany({ where: { tabId, deleted: false, dormant: true, lastActivityAt: { gte: new Date(digestSince(led, this.now())) },
+          OR: [{ projectId: led.id }, ...led.id === 'lead' ? [{ projectId: null }] : []] }, select: { key: true } })
+        if (finished.length) loaded = await this.ensure(tx, loaded, { groupIds: finished.map(g => g.key) })
+      }
+      const state = structuredClone(loaded.state)
       author(state, await this.actor(tx, user, state, agentId), true)
       const target = agent(state, agentId)
       // A Lead's poll runs the time checks (liveness.ts): lost work wakes it in this same poll.
@@ -1541,13 +1582,20 @@ export class SuperTabStore {
           woken = true
         }
       }
+      // The morning digest is due once a day; recording it as sent is part of this same write, so it is sent once.
+      const digest = digestRequest(state, target, this.now())
+      if (digest) {
+        const project = projectOf(state, digest.source!.projectId as string)
+        project.digest = { ...project.digest!, lastOn: digest.source!.on as string, lastAt: this.now() }
+        written.push(digest)
+      }
       // The poll also frees agents whose task the checks just lost, and any an older server left marked running (each poll; a
       // second finds none).
       await this.endRuns(tx, tabId, loaded.state, state)
       if (ledProject(state, agentId)) {
         await this.releaseRuns(tx, tabId, await this.staleRuns(tx, tabId, state))
       }
-      // One write for both: the time checks' changes and the wake-up's.
+      // One write for all: the time checks' changes, the digest and the wake-ups'.
       const sequences = numberMessages(state, written, this.now())
       await this.save(tx, loaded, state, clock.next(), [...judgedMachines(state, written), ...woken ? [{ kind: 'agent' as const, key: agentId }] : []])
       await this.writeMessages(tx, tabId, state, written, sequences)
