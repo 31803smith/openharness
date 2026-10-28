@@ -39,6 +39,11 @@ const envSchema = z.object({
   // Base internal port; each worker binds MESH_PORT_BASE + NODE_APP_INSTANCE (distinct per worker).
   MESH_PORT_BASE: z.string().default('8095').transform(Number),
 
+  // On SIGTERM the API answers /api/ready with 503 at once, then keeps serving this long before it closes its
+  // listeners, so the load balancer stops sending new connections first. 0 (the default) closes at once, as before;
+  // Kubernetes sets it, with probes and grace period, as backend/README.md describes.
+  DRAIN_DELAY_MS: z.coerce.number().int().min(0).max(60_000).default(0),
+
   // Remote-terminal WebRTC is STUN-only: successful ICE bypasses the backend data relay; failed ICE
   // keeps using the existing WebSocket route. Enabled by default; percentage 0 is the kill switch.
   TERMINAL_P2P_ROLLOUT_PERCENT: z.coerce.number().int().min(0).max(100).default(100),
@@ -235,6 +240,8 @@ const envSchema = z.object({
   SUPER_TAB_ATTACHMENTS_PREFIX: z.string().default('super-tabs'),
   // Where clients read the files. https:// in production (superTabs/attachments.ts refuses anything else at startup).
   SUPER_TAB_ATTACHMENTS_PUBLIC_BASE: z.string().url().default('https://cdn.harness.autonomous.ai'),
+  // A private bucket (no public read) for Swarm avatars, served only through signed links. Unset: avatar uploads are off.
+  SUPER_TAB_AVATARS_BUCKET: z.string().default(''),
 
   // The Harness GitHub App (github/app.ts, docs/swarm-github-app.md): a Swarm agent doing a task pushes and opens pull
   // requests with a one-hour token for its project's repository alone. Both empty: off, and POST

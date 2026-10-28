@@ -96,6 +96,7 @@ import '../settings/experimental_features.dart';
 import '../core/local_key_value_store.dart';
 import '../core/harness_file_store.dart';
 import '../super_tabs/attachment_upload.dart';
+import '../super_tabs/avatar_upload.dart';
 import '../super_tabs/client.dart';
 import '../super_tabs/controller.dart';
 import '../super_tabs/view_store.dart';
@@ -1754,8 +1755,10 @@ class AppNotifier extends ChangeNotifier {
     storage: localStore ?? HarnessFileStore.shared,
     viewStorage: localStore ?? swarmViewStore(),
     upload: uploadWith(() => api),
+    avatarUpload: uploadAvatarWith(() => api),
     onMention: superTabMentionNotice(systemNotifications),
     onTagCounts: notifyListeners,
+    onNotices: notifyListeners,
     discoveryInterval: kUnderTest ? Duration.zero : const Duration(seconds: 15),
     onTabs: (tabs, hidden) {
       // Discovery can finish while an already signed-in machine is re-seating
@@ -7486,6 +7489,8 @@ class AppNotifier extends ChangeNotifier {
     sessionTails.clear();
     shareStatus.clear();
     gridPictures.clear();
+    // Pickers keep listening to this menu; only the old account's rows go.
+    _modelsMenu?.reset();
     _stopWakeFollowers();
     expandedMachines.clear();
     selectedMachineId = null;
@@ -7808,6 +7813,7 @@ class AppNotifier extends ChangeNotifier {
   Future<void> login([SignInProvider? provider]) async {
     if (_disposed || signingIn || signingOut || signOutError != null) return;
     final measureSignIn = productMeasurement.begin(ProductFlow.signIn);
+    var signedInHere = false;
     final wasGuest = isGuest;
     final revision = _invalidateAuthWork();
     _closedHistory.clear();
@@ -7840,6 +7846,7 @@ class AppNotifier extends ChangeNotifier {
       );
       if (!_authWorkCurrent(revision)) return;
       measureSignIn(ProductOutcome.ok);
+      signedInHere = true;
       _loginAuthorized = true;
       pendingAuthorizeUrl = null;
       _resetLoginBrowser();
@@ -7858,7 +7865,7 @@ class AppNotifier extends ChangeNotifier {
       // The first sign-in on this computer offers Add Phone; a later one does not.
       unawaited(_offerPhoneAfterSignIn(revision));
     } catch (error) {
-      measureSignIn(ProductOutcome.failed);
+      if (!signedInHere) _measureSignInEnd(measureSignIn, error, revision);
       if (!_authWorkCurrent(revision)) return;
       status = wasGuest ? AppStatus.authenticated : AppStatus.unauthenticated;
       _lastError = error.toString();
@@ -7885,6 +7892,37 @@ class AppNotifier extends ChangeNotifier {
       }
     }
     if (_authWorkCurrent(revision)) notifyListeners();
+  }
+
+  /// A sign-in that did not go through: its outcome, and why. The person moving on — Cancel, the
+  /// other button, the app closing ([_authWorkCurrent] no longer) or turning it down on the phone —
+  /// is `cancelled`, not `failed`. A page nobody came back from in time, or a QR nobody scanned, is
+  /// `unknown`: they may have left, or finished and the callback never arrived, which only the
+  /// reason (`timeout`, `expired`) tells apart from the rest. Everything else is `failed`.
+  void _measureSignInEnd(
+    void Function(ProductOutcome) finish,
+    Object error,
+    int revision,
+  ) {
+    final reason = !_authWorkCurrent(revision)
+        ? SignInEndReason.cancelled
+        : switch (error) {
+            SignInException(:final code) || PhoneSignInException(:final code) =>
+              SignInEndReason.values.firstWhere(
+                (reason) => reason.wire == code.toLowerCase(),
+                orElse: () => SignInEndReason.other,
+              ),
+            CliNotAvailableException() => SignInEndReason.cliUnavailable,
+            _ => SignInEndReason.other,
+          };
+    finish(switch (reason) {
+      SignInEndReason.cancelled ||
+      SignInEndReason.denied => ProductOutcome.cancelled,
+      SignInEndReason.timeout ||
+      SignInEndReason.expired => ProductOutcome.unknown,
+      _ => ProductOutcome.failed,
+    });
+    productMeasurement.signInEnded(reason);
   }
 
   /// The failed sign-in again, to the account the person chose the first time.
@@ -8401,6 +8439,7 @@ class AppNotifier extends ChangeNotifier {
       return;
     }
     final finish = productMeasurement.begin(ProductFlow.signIn);
+    var signedInHere = false;
     final wasGuest = isGuest;
     final revision = _invalidateAuthWork();
     previousAccountEmail = currentUser?.email;
@@ -8434,6 +8473,7 @@ class AppNotifier extends ChangeNotifier {
       );
       if (!_authWorkCurrent(revision)) return;
       finish(ProductOutcome.ok);
+      signedInHere = true;
       _loginAuthorized = true;
       _clearPhoneSignIn();
       notifyListeners();
@@ -8444,7 +8484,7 @@ class AppNotifier extends ChangeNotifier {
       }
       _guestDeskRestorePending = false;
     } catch (error) {
-      finish(ProductOutcome.failed);
+      if (!signedInHere) _measureSignInEnd(finish, error, revision);
       if (!_authWorkCurrent(revision)) return;
       status = wasGuest ? AppStatus.authenticated : AppStatus.unauthenticated;
       _lastError = error.toString();

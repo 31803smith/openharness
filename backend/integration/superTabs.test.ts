@@ -797,6 +797,40 @@ describe('since when a worker is down', () => {
 })
 
 describe('Super Tabs on a real Mongo replica set', () => {
+  it('records a grid worker\'s model on every assignment, after its start is finished and no longer loaded', async () => {
+    // Review of #1808: the run read the start, which a command does not load once the start is finished, so an assigned or
+    // reused Kimi worker counted as a subscription run.
+    const tab = (await store.create(owner, randomUUID(), 'Grid pool')).id
+    const invitation = await run(tab, { type: 'invite.create', email: host.email, role: 'collaborator', conversationId: 'lead' })
+    await run(tab, { type: 'invite.accept', inviteId: invitation.result.inviteId as string }, host)
+    await db.machine.create({ data: { machineId: 'grid-host', userId: host.sub, apiKey: 'fixture-grid-host', managerId: 'fixture', autonomousEnv: 'prod', authMode: 'remote' } })
+    const team = await teamMachine('grid-host')
+    await run(tab, { type: 'machine.contribute', machineId: 'grid-host', name: 'Grid laptop', cwd: '/project', engines: ['claude'], maxAgents: 2 }, host)
+    const grid = (await store.read(owner, tab)).state.localModels!.grid
+    const generation = (await poolRows(store, host, 'grid-host'))[0]!.machine.generation
+    await store.observeMachine(team.session, tab, 'grid-host', { generation, resources: { cpuPercent: 10, memoryTotalBytes: 32e9, memoryUsedBytes: 4e9,
+      diskFreeBytes: 120e9, diskTotalBytes: 500e9, projectDiskFreeBytes: 120e9, deviceType: 'Laptop', chip: 'Fixture CPU', os: 'macOS', gpuPercent: null },
+      quotas: [], tools: { git: true }, runningHarnessIds: [], stoppedHarnessIds: [], privacy: team.privacy,
+      localModels: [{ grid, model: 'moonshotai/kimi-k3', name: 'Kimi K3', kind: 'api' }] })
+    const group = String((await run(tab, { type: 'conversation.create', title: 'Small fix', brief: 'Fix it.',
+      checks: [{ description: 'Independent review', independent: true }] })).result.conversationId)
+    const startId = String((await run(tab, { type: 'agent.start', request: { conversationId: group, machineId: 'grid-host', engine: 'claude', name: 'Builder',
+      cwd: '/project', worktree: true, gridModel: 'moonshotai/kimi-k3', gridName: grid,
+      requirements: { memoryBytes: 0, diskBytes: 0, maxCpuPercent: 100, tools: [], devices: [], quotaRequired: false } } })).result.startId)
+    const hostRun = (command: Command) => store.execute(host, tab, { operationId: randomUUID(), command }, undefined, 'grid-host')
+    await hostRun({ type: 'agent.startDispatch', startId })
+    const agentId = String((await hostRun({ type: 'agent.started', startId, harnessId: 'grid-builder',
+      configuration: { engine: 'claude', model: null, effort: null, contextWindow: null, engineVersion: null } })).result.agentId)
+    await hostRun({ type: 'agent.startSettled', startId, warning: null })
+    const runs = async () => (await storedState(tab)).conversations.find(c => c.id === group)!.ledger!.runs!.map(r => [r.model, r.grid])
+    await run(tab, { type: 'work.assign', conversationId: group, agentId })
+    expect(await runs()).toEqual([['moonshotai/kimi-k3', true]])
+    const first = (await store.read(owner, tab)).state.conversations.find(c => c.id === group)!.assignment!.id
+    await run(tab, { type: 'work.cancel', conversationId: group, assignmentId: first, reason: 'Again.' })
+    await run(tab, { type: 'work.assign', conversationId: group, agentId })
+    expect(await runs()).toEqual([['moonshotai/kimi-k3', true], ['moonshotai/kimi-k3', true]])
+  })
+
   it('contributes project capacity without sharing the computer and fences host execution', async () => {
     const tab = (await store.create(owner, randomUUID(), 'Machine pool')).id
     const invitation = await run(tab, { type: 'invite.create', email: host.email, role: 'collaborator', conversationId: 'lead' })
@@ -1398,6 +1432,27 @@ describe('Super Tabs on a real Mongo replica set', () => {
     await run(tab, { type: 'project.delete', projectId: other })
     expect(await db.superTabRoleText.count({ where: { tabId: tab, projectId: other } })).toBe(0)
   })
+  it('serves no role text once the reader, or the hosted agent\'s contributor, left the Swarm\'s Workspace, before that removal reaches the Swarm', async () => {
+    const { tab } = await fixture()
+    await invite(tab)
+    await run(tab, { type: 'agent.add', conversationId: 'lead', machineId: 'test-host', harnessId: randomUUID(), name: 'Worker', configuration: config, lead: false })
+    await run(tab, { type: 'project.roles.create', projectId: 'lead', roles: [{ id: 'lead', name: 'Product Manager', kind: 'lead' as const, text: 'LEAD-TEXT' },
+      { id: 'dev', name: 'Engineer', kind: 'builder' as const, text: 'DEV-TEXT' }] })
+    await run(tab, { type: 'project.skills', projectId: 'lead', mode: 'custom' })
+    const text = (user: AuthUser) => app.inject({ method: 'GET', url: `/api/super-tabs/${tab}/projects/lead/roles/dev`, headers: { authorization: `Bearer ${user.sub}` } })
+    expect((await text(owner)).statusCode).toBe(200)
+    expect((await text(host)).statusCode).toBe(200)
+    // The owner, who is the project's owner and the Worker's contributor, is marked removed as a removal leaves it before its cleanup.
+    const row = await db.superTab.findUniqueOrThrow({ where: { id: tab } })
+    await db.swarmWorkspaceMember.update({ where: { id: `${row.workspaceId}:${owner.sub}` }, data: { removedAt: new Date() } })
+    try {
+      for (const user of [owner, host]) {
+        const answer = await text(user)
+        expect(answer.statusCode, user.email).not.toBe(200)
+        expect(answer.body).not.toContain('DEV-TEXT')
+      }
+    } finally { await db.swarmWorkspaceMember.update({ where: { id: `${row.workspaceId}:${owner.sub}` }, data: { removedAt: null } }) }
+  })
   it('closes the replying agent\'s own deliveries of a message as answered, and nobody else\'s', async () => {
     const { tab, lead } = await fixture()
     const helper = (await run(tab, { type: 'agent.add', conversationId: 'lead', machineId: 'test-host', harnessId: randomUUID(),
@@ -1917,13 +1972,13 @@ describe('Super Tabs on a real Mongo replica set', () => {
     expect(await store.routeDecision(owner, tab, id)).toMatchObject({ outcome: 'done', assignmentId: second })
   })
 
-  it('limits route records to 30 per tab per hour', async () => {
+  it('records more than 30 routes in an hour: there is no hourly cap', async () => {
     const { tab, lead } = await fixture()
     const decision = { assessment: { difficulty: 'low', risk: 'low', why: 'Docs.' },
       candidates: [{ id: 'c0', kind: 'new', machineId: 'test-host', engine: 'claude', model: 'haiku', effort: 'auto', quality: 1, cost: 1, title: 'New agent', label: 'New agent' }],
       excluded: [], floor: 1, notes: false, pick: 'c0', via: 'only', p: null, belowFloor: false, why: 'Only candidate.' }
     for (let i = 0; i < 30; i++) await run(tab, { type: 'route.record', conversationId: 'lead', decision } as Command, host, lead)
-    await expect(run(tab, { type: 'route.record', conversationId: 'lead', decision } as Command, host, lead)).rejects.toMatchObject({ code: 'RATE_LIMITED', status: 429 })
+    await expect(run(tab, { type: 'route.record', conversationId: 'lead', decision } as Command, host, lead)).resolves.toBeDefined()
   })
 })
 
@@ -2662,7 +2717,7 @@ describe('Lead mentions', () => {
     const [mention, ...rest] = await list(tab, peer, 'waiting')
     expect(rest).toEqual([])
     expect(mention).toEqual({ id: expect.any(String), projectId: 'lead', projectName: 'Pilot', conversationId: group, conversationTitle: 'Copy review',
-      messageId, leadName: expect.any(String), text: text.slice(0, 200), createdAt: expect.any(String), resolvedAt: null, resolvedBy: null })
+      messageId, leadId: lead, leadName: expect.any(String), text: text.slice(0, 200), createdAt: expect.any(String), resolvedAt: null, resolvedBy: null })
     expect(mention!.leadName).toBe((await waiting(tab, owner)).agents.find(a => a.id === lead)!.displayName)
     expect(await list(tab, owner, 'waiting')).toEqual([])
     expect(await list(tab, peer, 'earlier')).toEqual([])
@@ -3474,5 +3529,50 @@ describe('Swarm parts under concurrent writes', () => {
     const assigned = await run(tab, { type: 'work.assign', conversationId: 'lead', agentId, routeDecisionId }, host, lead)
     expect(assigned.result.assignmentId).toBeTruthy()
     expect((await store.routeDecision(owner, tab, routeDecisionId)).final).toMatchObject({ kind: 'new', startId })
+  })
+})
+
+describe('a migrated Swarm\'s kept old state (Stability 2.1)', () => {
+  /** About the 1 MB a production Swarm kept from before its split into parts (design 6.1: `SuperTab.legacyState`). */
+  const OLD_STATE = { conversations: Array.from({ length: 2_000 }, (_, i) => ({ id: `old-${i}`, title: 'x'.repeat(480) })) }
+  /** Far below the old state: a read that fetched it would send at least 1 MB. */
+  const READ_LIMIT = 200_000
+  const bytesOut = async () => Number(((await db.$runCommandRaw({ serverStatus: 1 })) as { network: { bytesOut: unknown } }).network.bytesOut)
+
+  it('is never fetched by a command, a read, the owner\'s lists, an invitation list or a host\'s terminal pickup', async () => {
+    const { tab, lead } = await fixture()
+    const invited: AuthUser = { sub: '100000000000000000000009', email: 'invited@example.com', autonomousEnv: 'prod', role: 'user' }
+    await run(tab, { type: 'invite.create', email: invited.email, role: 'viewer', conversationId: 'lead' })
+    const group = (await run(tab, { type: 'conversation.create', title: 'Terminal', brief: 'Answer the prompt', checks: [] })).result.conversationId as string
+    const worker = (await run(tab, { type: 'agent.add', conversationId: group, machineId: 'test-host', harnessId: randomUUID(),
+      name: 'Terminal Engineer', configuration: config, lead: false })).result.agentId as string
+    await db.superTab.update({ where: { id: tab }, data: { legacyState: OLD_STATE } })
+
+    const fetched: string[] = []
+    /** Runs `body`, and names it when MongoDB sent this backend enough for the old state while it ran (bench/probe.ts). */
+    async function measured<T>(name: string, body: () => Promise<T>): Promise<T> {
+      const before = await bytesOut(), ownReply = await bytesOut() - before
+      const start = await bytesOut()
+      const result = await body()
+      if (await bytesOut() - start - ownReply >= READ_LIMIT) fetched.push(name)
+      return result
+    }
+    expect((await measured('command', () => run(tab, message('After the split')))).result.messageId).toBeTruthy()
+    expect((await measured('read', () => store.read(owner, tab))).state.agents.map(a => a.id).sort()).toEqual([lead, worker].sort())
+    expect(await measured('invitations', () => store.invitations(invited))).toEqual([expect.objectContaining({ tabId: tab, name: 'Pilot', role: 'viewer' })])
+    // The owner's lists read each of the owner's Swarms: an owner of this one alone, as the shared owner has many here.
+    const solo: AuthUser = { sub: '10000000000000000000000a', email: 'solo@example.com', autonomousEnv: 'prod', role: 'user' }
+    const own = (await store.create(solo, randomUUID(), 'Solo')).id
+    await db.superTab.update({ where: { id: own }, data: { legacyState: OLD_STATE } })
+    expect((await measured('list', () => store.list(solo))).tabs).toEqual([expect.objectContaining({ id: own, name: 'Solo', ownerId: solo.sub })])
+    expect(await measured('host grids', () => store.hostGrids(solo))).toEqual([expect.objectContaining({ tabId: own, enabled: true })])
+    expect(await measured('archive', () => store.archiveFinished(tab, group, []))).toBe(false)
+    const requestId = (await run(tab, { type: 'agent.screen', agentId: worker, scrollback: 20 }, host, lead)).result.requestId as string
+    expect((await measured('terminal pickup', () => store.hostTerminal(host, 'test-host'))).filter(row => row.tabId === tab).map(row => row.request.id))
+      .toEqual([requestId])
+    expect(fetched).toEqual([])
+
+    // Reads and writes leave it in place: only the maintenance script removes it.
+    for (const id of [tab, own]) expect((await db.superTab.findUnique({ where: { id }, select: { legacyState: true } }))!.legacyState).toEqual(OLD_STATE)
   })
 })
