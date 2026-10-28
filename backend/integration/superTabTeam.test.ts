@@ -455,6 +455,19 @@ describe('a teammate\'s work and the machines that take it', () => {
 // One machine (docs/plans/2026-10-24-swarm-team-account.md): the person's Mac and its Harness Team account are one
 // machine. Its team account joins where the Mac is added, through the Mac's own daemon, and takes the teammates' work
 // started on the Mac.
+describe('a project\'s repository, for its GitHub access', () => {
+  it('is read by those who may open the project, and by nobody else', async () => {
+    const f = await fixture()
+    expect(await store.projectRepository(owner, f.tab, 'lead')).toBeNull()
+    await run(f.tab, { type: 'tab.project', machineId: 'owner-host', project: { cwd: '/work', repositoryUrl: 'https://github.com/acme/app' } })
+    expect(await store.projectRepository(owner, f.tab, 'lead')).toBe('https://github.com/acme/app')
+    expect(await store.projectRepository(person, f.tab, 'lead')).toBe('https://github.com/acme/app')
+    const secret = String((await run(f.tab, { type: 'project.create', name: 'Secret', visibility: 'private', brief: '' })).result.projectId)
+    await expect(store.projectRepository(person, f.tab, secret)).rejects.toMatchObject({ code: 'NOT_FOUND' })
+    await expect(store.projectRepository(owner, f.tab, 'nope')).rejects.toMatchObject({ code: 'NOT_FOUND' })
+  })
+})
+
 describe('one machine: a Mac and its Harness Team account', () => {
   it('with no GitHub App on the server, the team account is never asked to join', async () => {
     await db.machine.update({ where: { machineId: 'team-mac' }, data: { hostMachineId: 'personal-mac' } })
