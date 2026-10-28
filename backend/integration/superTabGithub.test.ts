@@ -82,6 +82,12 @@ async function fresh(options: { github?: boolean; approveAll?: boolean; signIn?:
 }
 
 type Env = Awaited<ReturnType<typeof fresh>>
+/** The team account switched on for this test, in the Swarms of [owners] or everyone's. */
+function teamAccounts(owners = '') {
+  vi.stubEnv('SWARM_TEAM_ACCOUNT_REQUIRED', '1')
+  vi.stubEnv('SWARM_TEAM_ACCOUNT_OWNERS', owners)
+  onTestFinished(() => { vi.unstubAllEnvs() })
+}
 /** A tab whose project is on [repositoryUrl], with a Builder on the host's machine working on a task. */
 async function working(env: Env, repositoryUrl: string | null = 'https://github.com/example/app.git') {
   const tab = (await env.store.create(owner, randomUUID(), 'Pilot')).id
@@ -238,20 +244,38 @@ describe('a queued start\'s preparation token', () => {
   })
 
   it('gives no token for a repository nobody who can push to it approved for the project', async () => {
+    teamAccounts()
     const env = await fresh({ approveAll: false })
     const { tab, startId } = await queued(env)
+    const status = await env.app.inject({ method: 'GET', url: `/api/super-tabs/${tab}/projects/lead/github`, headers: { authorization: `Bearer ${owner.sub}` } })
+    expect(status.json().data).toMatchObject({ state: 'not-approved', repository: 'example/app' })
     const response = await prepare(env, tab, startId)
     expect(response.statusCode).toBe(403)
     expect(response.json().error).toMatchObject({ code: 'GITHUB_REPOSITORY_NOT_APPROVED' })
     expect(env.github.calls.some(c => c.path.endsWith('/access_tokens'))).toBe(false)
   })
 
+  // Rolled out with the team account (machines.ts teamAccountRequired), so a bug in it cannot stop anyone else's Swarm.
+  it('asks no approval in a Swarm the team account is not tried in, or with the switch off', async () => {
+    teamAccounts('someone@example.com')
+    const env = await fresh({ approveAll: false })
+    const { tab, startId } = await queued(env)
+    const status = await env.app.inject({ method: 'GET', url: `/api/super-tabs/${tab}/projects/lead/github`, headers: { authorization: `Bearer ${owner.sub}` } })
+    expect(status.json().data).toMatchObject({ state: 'covered', repository: 'example/app' })
+    expect((await prepare(env, tab, startId)).json().data).toMatchObject({ github: true, token: 'ghs_fixture_1' })
+    vi.unstubAllEnvs()
+    const off = await queued(env)
+    expect((await prepare(env, off.tab, off.startId)).json().data).toMatchObject({ github: true })
+  })
+
   it('approves a repository through the app\'s sign-in, for someone who can push to it, and gives the token after', async () => {
     let push = true
     const signIn = { authorizeUrl: (state: string) => `https://github.test/login/oauth/authorize?state=${state}`,
       permission: async () => ({ login: 'olive', push }) } as unknown as GitHubSignIn
+    teamAccounts()
     const env = await fresh({ approveAll: false, signIn })
     const { tab, startId } = await queued(env)
+    expect((await prepare(env, tab, startId)).statusCode).toBe(403)
     const asked = await env.app.inject({ method: 'POST', url: `/api/super-tabs/${tab}/projects/lead/github/approve`,
       headers: { authorization: `Bearer ${owner.sub}` }, payload: { scope: 'project' } })
     expect(asked.statusCode, asked.body).toBe(200)

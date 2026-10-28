@@ -108,7 +108,12 @@ export async function superTabRoutes(app: FastifyInstance, options: { store?: Su
   const approvalSecret = github ? stateSecret(github.app.config) : null
   // No token for a repository nobody who can push to it approved for this project: a project names its repository as
   // text, and the app is on other people's repositories too.
-  const requireApproval = async (user: { autonomousEnv: string }, tabId: string, projectId: string, repository: GitHubRepository) => {
+  // Rolled out with the team account (machines.ts `teamAccountRequired`): a Swarm outside it gets tokens as before, so a
+  // bug here cannot stop other people's Swarms.
+  const requireApproval = async (user: { autonomousEnv: string }, grant: { tabId: string; projectId: string; approvalRequired: boolean },
+    repository: GitHubRepository) => {
+    if (!grant.approvalRequired) return
+    const { tabId, projectId } = grant
     if (await approvals.approved(user.autonomousEnv, tabId, projectId, repository.fullName)) return
     throw new SuperTabError('GITHUB_REPOSITORY_NOT_APPROVED', `Nobody who can push to ${repository.fullName} has approved it for this project yet, `
       + 'so teammates\' agents get no access to it. Someone who can push to it approves it in Harness: Project details, GitHub access.', 403)
@@ -147,7 +152,7 @@ export async function superTabRoutes(app: FastifyInstance, options: { store?: Su
           ? 'This project\'s repository is not on github.com, so the Harness GitHub App cannot give a token for it.'
           : 'This project has no repository address yet. Its owner or Lead can share it (project.repository).', 409)
       }
-      await requireApproval(req.user!, grant.tabId, grant.projectId, repository)
+      await requireApproval(req.user!, grant, repository)
       return { github: true, ...await github.prepare(repository), requestedBy: grant.requester }
     }))
   app.get<{ Params: z.infer<typeof hostStartParams> }>('/api/super-tabs/hosts/:machineId/starts/:tabId/:startId', { preHandler: validateParams(hostStartParams) },
@@ -161,17 +166,19 @@ export async function superTabRoutes(app: FastifyInstance, options: { store?: Su
   // (github/projectAccess.ts). `refresh=1`: a person installed it just now and checks again.
   app.get<{ Params: z.infer<typeof projectParams>; Querystring: z.infer<typeof refreshQuery> }>('/api/super-tabs/:tabId/projects/:projectId/github',
     { preHandler: [validateParams(projectParams), validateQuery(refreshQuery)] },
-    (req, reply) => respond(reply, async () => projectGitHubAccess(github?.app ?? null,
-      await store.projectRepository(req.user!, req.params.tabId, req.params.projectId),
-      { approved: repository => approvals.approved(req.user!.autonomousEnv, req.params.tabId, req.params.projectId, repository), canApprove: !!signIn },
-      req.query.refresh === '1')))
+    (req, reply) => respond(reply, async () => {
+      const project = await store.projectRepository(req.user!, req.params.tabId, req.params.projectId)
+      return projectGitHubAccess(github?.app ?? null, project.repositoryUrl, { canApprove: !!signIn,
+        approved: async repository => !project.approvalRequired || approvals.approved(req.user!.autonomousEnv, req.params.tabId, req.params.projectId, repository) },
+        req.query.refresh === '1')
+    }))
   // Approving a project's repository: the person signs in to GitHub through the app (or installs it, which signs them in
   // too), and GitHub sends them back to /api/github/callback with the state signed here for them, this project and scope.
   app.post<{ Params: z.infer<typeof projectParams>; Body: z.infer<typeof approveBody> }>('/api/super-tabs/:tabId/projects/:projectId/github/approve',
     { preHandler: [validateParams(projectParams), validateBody(approveBody)] }, (req, reply) => respond(reply, async () => {
       if (!github || !approvalSecret) throw new GitHubAppError('GITHUB_APP_NOT_CONFIGURED', 'This Harness server has no GitHub App configured.', 503)
       if (!signIn) throw new GitHubAppError('GITHUB_APPROVAL_NOT_CONFIGURED', 'This Harness server cannot approve repositories yet: its administrator sets GITHUB_APP_CLIENT_ID and GITHUB_APP_CLIENT_SECRET.', 503)
-      const repositoryUrl = await store.projectRepository(req.user!, req.params.tabId, req.params.projectId)
+      const { repositoryUrl } = await store.projectRepository(req.user!, req.params.tabId, req.params.projectId)
       const repository = githubRepository(repositoryUrl) ?? fail('REPOSITORY_NOT_GITHUB', 'This project\'s repository is not on github.com.', 409)
       const state = signState(approvalSecret, { userId: req.user!.sub, autonomousEnv: req.user!.autonomousEnv, tabId: req.params.tabId,
         projectId: req.params.projectId, repository: repository.fullName.toLowerCase(), scope: req.body.scope }, Date.now())
@@ -273,7 +280,7 @@ export async function superTabRoutes(app: FastifyInstance, options: { store?: Su
           ? 'This project\'s repository is not on github.com, so the Harness GitHub App cannot give a token for it.'
           : 'This project has no repository address yet. Its owner or Lead can share it (project.repository).', 409)
       }
-      await requireApproval(req.user!, grant.tabId, grant.projectId, repository)
+      await requireApproval(req.user!, grant, repository)
       const issued = await github.issue({ tabId: grant.tabId, agentId: grant.agentId, assignmentId: grant.assignmentId, repository })
       return { ...issued, ...attribution(grant) }
     }))
